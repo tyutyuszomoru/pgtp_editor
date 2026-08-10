@@ -1358,14 +1358,31 @@ class CodeEditorDialog(QDialog):
         # rule rather than excepting it: the single accessor answers major and
         # minor, while the editing mode's source of truth is the editor itself.
         #
-        # ⚠ THE CONSEQUENCE THE RULING DID NOT NAME, flagged rather than decided:
-        # `Esc` no longer cancels this dialog -- from Edit mode it enters Command
-        # mode, and from Command mode it clears pending state and stays. The
-        # dialog's only KEYBOARD cancel is therefore withdrawn. `Return` still
-        # accepts and Cancel remains reachable by the button box and the window
-        # close, so nothing is trapped, but a keyboard-only user loses a gesture.
-        # A two-press escape would restore it and is the obvious candidate -- but
-        # it is vim-inauthentic and is deliberately NOT implemented here.
+        # THE CONSEQUENCE THE RULING DID NOT NAME, since DECIDED by the owner
+        # (2026-08-10): **the two-press escape, and it is THIS dialog only.**
+        #
+        #     Edit mode                     : Esc -> enter Command mode
+        #     Command mode, pending         : Esc -> clear pending, stay
+        #     Command mode, nothing pending : Esc -> reject this dialog
+        #
+        # Command mode had withdrawn this dialog's ONLY keyboard cancel: `Esc`
+        # *was* the cancel, and `Ctrl+S`/`Ctrl+W` were deleted here on 2026-08-09
+        # (see the note further down). A modal whose only remaining cancel is the
+        # mouse is a real regression, not a purist's quibble -- and **vim has no
+        # dialogs to be authentic about**, so nothing vim does is being
+        # contradicted; an absence is being filled.
+        #
+        # ⚠ THIS IS A DELIBERATE PER-SURFACE DIVERGENCE. At the other five editing
+        # surfaces `Esc` in Command mode with nothing pending STAYS PUT, exactly as
+        # shipped, because none of them is a modal and none of them loses a way
+        # out. **The accepted cost is that `Esc` means something different here
+        # than everywhere else in the app.** Do not "harmonise" it in either
+        # direction: removing it re-strands the keyboard user, and generalising it
+        # would make `Esc` leave Command mode in ordinary tabs, which the owner did
+        # not rule and vim does not do. The mechanism is the vim layer's single
+        # opt-in hook, whose docstring carries the ruling.
+        self._editor.set_command_mode_escape_fallback(self.cancel)
+
         self._mode_indicator = ModeIndicator(self, editing_only=True)
         self._mode_indicator.set_editing_mode(self._editor.editing_mode_label())
         self._editor.editing_mode_changed.connect(self._refresh_mode_indicator)
@@ -1383,9 +1400,15 @@ class CodeEditorDialog(QDialog):
         # over the local convention that OK/Cancel in a text-editing modal are
         # naturally those two keys.
         #
-        # OK and Cancel remain reachable by the button box, by `Return`/`Escape`
-        # (Qt's own defaults for a QDialogButtonBox), and by the window's close
-        # button, so nothing became unreachable.
+        # OK and Cancel remain reachable by the button box, by `Return` (Qt's own
+        # default for a QDialogButtonBox), by the window's close button -- and
+        # Cancel by `Escape`, which since Command mode landed is the **second**
+        # `Esc` press rather than the first: the first enters Command mode and the
+        # second rejects (see the two-press escape note above). It is no longer
+        # Qt's own `QDialog` Escape handling that answers, because the editor
+        # consumes the key; the outcome is the same, one press later. That
+        # distinction is written out because this comment read "by
+        # `Return`/`Escape`" while `Escape` did not cancel at all.
         #
         # ONE key this dialog does own: `Ctrl+Shift+B` (bracket-select). It is
         # `Select ▸ Select Enclosing Block` everywhere else, and this dialog has

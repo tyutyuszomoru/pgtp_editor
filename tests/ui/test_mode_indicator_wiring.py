@@ -63,9 +63,61 @@ def _both(window):
 
 
 def test_mode_text_shows_the_minor_mode_only_when_there_is_one():
-    assert mode_text(MODE_PROJECT) == "Project"
-    assert mode_text(MODE_PROJECT, MINOR_CAPTION) == "Project · Caption"
+    assert mode_text(MODE_PROJECT) == "Project mode"
+    assert mode_text(MODE_PROJECT, MINOR_CAPTION) == "Project mode · Caption"
     assert mode_text(None) == NO_MODE_LABEL
+
+
+def test_every_mode_label_says_the_word_mode(qtbot):
+    """`BUG-260810174126`: a chip reading a bare "Project" does not tell a reader
+    it is a mode at all. EVERY label the indicator can render carries the word --
+    the three majors, the no-mode state, and both editing modes.
+
+    The editing-mode labels matter especially: `CodeEditorDialog`'s chrome renders
+    that segment ALONE, so it is the one surface with no major-mode label to supply
+    the word, and fixing only `MAJOR_LABELS` would have left it reading "Edit"."""
+    from pgtp_editor.ui.mode_indicator import (
+        EDITING_COMMAND,
+        EDITING_EDIT,
+        MAJOR_LABELS,
+    )
+
+    for label in MAJOR_LABELS.values():
+        assert "mode" in label.lower(), label
+    assert "mode" in NO_MODE_LABEL.lower()
+    assert EDITING_EDIT == "Edit mode"
+    assert EDITING_COMMAND.startswith("Command mode")
+    # The exit hint the owner attached to Command mode survives the rewording.
+    assert "press i" in EDITING_COMMAND
+
+
+def test_the_editing_only_chip_reads_a_labelled_mode(qtbot):
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND, EDITING_EDIT
+
+    indicator = ModeIndicator(editing_only=True)
+    qtbot.addWidget(indicator)
+    assert indicator.text() == EDITING_EDIT == "Edit mode"
+    indicator.set_editing_mode(EDITING_COMMAND)
+    assert indicator.text().startswith("Command mode")
+
+
+def test_no_tooltip_says_mode_twice_in_a_row(qtbot):
+    """The labels now carry the word themselves, so a tooltip that also prefixes
+    it reads like a bug ("Editing mode: Edit mode")."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND
+
+    editing = ModeIndicator(editing_only=True)
+    qtbot.addWidget(editing)
+    editing.set_editing_mode(EDITING_COMMAND)
+    assert "mode: Command mode" not in editing.toolTip()
+    assert "Command mode" in editing.toolTip()
+
+    full = ModeIndicator()
+    qtbot.addWidget(full)
+    full.set_mode(MODE_PROJECT, MINOR_CAPTION, EDITING_COMMAND)
+    tooltip = full.toolTip()
+    assert "Project mode" in tooltip
+    assert "mode: Project mode" not in tooltip
 
 
 def test_mode_colors_are_theme_aware_and_pure():
@@ -99,7 +151,7 @@ def test_the_minor_mode_is_text_not_a_second_colour(qtbot):
     indicator.set_mode(MODE_PROJECT, MINOR_CAPTION)
 
     assert indicator.colors() == plain
-    assert indicator.text() == "Project · Caption"
+    assert indicator.text() == "Project mode · Caption"
 
 
 # --- One source of truth, two surfaces --------------------------------------
@@ -120,7 +172,7 @@ def test_the_indicator_tracks_workflow_mode_through_a_change(qtbot, tmp_path):
     window.set_workflow_mode(MODE_MAINTENANCE)
 
     assert window.current_mode() == (MODE_MAINTENANCE, None)
-    assert _both(window) == ("Maintenance", "Maintenance")
+    assert _both(window) == ("Maintenance mode", "Maintenance mode")
     assert (
         window._mode_label.colors()
         == window.toolbar_mode_indicator.colors()
@@ -137,13 +189,13 @@ def test_new_session_keeps_the_indicator_on_the_standing_mode(
     Mode" is no longer reachable by any gesture."""
     window = _window(qtbot, tmp_path)
     window.set_workflow_mode(MODE_PROJECT)
-    assert _both(window) == ("Project", "Project")
+    assert _both(window) == ("Project mode", "Project mode")
     monkeypatch.setattr(window, "show_launcher", lambda: None)
 
     assert window.new_session() is True
 
     assert window.workflow_mode == MODE_PROJECT
-    assert _both(window) == ("Project", "Project")
+    assert _both(window) == ("Project mode", "Project mode")
 
 
 def test_the_mode_is_session_only_and_never_persisted(qtbot, tmp_path):
@@ -175,11 +227,11 @@ def test_caption_mode_appears_as_a_minor_mode_and_leaves_again(qtbot, tmp_path):
 
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
     assert window.current_mode() == (MODE_STANDALONE, MINOR_CAPTION)
-    assert _both(window) == ("Standalone · Caption", "Standalone · Caption")
+    assert _both(window) == ("Standalone mode · Caption", "Standalone mode · Caption")
 
     window.center_stage.caption_management_panel.close_panel()
     assert window.current_mode() == (MODE_STANDALONE, None)
-    assert _both(window) == ("Standalone", "Standalone")
+    assert _both(window) == ("Standalone mode", "Standalone mode")
 
 
 def test_compare_merge_appears_as_a_minor_mode(qtbot, tmp_path):
@@ -190,7 +242,7 @@ def test_compare_merge_appears_as_a_minor_mode(qtbot, tmp_path):
 
     window.center_stage.enter_diff_merge_mode()
     assert window.current_mode() == (MODE_PROJECT, MINOR_DIFF)
-    assert window._mode_label.text() == "Project · Compare/Merge"
+    assert window._mode_label.text() == "Project mode · Compare/Merge"
 
     window.center_stage.leave_diff_merge_mode()
     assert window.current_mode() == (MODE_PROJECT, None)
