@@ -240,6 +240,7 @@ from pgtp_editor.ui.mode_indicator import (
 )
 from pgtp_editor.ui.project_status_model import quality_state
 from pgtp_editor.ui.status_bar import StaticStatusBar
+from pgtp_editor.ui.vim_mode import add_editing_mode_observer
 
 _log = logging.getLogger(__name__)
 
@@ -1581,6 +1582,18 @@ class MainWindow(QMainWindow):
         self._bookmark_write_timer.setInterval(_BOOKMARK_WRITE_DEBOUNCE_MS)
         self._bookmark_write_timer.timeout.connect(self._flush_bookmark_writes)
         add_bookmark_observer(self._on_editor_bookmarks_changed)
+        # FQ-032: the mode indicator's editing-mode segment follows the FOCUSED
+        # editor, and the state is per-editor. Two more triggers for the one
+        # refresh, subscribed ONCE here rather than wired per creation site --
+        # tabs are built at runtime in three different files and the next tab type
+        # would have to remember:
+        #   * an editing-mode transition on any editor (the publish registry, the
+        #     `add_bookmark_observer` idiom above);
+        #   * a focus change (which also covers a tab switch).
+        add_editing_mode_observer(self._on_editing_mode_changed)
+        application = QApplication.instance()
+        if application is not None:
+            application.focusChanged.connect(self._on_focus_changed_refresh_mode)
         # A project transition is a quiet moment: flush anything still pending
         # (each pending entry carries its OWN folder, so a close cannot misroute
         # it), then restore for documents that were already open when the project
@@ -5789,6 +5802,7 @@ class MainWindow(QMainWindow):
         `setStyleSheet`; that is what keeps the two renderings identical.
         """
         major, minor = self.current_mode()
+        editing = self.focused_editing_mode()
         light = self._light_theme_action.isChecked() if self._light_theme_action else False
         for indicator in (
             getattr(self, "_mode_label", None),
@@ -5797,7 +5811,61 @@ class MainWindow(QMainWindow):
             if indicator is None:
                 continue
             indicator.set_light_theme(light)
-            indicator.set_mode(major, minor)
+            indicator.set_mode(major, minor, editing)
+
+    def focused_editing_mode(self) -> str | None:
+        """The FOCUSED editor's editing mode, or None (FQ-032, §8).
+
+        **Not a fourth dispatcher and not a fourth minor mode.** The editing mode
+        is per-editor and orthogonal, so this asks Qt which widget has focus and
+        asks that widget -- there is no `active_*_editor()` branch and no
+        "which tab was in Command mode" map anywhere.
+
+        None -- the segment ABSENT -- is the honest answer for a non-editor tab
+        and for a read-only editor, where FQ-032 makes the layer inactive entirely
+        and the buffer already names itself in its tab title.
+        """
+        focused = QApplication.focusWidget()
+        answer = getattr(focused, "editing_mode_label", None)
+        if not callable(answer):
+            return None
+        return answer()
+
+    def _on_editing_mode_changed(self, _editor) -> None:
+        """Registry callback: any editor's editing mode moved."""
+        self._refresh_mode_indicator()
+
+    def _on_focus_changed_refresh_mode(self, _old, _new) -> None:
+        """`QApplication.focusChanged`: the indicator reports the FOCUSED
+        editor's mode, so a focus change (a tab switch included) changes it."""
+        self._refresh_mode_indicator()
+
+    # --- FQ-032's `:` palette namespace -------------------------------------
+
+    def vim_command_entries(self) -> list[tuple[str, str]]:
+        """The `:` palette's namespace: **the app's own menu tree.**
+
+        **Derive, don't design.** The verbs are the shipped FQ-012 enumeration --
+        `ToolbarController.collect_menu_commands()`, the same one command universe
+        Customize Toolbar and Customize Shortcuts use -- so `:deploy quality`
+        triggers the real `Deployment ▸ Apply to quality` `QAction`, the namespace
+        auto-syncs as the menus change, and there is never a second vocabulary to
+        maintain.
+
+        The editor finds this by asking its top-level window, which is also why
+        `CodeEditorDialog` has no palette: it is its own top level, it is
+        deliberately menu-less, and a palette with no namespace must SAY so rather
+        than open an empty command line.
+        """
+        return list(self._toolbar_ui.collect_menu_commands())
+
+    def vim_command_action(self, command_id: str):
+        """The `QAction` behind a `:` verb, or None.
+
+        `QAction.trigger()` on the real menu action is the EXISTING dispatch;
+        FQ-032 adds no fourth dispatcher.
+        """
+        return self._toolbar_ui.menu_commands.get(command_id)
 
     # --- FQ-018 (refined by FQ-028 Part 2.4): the connectivity dots ---------
 

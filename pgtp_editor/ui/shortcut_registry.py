@@ -275,9 +275,17 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # against them and Qt would fire neither.
     "Ctrl+F": "focuses the current tab's Find field — a per-tab shortcut at "
               "six sites (§27)",
-    "Ctrl+R": "focuses the current tab's Replace field — a per-tab shortcut "
-              "at six sites (§27)",
-    "Escape": "returns focus to the document (§27)",
+    # FQ-032 made this the app's FIRST mode-conditional chord
+    # (`DEC-260810193638`), so the reason must state BOTH meanings: a user refused
+    # the chord is owed the true reason, and "focuses the Replace field" alone is
+    # now only half of it. The reservation itself is unchanged -- `Ctrl+R` was
+    # already reserved, so `RESERVED_SEQUENCES` gains no member and the ledger
+    # test's set equality does not move.
+    "Ctrl+R": "focuses the current tab's Replace field in Edit mode — a per-tab "
+              "shortcut at six sites — and is redo in Command mode, the one "
+              "chord whose meaning depends on the editing mode (§27, §8)",
+    "Escape": "returns focus to the document, and Command-mode entry in an "
+              "editable editor (§27, §8)",
     # §27: window-level QActions with NO menu entry, so the menu walk cannot
     # enumerate them and this dialog has no row to move them from.
     "F3": "Find Next — a window-level command with no menu entry (§27)",
