@@ -403,17 +403,30 @@ def test_open_ddl_project_via_prompt_pgtp_open_mode_does_not_double_load(qtbot, 
 
 
 # --- .pgtp checksum drift report on open ------------------------------------
+def _existing_working_copy(project_dir: Path, name: str = "source.pgtp") -> Path:
+    """A real, parseable working copy inside `project_dir` -- what a WHOLE
+    §18.2 link points at (BUG-260810173246)."""
+    project_dir.mkdir(parents=True, exist_ok=True)
+    working_copy = project_dir / name
+    working_copy.write_text(_VALID_PGTP, encoding="utf-8")
+    return working_copy
+
+
 def test_open_reports_unchanged_source_pgtp(qtbot, tmp_path, monkeypatch):
     from pgtp_editor.db.ddl_project import content_hash, save_settings
 
     source = tmp_path / "source.pgtp"
     source.write_text("<Project/>", encoding="utf-8")
     project_dir = tmp_path / "proj"
+    # BUG-260810173246: a drift verdict needs a WHOLE link -- a recorded working
+    # copy with a real file behind it -- so these drift tests carry one.
+    working_copy = _existing_working_copy(project_dir, "source.pgtp")
     save_settings(
         project_dir,
         ProjectSettings(
             pgtp=PgtpLink(
                 source_path=str(source),
+                working_copy_path=str(working_copy),
                 last_known_source_checksum=content_hash("<Project/>"),
             )
         ),
@@ -437,11 +450,13 @@ def test_open_reports_drifted_source_pgtp(qtbot, tmp_path, monkeypatch):
     source = tmp_path / "source.pgtp"
     source.write_text("<Project><Changed/></Project>", encoding="utf-8")
     project_dir = tmp_path / "proj"
+    working_copy = _existing_working_copy(project_dir, "source.pgtp")
     save_settings(
         project_dir,
         ProjectSettings(
             pgtp=PgtpLink(
                 source_path=str(source),
+                working_copy_path=str(working_copy),
                 last_known_source_checksum=content_hash("<Project/>"),  # stale
             )
         ),
@@ -483,9 +498,15 @@ def test_open_reports_unreadable_source_pgtp_gracefully(qtbot, tmp_path, monkeyp
     from pgtp_editor.db.ddl_project import save_settings
 
     project_dir = tmp_path / "proj"
+    working_copy = _existing_working_copy(project_dir, "source.pgtp")
     save_settings(
         project_dir,
-        ProjectSettings(pgtp=PgtpLink(source_path=str(tmp_path / "does-not-exist.pgtp"))),
+        ProjectSettings(
+            pgtp=PgtpLink(
+                source_path=str(tmp_path / "does-not-exist.pgtp"),
+                working_copy_path=str(working_copy),
+            )
+        ),
     )
     window = _window(qtbot, tmp_path)
 
@@ -1057,6 +1078,214 @@ def test_saving_a_no_project_pgtp_still_writes_bak_as_before(qtbot, tmp_path):
     window._doc_ui.save_project()
 
     assert Path(str(source) + ".bak").exists()
+
+
+# --- BUG-260810173246: a half-link is not a link -----------------------------
+def _record_critical_boxes(monkeypatch) -> list[tuple]:
+    """Captures `QMessageBox.critical` instead of letting a modal open -- the
+    parse-error dialog is exactly what these tests must prove does NOT appear."""
+    seen: list[tuple] = []
+
+    def fake_critical(parent, title, text, *args, **kwargs):
+        seen.append((title, text))
+        return modals.QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(modals.QMessageBox, "critical", staticmethod(fake_critical))
+    return seen
+
+
+def _link_then_delete_working_copy(window, tmp_path, project_dir) -> tuple[Path, Path]:
+    """Drives the app into the half-link state by the most common real route:
+    link a `.pgtp` normally, then delete the working copy behind the app's back
+    (also what a moved/copied project folder or an absent mount looks like)."""
+    source = tmp_path / "source.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+    window.open_project_file(str(source))
+    working_copy = Path(window._current_project_path)
+    working_copy.unlink()
+    return source, working_copy
+
+
+def test_a_missing_working_copy_does_not_redirect_the_open_of_the_source(qtbot, tmp_path):
+    """The sharp edge: `resolve_pgtp_path` had no existence check, so an open of
+    the real, healthy source was redirected at a file that is not there."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source, working_copy = _link_then_delete_working_copy(window, tmp_path, project_dir)
+
+    assert window._ddl_project_settings.pgtp.working_copy_path == str(working_copy)
+    assert window._ddl_project_ui.resolve_pgtp_path(str(source)) == str(source)
+
+
+def test_opening_the_source_with_a_missing_working_copy_loads_it_not_a_parse_error(
+    qtbot, tmp_path, monkeypatch
+):
+    """The misdiagnosis this bug is about: a missing file reported as malformed
+    XML. Before the fix the open was redirected at the deleted working copy,
+    `load_project`'s OSError came back as a `PgtpParseError`, and the user got a
+    "Failed to Open Project" dialog naming a file they never asked to open."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source, working_copy = _link_then_delete_working_copy(window, tmp_path, project_dir)
+    boxes = _record_critical_boxes(monkeypatch)
+
+    window.open_project_file(str(source))
+
+    assert boxes == []  # no parse-error dialog, for any file
+    assert window._current_project is not None  # the real source really loaded
+
+
+def test_opening_the_source_with_a_missing_working_copy_repairs_the_link(
+    qtbot, tmp_path, monkeypatch
+):
+    """The recovery §18.2 promises ("attach the file later by opening it") was
+    unavailable for exactly this state, because recording a path is what
+    disabled the copier. Re-linking to the SAME source is repair, not the silent
+    relink `link_pgtp_if_needed` forbids."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source, working_copy = _link_then_delete_working_copy(window, tmp_path, project_dir)
+    _record_critical_boxes(monkeypatch)
+
+    window.open_project_file(str(source))
+
+    assert working_copy.exists()  # the copy is back
+    assert working_copy.read_text(encoding="utf-8") == _VALID_PGTP
+    assert window._current_project_path == str(working_copy)
+    relinked = window._ddl_project_settings.pgtp
+    assert relinked.source_path == str(source)
+    assert relinked.working_copy_path == str(working_copy)
+    assert load_settings(project_dir).pgtp == relinked  # persisted, not in-memory only
+
+
+def test_a_missing_working_copy_is_never_silently_repointed_at_another_source(
+    qtbot, tmp_path, monkeypatch
+):
+    """The half-way rule: the guard treats a missing working copy as unlinked so
+    the SAME source can be re-copied -- but a link naming source A is never
+    rewritten to source B behind the user's back, whole or not."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    _open_project(window, project_dir)
+    source, _working_copy = _link_then_delete_working_copy(window, tmp_path, project_dir)
+    broken_link = window._ddl_project_settings.pgtp
+    other = tmp_path / "other.pgtp"
+    other.write_text(_VALID_PGTP, encoding="utf-8")
+    _record_critical_boxes(monkeypatch)
+
+    window.open_project_file(str(other))
+
+    assert window._ddl_project_settings.pgtp == broken_link  # untouched
+    assert not (project_dir / "other.pgtp").exists()  # nothing copied in
+    assert window._current_project_path == str(other)  # opened plainly
+
+
+def test_auto_open_falls_back_to_the_folder_scan_when_the_working_copy_is_missing(
+    qtbot, tmp_path, monkeypatch
+):
+    """The `return` used to sit outside the `exists()` branch, so a missing
+    working copy silently suppressed the single-candidate rescue and the project
+    opened with nothing loaded and no explanation."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    leftover = project_dir / "renamed.pgtp"
+    leftover.write_text(_VALID_PGTP, encoding="utf-8")
+    save_settings(
+        project_dir,
+        ProjectSettings(
+            pgtp=PgtpLink(
+                source_path=str(tmp_path / "source.pgtp"),
+                working_copy_path=str(project_dir / "gone.pgtp"),
+            )
+        ),
+    )
+    window = _window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        modals.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+    _record_critical_boxes(monkeypatch)
+
+    window._ddl_project_ui.open_project()
+
+    assert window._current_project_path == str(leftover)  # the rescue ran
+    texts = window.activity_panel.row_texts()
+    assert any(
+        "[Project]" in t and "working copy is missing" in t.lower() for t in texts
+    )
+
+
+def test_a_legacy_source_only_link_opens_cleanly_and_self_heals(
+    qtbot, tmp_path, monkeypatch
+):
+    """Migration pin for the on-disk artifact a pre-`caed134` build wrote:
+    `source_path` set, the other two fields empty. It must open without a drift
+    verdict and without the false "checksum recorded" line, and re-opening the
+    source must complete the link."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    source = tmp_path / "legacy.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+    project_dir = tmp_path / "proj"
+    save_settings(project_dir, ProjectSettings(pgtp=PgtpLink(source_path=str(source))))
+    window = _window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        modals.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+    _record_critical_boxes(monkeypatch)
+
+    window._ddl_project_ui.open_project()
+
+    texts = window.activity_panel.row_texts()
+    assert not [t for t in texts if "[Project]" in t and "checksum" in t.lower()]
+    assert not [t for t in texts if "[Project]" in t and "unchanged" in t.lower()]
+
+    window.open_project_file(str(source))  # the promised recovery gesture
+
+    healed = window._ddl_project_settings.pgtp
+    assert healed.source_path == str(source)
+    assert healed.working_copy_path == str(project_dir / "legacy.pgtp")
+    assert Path(healed.working_copy_path).exists()
+
+
+def test_drift_never_claims_a_checksum_it_did_not_write(qtbot, tmp_path, monkeypatch):
+    """`report_project_drift` never calls `save_settings`, so its old "Source
+    .pgtp checksum recorded" line was false every single time it appeared."""
+    from pgtp_editor.db.ddl_project import save_settings
+
+    source = tmp_path / "source.pgtp"
+    source.write_text(_VALID_PGTP, encoding="utf-8")
+    project_dir = tmp_path / "proj"
+    working_copy = _existing_working_copy(project_dir)
+    save_settings(
+        project_dir,
+        ProjectSettings(
+            pgtp=PgtpLink(
+                source_path=str(source),
+                working_copy_path=str(working_copy),
+                last_known_source_checksum=None,  # never deployed yet
+            )
+        ),
+    )
+    window = _window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        modals.QFileDialog, "getExistingDirectory",
+        staticmethod(lambda *a, **k: str(project_dir)),
+    )
+
+    window._ddl_project_ui.open_project()
+
+    rows = [t for t in window.activity_panel.row_texts() if "[Project]" in t]
+    assert not [t for t in rows if "source .pgtp checksum recorded" in t.lower()]
+    assert [t for t in rows if "no .pgtp checksum recorded yet" in t.lower()]
+    # And the claim stays honest: nothing was persisted by the open.
+    assert load_settings(project_dir).pgtp.last_known_source_checksum is None
 
 
 def test_deploy_pgtp_pushes_the_working_copy_back_to_the_source(qtbot, tmp_path):
