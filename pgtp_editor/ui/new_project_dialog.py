@@ -166,6 +166,11 @@ class NewProjectDialog(QDialog):
         # Last sandbox capability probe result, kept so a caller (e.g.
         # MainWindow) can read it after `accepted` fires without re-probing.
         self._last_probe: SandboxCapabilities | None = None
+        # DEC-260810134915: whether the quality `Test` button has ever produced
+        # an ANSWER (green, red or a broken seam -- all three are "it was
+        # tried"). Read only by `quality_advisory`, which says so once at accept
+        # when the section was left blank or never tried. Never a gate.
+        self._quality_tested = False
         self.setWindowTitle("New Project")
 
         identity_form = QFormLayout()
@@ -345,8 +350,12 @@ class NewProjectDialog(QDialog):
         # The folder is still this dialog's ONLY blocking validation. FQ-035 adds
         # no gate: the quality section may be blank, partial or untested and
         # accept must succeed anyway -- exactly as it does today for a blank
-        # sandbox connection. (Whether it should be gated is DEC-260810134915,
-        # open; a gate invented here would be an answer to it.)
+        # sandbox connection (DEC-260810134915: a gate here cannot be made
+        # honest, because `connection_from_tree` never yields the password, so
+        # "fully populated" is not a bar the source data can clear). What the
+        # ruling adds instead is `quality_advisory()`, which the creating caller
+        # says once after accept -- an advisory is the ALTERNATIVE to a gate, not
+        # the absence of one.
         if not self.folder():
             self._folder_error_label.setText("Choose a project folder first.")
             return
@@ -373,6 +382,9 @@ class NewProjectDialog(QDialog):
 
     def _populate_quality_from_pgtp(self) -> None:
         path = self.pgtp_path()
+        # A (re-)attach replaces the fields, so any earlier `Test` answered a
+        # different connection and no longer counts as having tried this one.
+        self._quality_tested = False
         if not path:
             self._quality_group.setVisible(False)
             return
@@ -421,7 +433,8 @@ class NewProjectDialog(QDialog):
         `ConnectionParams` when no `.pgtp` is attached -- with the section hidden
         there is no target being described, and a fresh project must land at
         exactly today's empty default (§18.2). May be blank or partial with a
-        file attached too: nothing gates on it (DEC-260810134915 is open)."""
+        file attached too: nothing gates on it (DEC-260810134915 -- creation is
+        never refusable for a network condition; see `quality_advisory`)."""
         if not self.pgtp_path():
             return ConnectionParams()
         return ConnectionParams(
@@ -431,6 +444,49 @@ class NewProjectDialog(QDialog):
             user=self._quality_user_edit.text(),
             password=self._quality_password_edit.text(),
         )
+
+    def quality_advisory(self) -> str:
+        """The **one** accept-time notice about the quality (target) section, or
+        `""` when there is nothing to say (DEC-260810134915).
+
+        Accept is never gated on this section -- but *where the app declines to
+        gate something, it still owes the user a statement of what it noticed*
+        (the FQ-023/DEC-013 shape applied to a non-refusal). Two things are worth
+        saying exactly once, at creation:
+
+        * a `.pgtp` was attached, the section was therefore shown, and the
+          connection was left **blank**;
+        * it was filled in but the `Test` button was **never tried**, so nothing
+          has ever established that the host answers.
+
+        Nothing is said when no `.pgtp` is attached -- the section was never
+        shown, so there is no target being described and a sandbox-only project
+        is created as silently as before. Nothing is said after a test either,
+        red included: the user saw that answer inline, and repeating a failure
+        they already read is noise, not a notice.
+
+        The caller decides where this lands; `DdlProjectController.create_project`
+        files it as a `[Project]` journal row.
+        """
+        if not self.pgtp_path():
+            return ""
+        params = self.target_params()
+        if not params.host:
+            return (
+                "Created with no quality (target) server: a .pgtp was attached but"
+                " the connection was left blank, so the DDL Explorer and the"
+                " database checks have nothing to read until it is filled in"
+                " (File > Project Settings…). Opening this project re-imports the"
+                " target from the .pgtp while the host is still empty."
+            )
+        if not self._quality_tested:
+            return (
+                f"The quality (target) server ({params.host}) was never tested, so"
+                " it is recorded as typed -- nothing here has established that it"
+                " answers. It is re-probed on every project open, and Project"
+                " Status reports the result."
+            )
+        return ""
 
     def sandbox_params(self) -> ConnectionParams:
         """The sandbox **server** connection. `database` is deliberately empty
@@ -490,6 +546,9 @@ class NewProjectDialog(QDialog):
 
         def on_result(result: "tuple[bool, str]") -> None:
             ok, message = result
+            # Tried, and answered -- so `quality_advisory` has nothing left to
+            # say about it, red included: the user is reading that answer here.
+            self._quality_tested = True
             self._quality_status_label.setText(message)
             self._quality_status_label.setStyleSheet(
                 "color: green;" if ok else "color: red;"
@@ -497,6 +556,7 @@ class NewProjectDialog(QDialog):
             self._quality_test_button.setEnabled(True)
 
         def on_error(exc: BaseException) -> None:
+            self._quality_tested = True
             self._quality_status_label.setText(str(exc))
             self._quality_status_label.setStyleSheet("color: red;")
             self._quality_test_button.setEnabled(True)

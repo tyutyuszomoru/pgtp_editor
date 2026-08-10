@@ -53,6 +53,11 @@ this lane and the document lane were extracted together:
 3. :meth:`auto_open_linked_pgtp` — opening a project loads its linked `.pgtp`
    back into the editor (BUG-021).
 
+The copy itself lives in exactly one place, :func:`check_out_pgtp`, because a
+`.pgtp` can also be attached in the New Project dialog (FQ-035) and §18.2
+requires **one definition of linking** for both routes. (2) is the open-time
+entry point onto it; :meth:`create_project` is the creation-time one.
+
 (1) and (2) are called by the document lane through injected callables; (3)
 calls the document lane back through ``open_pgtp_file``. Because every provider
 is a callable resolved at CALL time, that cycle needs no two-phase construction
@@ -124,35 +129,42 @@ from pgtp_editor.ui.ui_shell import UiShell
 _log = logging.getLogger(__name__)
 
 
-def _new_project_pgtp_link(dialog) -> PgtpLink:
-    """The `PgtpLink` a New Project accept records (FQ-035, §18.2).
+def check_out_pgtp(folder: Path, source_path: Path) -> PgtpLink:
+    """**The one copier** (§18.2, `DEC-260810134914`): copy `source_path` into
+    `folder` as that project's working copy and return the full three-field
+    `PgtpLink`.
 
-    Records the **`source_path` only**. `working_copy_path` and
-    `last_known_source_checksum` are left empty deliberately, because whether
-    accept COPIES the attached file into the project folder there and then, or
-    defers to the existing open-time copier, is **`DEC-260810134914` — still
-    open, and not answered here.**
+    Both ways of linking a `.pgtp` to a project go through here -- the open-time
+    one (`DdlProjectController.link_pgtp_if_needed`, a `.pgtp` opened while a
+    project is active) and the creation-time one
+    (`DdlProjectController.create_project`, a `.pgtp` attached in the New Project
+    dialog) -- because §18.2 requires **one definition of linking**, "or the two
+    ways of linking would age apart". A second copy routine is exactly what
+    `DEC-260810134914` rejected.
 
-    **THE COPY, ONCE DECIDED, GOES IN THIS FUNCTION AND NOWHERE ELSE**: read the
-    source text, write it to `<folder>/<source name>` (the destination
-    `link_pgtp_if_needed` computes), and return the full three-field `PgtpLink`.
-    It therefore needs the project folder, which is why this takes the dialog and
-    is called from `create_project` at the single `ProjectSettings(...)`
-    construction site -- add `folder` as a second parameter there and the whole
-    change is local to these lines.
+    Two deliberate properties, inherited from the open-time path unchanged:
 
-    Why the two halves are NOT independently pickable: `link_pgtp_if_needed`
-    opens with `if self._settings.pgtp.working_copy_path: return` and is the only
-    code in the tree that writes a working copy, so recording a working-copy path
-    without also writing the file would disable the copier permanently. That
-    guard must not be relaxed -- it is what makes "never silently relinked" true.
-    Recording `source_path` alone leaves the copier free to run on first open,
-    which is why it is the state that does not pre-empt the decision.
+    * **An unreadable source RAISES `OSError`** rather than deciding what to do
+      about it. The two callers want opposite things -- the open-time one
+      swallows it (nothing to link yet, and a modal at someone who merely opened
+      a file is wrong), the creation-time one must NOT (a silent no-op there
+      would record an identity pointing at nothing, which is the state the ruling
+      forbids). Raising is what lets both keep their own behaviour off one copy.
+    * **An existing destination is left alone**, never overwritten. It is already
+      a real file at the path being recorded, so the link it produces is whole:
+      three fields, all of them true. `last_known_source_checksum` is the
+      SOURCE's hash either way, so a destination whose content differs shows up
+      as unpushed changes at close -- surfaced, not silently resolved (§18.2).
     """
-    source_path = dialog.pgtp_path()
-    if not source_path:
-        return PgtpLink()
-    return PgtpLink(source_path=source_path)
+    working_copy_path = folder / source_path.name
+    source_text = source_path.read_text(encoding="utf-8")
+    if not working_copy_path.exists():
+        working_copy_path.write_text(source_text, encoding="utf-8", newline="")
+    return PgtpLink(
+        source_path=str(source_path),
+        working_copy_path=str(working_copy_path),
+        last_known_source_checksum=content_hash(source_text),
+    )
 
 
 class DdlProjectController(QObject):
@@ -339,6 +351,12 @@ class DdlProjectController(QObject):
     def create_project(self, dialog) -> None:
         folder = Path(dialog.folder())
         folder.mkdir(parents=True, exist_ok=True)
+        # DEC-260810134914: the attached `.pgtp` is checked out HERE, BEFORE
+        # `ProjectSettings` exists -- so the link is recorded only if the copy
+        # succeeded, and the "attached but not linked" state (a recorded identity
+        # pointing at nothing) is unreachable rather than tolerated. Same
+        # ordering rule the sandbox step below follows for the same reason.
+        pgtp_link, pgtp_failure = self._check_out_attached_pgtp(dialog, folder)
         settings = ProjectSettings(
             name=dialog.name(),
             description=dialog.description(),
@@ -347,7 +365,7 @@ class DdlProjectController(QObject):
             # at their empty defaults until first open or Project Settings. Both
             # are empty when the user ignored the optional `.pgtp` field, so a
             # sandbox-only project is created byte for byte as before.
-            pgtp=_new_project_pgtp_link(dialog),
+            pgtp=pgtp_link,
             target=dialog.target_params(),
             sandbox=dialog.sandbox_params(),
             sandbox_mode=dialog.sandbox_mode(),
@@ -359,10 +377,71 @@ class DdlProjectController(QObject):
         save_settings(folder, settings)
         self.set_active_project(folder, settings)
         self._shell.status(f"Created project: {folder}", 5000)
+        # Both notices are filed AFTER `set_active_project`, never before: a
+        # `[Project]` row is journalled, and the project transition REPLACES the
+        # journal's display buffer (FQ-019/BUG-042) -- so a row emitted earlier in
+        # this method would be wiped off screen by the very creation it describes.
+        if pgtp_failure:
+            self._shell.audit.addItem(QListWidgetItem(pgtp_failure))
+        self._report_quality_advisory(dialog)
         # FQ-007: the sandbox step CREATES and provisions the sandbox database
         # now, rather than recording a name the user typed. Last, so a failed
         # sandbox never costs the user the project (§18's tier-2 degrade).
         self._provision_sandbox(dialog)
+
+    def _check_out_attached_pgtp(self, dialog, folder: Path) -> "tuple[PgtpLink, str]":
+        """The `PgtpLink` a New Project accept records, plus the Audit line to
+        file if the copy failed (FQ-035, §18.2, `DEC-260810134914`): the attached
+        `.pgtp` is copied into `folder` through the ONE copier
+        (`check_out_pgtp`), so creation produces exactly the same three fields the
+        open-time path produces.
+
+        No attachment -> an empty `PgtpLink`, i.e. today's sandbox-only project
+        byte for byte.
+
+        The failure line is RETURNED rather than filed here because this runs
+        before the project is active, and a `[Project]` row filed before that
+        transition is wiped from the journal by it -- `create_project` files it
+        once the project exists.
+
+        **A copy that fails costs the link, never the project.** The creation path
+        deliberately does NOT inherit the open-time copier's silent-no-op on an
+        unreadable source: it reports through the Audit panel and creates the
+        project with **no `pgtp` link at all** -- *a recorded identity that points
+        at nothing is worse than no record at all* (`DEC-260810134914`, with
+        DEC-007/DEC-008). The user can still attach the file afterwards by opening
+        it, which is the path that ships today, and the `working_copy_path` guard
+        in `link_pgtp_if_needed` is left clear so that open really does link it.
+        """
+        source_path = dialog.pgtp_path()
+        if not source_path:
+            return PgtpLink(), ""
+        try:
+            return check_out_pgtp(folder, Path(source_path)), ""
+        except OSError as exc:
+            return PgtpLink(), (
+                f"[Project] Could not copy the attached .pgtp into the project "
+                f"({source_path}: {exc}) -- the project was created with NO .pgtp "
+                "link. Open that file while this project is active to link it."
+            )
+
+    def _report_quality_advisory(self, dialog) -> None:
+        """DEC-260810134915: creation is **never gated** on the quality (target)
+        connection -- but where the app declines to gate something it still owes
+        the user a statement of what it noticed, so a blank or never-tested
+        quality section is said **once**, here, at creation.
+
+        It lands in the Audit panel (FQ-019's `[Project]` journal), not at the
+        caret and not in a modal: DEC-013's at-the-caret rule is about a REFUSAL
+        answering a keystroke, and this is the opposite -- a notice about an
+        action that succeeded. Project creation's own narration already lives in
+        this journal (drift on open, the multiple-`.pgtp` report, the pending-
+        deploy reminder), and that is also where it stays readable after the
+        transient status line has gone.
+        """
+        advisory = dialog.quality_advisory()
+        if advisory:
+            self._shell.audit.addItem(QListWidgetItem(f"[Project] {advisory}"))
 
     def open_project(self, on_ready=None) -> None:
         folder = modals.QFileDialog.getExistingDirectory(
@@ -707,35 +786,30 @@ class DdlProjectController(QObject):
         repoints the document's path there). No-op if no project is open or one
         is already linked -- never silently relinked. (Every FUTURE open of the
         linked source is redirected before this method even runs -- see
-        `resolve_pgtp_path`.)"""
+        `resolve_pgtp_path`.)
+
+        This is the ENTRY POINT for the open-time half of the link; the copy
+        itself is `check_out_pgtp`, shared with creation (`DEC-260810134914`).
+        The `working_copy_path` guard belongs to this entry point and must not be
+        relaxed -- it is what makes "never silently relinked" true, and
+        `resolve_pgtp_path` depends on the two fields being written together."""
         if self._folder is None or self._settings is None:
             return
         if self._settings.pgtp.working_copy_path:
             return
-        source_path = Path(self._document_path())
-        working_copy_path = self._folder / source_path.name
         try:
-            source_text = source_path.read_text(encoding="utf-8")
+            link = check_out_pgtp(self._folder, Path(self._document_path()))
         except OSError:
             return  # nothing to link yet -- leave the .pgtp unlinked
-        if not working_copy_path.exists():
-            working_copy_path.write_text(source_text, encoding="utf-8", newline="")
         settings = self._settings
         # `replace`, not a field-by-field `ProjectSettings(...)` rebuild: the
         # hand-listed form silently dropped `sandbox_mode` back to its default,
         # i.e. linking a `.pgtp` could quietly turn a "with data" project into
         # a schema-only one. Copy-with-changes cannot forget a field.
-        updated = replace(
-            settings,
-            pgtp=PgtpLink(
-                source_path=str(source_path),
-                working_copy_path=str(working_copy_path),
-                last_known_source_checksum=content_hash(source_text),
-            ),
-        )
+        updated = replace(settings, pgtp=link)
         save_settings(self._folder, updated)
         self._settings = updated
-        self._set_document_path(str(working_copy_path))
+        self._set_document_path(link.working_copy_path)
 
     def deploy_pgtp(self) -> None:
         """Push the local `.pgtp` working copy back to the sshfs-mounted

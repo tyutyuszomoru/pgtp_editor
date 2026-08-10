@@ -500,8 +500,8 @@ def test_an_unparsable_pgtp_is_tolerated_like_the_open_time_linker(qtbot, tmp_pa
 
 def test_attaching_a_pgtp_does_not_gate_accept(qtbot, tmp_path):
     """No gate was added: the quality section may be blank, partial or untested
-    and accept must still succeed (DEC-260810134915 is OPEN -- a gate invented
-    here would be an answer to it)."""
+    and accept must still succeed (DEC-260810134915: a gate here cannot be made
+    honest, since the XML never yields the password)."""
     dialog = NewProjectDialog()
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
@@ -569,3 +569,100 @@ def test_quality_test_surfaces_a_broken_seam_and_re_enables_the_button(qtbot, tm
 
     assert "driver exploded" in dialog._quality_status_label.text()
     assert dialog._quality_test_button.isEnabled() is True
+
+
+# --- The accept-time advisory that stands in for the gate (DEC-260810134915) ---
+def test_no_pgtp_means_no_advisory_at_all(qtbot):
+    """The section was never shown, so there is no target being described -- a
+    sandbox-only project is created as silently as before."""
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+
+    assert dialog.quality_advisory() == ""
+
+
+def test_a_blank_quality_connection_earns_the_advisory(qtbot, tmp_path):
+    dialog = NewProjectDialog(connection_reader=lambda path: None)
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    advisory = dialog.quality_advisory()
+
+    assert "no quality (target) server" in advisory
+    assert "Project Settings" in advisory  # says where to fix it
+
+
+def test_a_filled_but_untested_quality_connection_earns_the_advisory(qtbot, tmp_path):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    advisory = dialog.quality_advisory()
+
+    assert "never tested" in advisory
+    assert "quality.example.com" in advisory  # names what it noticed
+
+
+def test_any_answered_test_silences_the_advisory_green_or_red(qtbot, tmp_path):
+    """A red result is read inline by the user; repeating it is noise, not a
+    notice. Both answers count as "it was tried"."""
+    for ok, message in ((True, "Connected."), (False, "could not connect")):
+        dialog = NewProjectDialog(tester=lambda params: (ok, message))
+        dialog._run_async = _sync_run
+        qtbot.addWidget(dialog)
+        dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+        dialog.test_quality()
+
+        assert dialog.quality_advisory() == ""
+
+
+def test_a_broken_seam_also_counts_as_tried(qtbot, tmp_path):
+    def boom(_params):
+        raise RuntimeError("driver exploded")
+
+    dialog = NewProjectDialog(tester=boom)
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+
+    dialog.test_quality()
+
+    assert dialog.quality_advisory() == ""
+
+
+def test_re_attaching_a_different_pgtp_makes_the_earlier_test_stop_counting(
+    qtbot, tmp_path
+):
+    """The fields were replaced, so the previous answer described a different
+    connection."""
+    dialog = NewProjectDialog(tester=lambda params: (True, "Connected."))
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+    dialog.test_quality()
+    assert dialog.quality_advisory() == ""
+
+    dialog.set_pgtp_path(
+        _pgtp_file(
+            tmp_path,
+            _PGTP_WITH_TWO_CONNECTION_ELEMENTS.replace("quality.example.com", "other.host"),
+            name="other.pgtp",
+        )
+    )
+
+    assert "never tested" in dialog.quality_advisory()
+
+
+def test_the_advisory_never_blocks_accept(qtbot, tmp_path):
+    dialog = NewProjectDialog()
+    qtbot.addWidget(dialog)
+    dialog._folder_edit.setText(str(tmp_path / "p"))
+    dialog.set_pgtp_path(_pgtp_file(tmp_path))
+    got = []
+    dialog.accepted.connect(lambda: got.append(True))
+
+    dialog._on_accept_clicked()
+
+    assert got == [True]
+    assert dialog.quality_advisory() != ""  # noticed, and still accepted
