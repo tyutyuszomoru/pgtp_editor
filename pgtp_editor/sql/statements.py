@@ -255,6 +255,30 @@ def _finish(text: str, tokens: list[Token], *, terminated: bool) -> list[Stateme
     ]
 
 
+def statement_at(text: str, pos: int) -> Statement | None:
+    """The `Statement` whose scope a caret at 0-based offset `pos` belongs to.
+
+    The last statement starting at or before `pos` -- **not** the one whose
+    span *contains* `pos`, because `split_statements` trims trailing
+    whitespace and a caret one space past `... where jc. ` would then belong
+    to no statement at all. A caret before the first statement belongs to
+    none, and gets None.
+
+    Statement selection is a *policy*, not a lookup, which is why it lives
+    here beside the splitter rather than being re-derived by each caret-aware
+    analyzer (`sql/from_clause.py`, `sql/routine_scope.py`): if the policy
+    ever changes, the analyzers must not disagree about which statement the
+    caret is in.
+    """
+    chosen: Statement | None = None
+    for statement in split_statements(text):
+        if statement.start <= pos:
+            chosen = statement
+        else:
+            break
+    return chosen
+
+
 def classify_statement(sql: str) -> Classification:
     """Classify one statement by its leading keyword, conservatively.
 

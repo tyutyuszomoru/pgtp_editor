@@ -24,7 +24,9 @@ of identifier reference sits under the caret --
   schema-qualified-table-reference context;
 - a ``NEW.`` / ``OLD.`` reference -- the trigger-row-variable context;
 - an ``alias.`` reference whose alias is bound by the caret's own FROM clause
-  (``FROM hr.jobcard jc`` ... ``jc.``) -- the alias context.
+  (``FROM hr.jobcard jc`` ... ``jc.``) -- the alias context;
+- a ``local.`` reference whose name is declared by the routine the caret is in
+  (``rec hr.jobcard%ROWTYPE`` ... ``rec.``) -- the local-symbol context.
 
 This module knows nothing about a live schema, a `DatabaseSchema`, or
 `db/schema_index.py` -- it only parses text. The caller (`ddl_object_editor.py`
@@ -40,18 +42,25 @@ the DDL object editor's buffer is a whole `pg_get_functiondef` result whose
 body is one token. Strings, comments and quoted identifiers *nested inside* the
 body stay opaque and stay unresolvable.
 
-`ALIAS_REF` is a **refinement of** `DOTTED_PATH`, not a rival to it: the same
-`parts`/`prefix` are still filled in, and only the extra `table_ref` is new.
-That is deliberate -- a one-segment path is ambiguous between a schema name and
-an alias, and nothing here can rule out that a schema and an in-scope alias
-share a spelling. A caller that finds `table_ref` unhelpful can fall back to
-the `DOTTED_PATH` reading of the very same context with no re-resolution.
+`ALIAS_REF` and `LOCAL_REF` are **refinements of** `DOTTED_PATH`, not rivals to
+it: the same `parts`/`prefix` are still filled in, and only the extra
+`table_ref` / `local_symbol` is new. That is deliberate -- a one-segment path is
+ambiguous between a schema name, a FROM alias and a plpgsql variable, and
+nothing here can rule out that they share a spelling. A caller that finds the
+refinement unhelpful can fall back to the `DOTTED_PATH` reading of the very
+same context with no re-resolution.
+
+When a one-segment name is *both* a FROM alias and a declared local (a `FOR rec
+IN SELECT ...` loop variable spelled like an alias, say), `ALIAS_REF` wins: it
+is the reading that actually resolves to a catalog table and therefore to
+columns, while a local may resolve to nothing completable.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from .from_clause import TableRef, analyze_from_scope
+from .routine_scope import LocalSymbol, analyze_routine_scope
 from .tokenizer import WORD, dollar_body_at, tokenize
 
 #: How many nested dollar-quoted bodies the caret may be descended into --
@@ -63,6 +72,7 @@ _MAX_BODY_DEPTH = 5
 DOTTED_PATH = "dotted_path"  # bare identifier or dotted schema[.table] prefix
 ROW_VARIABLE = "row_variable"  # NEW.<prefix> / OLD.<prefix>
 ALIAS_REF = "alias_ref"  # <alias>.<prefix>, alias bound by a FROM clause
+LOCAL_REF = "local_ref"  # <local>.<prefix>, name declared by the routine
 
 
 @dataclass(frozen=True)
@@ -85,6 +95,14 @@ class CaretContext:
     `SchemaIndex.known_columns()` key), ``prefix`` is the partial column name
     typed after the dot, and ``parts`` still holds that one segment so the
     `DOTTED_PATH` reading stays available as a fallback.
+
+    For `LOCAL_REF`: ``local_symbol`` is the
+    `sql/routine_scope.py::LocalSymbol` the single segment resolves to (use
+    ``local_symbol.rowtype_qualified`` as the `SchemaIndex.known_columns()`
+    key -- it is None for a local whose fields this module cannot know, e.g. a
+    `record` or a loop variable, and offering nothing is then the right
+    answer), ``prefix`` is the partial field name, and ``parts`` again keeps
+    the `DOTTED_PATH` fallback available.
     """
 
     kind: str
@@ -92,6 +110,7 @@ class CaretContext:
     parts: tuple[str, ...] = ()
     row_variable: str | None = None
     table_ref: TableRef | None = None
+    local_symbol: LocalSymbol | None = None
 
 
 def resolve_caret_context(text: str, pos: int) -> CaretContext | None:
@@ -120,8 +139,29 @@ def resolve_caret_context(text: str, pos: int) -> CaretContext | None:
     correct in the *original* buffer's coordinates. **Any future field that
     carries a position must be rebased by `+ body_start` at the recursion
     boundary below** -- inside the recursion, positions are body-relative.
+
+    The `LOCAL_REF` promotion happens **here, on the original text**, not
+    inside the body recursion: a routine's parameters are declared in its
+    *header*, which is outside the body the recursion descends into, so
+    resolving locals against body text alone would lose them.
+    `sql/routine_scope.py` does its own body descent from the full text and
+    sees both halves.
     """
-    return _resolve(text, pos, depth=0)
+    context = _resolve(text, pos, depth=0)
+    if (
+        context is not None
+        and context.kind == DOTTED_PATH
+        and len(context.parts) == 1
+    ):
+        symbol = analyze_routine_scope(text, pos).resolve(context.parts[0])
+        if symbol is not None:
+            return CaretContext(
+                kind=LOCAL_REF,
+                prefix=context.prefix,
+                parts=context.parts,
+                local_symbol=symbol,
+            )
+    return context
 
 
 def _resolve(text: str, pos: int, *, depth: int) -> CaretContext | None:

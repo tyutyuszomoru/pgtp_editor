@@ -3,6 +3,7 @@
 resolver behind schema-aware Ctrl+Space completion (spec §18.6)."""
 from pgtp_editor.sql.caret_context import (
     ALIAS_REF,
+    LOCAL_REF,
     DOTTED_PATH,
     ROW_VARIABLE,
     resolve_caret_context,
@@ -354,3 +355,64 @@ def test_malformed_dollar_quotes_degrade_to_no_resolution_rather_than_raising():
     for text in ("$", "$$", "$$$", "$tag$", "$tag$ $other$", "$$ $ $$", "$1 $$ x"):
         for pos in range(len(text) + 1):
             resolve_caret_context(text, pos)  # must not raise
+
+
+# --- LOCAL_REF: a lone segment declared by the caret's own routine ----------
+# (FQ-030 slice 3; like `ALIAS_REF` it is a refinement of `DOTTED_PATH`, so
+# `parts` stays filled and the old reading remains available as a fallback.)
+
+ROWTYPE_DEF = """CREATE OR REPLACE FUNCTION hr.touch(p_id integer)
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  rec hr.jobcard%ROWTYPE;
+BEGIN
+  IF rec.jo THEN
+    p_id
+  END IF;
+  RETURN NEW;
+END
+$function$
+"""
+
+
+def test_rowtype_variable_is_promoted_to_local_ref():
+    ctx = resolve_caret_context(ROWTYPE_DEF, _pos(ROWTYPE_DEF, "rec.jo"))
+    assert ctx.kind == LOCAL_REF
+    assert ctx.local_symbol.rowtype_qualified == "hr.jobcard"
+    assert ctx.parts == ("rec",)  # DOTTED_PATH fallback still available
+    assert ctx.prefix == "jo"
+
+
+def test_a_parameter_declared_in_the_header_is_resolvable_inside_the_body():
+    """The header lives *outside* the `$$` body the resolver descends into, so
+    this is the case that fails if locals are resolved on body text alone."""
+    text = ROWTYPE_DEF.replace("    p_id\n", "    p_id.\n")
+    ctx = resolve_caret_context(text, _pos(text, "p_id."))
+    assert ctx.kind == LOCAL_REF
+    assert ctx.local_symbol.name == "p_id"
+    assert ctx.local_symbol.rowtype_qualified is None  # nothing to complete
+
+
+def test_an_undeclared_name_stays_a_dotted_path():
+    text = ROWTYPE_DEF.replace("rec.jo", "nope.jo")
+    assert resolve_caret_context(text, _pos(text, "nope.jo")).kind == DOTTED_PATH
+
+
+def test_a_from_alias_wins_over_a_local_of_the_same_name():
+    text = (
+        "create function f() returns int as $$\ndeclare jc int;\nbegin\n"
+        "  select * from hr.jobcard jc where jc.jo\n"
+    )
+    ctx = resolve_caret_context(text, _pos(text, "jc.jo"))
+    assert ctx.kind == ALIAS_REF
+    assert ctx.table_ref.qualified == "hr.jobcard"
+
+
+def test_a_bare_word_with_no_dot_is_not_a_local_ref():
+    """`rec` alone is still the bare-identifier context; only `rec.` refines."""
+    text = ROWTYPE_DEF.replace("rec.jo", "rec")
+    ctx = resolve_caret_context(text, _pos(text, "IF rec"))
+    assert ctx.kind == DOTTED_PATH
+    assert ctx.parts == ()

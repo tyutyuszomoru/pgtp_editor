@@ -33,9 +33,11 @@ both are reached through their own API rather than re-implemented:
   `"quoted identifier"` or a `$$ ... $$` / `$tag$ ... $tag$` routine body is
   not a token in this module's view at all, so it can never be mistaken for a
   FROM clause. Nothing here scans characters.
-- **`sql/statements.py::split_statements`** owns statement boundaries. Scope is
-  per statement, and a buffer holds many; the caret's statement is *selected*
-  from that splitter's output rather than re-cut here.
+- **`sql/statements.py`** owns statement boundaries *and* the policy for which
+  statement a caret belongs to (`statement_at`). Scope is per statement, and a
+  buffer holds many; the caret's statement is *asked for* rather than re-cut
+  here -- the same call `sql/routine_scope.py` makes, so the two analyzers can
+  never disagree about which statement the caret is in.
 
 WHAT IS SUPPORTED, AND WHAT IS DELIBERATELY NOT
 -----------------------------------------------
@@ -75,7 +77,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .statements import split_statements
+from .statements import statement_at
 from .tokenizer import (
     BLOCK_COMMENT,
     LINE_COMMENT,
@@ -237,7 +239,7 @@ def _analyze(text: str, pos: int, *, depth: int) -> FromScope:
         return FromScope()
     pos = max(0, min(pos, len(text)))
 
-    statement = _statement_at(text, pos)
+    statement = statement_at(text, pos)
     if statement is None:
         return FromScope()
     local = max(0, min(pos - statement.start, len(statement.text)))
@@ -262,23 +264,6 @@ def _analyze(text: str, pos: int, *, depth: int) -> FromScope:
         if path == caret_path[: len(path)]
     ]
     return FromScope(tuple(_dedupe(refs)))
-
-
-def _statement_at(text: str, pos: int):
-    """The `Statement` whose scope the caret at `pos` belongs to.
-
-    The last statement starting at or before `pos` -- not the one whose span
-    *contains* `pos`, because `split_statements` trims trailing whitespace and
-    a caret one space past `... where jc. ` would then belong to no statement
-    at all. A caret before the first statement belongs to none, and gets None.
-    """
-    chosen = None
-    for statement in split_statements(text):
-        if statement.start <= pos:
-            chosen = statement
-        else:
-            break
-    return chosen
 
 
 def _caret_paren_path(code: list[Token], pos: int) -> tuple[int, ...]:
