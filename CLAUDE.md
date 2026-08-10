@@ -128,6 +128,40 @@
   manual-maintainer policies above as usual, then flip that entry's `Status`
   line to `PROCESSED (<commit or spec §>)` in place rather than deleting it.
 
+## The implementation drive (mandatory for the main session)
+
+**The main implementation session keeps implementing `docs/BUGFIX_QUEUE.md` and
+`docs/FEATURE_QUEUE.md` until an owner decision blocks it. Whatever can be implemented
+must be implemented, and as soon as possible.** Do not stop at the end of a batch to ask
+what is next, do not idle waiting for an answer, and do not treat a queue as a list to be
+picked from occasionally — it is the work.
+
+- **An owner decision is the only legitimate blocker.** Not a spec gap (dispatch
+  `spec-maintainer`), not an unclear root cause (dispatch `bug-triager`), not "this looks
+  large" (split it), and not "the tests might be affected" (run them). If you find yourself
+  waiting, name what you are waiting for; if it is not an unanswered `DEC-…`, it is not a
+  blocker.
+- **A blocking decision blocks its own part, never the whole entry.** File it via
+  `owner-decision` and **implement everything the answer does not touch**, structured so the
+  answer drops into one place. Say in the code and in the report exactly where that place is.
+  FQ-035 shipped its field, parse, reveal, population and probes with the accept-path copy
+  left out for `DEC-260810134914` — that is the shape.
+- **Never invent an answer to unblock yourself.** A guess written into shipped code is far
+  more expensive than a partial feature, because nothing marks it as a guess.
+- **Parallelise by file ownership, not by task.** Two agents in one file clobber each other —
+  there is no merge, only last-write-wins. Give each file exactly one owner; where two pieces
+  of work genuinely need the same file, either give them to one agent or put them in separate
+  worktrees and merge.
+- **Worktree agents MUST commit.** Uncommitted worktree changes have nothing to merge and are
+  lost. This has cost real work: two fixes were silently absent from a branch about to land on
+  `main` because their agents were told not to commit.
+- **Run the full suite after every merge, not only in each worktree.** Integration failures
+  are invisible to both sides — a merge has broken imports that neither track could see.
+- **Flip the status as each piece merges, not in a later sweep.** BUG-062 was found
+  *half-shipped* — panels emitting a signal nothing consumed, a green suite over a dead
+  feature — only because a status sweep went looking. A fixed-but-`OPEN` entry is
+  indistinguishable from an unfixed one.
+
 ## Owner decisions (mandatory routing)
 
 - **Never bury a decision the owner must make inside an implementation report.** Decisions raised
