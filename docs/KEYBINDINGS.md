@@ -68,25 +68,25 @@ both directions.
 | Chord | Command or gesture | Host mechanism | Surfaces it is live on | Gate | Reserved | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `Ctrl+A` | Select All | `QAction`, `Qt default` | window-level (`main_window.py`), acting on `find_controller.active_selection_editor()`; and Qt's own Select All inside every focused text widget | `DEC-012`, `Qt` | no | Rebindable. A *focused* text widget claims the chord via Qt's `ShortcutOverride` before the window action sees it, so the action only fires when focus is elsewhere (e.g. the structure tree) — which is also why it cannot steal `Ctrl+A` from a `QLineEdit`. `[qt:SelectAll]` |
-| `Ctrl+C` | Copy | `Qt default`, `QShortcut(StandardKey)` | Qt's built-in copy in every text widget and table; **and** a real host — `caption_management_panel.py` binds `StandardKey.Copy` on the caption grid to `copy_selection` | `Qt`, `DEC-009` | yes | Reserved so no menu command can be retargeted onto it — a window-level shortcut on `Ctrl+C` would take precedence over the widgets and break copy app-wide. The caption grid's host is an implicit `WindowShortcut` (see [Known gaps](#known-gaps)); it only wins where the focused widget does not itself claim Copy (measured: a `QLineEdit` does). `[qt:Copy]` |
+| `Ctrl+C` | Copy | `Qt default`, `QShortcut` | Qt's built-in copy in every text widget and table; **and** a real host — `caption_management_panel.py` binds the spelled chord `Ctrl+C` on the caption grid to `copy_selection` | `Qt`, `DEC-009` | yes | Reserved so no menu command can be retargeted onto it — a window-level shortcut on `Ctrl+C` would take precedence over the widgets and break copy app-wide. The caption grid's host is `WidgetWithChildrenShortcut` on the grid (BUG-260810143056 narrowed it from Qt's implicit `WindowShortcut`), so it fires only where the grid or one of its cell editors has focus, and it only wins where the focused widget does not itself claim Copy (measured: a `QLineEdit` does). The chord is spelled out and no longer taken from `StandardKey.Copy`, so the grid answers the same keys on both schemes (DEC-015). `[qt:Copy]` |
 | `Ctrl+F` | Focus the current tab's Find field | `QShortcut` | seven hosts, one per surface, all `WidgetWithChildrenShortcut`: `find_replace_bar.py`'s `install_focus_shortcuts` at six sites (`center_stage.py` for the Raw XML tab, the Edit XSD tab and the FQ-006 draft fragment tab; `php_file_tab.py`; `ddl_editor_panel.py`; `ddl_object_editor.py`) plus `caption_management_panel.py`'s own pair | `DEC-009` | yes | Per-tab and never window-level: Qt answers two enabled shortcuts matching one key press by firing **neither**, so one window-level host plus the caption panel's would delete the command from the keyboard. Never two hosts in one focus chain. A no-op on tabs with no bar (Manual, Diff/Merge) rather than yanking focus to Raw XML. `[qt:Find]` |
-| `Ctrl+G` | Go to line in XML, from the caption grid | `QShortcut` | `caption_management_panel.py`, on the grid | `DEC-012` | yes | Command form: the click-only context-menu entry *Go to line in XML* on the same panel, deliberately carrying no `setShortcut`. Implicit `WindowShortcut` (see [Known gaps](#known-gaps)): live anywhere in the window while the Caption Management tab is visible, including from inside that panel's Find field — measured. Qt's Windows scheme also binds `Ctrl+G` as Find Next, but nothing in the app uses that standard key, so there is no clash. `[qt:FindNext]` |
+| `Ctrl+G` | Go to line in XML, from the caption grid | `QShortcut` | `caption_management_panel.py`, on the panel | `DEC-012` | yes | Command form: the click-only context-menu entry *Go to line in XML* on the same panel, deliberately carrying no `setShortcut`. `WidgetWithChildrenShortcut` **on the panel**, not on the grid (BUG-260810143056): that deliberately keeps the previously-accidental behaviour that `Ctrl+G` works from inside the panel's Find field — find a caption, jump straight to its line — while stopping it from firing anywhere else in the window. It used to be Qt's implicit `WindowShortcut`, contained only by the untested fact that a hidden `CenterStage` tab page's shortcuts do not fire. Qt's Windows scheme also binds `Ctrl+G` as Find Next, but nothing in the app uses that standard key, so there is no clash. `[qt:FindNext]` |
 | `Ctrl+L` | Go To XSD | `QAction` | window-level (`xsd_controller.py`), no menu entry | `DEC-012` | yes | Invisible to `ToolbarController._walk_menu_actions`, so it can never be pinned to the toolbar and never appears in Customize Shortcuts — which is why it must be reserved rather than merely listed. |
 | `Ctrl+R` | Focus the current tab's Replace-with field | `QShortcut` | the same seven hosts as `Ctrl+F` (`find_replace_bar.py`, `caption_management_panel.py`) | `DEC-009` | yes | Qt's KDE scheme binds `Ctrl+R` as Replace, its Windows scheme `Ctrl+H`; no text widget implements the standard key, so the app's chord is the only answer on both. `[qt:Replace]` |
 | `Ctrl+Return` | Run, on the Sandbox SQL Console tab | `QShortcut` | `sql_console_panel.py`, `WidgetWithChildrenShortcut` | `DEC-009` | yes | Calls the same `run()` the results panel's Run button calls — one execution path. No menu or context-menu form (a button is not a command form). The sandbox is disposable and `reset()`-able, so this does not reopen "an irreversible outward effect must not be one keystroke away". |
 | `Ctrl+S` | — nothing, deliberately | `unbound` | app-wide | `dead` | yes | Every save is a named `Deployment` menu click (FQ-020). The last carve-out, `CodeEditorDialog`'s OK, was removed by owner decision 2026-08-09. Qt's Save standard key is this chord, but nothing in the app uses it. `[qt:Save]` |
-| `Ctrl+V` | Paste | `Qt default`, `QShortcut(StandardKey)`, `keyPressEvent` | Qt's built-in paste in every text widget; `caption_management_panel.py` binds `StandardKey.Paste` on the caption grid to `paste_into_new_value`; `xml_editor.py` refuses it with the read-only hint in Caption Mode | `Qt`, `DEC-009` | yes | Reserved for the same reason as `Ctrl+C`. `xml_editor.py` tests it with `event.matches(StandardKey.Paste)` rather than a literal chord, so the refusal follows Qt's table on both schemes. `[qt:Paste]` |
+| `Ctrl+V` | Paste | `Qt default`, `QShortcut`, `keyPressEvent` | Qt's built-in paste in every text widget; `caption_management_panel.py` binds the spelled chord `Ctrl+V` on the caption grid to `paste_into_new_value` (`WidgetWithChildrenShortcut`, as `Ctrl+C`); `xml_editor.py` refuses it with the read-only hint in Caption Mode | `Qt`, `DEC-009` | yes | Reserved for the same reason as `Ctrl+C`. `xml_editor.py` tests it through `code_editor.is_paste_chord`, i.e. against the app's own `shortcut_registry.EDITOR_PASTE_CHORDS`, and no longer with `event.matches(StandardKey.Paste)` — that call answered Qt's per-scheme table, so the read-only hint used to fire for `Ctrl+Shift+Insert`/`F18` on Linux only (DEC-015). `[qt:Paste]` |
 | `Ctrl+X` | Cut | `Qt default` | Qt's built-in cut in every text widget | `Qt` | yes | Nothing in the app binds it; reserved so nothing can. `[qt:Cut]` |
 | `Ctrl+Y` | Redo, in the surface that has focus | `QShortcut`, `eventFilter`, `keyPressEvent` | `main_window.py` (window-scoped, routed through the tab-scoped Raw XML snapshot slot) **plus** every editing surface's own key handling: `code_editor.py` (`CodeEditorDialog`), `xml_editor.py`, `php_file_tab.py`, `ddl_object_editor.py`, `ddl_editor_panel.py`, `sql_console_panel.py` | `DEC-014`, `DEC-015` | yes | **Bound by this app on every platform** — Qt binds it only on the Windows scheme, so a redo that leaned on Qt was a dead key on Linux (BUG-056 measured it in the Sandbox SQL Console). The project-wide twin is `History ▸ Redo Project Edit`, a different command with a different scope, and it IS rebindable (BUG-064). `[qt:Redo]` |
 | `Ctrl+Z` | Undo, in the surface that has focus | `QShortcut`, `eventFilter`, `keyPressEvent` | as `Ctrl+Y`: `main_window.py` plus all six editing surfaces — `code_editor.py`, `xml_editor.py`, `php_file_tab.py`, `ddl_object_editor.py`, `ddl_editor_panel.py`, `sql_console_panel.py` | `DEC-014`, `DEC-015` | yes | Two *different* operations, so two rows with two reasons — never one "the undo/redo chords" statement. Each surface's answer differs and must: own native stack, a stated read-only refusal, or re-emission into the project's snapshot history. The project-wide twin is `History ▸ Undo Project Edit`, which IS rebindable. `[qt:Undo]` |
-| `Ctrl+Insert` | Copy | `Qt default`, `QShortcut(StandardKey)` | as `Ctrl+C` — it is Qt's second chord for the same standard key on both schemes, so the caption grid's `StandardKey.Copy` host (`caption_management_panel.py`) answers it too | `Qt` | no | **Not reserved** — see [Known gaps](#known-gaps). `[qt:Copy]` |
-| `Shift+Insert` | Paste | `Qt default`, `QShortcut(StandardKey)` | as `Ctrl+V` — Qt's second chord for the same standard key on both schemes, so the caption grid's `StandardKey.Paste` host (`caption_management_panel.py`) answers it too | `Qt` | no | **Not reserved** — see [Known gaps](#known-gaps). `[qt:Paste]` |
-| `Ctrl+Shift+Insert` | Paste, on the Linux/KDE scheme only | `Qt default`, `QShortcut(StandardKey)` | as `Ctrl+V`, and only where Qt binds it: the KDE scheme adds this chord to `StandardKey.Paste`, so the caption grid's host (`caption_management_panel.py`) answers it there and nowhere else | `Qt`, `DEC-015` | no | An inherited platform-conditional chord — the app neither binds nor suppresses it, because it comes from a `StandardKey` host rather than a literal chord. See [Known gaps](#known-gaps). `[qt:Paste]` |
-| `Shift+Delete` | Cut | `Qt default` | Qt's built-in cut in every text widget; on the KDE scheme `F20` is a second Cut chord there too | `Qt` | no | Qt's second Cut chord. Nothing in the app binds or reserves it. `[qt:Cut]` |
-| `F16` | Copy, on the Linux/KDE scheme only | `Qt default`, `QShortcut(StandardKey)` | as `Ctrl+C`: Qt's KDE scheme adds `F16` to `StandardKey.Copy`, so the caption grid's host (`caption_management_panel.py`) answers it on Linux and not on Windows | `Qt`, `DEC-015` | no | No keyboard the owner uses has an `F13`…`F20` block. Recorded because it is bound, not because it is reachable. `[qt:Copy]` |
-| `F18` | Paste, on the Linux/KDE scheme only | `Qt default`, `QShortcut(StandardKey)` | as `Ctrl+V`, KDE scheme only (`caption_management_panel.py`) | `Qt`, `DEC-015` | no | As `F16`. `[qt:Paste]` |
-| `Copy` | Copy | `Qt default`, `QShortcut(StandardKey)` | as `Ctrl+C` — the dedicated `Key_Copy` media key is in `StandardKey.Copy` on both schemes, so the caption grid's host (`caption_management_panel.py`) answers it too | `Qt` | no | A real key on multimedia keyboards, not a modifier chord. `[qt:Copy]` |
-| `Paste` | Paste | `Qt default`, `QShortcut(StandardKey)` | as `Ctrl+V` — the dedicated `Key_Paste` media key, on both schemes (`caption_management_panel.py`) | `Qt` | no | `[qt:Paste]` |
+| `Ctrl+Insert` | Copy | `Qt default` | Qt's built-in copy in every text widget and table — this is Qt's older second chord for `StandardKey.Copy`, on **both** schemes | `Qt` | yes | **Reserved** (BUG-260810140553 Part 1): a menu command retargeted here would break copy-by-`Ctrl+Insert` in every editor on every platform, which is verbatim the reason `Ctrl+C` is reserved. Not a platform split — native on both schemes — so it needed no bind-or-suppress ruling. The caption grid no longer answers it: its host is now the spelled chord `Ctrl+C`, not `StandardKey.Copy`. `[qt:Copy]` |
+| `Shift+Insert` | Paste | `Qt default`, `keyPressEvent` | Qt's built-in paste in every text widget — Qt's older second chord for `StandardKey.Paste`, on **both** schemes; `xml_editor.py` refuses it with the read-only hint in Caption Mode (it is in `EDITOR_PASTE_CHORDS`) | `Qt` | yes | **Reserved** (BUG-260810140553 Part 1), as `Ctrl+Insert`: assigning a menu command here would kill paste-by-`Shift+Insert` in every editor on every platform. The caption grid no longer answers it — its host is the spelled chord `Ctrl+V`. `[qt:Paste]` |
+| `Ctrl+Shift+Insert` | Paste, on the Linux/KDE scheme only | `Qt default` | Qt's own paste inside every text widget, and only where Qt binds it: the KDE scheme adds this chord to `StandardKey.Paste`, the Windows scheme does not | `Qt`, `DEC-015` | no | An inherited platform-conditional chord the app still neither binds nor suppresses — **that direction is an open owner ruling** (BUG-260810140553 Part 2: bind on both, or suppress on both). What has changed: the caption grid's `StandardKey.Paste` host is gone, so no app-owned binding answers this chord on one platform and not the other any more, and `EDITOR_PASTE_CHORDS` deliberately excludes it rather than inheriting it. `[qt:Paste]` |
+| `Shift+Delete` | Cut | `Qt default` | Qt's built-in cut in every text widget; on the KDE scheme `F20` is a second Cut chord there too | `Qt` | yes | Qt's older second Cut chord, native on **both** schemes. **Reserved** (BUG-260810140553 Part 1) for the same reason as `Ctrl+X`, one step safer than the Insert pair because nothing in the app hosts a Cut shortcut. `[qt:Cut]` |
+| `F16` | Copy, on the Linux/KDE scheme only | `Qt default` | Qt's own copy inside every text widget, KDE scheme only: that scheme adds `F16` to `StandardKey.Copy` and the Windows scheme does not | `Qt`, `DEC-015` | no | No keyboard the owner uses has an `F13`…`F20` block. Recorded because it is bound, not because it is reachable. The caption grid used to answer it via `StandardKey.Copy` and no longer does. Direction pending the same ruling as `Ctrl+Shift+Insert`. `[qt:Copy]` |
+| `F18` | Paste, on the Linux/KDE scheme only | `Qt default` | as `F16`, for `StandardKey.Paste`, KDE scheme only | `Qt`, `DEC-015` | no | As `F16`. `[qt:Paste]` |
+| `Copy` | Copy | `Qt default` | the dedicated `Key_Copy` media key is in `StandardKey.Copy` on both schemes, so Qt's own copy answers it inside every text widget | `Qt` | no | A real key on multimedia keyboards, not a modifier chord. No app-owned host since the caption grid's chords were spelled out. `[qt:Copy]` |
+| `Paste` | Paste | `Qt default`, `keyPressEvent` | the dedicated `Key_Paste` media key, in `StandardKey.Paste` on both schemes; `xml_editor.py` refuses it with the read-only hint in Caption Mode (it is in `EDITOR_PASTE_CHORDS`) | `Qt`, `bare-key` | no | A media key, not a modifier chord, so it is not a target Customize Shortcuts could hand out and the reservation rule does not reach it. Kept in `EDITOR_PASTE_CHORDS` because it is native on both schemes — dropping it would have silently removed the read-only hint it already raised. `[qt:Paste]` |
 | `Delete` | Delete the selection or the character after the caret | `Qt default`, `keyPressEvent` | Qt's built-in in every text widget; `xml_editor.py` refuses it with the read-only hint in Caption Mode | `Qt`, `bare-key` | no | `[qt:Delete]` |
 | `Ctrl+Alt+C` | Expand `SELECT` into its column list | `keyPressEvent` | `code_editor.py`, and only while `self._language == "sql"` — the DDL object tabs and the Sandbox SQL Console; inert in js/php, where expanding plpgsql into a PHP body would be a bug | `DEC-009` | yes | No menu and no context-menu form at all: this is a widget *behaviour* like auto-close brackets, and it depends on caret state and on the editor's own language, so the widget is its one legitimate host. |
 | `Ctrl+Alt+E` | Expand the snippet at the caret | `keyPressEvent` | `code_editor.py`, SQL only, as `Ctrl+Alt+C` | `DEC-009` | yes | Same family, same reason. |
@@ -114,7 +114,7 @@ both directions.
 | `Up` | Move the completion selection up | `keyPressEvent` | `completion_popup.py` | `bare-key` | no | Passed to the base `QListWidget`, which is what makes the popup navigable while the editor keeps focus. |
 | `Down` | Move the completion selection down | `keyPressEvent` | `completion_popup.py` | `bare-key` | no | |
 | `Space` | Activate the focused Project Status node | `keyPressEvent` | `project_status_panel.py` | `bare-key` | no | Keyboard equivalent of the node's click. |
-| `Ctrl+W` | — nothing | `unbound` | app-wide | `dead` | no | Lost its `File ▸ Close` binding on 2026-08-09 and was deliberately not re-bound anywhere, including in `CodeEditorDialog`. **Not reserved** — see [Known gaps](#known-gaps). `[qt:Close]` |
+| `Ctrl+W` | — nothing by default | `unbound` | app-wide | `dead` | no | Lost its `File ▸ Close` binding on 2026-08-09 and was deliberately not re-bound anywhere, including in `CodeEditorDialog` (`code_editor.py` removed that dialog-local Cancel the same day — it was the last carve-out). **Deliberately not reserved, and that is not the same state as `Ctrl+S`.** `Ctrl+S` is reserved because FQ-020 removed the *capability* — there is no save gesture anywhere, so no command may ever sit there. `Ctrl+W`'s reason is narrower: no single "close" is the obvious *default*, because this app closes projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console tabs (`main_window.py`, at `File ▸ Close`). That is an argument against a default, not against a user who knows which close they mean, so the chord stays a legal target in Customize Shortcuts — `manual.md` invites the user to assign it. `Ctrl+O` is in exactly the same position, stated as its twin in the manual; it has no row here because nothing in the app has ever bound it. Whether both should instead be pinned dead is an open owner ruling (BUG-260810143058). `[qt:Close]` |
 
 ## Appendix A — Qt's own binding table, per scheme
 
@@ -134,9 +134,9 @@ comparing, so `Ctrl+Ins` and `Ctrl+Insert` are the same row):
 | --- | --- | --- | --- |
 | `Undo` | `Ctrl+Z`, `Alt+Backspace`, `Undo` | `Ctrl+Z`, `F14`, `Undo` | binds `Ctrl+Z` itself on both; **suppresses** `Alt+Backspace` on both. `F14` and the `Undo` media key are left to Qt — Linux-only, and see [Known gaps](#known-gaps) |
 | `Redo` | `Ctrl+Y`, `Alt+Shift+Backspace`, `Ctrl+Shift+Z`, `Redo` | `Ctrl+Shift+Z`, `Redo` | binds `Ctrl+Y` itself on both (DEC-015); **suppresses** `Alt+Shift+Backspace`; **intercepts** `Ctrl+Shift+Z` everywhere so Qt's native redo cannot fire |
-| `Copy` | `Ctrl+C`, `Ctrl+Insert`, `Copy` | `Ctrl+C`, `Ctrl+Insert`, `F16`, `Copy` | left to Qt inside the widgets; additionally hosted on the caption grid via `StandardKey.Copy`, so that host follows this row per scheme |
-| `Cut` | `Ctrl+X`, `Shift+Delete`, `Cut` | `Ctrl+X`, `Shift+Delete`, `F20`, `Cut` | left to Qt inside the widgets |
-| `Paste` | `Ctrl+V`, `Shift+Insert`, `Paste` | `Ctrl+V`, `Ctrl+Shift+Insert`, `Shift+Insert`, `F18`, `Paste` | left to Qt inside the widgets; additionally hosted on the caption grid via `StandardKey.Paste` |
+| `Copy` | `Ctrl+C`, `Ctrl+Insert`, `Copy` | `Ctrl+C`, `Ctrl+Insert`, `F16`, `Copy` | left to Qt inside the widgets; the caption grid additionally binds the spelled chord `Ctrl+C` and **no longer** this standard key, so no app-owned host follows this row per scheme (`Ctrl+C` and `Ctrl+Insert` are reserved) |
+| `Cut` | `Ctrl+X`, `Shift+Delete`, `Cut` | `Ctrl+X`, `Shift+Delete`, `F20`, `Cut` | left to Qt inside the widgets (`Ctrl+X` and `Shift+Delete` are reserved) |
+| `Paste` | `Ctrl+V`, `Shift+Insert`, `Paste` | `Ctrl+V`, `Ctrl+Shift+Insert`, `Shift+Insert`, `F18`, `Paste` | left to Qt inside the widgets; the caption grid binds the spelled chord `Ctrl+V` and **no longer** this standard key. The app's own paste set, `shortcut_registry.EDITOR_PASTE_CHORDS`, is exactly this row's **Windows** column — the subset native on both schemes — which is what makes the Raw XML read-only hint identical on both |
 | `SelectAll` | `Ctrl+A` | `Ctrl+A` | the same chord as `Select ▸ Select All`; identical on both schemes, so no divergence |
 | `Deselect` | *(nothing)* | `Ctrl+Shift+A` | the app binds `Select ▸ Select Parent Block` there; measured on both schemes, `QPlainTextEdit` does not claim the chord, so the action wins |
 | `Find` | `Ctrl+F`, `Find` | `Ctrl+F`, `Find` | the app's per-tab focus-Find shortcut is the same chord; no text widget implements the standard key |
@@ -158,34 +158,49 @@ comparing, so `Ctrl+Ins` and `Ctrl+Insert` are the same row):
 
 ## Known gaps
 
-Found by the sweep that produced this register. **None of them is fixed here** — this
-document and its test are a register, not a refactor. They are recorded so the next
-keyboard question does not have to re-derive them, and are for `bug-triager` to rule on.
+Found by the sweep that produced this register. They are recorded so the next keyboard
+question does not have to re-derive them, and are for `bug-triager` to rule on. Three of
+the original five are now **closed** and are kept, struck, as history: the register is also
+the record of which gaps were real.
 
-1. **`Ctrl+Insert` and `Shift+Insert` are not in `RESERVED_SEQUENCES`, but they are bound.**
-   They are Qt's second chords for Copy and Paste on both schemes, and the caption grid's
-   `StandardKey.Copy`/`StandardKey.Paste` shortcuts answer them for real. Customize
-   Shortcuts would therefore accept `Ctrl+Insert` as a rebinding target, producing exactly
-   the ambiguity `RESERVED_SEQUENCES` exists to prevent: two enabled shortcuts matching one
-   key press, and Qt fires **neither**. `Ctrl+C`/`Ctrl+V` are reserved; their aliases are
-   not. (`Shift+Delete` for Cut is the same shape, one step safer because nothing in the app
-   hosts a Cut shortcut.)
-2. **Three shortcuts rely on Qt's implicit `WindowShortcut` default rather than stating a
-   scope.** `caption_management_panel.py` sets a context on its `Ctrl+F`/`Ctrl+R` pair
-   (`WidgetWithChildrenShortcut`) but not on `StandardKey.Copy`, `StandardKey.Paste` or
-   `Ctrl+G` on the same panel, which are therefore window-scoped: measured, `Ctrl+G` fires
-   from inside that panel's Find field, and the Copy/Paste pair would fire from anywhere in
-   the window that does not itself claim the chord. It is contained today only because the
-   panel is a `CenterStage` tab and a hidden tab page's shortcuts do not fire (also
-   measured) — an invariant nothing states, and the same shape as BUG-048.
-3. **`RESERVED_SEQUENCES`' stated reasons for `Ctrl+C` and `Ctrl+V` are incomplete.** Both
-   say "a Qt built-in inside every editor widget"; both also have a real `QShortcut` host on
-   the caption grid. The reason text is what the user is shown when the dialog refuses the
-   key, so it should name that host.
-4. **`Ctrl+W` is dead but unreserved.** It was deliberately unbound app-wide on 2026-08-09
-   for the same reason as `Ctrl+S` — total consistency — but only `Ctrl+S`/`Ctrl+Shift+S`
-   were written into `RESERVED_SEQUENCES`, so Customize Shortcuts will happily hand `Ctrl+W`
-   to a menu command and quietly reverse that decision.
+1. ~~**`Ctrl+Insert` and `Shift+Insert` are not in `RESERVED_SEQUENCES`, but they are
+   bound.**~~ **CLOSED** (BUG-260810140553 Part 1). `Ctrl+Insert`, `Shift+Insert` and
+   `Shift+Delete` are reserved, so Customize Shortcuts refuses them as targets — the hole
+   was that a menu command assigned to `Shift+Insert` would have killed paste-by-
+   `Shift+Insert` in every editor on every platform. None of the three is a platform split
+   (all native on both schemes), so no ruling was needed. In the same pass the caption
+   grid's `StandardKey.Copy`/`StandardKey.Paste` hosts became the spelled chords `Ctrl+C`
+   and `Ctrl+V`: a `StandardKey` argument installs *every* chord the running scheme lists,
+   which is the mechanism by which an app-owned binding differed per platform (DEC-015).
+2. ~~**Three shortcuts rely on Qt's implicit `WindowShortcut` default rather than stating a
+   scope.**~~ **CLOSED** (BUG-260810143056). All three now state a scope:
+   `caption_management_panel.py`'s Copy and Paste are `WidgetWithChildrenShortcut` on the
+   grid (their slots act on the *grid's* selection), and `Ctrl+G` is
+   `WidgetWithChildrenShortcut` on the **panel** — deliberately, so that the measured
+   behaviour of `Ctrl+G` working from inside the panel's Find field is preserved as a
+   stated, tested gesture instead of an accident of window scope. Nothing rests on the
+   hidden-tab invariant any more, and a test asserts every `QShortcut` the panel owns
+   declares a non-`WindowShortcut` context, with no allow-list.
+3. ~~**`RESERVED_SEQUENCES`' stated reasons for `Ctrl+C` and `Ctrl+V` are incomplete.**~~
+   **CLOSED** (BUG-260810143057). Both reasons now name the caption-grid host alongside
+   Qt's widget built-in. `Ctrl+X` was deliberately left alone: nothing in the app hosts a
+   Cut shortcut, so its reason was already the whole truth.
+4. **`Ctrl+W` and `Ctrl+O` have no default and are deliberately assignable — which is a
+   different state from `Ctrl+S`'s, and the register used to conflate the two.** The
+   original wording of this gap claimed `Ctrl+W` was unbound "for the same reason as
+   `Ctrl+S`" and that its non-reservation was an oversight. That is wrong on both counts.
+   `Ctrl+S`/`Ctrl+Shift+S` are reserved because FQ-020 removed the *capability*: there is
+   no save gesture anywhere in the app, so no command may ever sit on those chords.
+   `Ctrl+W` lost its `File ▸ Close` binding on 2026-08-09 for a narrower reason — this app
+   closes projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console
+   tabs, so no single "close" is the obvious *default* — and `manual.md` tells the user
+   outright that `Ctrl+W` **and** `Ctrl+O` are free to assign. Reserving `Ctrl+W` alone
+   would contradict that invitation and split a pair the manual states as symmetric. The
+   machine-checked columns of this register were right all along (`Ctrl+W`: Reserved `no`);
+   only this prose was wrong. What remains genuinely open is the ruling itself — pinned dead
+   like `Ctrl+S`, or no-default-yours-to-assign (BUG-260810143058) — and note that the gate
+   vocabulary above has no token for the second state, so `Ctrl+W` carries `dead` and says
+   the rest in its Notes.
 5. **Qt's Linux-only chords reach the editors unfiltered.** On the KDE scheme Qt answers
    `F14` (Undo), `F16`/`F18`/`F20` (Copy/Paste/Cut), `Ctrl+Shift+Insert` (Paste), `Ctrl+D`
    (Delete), `Ctrl+K` (delete to end of line) and `Ctrl+U` (delete line) inside every text
@@ -194,4 +209,9 @@ keyboard question does not have to re-derive them, and are for `bug-triager` to 
    edit the buffer without a journal line, which is what DEC-014's interception exists to
    prevent for `Ctrl+Z`. In practice no keyboard the owner uses has an `F14`…`F20` block, so
    this is a correctness gap rather than a live bug; `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are reachable
-   and are plain editing keys that simply do nothing on Windows.
+   and are plain editing keys that simply do nothing on Windows. **Narrowed, not closed:** no
+   *app-owned* binding inherits any of them any more (the caption grid's `StandardKey` hosts
+   are gone, and `EDITOR_PASTE_CHORDS` excludes `Ctrl+Shift+Insert`), so what is left is
+   purely Qt's own widget-internal answer. The bind-on-both-vs-suppress-on-both direction is
+   an open owner ruling, split in two: `Ctrl+Shift+Insert` and the `F16`/`F18`/`F20` trio in
+   BUG-260810140553 Part 2, and `F14` plus `Ctrl+D`/`Ctrl+K`/`Ctrl+U` in BUG-260810143059.

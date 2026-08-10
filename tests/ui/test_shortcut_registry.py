@@ -391,3 +391,95 @@ def test_the_format_selection_reason_names_its_shortcut_hosts():
     reason = RESERVED_SEQUENCES["Ctrl+Alt+F"]
     assert "context-menu" in reason
     assert "SQL Console" in reason
+
+
+def test_the_clipboard_reasons_name_both_hosts_and_leave_ctrl_x_alone():
+    """BUG-260810143057, the same defect as `Ctrl+Alt+F`'s above. Both reasons
+    said only *"a Qt built-in inside every editor widget"* while the caption grid
+    binds real slots to both chords, and the reason string is what the user is
+    shown when Customize Shortcuts… refuses the key."""
+    copy = RESERVED_SEQUENCES["Ctrl+C"]
+    paste = RESERVED_SEQUENCES["Ctrl+V"]
+    for reason in (copy, paste):
+        assert "editor widget" in reason  # Qt's built-in, still named
+        assert "Caption Management grid" in reason  # and the real host
+        assert "(§26/§27)" in reason  # the citation shape every row carries
+    # Two operations, two reasons (DEC-014): never one merged clipboard sentence.
+    assert copy != paste
+    # `Ctrl+X` is deliberately NOT changed for symmetry: nothing in the app hosts
+    # a Cut shortcut, so "a Qt built-in" is the whole truth there and naming a
+    # host would make the user-facing text a different kind of wrong.
+    cut = RESERVED_SEQUENCES["Ctrl+X"]
+    assert cut == "Cut — a Qt built-in inside every editor widget (§26/§27)"
+    assert "grid" not in cut
+
+
+def test_the_older_clipboard_spellings_are_reserved():
+    """BUG-260810140553 Part 1. `Ctrl+Insert`, `Shift+Insert` and `Shift+Delete`
+    are Qt's older chords for Copy/Paste/Cut and are native on **both** keyboard
+    schemes, so they are not a platform split and needed no bind-or-suppress
+    ruling — but they were free targets in Customize Shortcuts…, and a menu
+    command assigned to `Shift+Insert` would have killed paste-by-`Shift+Insert`
+    in every editor on every platform."""
+    for sequence in ("Ctrl+Insert", "Shift+Insert", "Shift+Delete"):
+        assert sequence in RESERVED_SEQUENCES
+        # The ledger's canonical spelling, which `docs/KEYBINDINGS.md` and its
+        # test compare against verbatim.
+        assert normalize_sequence(sequence) == sequence
+        reason = RESERVED_SEQUENCES[sequence]
+        assert "both keyboard schemes" in reason
+        assert "(§26/§27)" in reason
+    # Read back through the spelling-insensitive lookup, as the dialog does with
+    # whatever the user pressed.
+    assert reserved_reason("Shift+Ins") is not None
+    assert reserved_reason("ctrl+ins") is not None
+    assert reserved_reason("shift+del") is not None
+
+
+def test_shift_insert_is_refused_as_a_target_not_stolen():
+    refusal = refusal_for("file.open", "Shift+Insert")
+    assert refusal and "Shift+Insert" in refusal
+    with pytest.raises(ValueError):
+        assign_shortcut({"file.open": "Ctrl+O"}, "file.open", "shift+ins")
+
+
+def test_the_app_owns_its_paste_chords_instead_of_inheriting_qts_table():
+    """DEC-015, applied to the read-only surfaces' edit-attempt hint.
+    `XmlEditor` used to ask `event.matches(StandardKey.Paste)`, which is Qt's
+    per-scheme table: the hint fired for `Ctrl+Shift+Insert`/`F18` on Linux and
+    for neither on Windows. `EDITOR_PASTE_CHORDS` is the app's own answer."""
+    from pgtp_editor.ui.shortcut_registry import EDITOR_PASTE_CHORDS
+
+    assert EDITOR_PASTE_CHORDS == ("Ctrl+V", "Shift+Insert", "Paste")
+    for chord in EDITOR_PASTE_CHORDS:
+        assert normalize_sequence(chord) == chord
+    # Exactly the subset Qt binds on BOTH schemes, so nothing that raised the
+    # hint before stopped doing so...
+    assert "Ctrl+Shift+Insert" not in EDITOR_PASTE_CHORDS
+    assert "F18" not in EDITOR_PASTE_CHORDS
+    # ...and the two modifier chords in the set are reserved, so no command can
+    # be retargeted onto a chord an editor answers. `Paste` is a media key, not
+    # a chord Customize Shortcuts can hand out, so it needs no row.
+    assert reserved_reason("Ctrl+V") is not None
+    assert reserved_reason("Shift+Insert") is not None
+
+
+def test_ctrl_w_and_ctrl_o_are_unreserved_on_purpose():
+    """BUG-260810143058, and the reason is recorded here because an
+    unreserved-on-purpose chord needs an assertion exactly as much as a reserved
+    one — a sweep already re-filed this once.
+
+    `Ctrl+S`/`Ctrl+Shift+S` are reserved for a CAPABILITY reason: FQ-020 removed
+    the save gesture altogether, so no command may ever sit there. `Ctrl+W` (and
+    its twin `Ctrl+O`) lost its default on 2026-08-09 for a narrower reason — no
+    single "close" is the obvious default in an app that closes projects, `.pgtp`
+    documents, PHP tabs, DDL object tabs, the XSD tab and console tabs — which is
+    an argument against a default, not against a user who knows which close they
+    mean. `manual.md` invites the user to assign both.
+    """
+    assert "Ctrl+W" not in RESERVED_SEQUENCES
+    assert "Ctrl+O" not in RESERVED_SEQUENCES
+    assert reserved_reason("Ctrl+W") is None
+    assert reserved_reason("Ctrl+O") is None
+    # The distinction, stated: the capability ban IS reserved.
+    assert "Ctrl+S" in RESERVED_SEQUENCES

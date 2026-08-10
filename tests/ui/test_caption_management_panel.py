@@ -1,6 +1,7 @@
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QGuiApplication, QKeySequence
+from PySide6.QtWidgets import QApplication
 
 from pgtp_editor.ui.caption_scan import CaptionEntry
 from pgtp_editor.ui.caption_management_panel import (
@@ -1451,6 +1452,124 @@ def test_ctrl_f_focuses_the_find_field_and_ctrl_r_the_replace_field(qtbot):
     assert panel.focusWidget() is bar.replace_field
     # Neither gesture ever hid or showed the bar.
     assert bar.isHidden() is False
+
+
+# -- BUG-260810143056: every shortcut this panel owns STATES its scope ------
+
+
+def test_no_shortcut_the_panel_owns_is_window_scoped(qtbot):
+    """Deliberately a loop with NO allow-list, so a fourth shortcut added here
+    later fails immediately.
+
+    Three of them (`StandardKey.Copy`, `StandardKey.Paste`, `Ctrl+G`) used to
+    take Qt's implicit `WindowShortcut` default while the `Ctrl+F`/`Ctrl+R` pair
+    three lines below set a context explicitly. Nothing broke only because the
+    panel lives on a hidden `CenterStage` tab page and a hidden page's shortcuts
+    do not fire -- an invariant nothing asserted, which is BUG-048's shape. This
+    test is what replaces it: containment is now the shortcuts' own stated scope.
+    """
+    from PySide6.QtGui import QShortcut
+
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    found = panel.findChildren(QShortcut)
+    assert found, "the panel owns shortcuts; findChildren must see them"
+    for shortcut in found:
+        assert shortcut.context() != Qt.ShortcutContext.WindowShortcut, (
+            f"{shortcut.key().toString()} on the caption panel is "
+            f"window-scoped; every shortcut here must state a widget scope"
+        )
+
+
+def test_the_grid_clipboard_shortcuts_are_spelled_chords_not_standard_keys(qtbot):
+    """DEC-015: a binding this app owns names its chord; it never inherits Qt's
+    per-scheme `StandardKey` table.
+
+    Asserted with `keys()` and not `key()` on purpose -- `key()` reports only the
+    first chord, which is exactly what hid the defect: a
+    `QShortcut(StandardKey.Copy, ...)` answers `Ctrl+C`, `Ctrl+Ins` and the
+    `Copy` media key on every scheme, plus `F16` on Linux/KDE, so
+    `paste_into_new_value` answered `Ctrl+Shift+Ins`/`F18` on Linux and neither
+    on Windows.
+    """
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    assert [key.toString() for key in panel._copy_shortcut.keys()] == ["Ctrl+C"]
+    assert [key.toString() for key in panel._paste_shortcut.keys()] == ["Ctrl+V"]
+    assert [key.toString() for key in panel._go_to_line_shortcut.keys()] == ["Ctrl+G"]
+
+
+def test_the_clipboard_shortcuts_are_scoped_to_the_grid_and_ctrl_g_to_the_panel(qtbot):
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    for shortcut in (panel._copy_shortcut, panel._paste_shortcut):
+        # The slots act on the GRID's selection, so the grid (and its cell
+        # editors) is the right scope -- WidgetWithChildrenShortcut and never
+        # WidgetShortcut, which would die the moment a cell editor took focus.
+        assert shortcut.parent() is panel._table
+        assert shortcut.context() == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    # Ctrl+G is parented to the PANEL, which is what keeps it reachable from the
+    # Find field (see the next test).
+    assert panel._go_to_line_shortcut.parent() is panel
+    assert (
+        panel._go_to_line_shortcut.context()
+        == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    )
+
+
+def test_ctrl_g_still_fires_from_inside_the_panels_find_field(qtbot):
+    """The behaviour narrowing the scope deliberately PRESERVED: find a caption,
+    then jump straight to its line in the XML without leaving the Find field. It
+    used to work by accident of window scope; it now works because the shortcut
+    is parented to the panel."""
+    from PySide6.QtTest import QTest
+
+    calls = []
+    panel = CaptionManagementPanel(on_go_to_line=lambda line: calls.append(line))
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    panel.show()
+    qtbot.waitExposed(panel)
+    # A QShortcut fires under QT_QPA_PLATFORM=offscreen, but only for the ACTIVE
+    # window -- so activating (and waiting for it) is part of the setup, not a
+    # workaround: without it there is no focus widget at all and no key press
+    # reaches anything.
+    panel.activateWindow()
+    QApplication.processEvents()
+    _select_source_rows(panel, [1])
+    panel.focus_find_replace_bar()
+    assert panel.focusWidget() is panel.find_replace_bar.find_field
+    QTest.keyClick(
+        panel.find_replace_bar.find_field, Qt.Key.Key_G, Qt.KeyboardModifier.ControlModifier
+    )
+    assert calls == [3]  # row 1 is line 3
+
+
+def test_copy_fires_from_the_grid_and_not_from_the_find_field(qtbot):
+    """The scope narrowing that is a behaviour CHANGE: a Ctrl+C pressed with
+    focus in the Find field used to copy the grid's selection, which is wrong --
+    the gesture belongs to whatever has focus."""
+    from PySide6.QtTest import QTest
+
+    panel = CaptionManagementPanel()
+    qtbot.addWidget(panel)
+    panel.load_entries(_sample_entries())
+    panel.show()
+    qtbot.waitExposed(panel)
+    panel.activateWindow()
+    QApplication.processEvents()
+    _select_source_rows(panel, [1])
+
+    QGuiApplication.clipboard().setText("untouched")
+    panel.focus_find_replace_bar()
+    QTest.keyClick(
+        panel.find_replace_bar.find_field, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier
+    )
+    assert QGuiApplication.clipboard().text() == "untouched"
+
+    panel.focus_grid()
+    QTest.keyClick(panel._table, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier)
+    assert QGuiApplication.clipboard().text() != "untouched"
 
 
 # -- Phase C.2: preset-filter entry (row predicate) -------------------------

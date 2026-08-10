@@ -3104,10 +3104,14 @@ class MainWindow(QMainWindow):
         # has to pick which "close" it means -- and the one it meant was the
         # rarest, closing the whole project.
         #
-        # This does NOT touch `CodeEditorDialog`'s own `Ctrl+W`, which is a
-        # dialog-local Cancel bound as a `QShortcut` beside that dialog's
-        # `Ctrl+S`; it is not a menu command, it never competed with this one,
-        # and §27 documents it separately.
+        # There is no `Ctrl+W` left anywhere else either: `CodeEditorDialog`
+        # used to own a dialog-local `Ctrl+W` Cancel, and `code_editor.py`
+        # (see the "NO `Ctrl+S` / `Ctrl+W`" comment where its button box is
+        # built) removed it by the same 2026-08-09 decision -- that dialog was
+        # the last carve-out for either chord. So the chord answers nothing in
+        # the app; it is deliberately left FREE to assign in Customize
+        # Shortcuts, paired with `Ctrl+O` (see `docs/KEYBINDINGS.md`), rather
+        # than reserved the way `Ctrl+S` is.
         close_action.triggered.connect(lambda: self._doc_ui.close())
         self._close_action = close_action
         menu.addSeparator()

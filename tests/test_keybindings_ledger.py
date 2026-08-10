@@ -694,9 +694,18 @@ def test_widget_hosted_modifier_chords_are_reserved(ledger):
     be in RESERVED_SEQUENCES"*. Scoped to `Ctrl`/`Alt`/`Meta` chords, because a
     bare key (`Tab`, `Return`, `Escape`) is not a rebinding target the dialog
     could hand out in the first place -- which is what the `bare-key` gate
-    records."""
+    records.
+
+    A row that IS reserved satisfies the rule whatever shape its chord has, and
+    is checked first: the `bare-key` branch exists only to excuse an *unreserved*
+    row, so demanding that gate from a reserved one would force a `Shift+Insert`
+    (a real rebinding target, reserved since BUG-260810140553) to claim it is a
+    bare key.
+    """
     for row in ledger:
         if not row.mechanisms & WIDGET_MECHANISMS:
+            continue
+        if row.reserved:
             continue
         if not any(
             row.chord.startswith(prefix) or f"+{prefix}" in row.chord
