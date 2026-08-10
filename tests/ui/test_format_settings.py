@@ -61,6 +61,19 @@ def test_a_tab_indent_survives_the_round_trip(store):
     assert format_settings.load_sql_config(store).indent_unit == "\t"
 
 
+def test_the_xml_side_is_a_WIDTH_and_a_tab_is_not_in_its_domain(store):
+    """§18.4 B's table gives the XML engine `xml_indent_width`: **1-8 spaces**, and
+    deliberately no tab (the SQL side has one). Persistence stores the width, so a
+    tab handed in by a caller comes back as spaces rather than being kept -- the
+    dialog's spin box cannot produce one, and the loader is the enforcement point."""
+    format_settings.save_configs(
+        DEFAULT_FORMAT_CONFIG, XmlFormatConfig(indent_unit="\t"), store
+    )
+    loaded = format_settings.load_xml_config(store)
+    assert loaded.indent_unit.strip() == ""
+    assert "\t" not in loaded.indent_unit
+
+
 def test_the_stored_grid_stays_sparse(store):
     # Saving a grid where one keyword differs must not write the other 17: the
     # sparse shape is what lets a clause starter be ADDED to the engine later

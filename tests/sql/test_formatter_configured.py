@@ -329,3 +329,144 @@ def test_leading_comma_style_survives_every_config():
     text = "select a\n, b\n, c\nfrom t"
     for config in CONFIGS:
         assert fmt(text, config).count(", b") == 1
+
+
+# --------------------------------------------------------------------------
+# Casing is a PURE RE-SPELLING: it may not shift a single space (FQ-033 A)
+# --------------------------------------------------------------------------
+
+
+def _whitespace_skeleton(text: str) -> str:
+    """The text with every non-whitespace run replaced by a single `X`.
+
+    Two outputs with the same skeleton have byte-identical layout -- same line
+    breaks, same indentation, same glue decisions -- and differ only inside the
+    tokens.
+    """
+    import re
+
+    return re.sub(r"\S+", "X", text)
+
+
+@pytest.mark.parametrize("case", [KeywordCase.UPPER, KeywordCase.LOWER])
+def test_casing_never_shifts_the_layout_by_a_single_space(case):
+    """Casing is applied at token EMIT, so no break/glue decision may read a
+    token's spelling.
+
+    The existing tests pin the token stream (texts) and idempotence; this pins
+    the complementary half -- the *whitespace* -- because a glue rule that
+    compared `tok.text` instead of `Token.keyword` would keep every token intact
+    and still move `%TYPE`, a unary sign or a JOIN phrase onto another line.
+    """
+    for text in CORPUS + [
+        "select x%type, count(*) - 1, array[1][2], f(a)(b), e'a\\'b', $1 "
+        "from t left outer join u on u.id = t.id where a in (1, 2) and b = -1;",
+        "declare c cursor for select 1; begin null; end;",
+        "select case when 1 then 'a' else 'b' end from t;",
+    ]:
+        assert _whitespace_skeleton(fmt(text, FormatConfig(keyword_case=case))) == (
+            _whitespace_skeleton(fmt(text))
+        ), text
+
+
+def test_upper_casing_of_a_glue_heavy_statement_is_pinned_literally():
+    """One readable golden, because the skeleton comparison above is a property
+    and a property does not show what the user sees.
+
+    Everything §18.4's glue table protects appears here (`%type`, a binary minus,
+    a subscript chain, a call chain, `$1`, a JOIN phrase, a unary minus) and every
+    one of them keeps its spacing while the keywords -- and only the keywords --
+    change case. `type` after `%` is deliberately NOT recased: it is not in
+    `SQL_KEYWORDS`.
+    """
+    text = (
+        "select x%type, count(*) - 1, array[1][2], f(a)(b), $1 from t "
+        "left outer join u on u.id = t.id where a in (1, 2) and b = -1;"
+    )
+    assert fmt(text, FormatConfig(keyword_case=KeywordCase.UPPER)).split("\n") == [
+        "SELECT x%type, count(*) - 1, ARRAY[1][2], f(a)(b), $1",
+        "FROM t",
+        "LEFT OUTER JOIN u",
+        "ON u.id = t.id",
+        "WHERE a IN (1, 2) AND b = -1;",
+    ]
+
+
+def test_upper_casing_of_a_plpgsql_block_keeps_the_block_layout():
+    out = fmt(
+        "begin if a then x := t.c%type; end if; exception when others then null; end;",
+        FormatConfig(keyword_case=KeywordCase.UPPER),
+    )
+    assert out.split("\n") == [
+        "BEGIN",
+        "    IF a THEN",
+        "        x := t.c%type;",
+        "    END IF;",
+        "EXCEPTION",
+        "    WHEN others THEN",
+        "        NULL;",
+        "END;",
+    ]
+
+
+def test_every_keyword_in_the_dialect_cases_and_never_refuses():
+    """The whole 115-member dialect, one keyword at a time.
+
+    A keyword the reindenter treats specially (`end`, `loop`, `declare`, a JOIN
+    prefix) must still be *classified* from `Token.keyword` after the emit step
+    recased it -- and a keyword that only ever appears cased must not become a
+    refusal reason. Swept rather than sampled because the set is the config's
+    own key space.
+    """
+    from pgtp_editor.sql import SQL_KEYWORDS
+
+    # The five keywords that cannot sit in a neutral context because they open or
+    # close a block: each gets a balanced snippet instead, so the sweep covers the
+    # structurally special words rather than skipping exactly them.
+    balanced = {
+        "begin": "begin null; end;",
+        "end": "begin null; end;",
+        "if": "if a then null; end if;",
+        "loop": "loop exit; end loop;",
+        "case": "select case when a then 1 end from t",
+    }
+
+    for keyword in sorted(SQL_KEYWORDS):
+        text = balanced.get(keyword, f"select {keyword} from t")
+        upper = format_selection(text, config=FormatConfig(keyword_case=KeywordCase.UPPER))
+        lower = format_selection(text, config=FormatConfig(keyword_case=KeywordCase.LOWER))
+        assert upper.ok and lower.ok, keyword
+        assert keyword.upper() in upper.text, keyword
+        assert keyword.lower() in lower.text.lower(), keyword
+        # ...and the pair are the same text apart from case.
+        assert upper.text.lower() == lower.text.lower(), keyword
+
+
+# --------------------------------------------------------------------------
+# The public API's second source of truth is GONE, not deprecated
+# --------------------------------------------------------------------------
+
+
+def test_indent_unit_is_no_longer_a_keyword_argument():
+    """§18.4's API table: `indent_unit=` is REMOVED rather than kept alongside
+    `FormatConfig.indent_unit`, because two ways to set one value is the
+    second-source-of-truth defect this project refuses everywhere else."""
+    with pytest.raises(TypeError):
+        format_selection("select 1", indent_unit="  ")
+
+
+def test_no_caller_in_the_package_still_passes_indent_unit():
+    """The migration was confined to `tests/sql/`; nothing in `pgtp_editor/` may
+    have kept the old keyword (it would now be a runtime TypeError at the
+    gesture, i.e. only on a user's machine)."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[2] / "pgtp_editor"
+    call = re.compile(r"format_selection\s*\([^)]*indent_unit\s*=", re.S)
+    offenders = [
+        str(py.relative_to(root))
+        for py in root.rglob("*.py")
+        if call.search(py.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], offenders

@@ -15,6 +15,8 @@ this engine is safe to run on a `.pgtp`:
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from pgtp_editor.sql import FormatResult, Issue
@@ -23,7 +25,13 @@ from pgtp_editor.xmlfmt import (
     XmlFormatConfig,
     format_xml_selection,
 )
-from pgtp_editor.xmlfmt.scanner import TEXT, scan
+from pgtp_editor.xmlfmt.scanner import (
+    TAG_CLOSE,
+    TAG_OPEN,
+    TAG_SELF_CLOSING,
+    TEXT,
+    scan,
+)
 
 # --------------------------------------------------------------------------
 # Helpers
@@ -534,6 +542,68 @@ def test_refusal_is_idempotent_too(document, start, end):
     second = format_xml_selection(document, start, start + len(first.text))
     assert second.ok is False and second.text == first.text
     assert [i.message for i in second.issues] == [i.message for i in first.issues]
+
+
+# --------------------------------------------------------------------------
+# The real corpus: the private sample `.pgtp` files (skipped when absent)
+# --------------------------------------------------------------------------
+
+SAMPLE_DIR = pathlib.Path(__file__).resolve().parents[2] / "sample"
+SAMPLE_FILES = [
+    SAMPLE_DIR / "dev_Ferrara.pgtp",
+    SAMPLE_DIR / "Sdman_RencoStrikesBack.i01.r01_FRENCH.pgtp",
+]
+
+
+def _sample(path: pathlib.Path) -> str:
+    if not path.exists():
+        pytest.skip(f"sample file not present: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("path", SAMPLE_FILES, ids=lambda p: p.name)
+def test_a_whole_real_pgtp_file_reindents_without_refusing(path):
+    """The synthetic corpus above is `.pgtp`-*shaped*; these are the real files.
+
+    Rules 1-3 are asserted against them directly, because it is a real project
+    file whose PHP/JS handler bodies and single-line opening tags §13's caption
+    grid and §17's DB-rename path depend on.
+    """
+    document = _sample(path)
+    result = whole(document)
+    assert result.ok, [issue.message for issue in result.issues]
+    # Nothing but inter-tag whitespace moved...
+    assert significant(result.text) == significant(document)
+    # ...no opening tag gained a line break that it did not have (rule 1)...
+    for tok in scan(result.text):
+        if tok.kind in (TAG_OPEN, TAG_SELF_CLOSING, TAG_CLOSE):
+            assert "\n" not in tok.text, tok.text[:80]
+    # ...and every element with real content kept that content byte-for-byte
+    # (rule 2: the handler bodies).
+    before = [tok.text for tok in scan(document) if tok.kind == TEXT and tok.text.strip()]
+    after = [tok.text for tok in scan(result.text) if tok.kind == TEXT and tok.text.strip()]
+    assert after == before
+
+
+@pytest.mark.parametrize("path", SAMPLE_FILES, ids=lambda p: p.name)
+def test_a_whole_real_pgtp_file_is_idempotent(path):
+    document = _sample(path)
+    assert_idempotent(document, 0, len(document))
+
+
+@pytest.mark.parametrize("path", SAMPLE_FILES, ids=lambda p: p.name)
+def test_an_arbitrary_slice_of_a_real_pgtp_file_is_idempotent(path):
+    """Mid-document selections, the actual invocation model. Each slice starts at a
+    tag boundary so the selection does not split a construct (that case is a
+    refusal, covered above)."""
+    document = _sample(path)
+    starts = [
+        document.index("<", document.index("\n", offset) + 1)
+        for offset in (0, len(document) // 3, len(document) // 2)
+    ]
+    for start in starts:
+        end = document.index(">", document.index("\n", start + 1) or start + 1) + 1
+        assert_idempotent(document, start, end)
 
 
 def test_result_shape_is_the_sql_engines_own_types():
