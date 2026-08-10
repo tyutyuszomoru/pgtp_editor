@@ -4383,7 +4383,15 @@ section. No new introspection, no DB, no new parsing — `body_line_offset` alre
 ---
 
 ## FQ-032: Vim editing mode — an Esc-entered, per-tab Command mode over the editors (motions/operators/counts, shared-clipboard yank/paste, a menu-derived ':' palette), Windows editing untouched
-**Status:** QUEUED
+**Status:** PROCESSED (spec §8; `b0c42da`). All three owner rulings shipped — `Ctrl+D`/`K`/`U` freed and
+inert in Command mode, `Ctrl-R` as the app's first mode-conditional chord, and `CodeEditorDialog` with its
+own `ModeIndicator(editing_only=True)`.
+Two lifts the feature forced, both recorded: `ui/editor_shared.py` now holds ONE hint/refusal path (XmlEditor
+had none) and ONE line-wrap toggle (CodeEditor had none). The grammar is Qt-free in `pgtp_editor/vim/` and
+imports neither `ui/` nor `sql/` — pinned statically AND in a fresh interpreter.
+One entry framing corrected: **no v1 motion consumes FQ-034's span model.** `w`/`b`/`e` are character-class,
+and four of six vim surfaces are not SQL; the chain's only FQ-032 caller is the deferred SQL-only text
+objects. The dispatching session had this wrong repeatedly.
 **Requested:** 2026-08-10
 **Idea (verbatim/summarized):** "Add a vim editing mode over the code/XML editors — but NOT 'vim for vim
 fans.' The editor needs advanced editing OPERATIONS anyway (go-to-line, go-N-lines-relative, delete-line,
