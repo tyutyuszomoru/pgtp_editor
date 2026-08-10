@@ -17,6 +17,7 @@ import logging
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, QEvent, QSettings, QTimer
 from PySide6.QtGui import (

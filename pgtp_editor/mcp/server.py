@@ -52,7 +52,7 @@ from pgtp_editor.mcp.tools import ToolArgumentError, UnknownToolError, build_reg
 #: The MCP revision this transport speaks.
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "pgtp-editor"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.4.0"
 
 # JSON-RPC 2.0 error codes used here.
 PARSE_ERROR = -32700
