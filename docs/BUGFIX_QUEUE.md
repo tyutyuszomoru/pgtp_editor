@@ -5279,7 +5279,7 @@ cases, and they are not equally load-bearing:
 ---
 
 ## BUG-054: `Ctrl+Alt+F` in the DDL object tab has THREE hosts, and the redundancy is still justified by the offscreen premise BUG-046 measured false
-**Status:** OPEN
+**Status:** RESOLVED (`a54c32c`)
 **Reported:** 2026-08-10
 **Report (verbatim):** (found by `bug-triager` while verifying BUG-052's fix at `f533350`, not filed by
 the user) "`pgtp_editor/ui/ddl_object_editor.py:781-785` still reads *'The redundant eventFilter branch
@@ -5346,6 +5346,65 @@ distinguishes *gesture with no menu command* (widget-hosted, fine) from *gesture
 (exactly one host). `Ctrl+Alt+F` is the awkward middle case: a **context-menu** command with no
 menu-bar action. §8 should say which side of the line that falls on, because the answer also governs
 any future context-menu-only gesture.
+
+**RESOLUTION (`a54c32c`, on `main`; verified in-tree at `f89e078` after the `0.4.0` release commit
+from another machine — the fix survived that merge intact).** Option (a): the duplicate host was
+deleted, not justified. Verified point by point in the current tree:
+
+- **The `eventFilter` `Key_F` + `Ctrl|Alt` branch is gone.** `grep -n "Key_F\b"
+  pgtp_editor/ui/ddl_object_editor.py` now returns exactly one hit — line `:794`, inside a comment
+  that says the branch was deleted. A second note sits where the branch used to be
+  (`ddl_object_editor.py:925-927`, in `eventFilter`) telling a future reader not to re-add it.
+- **The `QShortcut` is the sole keyboard host** (`ddl_object_editor.py:811-814`): same
+  `WidgetWithChildrenShortcut` scope, `activated` → `format_selection`, still `setEnabled(False)`
+  until `_update_format_shortcut_enabled` sees a selection. The context-menu action
+  (`:985`, `menu.addAction("Format Selection", self.format_selection)`) was kept — it is a separate
+  *affordance*, not a second keyboard host, which is the distinction the ruling turns on.
+  `RESERVED_SEQUENCES` untouched, as required by gotcha (b); the `Ctrl+Space`/`Ctrl+Alt+J` branches
+  untouched, as required by gotcha (c).
+- **The dead comment is replaced by DEC-012's rule**, stated positively at `:783-792`: *any gesture
+  with a command form — menu bar OR context menu — has exactly one keyboard host*, with DEC-009's
+  carve-out explicitly narrowed to gestures with **no command form at all** (`Ctrl+Alt+E`,
+  `Ctrl+Alt+C`, `Ctrl+Alt+J`, `Ctrl+Space`). Both dead justifications are named as dead: the
+  offscreen premise (BUG-046 measured it false) and the `CodeEditorDialog` `Ctrl+S`/`Ctrl+W`
+  double-hosting precedent (BUG-046 deleted it). `SqlConsolePanel` is cited as the shape that already
+  worked.
+- **The `Ctrl+Space` comment now stands on its own** (`:929-937`): `grep -rn "for the same reason as"
+  pgtp_editor/ui/ddl_object_editor.py` returns nothing, so no comment dangles off the deleted
+  antecedent any more. It states its own reason (no menu command at all; needs the injected
+  `SchemaIndex` and the panel's caret/popup state; intrinsically focus-scoped).
+
+**Three things about this resolution that are easy to mistake later — record, don't re-derive:**
+
+1. **It is a behavioural change, not a comment/refactor tidy.** The deleted branch was
+   *unconditional*, so a selection-less `Ctrl+Alt+F` used to reach `format_selection` and silently
+   no-op there. It now does **nothing at all**, because the one surviving host is disabled without a
+   selection. That is deliberate and is now the answer the context-menu action and `SqlConsolePanel`
+   already gave — gotcha (a) in the proposal called for deciding this explicitly, and this is the
+   decision. `tests/ui/test_ddl_object_editor.py::test_ctrl_alt_f_has_exactly_one_keyboard_host`
+   pins it.
+2. **A second test was passing *on the deleted branch*, not only the one the proposal named.**
+   `test_shortcut_override_claims_ctrl_alt_f` was the known case (it drove `panel.eventFilter`
+   directly and was replaced by `test_ctrl_alt_f_has_exactly_one_keyboard_host`), but
+   `test_ctrl_alt_f_triggers_format_selection` was **also** false-green: it used
+   `QTest.keyClick` on an **unshown** panel, which posts straight at the widget and never reaches
+   `QShortcutMap`. Both tests now `show()` the panel, `waitExposed`, and send at
+   `panel.windowHandle()`. Three negative controls were run to prove they exercise the `QShortcut`
+   rather than passing incidentally — **restoring the branch**, **removing the `activated`
+   connection**, and **removing the `show()`** each make them fail.
+3. **Offscreen-lore refinement measured during that work:** once the top level is shown,
+   `QTest.keyClick(widget, …)` *also* reaches `QShortcutMap`. **The `show()` is the decisive part,
+   not the `windowHandle()` target.** The implementation kept `windowHandle()` because it is the
+   faithful delivery path, but anyone writing a shortcut test needs the `show()` far more than the
+   target — a test that targets `windowHandle()` without showing still proves nothing.
+
+Full suite at the time of the fix: **6343 passed, 45 skipped**. Re-confirmed in the current tree:
+`tests/ui/test_ddl_object_editor.py -k "ctrl_alt_f or format_selection"` → 12 passed.
+
+**Spec follow-up still open:** the §8 question flagged above (which side of the one-host line a
+**context-menu-only** command falls on) is answered by DEC-012 and by this code, but folding DEC-012
+into `CONSOLIDATED_SPEC.md` §8 remains `spec-maintainer`'s to do — the code comments are currently the
+only place the rule is written down in that form.
 
 ---
 
