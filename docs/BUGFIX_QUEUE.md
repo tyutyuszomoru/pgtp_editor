@@ -5409,7 +5409,7 @@ only place the rule is written down in that form.
 ---
 
 ## BUG-055: RE-SCOPED — "the refusals are lost" is FALSE (every one is journalled); what actually survives is two comments that lie and ~15 dead `timeout` arguments, plus an owner question about immediacy
-**Status:** OPEN (RE-SCOPED 2026-08-10, second triage pass — the original premise is REFUTED; do **not** implement the original three-part fix below the fold without an owner ruling)
+**Status:** RESOLVED (`a9efb67`) — the RE-SCOPED fix only. Verified in the tree 2026-08-10: both lying comments rewritten (`ui/main_window.py:2145` *"this window's own call sites no longer pass one (BUG-055)"*, `:3648` *"gap to be filled here (BUG-055 / DEC-013)"*), the dead `timeout` arguments swept (no `showMessage`/`show_message` call site in `pgtp_editor/` passes a numeric timeout any more, across 58 call sites), and the absence is now asserted by `tests/ui/test_status_bar_static.py:93`. **No refusal was re-routed** — DEC-013 answered the immediacy question by leaving the Activity Log as the channel, so the original three-part fix below the fold stays UNIMPLEMENTED by decision, not by omission.
 **Reported:** 2026-08-10 — found by `spec-maintainer` during a harmonization pass; **not** reported by the user. Re-triaged the same day at the owner's request, who flagged the premise as his own error.
 **Report (verbatim):** "Claim: BUG-048's refusal message is never shown to the user. BUG-048 (RESOLVED `e8df6c3`) added a refuse-with-a-stated-reason path for project-history writes against a read-only Raw XML buffer. The queue entry records the result as 'refused-with-a-reason (logged, plus a 4-second status-bar message naming the read-only reasons)', and the implementation deviated from the proposed greying *specifically* in order to state the reason instead. … So the reason lands as an Activity Log line in the bottom dock, which may not even be the visible tab, while the user pressing `Ctrl+Z` (or clicking `History ▸ Undo`) in Caption Mode or Compare/Merge mode sees the chord do **nothing at all**. … The surviving `4000` timeout argument is the evidence the fix was written against the pre-FQ-028 status-bar contract."
 
@@ -5635,7 +5635,7 @@ a toast and do not make the bar paint.)*
 ---
 
 ## BUG-056: the reported `Ctrl+Shift+Z` platform divergence is NOT real — but `Ctrl+Y` is, and it is dead in the Sandbox SQL Console on Linux (plus: the offscreen test platform runs the **Windows** keyboard scheme, so no test can ever see it)
-**Status:** OPEN
+**Status:** RESOLVED (`a9efb67`). Verified in the tree 2026-08-10: `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` (`:368`) is the single Qt-free table — `Ctrl+Z`→`UNDO`, `Ctrl+Y`→`REDO`, `Ctrl+Shift+Z`→`CLAIMED_NOT_UNDO_REDO` (re-routed for FQ-034's shrink-selection, **not** removed), `Alt+Backspace`/`Alt+Shift+Backspace`→`SUPPRESSED` on both platforms. Its Qt-side matcher `code_editor.classify_undo_redo_chord` (`:114`) *classifies* rather than returning a boolean and takes no per-surface parameter; exactly six surfaces call it — `code_editor.py:1045`, `xml_editor.py:1210`, `ddl_object_editor.py:916`, `ddl_editor_panel.py:212`, `php_file_tab.py:406`, `sql_console_panel.py:610`. `Ctrl+Y` is bound by the app on every platform, never inherited from Qt's table (DEC-015). Chord rows are registered in `docs/KEYBINDINGS.md`, which now exists and is verified by `tests/test_keybindings_ledger.py` — **any future change to the reserved set must edit the ledger in the same commit**, because that test's Reserved-column set-equality is what caught `Ctrl+Shift+R` missing a row during this merge.
 **Reported:** 2026-08-10
 
 **Report (verbatim):** "`Ctrl+Shift+Z` in a **PHP tab** and in the **Sandbox SQL Console** is unspecified in
@@ -5856,7 +5856,7 @@ answers it: it already means redo on every platform. The question that *does* su
 ---
 
 ## BUG-057: Curated XSD should be included in releases (add a packaging guard)
-**Status:** OPEN
+**Status:** RESOLVED (`70578cb`). Verified in the tree 2026-08-10: `docs/curated_20260807.xsd` is git-tracked as the owner's authoritative dated drop, `pgtp_editor/resources/curated.xsd` remains the single shipped home, and the two are byte-identical (`cmp` clean, 110 487 bytes each) — asserted by `tests/test_curated_xsd_packaging.py::test_shipped_curated_xsd_is_identical_to_the_newest_snapshot`, alongside the wheel-`package_data`, frozen-bundle and installed-layout guards and `optimized_build.REQUIRED_RESOURCE_FILES = ("curated.xsd", "manual.md")` (`optimized_build.py:49`, checked in `build()` at `:251`, with a source-level guard test so the check cannot be silently deleted). **Three defects in the new curation were fixed before shipping**, each with its own regression test: the `editAbilityMode` labels/hints restored (BUG-002's regression, `test_shipped_curated_xsd_keeps_the_hand_authored_labels_and_hints`), a `dateTimeKind` truncated to `d` (`test_shipped_curated_xsd_keeps_detail_view_date_time_kind`), and a mis-nested `sortable` that swallowed `totalFunction` (`test_no_attribute_is_nested_inside_another_attribute`).
 **Reported:** 2026-08-10
 **Report (verbatim):** "the curated xsd should be included in the releases."
 
@@ -5941,7 +5941,7 @@ to fold into §11 after the guard lands — flag, do not edit here.
 ---
 
 ## BUG-058: Move "Project Status…" from the Database menu to File, directly below "Project Settings…"
-**Status:** OPEN
+**Status:** RESOLVED (`3a6098c`). Verified in the tree 2026-08-10: the action is built in the File menu directly under `Project Settings…` (`ui/main_window.py:3055`, with the move recorded at `:3039`) and the Database menu carries a comment at `:3840` marking where it used to stand. The command id moved `database.project-status` → `file.project-status` with a `RENAMED_ID_ALIASES` row (`ui/toolbar_registry.py:206`), so a toolbar pinned before the move still resolves; `ui/shortcut_registry.py:633` applies the same alias table, so a shortcut override made against the old id resolves too. Availability was verified unchanged — the handler is `File ▸ Project Status…` at `ui/main_window.py:4603`.
 **Reported:** 2026-08-10
 **Report (verbatim):** "Project status should be in File, just below Project settings"
 
@@ -6025,7 +6025,7 @@ after the fix lands: update those references to `File ▸ Project Status…`, an
 ---
 
 ## BUG-059: The startup launcher is dismissable, leaving the app in the invalid "No Mode" state
-**Status:** OPEN
+**Status:** RESOLVED (`3a6098c`). Verified in the tree 2026-08-10 — "No Mode" is made **unreachable**, not merely guarded. In `ui/launcher_dialog.py`: `dismissable` defaults to `False` (`:217`), the undismissable regime gets **no** `Close` button and its hints stripped (`:264`), `closeEvent` → `event.ignore()` as the authoritative barrier since `WindowCloseButtonHint` is advisory and covers neither `Alt+F4` nor a WM close (`:383`), `reject()` is neutralised so `QDialogButtonBox.rejected`, `QDialog`'s own Escape handling and any programmatic `reject()` all dead-end (`:376`), `cancel()` is inert (`:369`), Escape is swallowed in `keyPressEvent` before `QDialog`'s default reject (`:388`), and `choose()` refuses a pick whose column names no mode (`:360`) — so the only exit is an `accept()` carrying a mode. `MainWindow.new_session` (`:3136`) no longer clears the mode; the mode STANDS while the launcher is up, which is what makes *that* launcher legitimately dismissable. `set_workflow_mode(None)` now appears **only** in tests (`tests/ui/test_launcher_dialog.py`, `tests/ui/test_edit_snippets_menu.py`) — no production write of `None` remains.
 **Reported:** 2026-08-10
 **Report (verbatim):** "When launcher is closed without making a choice the software should either stay in the mode it was previously or if it's right after opening the app, it should enter in Standalone mode. \"No Mode\" is not an option."
 
@@ -6042,7 +6042,7 @@ after the fix lands: update those references to `File ▸ Project Status…`, an
 ---
 
 ## BUG-060: Find All is an unwired no-op in the DDL Explorer, DDL object, PHP file, and draft fragment tabs — its results reach no output
-**Status:** OPEN
+**Status:** RESOLVED (`8d489f8`). Verified in the tree 2026-08-10 — **and the root cause was upstream of the router, not in it**: `[Find]` already routed to the Findings tab (`ui/audit_router.py:104`, `FIND_PREFIX`), and `FindReplaceBar.__init__` defaulted `on_find_all` to a no-op lambda (`ui/find_replace_bar.py:144`), so only the two bars `main_window` wired by hand ever reported. **No new prefix was needed.** Unwired bars now publish to a module-level observer registry — `add_find_all_observer` / `remove_find_all_observer` / `_notify_find_all_observers(bar, term, reason)` (`ui/find_replace_bar.py:86-140`), holding bound methods as `WeakMethod` and pruning dead entries, mirroring `editor_gutter.add_bookmark_observer` — with `FindController` as the sole subscriber (`ui/find_controller.py:242`). A wired bar never publishes, so one click cannot start two runs, and the draft-fragment bar is covered **with no host edit**. Covered by `tests/ui/test_find_all_surfaces.py`. **Record rather than smooth over: this retired §18.5 carve-out 3 and its test** — no `carve-out 3` reference survives in `CONSOLIDATED_SPEC.md`.
 **Reported:** 2026-08-10
 **Report (verbatim):** "Find All's results are not wired in to any output."
 
@@ -6057,7 +6057,7 @@ after the fix lands: update those references to `File ▸ Project Status…`, an
 ---
 
 ## BUG-061: The Findings tab exists in code but is unreachable from the View menu, so with no auto-reveal event it appears "not to exist"
-**Status:** OPEN
+**Status:** RESOLVED (`3a6098c`). Verified in the tree 2026-08-10: `View ▸ Findings` is built at `ui/main_window.py:3285` and triggers `self._reveal_findings_tab` (`:3286`) — **the same slot `AuditRouter` is handed as `on_findings=` at `:894`**, so the menu entry and the auto-reveal path cannot disagree about what "reveal Findings" means. Carries **no shortcut**, matching its View-menu siblings (rationale recorded in the comment at `:3270`).
 **Reported:** 2026-08-10
 **Report (verbatim):** "The \"Findings\" tab doesn't exist, it's not in View to turn on and off."
 
@@ -6074,7 +6074,19 @@ after the fix lands: update those references to `File ▸ Project Status…`, an
 ---
 
 ## BUG-062: DDL Explorer / DDL Objects has no reload gesture; re-introspecting after applying changes requires closing and reopening the tab
-**Status:** OPEN
+**Status:** OPEN — **PARTIALLY SHIPPED in `8d489f8`; NOT resolved.** Verified against the tree at `1ad73c6` on 2026-08-10 and deliberately **not** flipped: the two panel-side affordances exist but **nothing consumes them**, so all three gestures are no-ops in the running app. See *Remaining gap* below.
+
+**Present (verified):** `EditorPanel.reload_requested` (`ui/ddl_editor_panel.py:86`) and `BrowserPanel.reload_requested` (`ui/ddl_buffer_panel.py:472`), both signals with the reasoning recorded on them (re-introspection, never a re-render of a cached `SchemaIndex`; no role carried, because the host owns the role). `Ctrl+Shift+R` as a `WidgetWithChildrenShortcut` `QShortcut` on `EditorPanel` (`ui/ddl_editor_panel.py:161-165`). Context-menu `Reload DDL` items on both panels, using the shared `RELOAD_LABEL` constant (`ui/ddl_buffer_panel.py:325`, added at `:837` and `ui/ddl_editor_panel.py:283`), offered *anywhere* in the tree including a blank area and a `browse_only` sandbox tree — neither carries a `setShortcut`. The reserved row in `ui/shortcut_registry.py:296`. And the ledger row in `docs/KEYBINDINGS.md:97`.
+
+**Remaining gap (two items, both required for the report to be answered):**
+1. **No host connection — the fix's whole point is missing.** `grep -rn "reload_requested" pgtp_editor/` finds exactly three references outside the two `Signal()` declarations, and **all three are emitters** (`ddl_editor_panel.py:165`, `:283`, `ddl_buffer_panel.py:837`). Nothing anywhere in `pgtp_editor/` connects either signal, so pressing `Ctrl+Shift+R` or clicking `Reload DDL` emits into the void. `MainWindow` wires `edit_requested` for both panels (`main_window.py:795`, `:985`) and is where the missing `reload_requested.connect(...)` pair belongs — per-instance, bound to that instance's role, exactly as `edit_requested` is. The shared handler the entry proposed (`reload_ddl_explorer`, delegating to the existing `MainWindow._open_ddl_explorer(role)` at `main_window.py:4047`) **was never added**; `_open_ddl_explorer`'s only caller is still `_on_ddl_explorer_toggled` (`:4006`).
+2. **No `Database ▸ Reload DDL` menu action** (report item 1). There is no `addAction` for it anywhere; the only `RELOAD_LABEL` uses are the two context menus. Two comments already **describe it as existing** and are therefore lying: `ui/shortcut_registry.py:292` (*"The command's menu-bar form (Database ▸ Reload DDL) and its two…"*) and `ui/ddl_editor_panel.py:145` (*"Reload has three affordances: this panel's context menu, the tree's, and the host's Database-menu action"*). The `docs/KEYBINDINGS.md:97` row inherits the same claim (*"the Database-menu action carries no `setShortcut`"*) — it is accurate about the absence of a shortcut and inaccurate about the action existing. **Do not "fix" the ledger by deleting that clause: add the action.** If instead the owner rules the Database-menu form out, then the ledger row, both comments, and the DEC-012 justification below all have to change together, and the gate flips — with no command form on the menu bar, the widget host would rest on DEC-009 rather than DEC-012.
+
+**Why the test suite is green anyway (so this gap can't be caught by re-running it):** every BUG-062 test connects its *own* lambda to the signal (`tests/ui/test_ddl_editor_panel.py:626`, `:672`, `:702`; `tests/ui/test_ddl_buffer_panel.py:832`, `:851`), which proves the panels emit but asserts nothing about a consumer. No test asserts a `Database ▸ Reload DDL` action exists, and no test asserts an emission re-introspects. **The fix needs a host-level wiring test** (patch the injectable `MainWindow._fetch_ddl_schema` seam, emit `reload_requested` on each role's panel, assert a fresh fetch happened for *that* role only) plus a Database-menu presence test.
+
+**Keyboard gate (settled, record it rather than re-deriving it):** `Ctrl+Shift+R` is hosted on the **widget, not the `QAction`, deliberately**. §18.7 gives each Explorer role its own panel, so a window-level chord would have two candidate actions and no way to choose between them; the answer can only come from which buffer the caret is in. DEC-012's principle is *exactly one* host, which this satisfies, and the Database-menu action must therefore carry no `setShortcut`. `CLAUDE.md`'s paraphrase read *"that host is the `QAction`"* — stricter than the decision itself — and **has been corrected**. **The stated cost:** a widget-hosted chord no longer follows a rebinding, because `_apply_shortcut_bindings` only walks menu actions. Also: `Ctrl+Shift+R` was verified free across all six binding mechanisms and is platform-uniform — **no Qt `StandardKey` binds any chord on the R key on either scheme** (Refresh is `F5` on both), so there was nothing to bind-or-suppress under DEC-015.
+
+**Ledger note for whoever finishes this:** `docs/KEYBINDINGS.md` now exists and is verified by `tests/test_keybindings_ledger.py`, whose Reserved-column set-equality **already caught `Ctrl+Shift+R` missing a row during this merge**. Any further reservation change must edit the ledger in the same commit.
 **Reported:** 2026-08-10
 **Report (verbatim):** "DDL Objects and DDL Explorer has no refresh button, therefore when applying changes, we need to close the tab and reopen again to reload.\n1. There should be a menupoint in Database to \"Reload DDL\",\n2. the same should be added to right click menu wherever in DDL Objects\n3. should also be triggered by Ctrl+Shift+R from the DDL Explorer Viewing pane (readonly editor tab)."
 
@@ -6088,7 +6100,7 @@ after the fix lands: update those references to `File ▸ Project Status…`, an
 
 ---
 ## BUG-063: Sandbox SQL Console has no "Format Selection" context-menu item — Ctrl+Alt+F is chord-only there, contradicting DEC-012's classification and three spec assertions
-**Status:** OPEN
+**Status:** RESOLVED (`a9efb67`). Verified in the tree 2026-08-10 — the spec was right and the code was wrong, as triaged. `SqlConsolePanel` now builds a context menu on top of `self.editor.createStandardContextMenu()` and adds the verbatim `Format Selection` item wired to `self.format_selection` (`ui/sql_console_panel.py:649-651`, documented at `:634` as the gesture's *second, CLICK-ONLY host*). The action carries **no** `setShortcut`, so `Ctrl+Alt+F`'s single keyboard host remains the panel's `QShortcut` (DEC-012); that absence is asserted, not assumed — `tests/ui/test_sql_console_panel.py:633` (`assert action.shortcut().isEmpty()`, under the `BUG-063` block opened at `:578`). Both lying comments are fixed (`:512`, `:520`).
 **Reported:** 2026-08-10
 **Report (verbatim):** "Bug report from `spec-maintainer`'s harmonization pass while folding FQ-033 into `docs/superpowers/CONSOLIDATED_SPEC.md` §18.4. This is a **code-wrong / spec-right** finding: the spec asserts a user-visible command that does not exist. […] `pgtp_editor/ui/sql_console_panel.py` **builds no context menu at all.** […] Its Format Selection gesture is therefore **the `Ctrl+Alt+F` `QShortcut` only** […] **DEC-012 (ANSWERED, `docs/DECISION_QUEUE.md`) rests on this command form existing.** […] the fix direction the spec implies is **add the context-menu item to `SqlConsolePanel`**, matching the DDL object tab's shape (label verbatim `Format Selection`, enabled only with a selection […]). Please verify that is the right call rather than assuming it."
 
@@ -6123,7 +6135,7 @@ Secondary source of the drift, in code: the comment block at `sql_console_panel.
 ---
 ## BUG-064: `Undo`/`Redo` are TWO commands wearing ONE name — the DEC-012 report is half right: the chord has one host, but the menu twin means something different and its row in Customize Shortcuts cannot reach the chord
 **Renumbered:** this entry was originally appended as **BUG-063** on 2026-08-10 and moved to **BUG-064** on 2026-08-10. Two `bug-triager` instances ran concurrently and neither could see the other's append, so both claimed 063. The other 063 (the Sandbox SQL Console "Format Selection" entry, immediately above) keeps the number because `CONSOLIDATED_SPEC.md` already cites BUG-063 for it in four places (§18.4 status banner, §26 Format-Selection parenthetical, §27 `Ctrl+Alt+F` row, §8 DEC-012 bullet). **An external reference to "BUG-063 undo/redo" means THIS entry, BUG-064.**
-**Status:** OPEN
+**Status:** RESOLVED (`a9efb67`). Verified in the tree 2026-08-10: the History menu's two entries are renamed to `Undo Project Edit` / `Redo Project Edit` (`ui/main_window.py:2573`, `:2576`, docstring at `:2541`) — **named apart rather than merged**, per this triage, because they are a project-scoped command and not the menu twin of the editor chord. **Both alias tables moved in the same commit**, so nothing pinned or rebound against the old names breaks: `ui/toolbar_registry.py:159` (`RENAMED_ID_ALIASES`, with the rename recorded at `:81`/`:89`) and the `RESERVED_BINDINGS` reasons in `ui/shortcut_registry.py:222`/`:227`, which now say in so many words that the project-wide command *is* `History ▸ Undo Project Edit` and *is* rebindable. `xml_editor.undo_requested` is re-pointed to the scoped slot `MainWindow._undo_raw_xml_history` (`ui/main_window.py:1212`), closing the latent BUG-048 re-opener; the warning against repeating that mistake is left at `:5342`. `tests/ui/test_history_wiring.py:382-383` asserts both actions' shortcuts are empty.
 **Reported:** 2026-08-10
 **Report (verbatim):** "`Undo` and `Redo` are hosted twice, in violation of DEC-012 — the rule the owner set for exactly this shape. `History ▸ Undo` and `History ▸ Redo` are menu actions with no `setShortcut` (`main_window.py:2502-2507`), wired to `self._undo`/`self._redo`. Their chords live in separate window-level `QShortcut`s (`:1179-1182`) wired to different slots — `_undo_from_shortcut`/`_redo_from_shortcut`. So one command has two keyboard-reachable hosts and two distinct entry points."
 
