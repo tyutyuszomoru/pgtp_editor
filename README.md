@@ -49,7 +49,7 @@ The app opens on a **launcher** offering its three modes — **Standalone** (a `
 
 ### Generation, PHP and diagnostics
 
-- **Generate PHP…** runs the vendor CLI asynchronously, streaming its log into the Activity Log. **panGen** and **rePHPgen (Analyze Gap)** shell out to the sibling `re_phpgen` project — a separate parity-first reverse-engineering effort — to produce a masked-parity gap report. The suite runs without either the vendor executable or the `re_phpgen` checkout present.
+- **Generate PHP…** runs the vendor CLI asynchronously, streaming its log into the Activity Log. **panGen** and **rePHPgen (Analyze Gap)** shell out to the sibling `re_phpgen` project — a separate parity-first reverse-engineering effort — to produce a masked-parity gap report. The vendor generator is a Windows executable; panGen is not, and runs on Windows and Linux alike. The suite runs without either the vendor executable or the `re_phpgen` checkout present.
 - **PHP file editing** with `php -l` linting, on demand or on save.
 - **MCP server** (`Tools ▸ Start MCP Server`, or headless `--mcp`): six read-only tools exposing the project model and database introspection.
 - **Debug mode** (`--debug` / `PGTP_EDITOR_DEBUG=1`): a full-detail trace log plus always-on crash capture; **Help ▸ Open Log Folder**.
@@ -70,7 +70,7 @@ Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/t
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q -n 10
 
-6287 passing / 45 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
+6343 passing / 45 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
 
 **Windows release:** `python optimized_build.py` produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`; package it with `docs/installer.iss` (Inno Setup).
 
