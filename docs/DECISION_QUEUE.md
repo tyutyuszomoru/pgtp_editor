@@ -2344,7 +2344,40 @@ also lets `spec-maintainer` move §29's second FQ-034 item into §8's rung table
 
 ## DEC-260810193637 — Does Command mode leave `Ctrl+D` / `Ctrl+K` / `Ctrl+U` as the app's line-editing gestures, or must they be freed for a later vim binding?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: FREED in Command mode — consumed and INERT.** Command mode consumes all three and does nothing
+  with them, **reserving them for later vim scrolling**. So **the same keystroke deletes a line in Edit mode
+  and is inert in Command mode.** The owner went **against the recommendation**, which was to keep them as
+  the app's gestures in both modes.
+- **This is a QUALIFICATION of `DEC-260810143600`, not a reversal, and the distinction is the record's.**
+  The three chords **stay bound, reserved and app-implemented at all six surfaces in Edit mode**; Windows
+  keeps the three gestures it gained in `55c2538`; `apply_editor_operation` remains their one implementation
+  and every boundary answer in its docstring still governs. **Only Command mode declines them.**
+  `DEC-260810143600` therefore gets **no `SUPERSEDED BY` line** — it is narrowed in one mode, not overturned.
+- **Consequence 1 — the decline lives in `apply_editor_operation` once, not in six `eventFilter`s.** Six
+  copies of a mode test is six chances to drift, which is the same argument that centralised these chords
+  into one function to begin with. `EDITOR_CHORDS` keeps classifying all three identically at all six
+  surfaces: **what is mode-conditional is the APPLICATION, not the classification.** `PASTE` is untouched —
+  the ruling freed exactly three operations, so `Ctrl+V` and `Ctrl+Shift+Insert` keep pasting in Command mode.
+- **Consequence 2 — the mode-dependent silence is a STATED, OWNER-ACCEPTED EXCEPTION to FQ-023/DEC-013.**
+  A swallowed keystroke that does nothing and says nothing is normally exactly what those forbid. The owner
+  **accepted the stated cost verbatim: a mode-dependent hole with no visible reason.** So **a future sweep
+  meeting an inert `Ctrl+U` in Command mode closes against this paragraph rather than re-filing a swallowed
+  keystroke.** The only mitigation is the mode indicator, which is the one thing on screen explaining why
+  the key did nothing.
+- **Owner's reasoning:** the vim vocabulary's completeness outweighs keeping three chords uniform across
+  modes — the same weighting that decided `DEC-260810193638` and `DEC-260810193639`. See *the pattern across
+  all three*, below.
+- **Unblocks:** §8's vim block stating the freeing as a rule (**folded, `50fe22b`**, at
+  `CONSOLIDATED_SPEC.md` *"`Ctrl+D` / `Ctrl+K` / `Ctrl+U` are FREED in Command mode"*, ~:4090); the
+  `apply_editor_operation` refusal branch; and **`docs/KEYBINDINGS.md` owes the three rows a Notes amendment**
+  (their behaviour is now mode-conditional). No `RESERVED_SEQUENCES` change, so no ledger-test breakage.
+- **⚠ RECORDING GAP (2026-08-10).** This answer was given, and folded into the spec (**`50fe22b`**), **hours
+  before it was written here** — the answering session never dispatched `owner-decision`, so the entry still
+  read `OPEN` while the spec already stated the ruling as settled design. That is precisely the
+  *"decision believed filed"* failure the last pass wrote a rule about (§29's *Filing history* note), in the
+  mirror image: not a decision believed filed, but an **answer believed recorded**. **The rule generalises:
+  the queue is the record, and a ruling that exists only in the spec is a ruling this file will re-ask.**
 - **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-032 (vim editing mode) into
   `CONSOLIDATED_SPEC.md` §8 as target design
 - **Blocks:** nothing. None of the three chords is in FQ-032's v1 command set, so there is **no defect
@@ -2399,7 +2432,41 @@ recommendation.
 
 ## DEC-260810193638 — Is vim's `Ctrl-R` redo dropped PERMANENTLY, or merely deferred?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: neither — `Ctrl+R` is built, as COMMAND-MODE-ONLY redo.** In Command mode `Ctrl+R` is redo. **Edit
+  mode leaves it unbound as redo**, keeping its existing meaning (focus the Replace field), so **redo is not
+  reachable by `Ctrl-R` while typing**. **`Ctrl+Y` remains the app's redo everywhere** (DEC-015, unchanged).
+  Also **against the recommendation**, which was to drop it permanently.
+- **This makes `Ctrl+R` the app's FIRST MODE-CONDITIONAL CHORD** — a **fourth shape cutting across §27's
+  three states** (**bound** · **reserved** · **no default, freely assignable**). The owner's *"not licence for
+  others"* is **binding**: **any second mode-conditional chord is a new decision**, not an extension of this
+  one. Do not cite this entry as precedent for `Ctrl+V` block-visual or anything else.
+- **Consequence 1 — it REQUIRES a `ShortcutOverride` interposer.** `Ctrl+R` is a `QShortcut`
+  (`find_replace_bar.install_focus_shortcuts`, `WidgetWithChildrenShortcut`, six `FindReplaceBar` hosts plus
+  the caption panel's own pair), and **a `QShortcut` outranks `keyPressEvent`** — so Replace-focus would
+  otherwise win and Command mode could never see the chord. The only mechanism is **accepting the
+  `ShortcutOverride` event while Command mode holds**, which is the idiom the six surfaces already use for
+  `Ctrl+Shift+Z`. This **corrects the spec's earlier claim that no event filter was needed in v1**, and it
+  re-opens the queue entry's headline steal/restore risk exactly as FQ-032 stated it.
+- **Consequence 2 — the single mode-reset path becomes a CORRECTNESS GUARANTEE, not tidiness.** While Command
+  mode holds, **Replace-focus is dead on that editor.** A mode left set — a missed `focusOutEvent`, a
+  read-only transition, a document swap — is a **silently broken `Ctrl+R`** with nothing on screen saying why
+  but the indicator. **The spec therefore requires a test per exit trigger, all six** (insert-entry command ·
+  focus loss · buffer becoming read-only · document swap · a focus-changing `:` command · tab switch),
+  each asserting Replace-focus is restored.
+- **Also owed:** `Ctrl+R` stays reserved, and its `RESERVED_SEQUENCES` reason must now state **both**
+  meanings — *"focuses the Replace field"* alone is half the truth, and a user refused a chord is owed the
+  real reason. `Ctrl+F` is untouched in both modes; no other find or clipboard chord is claimed.
+- **Owner's reasoning:** *do not withdraw an existing capability* — here, do not withdraw the vim redo
+  reflex — with the vim vocabulary's completeness weighed above cross-mode uniformity. See *the pattern
+  across all three*, below.
+- **Unblocks:** §8's Mode-D restatement rewritten from *"`Ctrl-R` is not built, do not implement it"* to the
+  mode-conditional rule (**folded, `50fe22b`**, ~:4114 and the v1 command-set table ~:4173); the
+  `ShortcutOverride` branch; the six exit-trigger tests; and closing FQ-032's `Ctrl-R` item as **in scope**
+  rather than as future work.
+- **⚠ RECORDING GAP (2026-08-10).** Answered and folded into the spec (**`50fe22b`**) before being written
+  here; the answering session did not dispatch `owner-decision`, so this entry read `OPEN` while the spec
+  stated the ruling as settled. See the same note on `DEC-260810193637`.
 - **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-032 into `CONSOLIDATED_SPEC.md` §8
 - **Blocks:** nothing. That `Ctrl-R` is **not built in v1** already follows from what shipped, and the spec
   has restated it that way. What is open is only whether it is ever revisited.
@@ -2445,7 +2512,44 @@ and §29's three FQ-032 items. DEC-015 is the recorded ruling that `Ctrl+Y` is r
 
 ## DEC-260810193639 — Is the vim layer INACTIVE in `CodeEditorDialog` (the "Edit code…" PHP/JS event-handler dialog)?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-10)
+- **Answer: no — `CodeEditorDialog` DOES get Command mode**, with a **mode indicator and an exit hint added
+  to the dialog**. Also **against the recommendation**, which was that the layer be inactive there.
+- **The chrome is LOAD-BEARING, NOT COSMETIC — it is the condition the ruling rests on.** FQ-032's entire
+  safety argument is that **the indicator plus the exit hint is the ONLY guard** for someone who enters
+  Command mode by accident. **Shipping the mode there without them ships the version the owner declined.**
+  So the chrome is a **precondition**, not a follow-up: an implementation that lands Command mode in that
+  dialog and defers the indicator has not implemented this ruling.
+- **It becomes a THIRD `ModeIndicator` surface** — the first **outside the main window** and the first **not
+  driven by `MainWindow._refresh_mode_indicator()`**, which the dialog cannot reach. It renders **the
+  editing-mode segment only** (`Edit`, or `Command — press i to type`), not major/minor modes. This **applies**
+  §7's one-source-of-truth rule rather than excepting it: §7's accessor answers major and minor, while the
+  **editing mode's source of truth is the editor itself**, so a local render of a local fact is not a rival
+  indicator. §7's *"two surfaces, one call"* framing is amended.
+- **⚠ TWO COSTS THE RULING DID NOT NAME — flagged in the spec and carried here, not decided.**
+  1. **`Esc` no longer cancels that dialog.** It was **its only keyboard cancel** since `Ctrl+S`/`Ctrl+W` were
+     removed there on 2026-08-09. From Edit mode `Esc` now enters Command mode; from Command mode it clears
+     pending state and stays. **Cancel survives via the button box and the window close** (and `Return` still
+     accepts), so nothing is trapped, but a keyboard-only user loses a gesture. **The ruling's stated reason
+     was the accidental-entry risk, not this** — the two are different costs, which is why this is recorded
+     as a flag. A **two-press escape** (`Esc` in Command mode with nothing pending falling through to the
+     dialog's reject) would restore it and is the obvious candidate, but it is vim-inauthentic and is **not
+     specified**. This is the one genuinely live item left by the FQ-032 fold.
+  2. **`:` is unavailable in that dialog, and must SAY SO.** The palette's namespace **is** the menu tree
+     (`collect_menu_commands()`); a menu-less dialog has no tree to derive from. Per refuse-don't-guess it
+     **states that** rather than opening an empty palette — an empty command line is the dead-control posture
+     §7 forbids. Every other Command-mode gesture works there normally.
+- **Owner's reasoning:** *do not withdraw an existing capability* — do not deny one editable surface the
+  editing vocabulary every other editable surface has — with the accidental-entry risk answered by the
+  chrome rather than by exclusion. See *the pattern across all three*, below.
+- **Unblocks:** §27's `Escape` row 6 corrected (`CodeEditorDialog` no longer reaches it) and its
+  *"Return / Escape — OK / Cancel"* row for that dialog corrected; §8's *"The dialog's new chrome"* block
+  (**folded, `50fe22b`**, ~:4025); the FQ-032 implementation knowing `VimModeMixin` installs at this host too;
+  and a `ModeIndicator` render path that does not depend on `MainWindow`. **`manual-maintainer` owes the
+  dialog's `Esc`-cancel change**, since the manual currently describes `Escape` as that dialog's cancel.
+- **⚠ RECORDING GAP (2026-08-10).** Answered and folded into the spec (**`50fe22b`**) before being written
+  here; the answering session did not dispatch `owner-decision`, so this entry read `OPEN` while the spec
+  stated the ruling as settled. See the same note on `DEC-260810193637`.
 - **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-032 into `CONSOLIDATED_SPEC.md` §8
 - **Blocks:** nothing in the rest of FQ-032 — but it blocks that dialog specifically: if the layer is active
   there and nobody notices, the dialog ships with one fewer exit than it has today.
@@ -2481,3 +2585,28 @@ is off, alongside "read-only"), and the FQ-032 implementation knowing at which h
 `VimModeMixin`.
 
 **Cross-references:** `CONSOLIDATED_SPEC.md` §8's `Esc` ordering (~:3918) and §29's three FQ-032 items.
+
+---
+
+## The pattern across `DEC-260810193637` / `-38` / `-39` — an assumption, not something to re-argue
+
+**Three of three recommendations lost.** All three FQ-032 decisions were answered against
+`owner-decision`'s recommendation on the same day, and **two of them (`-38`'s `Ctrl-R` and `-39`'s dialog)
+were argued from *"do not withdraw an existing capability"*** — a vim reflex in one case, the editing
+vocabulary of one editable surface in the other. **The owner weighed the vim vocabulary's completeness higher
+both times.**
+
+**Record it as an assumption for future vim questions.** A filing that recommends *narrow the vim layer to
+keep the app uniform* is arguing against a preference the owner has now stated three times, and should say so
+and weigh accordingly rather than re-deriving the trade-off per chord.
+
+**The per-chord exception `DEC-260810193638` requires stands above this pattern.** *"Not licence for others"*
+means a **second mode-conditional chord is still its own decision** — the pattern predicts how the owner is
+likely to weigh it, and does not answer it. Predicting an answer is not having one.
+
+**The mirror-image process failure, recorded once.** All three were **answered, folded into
+`CONSOLIDATED_SPEC.md` (`50fe22b`), and left reading `OPEN` here** because the answering session never
+dispatched `owner-decision`. The previous pass had just written a rule against a *decision believed filed*;
+this is an *answer believed recorded*, and it happened immediately after. **Both failures have one shape: a
+queue state inferred from work done elsewhere.** The queue is the record — a ruling that lives only in the
+spec is a ruling this file will re-ask, and a sweep would have re-put all three to the owner as open.
