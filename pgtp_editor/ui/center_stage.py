@@ -56,6 +56,18 @@ class DraftFragmentTab(QWidget):
         #: The source DB table/view the fragment was generated from.
         self.table_name = table_name
         self.editor = XmlEditor()
+        # BUG-049: `XmlEditor.keyPressEvent` CONSUMES Ctrl+Z / Ctrl+Y /
+        # Ctrl+Shift+Z and re-emits them as `undo_requested`/`redo_requested`,
+        # so an unwired instance swallows the key forever and silently -- the
+        # native undo it replaced never sees it either. A draft has no snapshot
+        # history (and no save path or dirty concept at all), so the routing is
+        # the Edit XSD tab's precedent verbatim: straight back into the editor,
+        # where per-keystroke native undo is the right and only semantics.
+        # Wired HERE and not in `MainWindow` because drafts are created
+        # dynamically and multiply, so a self-contained tab cannot be forgotten
+        # by the next caller.
+        self.editor.undo_requested.connect(self.editor.undo)
+        self.editor.redo_requested.connect(self.editor.redo)
         self.editor.setPlainText(text)
         self.find_replace_bar = FindReplaceBar(self.editor)
         layout = QVBoxLayout(self)

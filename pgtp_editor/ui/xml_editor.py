@@ -430,6 +430,13 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
     # shadow the window-level snapshot undo; keyPressEvent consumes these keys
     # and routes them to MainWindow's document-level snapshot undo/redo instead
     # (Sub-project C, C1).
+    #
+    # EVERY host MUST connect both signals (BUG-049). The key is consumed here
+    # whether or not anyone is listening, so an unwired instance does not fall
+    # back to native undo -- it swallows Ctrl+Z forever and silently, which is
+    # exactly what the FQ-006 draft fragment tab did until it was wired. A host
+    # with no snapshot history connects them straight back to `self.undo` /
+    # `self.redo` (the Edit XSD tab and the draft tab both do).
     undo_requested = Signal()
     redo_requested = Signal()
     # Emitted when the user picks "Go To XSD" from the editor's right-click

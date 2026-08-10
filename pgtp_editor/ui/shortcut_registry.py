@@ -217,6 +217,9 @@ RESERVED_SEQUENCES: dict[str, str] = {
               "action (§27)",
     "Ctrl+Y": "project history Redo — a window-scoped shortcut, not a menu "
               "action (§27)",
+    "Ctrl+Shift+Z": "project history Redo, the second chord — answered inside "
+                    "every XML editor's own key handling, so a command moved "
+                    "here would only work while no editor has focus (§27)",
     # §27/§15, FQ-016/FQ-017: six per-tab `WidgetWithChildrenShortcut` pairs
     # (`find_replace_bar.install_focus_shortcuts`) plus the caption panel's own
     # pair. A window-level menu action on either key would be *ambiguous*
@@ -230,8 +233,9 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # enumerate them and this dialog has no row to move them from.
     "F3": "Find Next — a window-level command with no menu entry (§27)",
     "Ctrl+L": "Go To XSD — a window-level command with no menu entry (§27)",
-    "Ctrl+Alt+F": "Format Selection — a context-menu command, not a menu-bar "
-                  "action (§27)",
+    "Ctrl+Alt+F": "Format Selection — a context-menu command plus a shortcut "
+                  "inside the Sandbox SQL Console and the DDL object tabs; "
+                  "there is no menu-bar action to move (§27)",
     # FQ-030's four editor gestures. Two are handled inside `CodeEditor`'s own
     # key handling and two inside the SQL panels', so none of them is a QAction
     # the menu walk could enumerate — exactly the situation Ctrl+Alt+F is in,

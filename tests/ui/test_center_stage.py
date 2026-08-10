@@ -1,3 +1,6 @@
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent, QTextCursor
+
 from pgtp_editor.ui.center_stage import (
     DRAFT_TAB_KEY_KIND,
     CenterStage,
@@ -704,3 +707,59 @@ def test_open_php_file_tab_lint_seams_reach_an_untitled_buffer_too(qtbot):
 
     assert tab.lint_service is service
     assert tab.lint_on_save is False
+
+
+# --- BUG-049: a draft's Ctrl+Z is a live key, not a swallowed one ------------
+
+
+def _press(editor, key, mods=Qt.KeyboardModifier.ControlModifier):
+    """Drive `XmlEditor.keyPressEvent` directly — the draft's editor CONSUMES
+    the undo chords there and re-emits them, so this is the layer under test."""
+    editor.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, key, mods))
+
+
+def test_a_draft_tabs_ctrl_z_undoes_its_own_edit(qtbot):
+    """`XmlEditor` routes Ctrl+Z to `undo_requested` instead of its native undo,
+    so an unwired instance swallows the key forever and silently. A draft has no
+    snapshot history (no save path, no dirty concept), so the signal goes
+    straight back into the editor — the Edit XSD tab's precedent."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    tab = stage.open_draft_fragment_tab("page", "pr.customers", "<Page/>")
+    tab.editor.setFocus()
+    cursor = tab.editor.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    tab.editor.setTextCursor(cursor)
+    tab.editor.insertPlainText("<Extra/>")
+    assert tab.toPlainText() == "<Page/><Extra/>"
+
+    _press(tab.editor, Qt.Key.Key_Z)
+
+    assert tab.toPlainText() == "<Page/>"
+
+    # ...and Ctrl+Y puts it back, as does the second redo chord.
+    _press(tab.editor, Qt.Key.Key_Y)
+    assert tab.toPlainText() == "<Page/><Extra/>"
+    _press(tab.editor, Qt.Key.Key_Z)
+    assert tab.toPlainText() == "<Page/>"
+    _press(
+        tab.editor,
+        Qt.Key.Key_Z,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+    )
+    assert tab.toPlainText() == "<Page/><Extra/>"
+
+
+def test_every_draft_gets_its_own_wiring(qtbot):
+    """Wired in the TAB, not in MainWindow: drafts are created dynamically and
+    multiply, so a self-contained tab cannot be forgotten by the next caller."""
+    stage = CenterStage()
+    qtbot.addWidget(stage)
+    first = stage.open_draft_fragment_tab("page", "t", "a")
+    second = stage.open_draft_fragment_tab("detail", "t", "b")
+
+    for tab, seed in ((first, "a"), (second, "b")):
+        tab.editor.insertPlainText("X")
+        assert tab.toPlainText() != seed
+        _press(tab.editor, Qt.Key.Key_Z)
+        assert tab.toPlainText() == seed

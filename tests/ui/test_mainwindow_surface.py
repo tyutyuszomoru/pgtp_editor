@@ -172,6 +172,10 @@ EXPECTED_HOST_SURFACE = {
     "_history_action",
     "_history_entries",
     "_history_jump",
+    # BUG-048: the project history writes only where it may. The two
+    # `*_from_shortcut` slots scope the window Ctrl+Z/Ctrl+Y to a writable Raw
+    # XML tab; the lock helpers state the reason when it is refused.
+    "_history_write_refused",
     "_identity_in_schema",
     "_import_pgtp_connection_into_target",
     "_inspect_sandbox_provisioning",
@@ -247,9 +251,11 @@ EXPECTED_HOST_SURFACE = {
     "_prompt_target_password",
     "_properties_action",
     "_provision_new_project_sandbox",
+    "_raw_xml_history_lock_reason",
     "_raw_xml_panel_action",
     "_redo",
     "_redo_action",
+    "_redo_from_shortcut",
     "_redo_shortcut",
     "_ref_for_created_object",
     "_refresh_ddl_drift_markers",
@@ -351,6 +357,7 @@ EXPECTED_HOST_SURFACE = {
     "_trigger_relation_for",
     "_undo",
     "_undo_action",
+    "_undo_from_shortcut",
     "_undo_shortcut",
     "_update_title",
     "_validate_project_action",

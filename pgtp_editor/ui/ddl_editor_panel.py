@@ -26,7 +26,7 @@ live/synthesized: the checked-out, editable form lives in `ddl/*.sql` files
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from pgtp_editor.ui.code_editor import CodeEditor
@@ -141,7 +141,43 @@ class EditorPanel(QWidget):
                 return span
         return None
 
+    #: Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, claimed AND answered here (BUG-048).
+    #: Shaped after `DdlObjectEditorPanel.eventFilter`'s §18.5 carve-out 1, for
+    #: the same hazard at the sibling site nobody filtered: a read-only
+    #: `QPlainTextEdit` does not claim the `ShortcutOverride` for undo/redo, so
+    #: without this the window-level Ctrl+Z QShortcut fired here and silently
+    #: reverted the **Raw XML project buffer** — a different document than the
+    #: one on screen. The object tab routes the key into its own undo stack;
+    #: this buffer is synthesized by `build_ddl_text` and read-only by design
+    #: (§18.1), so there is no stack to route to and the honest answer is to
+    #: state the reason (FQ-023) rather than to leave a dead key.
+    _UNDO_REDO_REFUSAL = "this buffer is read only — there is nothing to undo here"
+
+    def _is_undo_redo_chord(self, event) -> bool:
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        shift = Qt.KeyboardModifier.ShiftModifier
+        mods = event.modifiers()
+        key = event.key()
+        if mods == ctrl and key in (Qt.Key.Key_Z, Qt.Key.Key_Y):
+            return True
+        # Ctrl+Shift+Z is the second redo chord (BUG-050).
+        return mods == (ctrl | shift) and key == Qt.Key.Key_Z
+
     def eventFilter(self, obj, event) -> bool:
+        if (
+            obj is self.editor
+            and event.type()
+            in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
+            and self._is_undo_redo_chord(event)
+        ):
+            if event.type() == QEvent.Type.ShortcutOverride:
+                # Claiming the sequence is what stops the window shortcut;
+                # answering the KeyPress is what stops the silence. Both halves
+                # are required — writing only the second changes nothing.
+                event.accept()
+            else:
+                self.editor.report_refusal(self._UNDO_REDO_REFUSAL)
+            return True
         if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
             menu = self._build_context_menu_at(event.pos())
             menu.exec(event.globalPos())

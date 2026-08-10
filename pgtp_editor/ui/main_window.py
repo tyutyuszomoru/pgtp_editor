@@ -1136,10 +1136,18 @@ class MainWindow(QMainWindow):
             self._on_editor_block_count_changed
         )
 
+        # BUG-048: the window shortcut is SCOPED, the shared `_undo`/`_redo` are
+        # not. A read-only `QPlainTextEdit` does not claim the `ShortcutOverride`
+        # for Ctrl+Z/Ctrl+Y (it has no undo to offer), so this window shortcut
+        # fired while the DDL Explorer, the Sandbox SQL Console's results, a dock
+        # or a read-only Raw XML editor had focus -- and rewrote the Raw XML
+        # project buffer, a document the user was not even looking at. The
+        # shortcut is deliberately NOT disabled (§18.5's ledger row forbids that
+        # shape); it is routed through a scope check instead.
         self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-        self._undo_shortcut.activated.connect(self._undo)
+        self._undo_shortcut.activated.connect(self._undo_from_shortcut)
         self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
-        self._redo_shortcut.activated.connect(self._redo)
+        self._redo_shortcut.activated.connect(self._redo_from_shortcut)
         # When the Raw XML editor has focus its native undo would shadow the
         # window shortcuts; the editor consumes Ctrl+Z/Ctrl+Y in keyPressEvent
         # and routes them here instead. Both paths call the same _undo/_redo,
@@ -1896,8 +1904,64 @@ class MainWindow(QMainWindow):
 
     # -- Snapshot history: undo/redo/jump (Sub-project C) --------------------
 
+    # -- BUG-048: who may drive the project history, and from where ----------
+
+    def _raw_xml_history_lock_reason(self) -> str | None:
+        """Why a project-history write must be refused right now, or None.
+
+        The Raw XML buffer is the ONLY document snapshot history describes, so a
+        history write is legitimate exactly while that buffer is writable. When
+        it is held read-only -- Caption Mode, or FQ-021's Compare/Merge lock,
+        which is a **data-loss guard** and not a hint -- undo/redo would walk
+        straight through the lock and rewrite the buffer under the user."""
+        stage = self.center_stage
+        if not stage.xml_editor.isReadOnly():
+            return None
+        reasons = sorted(stage.raw_xml_read_only_reasons())
+        joined = " + ".join(reasons) if reasons else "read-only mode"
+        return f"Raw XML is read only in {joined} — project history cannot change it."
+
+    def _history_write_refused(self) -> bool:
+        """True (having stated the reason) if the history must not write now."""
+        reason = self._raw_xml_history_lock_reason()
+        if reason is None:
+            return False
+        _log.info("history: refused — %s", reason)
+        self.statusBar().showMessage(reason, 4000)
+        return True
+
+    def _undo_from_shortcut(self) -> None:
+        """The window `Ctrl+Z` shortcut's slot — scoped, unlike `_undo`.
+
+        Fires only when the Raw XML tab is current and writable. Anywhere else
+        the key belongs to whatever has focus, and the tabs that hold a
+        read-only editor state that themselves (`EditorPanel.eventFilter`,
+        `DdlObjectEditorPanel.eventFilter`) rather than leaving a dead key."""
+        if self.center_stage.currentIndex() != self.center_stage.raw_xml_tab_index:
+            return
+        if self._history_write_refused():
+            return
+        self._undo()
+
+    def _redo_from_shortcut(self) -> None:
+        """The window `Ctrl+Y` shortcut's slot — see `_undo_from_shortcut`."""
+        if self.center_stage.currentIndex() != self.center_stage.raw_xml_tab_index:
+            return
+        if self._history_write_refused():
+            return
+        self._redo()
+
     def _apply_history_text(self, text: str) -> None:
-        """Set the editor to `text` without recording a new snapshot."""
+        """Set the editor to `text` without recording a new snapshot.
+
+        BUG-048's second, independent cause closed: `setPlainText` is a
+        `QTextCursor`-level write that `setReadOnly(True)` does NOT gate, so
+        every caller had to be trusted to check the lock. This is the last-ditch
+        check that no path -- shortcut, History menu, the jump list, an
+        `XmlEditor` re-emission -- can write a locked buffer."""
+        if self.center_stage.xml_editor.isReadOnly():
+            _log.info("history: apply refused — Raw XML is read only")
+            return
         self._restoring = True
         try:
             self.center_stage.xml_editor.setPlainText(text)
@@ -1905,12 +1969,20 @@ class MainWindow(QMainWindow):
             self._restoring = False
 
     def _undo(self) -> None:
+        """Snapshot undo. Deliberately NOT tab-scoped: the History menu's
+        `Undo` is an explicit, deliberate click that means "undo the project",
+        wherever the user is. It IS lock-scoped (see `_history_write_refused`)
+        — the read-only modes are data-loss guards, not view states."""
+        if self._history_write_refused():
+            return
         _log.info("history: undo")
         text = self._history.undo()
         if text is not None:
             self._apply_history_text(text)
 
     def _redo(self) -> None:
+        if self._history_write_refused():
+            return
         _log.info("history: redo")
         text = self._history.redo()
         if text is not None:
@@ -1925,6 +1997,8 @@ class MainWindow(QMainWindow):
         return list(reversed(self._history.edit_entries()))
 
     def _history_jump(self, index) -> None:
+        if self._history_write_refused():
+            return
         text = self._history.jump_to(index)
         if text is not None:
             self._apply_history_text(text)
@@ -2471,16 +2545,22 @@ class MainWindow(QMainWindow):
         method name: the two methods are genuinely different, not two
         implementations of one interface.
 
-        **The duplicate Ctrl+Shift+B handler, resolved (FQ-015 trap).**
-        `CodeEditor.keyPressEvent` also handles the chord. This action WINS
-        wherever it exists: Qt's shortcut map consumes the key event before it
-        reaches the focused widget, so a `CodeEditor`-hosting tab does not
-        double-handle (verified, not assumed). The editor-side handler is kept
-        on purpose — it is the only host for the chord in a `CodeEditorDialog`,
-        which has no menu bar, and it remains the reliable path under the
-        offscreen test platform where QShortcut activation is not guaranteed.
-        Both paths now land on the SAME editor, and the operation is idempotent,
-        so even a double delivery would be harmless.
+        **This action is the SOLE host of Ctrl+Shift+B on every tab**
+        (owner ruling, 2026-08-10 — BUG-046, superseding FQ-015's "duplicate
+        handler, measured then KEPT"). `CodeEditor.keyPressEvent` no longer
+        handles the chord, so it is hosted the same way every other shortcut is
+        and it is genuinely rebindable through `Customize Shortcuts…`. The one
+        other host is `CodeEditorDialog`'s own `QShortcut`, because that dialog
+        has no menu bar for this action to live in.
+
+        The retired premise, named so it is not re-derived: the duplicate was
+        justified by *"QShortcut activation is not guaranteed under the offscreen
+        test platform"*. That is measurably false — shortcuts DO activate under
+        `QT_QPA_PLATFORM=offscreen`. What fails is key delivery to a widget whose
+        top level was never `show()`n (no `windowHandle()`, so `QTest`/`qtbot`
+        posts the event straight at the widget and Qt's shortcut map never sees
+        it), and `qtbot.keyClick(widget, …)`, which bypasses the shortcut map
+        even on a shown window — send the key to `window.windowHandle()`.
         """
         editor = self._find_ui.active_selection_editor()
         select = getattr(editor, "select_enclosing_block", None) or getattr(
