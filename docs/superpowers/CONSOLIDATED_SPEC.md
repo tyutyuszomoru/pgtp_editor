@@ -46,10 +46,12 @@
 > dropping branch is dead in the current construction order and is correct defensive code. **The rule
 > itself is not refuted, but its STATUS is downgraded from settled ruling to PROPOSAL** — *a notice
 > belongs in the journal; a refusal must reach a surface the user is already looking at* — because
-> applying it to ~15 shipped refusals is a **feature, not a correction**. It is **OPEN with
-> `owner-decision`**, and §7 now records what that decision actually turns on: **FQ-023's three reference
+> applying it to ~15 shipped refusals is a **feature, not a correction**. It is **DEC-013, `OPEN`**, and
+> §7 now records what that decision actually turns on: **FQ-023's reference
 > implementations refuse three different ways** (`_report_gesture_unavailable` dual-routes,
-> `_refuse_sandbox_gesture` raises a `QMessageBox`, the rest journal only). **BUG-055 stays OPEN with its
+> `_refuse_sandbox_gesture` raises a `QMessageBox`, `CodeEditor.report_refusal` tiers a caret tooltip with
+> a durable row — **the mechanism DEC-013 would extend, not invent** — and the rest journal only).
+> **BUG-055 stays OPEN with its
 > scope reduced to two stale comments** (`:5795-5798`, `:3514-3518`), which are prose defects over correct
 > behaviour. §7's ⚠ block and its §18.5 twin are corrected in place; §18.5's narrower claims — that
 > `showMessage` paints nothing, that `timeout` is ignored, and that the surviving `4000` is a pre-FQ-028
@@ -1261,19 +1263,32 @@ below).
 > it draws is sound and the app already honours it in three places: **a notice reports what happened and
 > the journal is its right home; a refusal answers a gesture the user just made, so it should reach a
 > surface they are already looking at.** But it was recorded here as settled *because the risk had
-> materialized*, and it had not. Applying it uniformly would change **~15 shipped refusals**, which is a
-> **feature, not a correction**. It is **filed through `owner-decision` and OPEN at the time of writing**
-> (`docs/DECISION_QUEUE.md`); nothing here pre-empts that ruling.
+> materialized*, and it had not. Applying it uniformly would touch **up to ~15 shipped refusals**, which
+> is a **feature, not a correction**. It is **DEC-013 — *"Where must a refusal appear: is the journal
+> enough, or must it reach a surface the user is already looking at?"*, `Status: OPEN` in
+> `docs/DECISION_QUEUE.md`**; nothing here pre-empts that ruling.
+>
+> **The open question is HOW FAR TO EXTEND A MECHANISM THAT ALREADY EXISTS, not which policy to invent.**
+> `CodeEditor.report_refusal` → `show_hint(..., refusal=True)` (`ui/code_editor.py:596-625`) is a
+> **shipped implementation of the tiering** DEC-013 would generalize, and its docstring argues this exact
+> decision in miniature: *"A dock row alone would make a `Ctrl+Alt+E` that matched no snippet look like
+> nothing happened; a tooltip alone would vanish before it could be re-read."* Recorded because *"changes
+> ~15 shipped refusals"* reads as a larger undertaking than it is.
 >
 > **The genuinely unsettled thing, and the useful residue: FQ-023's own reference implementations
 > disagree with each other.** FQ-023 requires a gesture that cannot run to state *why* without saying
-> *where*, and the three shipped shapes answer *where* three different ways:
+> *where*, and the shipped shapes answer *where* three different ways:
 >
 > | Site | How the refusal surfaces |
 > |---|---|
-> | `_report_gesture_unavailable` (`ui/main_window.py:6415-6428`) | **dual-routes** — `_report_check_lines` to the Messages tab **and** `showMessage` |
+> | `_report_gesture_unavailable` (`ui/main_window.py:6415-6428`) | **dual-routes** — `showMessage` **and** a `_report_check_lines` row carrying `CHECK_PREFIX`, which `audit_router.py:135` maps to **`TO_RESULTS`** — the bottom-dock tab **titled `Messages`** since the FQ-028 title collided with the Sandbox SQL Console's genuine results grid (`audit_router.py:116-119`: the identifier keeps its spelling on purpose, *"a label is not a schema"*) |
 > | `_refuse_sandbox_gesture` (`:5785`) | raises a **`QMessageBox`** |
-> | the remaining ~15 | **journal only**, via the `showMessage` sink |
+> | `CodeEditor.report_refusal` (`ui/code_editor.py:596`) | **caret tooltip + `expansion_refused`** — the tiered shape above |
+> | the rest | **journal only**, via the `showMessage` sink |
+>
+> **Scale, as a bound rather than a count:** **38 `showMessage` call sites across `pgtp_editor/ui/`**, of
+> which BUG-055 identifies **~15 as refusals**. The `~15` has never been re-counted precisely and must not
+> be quoted as if it had been.
 >
 > That inconsistency is real, it is what the owner will be ruling on, and it is why the rule above is not
 > yet spec. **Whatever the ruling, §7's static-bar rule is not reopened**: `displayed_message() == ""`
@@ -6535,10 +6550,11 @@ required behavior:
 > **The refusal is NOT lost, and an earlier revision of this block wrongly said it was** (corrected
 > 2026-08-10). The sink is wired unconditionally and appends the row to the Activity Log panel
 > immediately; §7 traces the path call by call. What is genuinely open is whether a *refusal* should
-> additionally reach a surface the user is already looking at — a **proposal filed through
-> `owner-decision` and unresolved at the time of writing**, not a rule of this document. See §7's block
-> for the three inconsistent shapes FQ-023's own reference implementations ship, which is what that
-> decision turns on.
+> additionally reach a surface the user is already looking at — **DEC-013 (`Status: OPEN`,
+> `docs/DECISION_QUEUE.md`)**, a proposal and not a rule of this document. See §7's block for the
+> inconsistent shapes FQ-023's own reference implementations ship, which is what that decision turns on,
+> and for why it is an **extension of `CodeEditor.report_refusal`'s already-shipped tiering** rather than
+> a new policy.
 
 **2 — No sandbox button row in v1.** *Apply to Sandbox* / *Check* / *Check without applying* (and their
 menu twins — Database for Apply, `Parsing` for the two Checks since BUG-039) have their consumers in
