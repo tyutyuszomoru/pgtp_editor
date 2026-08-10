@@ -1268,3 +1268,60 @@ def test_session_apply_uses_the_shared_upsert_helper():
 
     _params, statements = executor.execute_calls[0]
     assert text_sha1("CREATE FUNCTION ...") in statements[1]
+
+
+# --- BUG-044 / DEC-008: the one-time cleanup of pre-fix alter rows ----------
+
+
+def _purge_statements():
+    from pgtp_editor.db.sandbox import purge_orphaned_alter_rows
+
+    executor = _FakeExecutor()
+    session = SandboxSession(
+        params=_SANDBOX_PARAMS, mode=SandboxMode.SCHEMA_ONLY, executor=executor
+    )
+    purge_orphaned_alter_rows(session)
+    assert len(executor.execute_calls) == 1
+    params, statements = executor.execute_calls[0]
+    assert params is _SANDBOX_PARAMS
+    return statements
+
+
+def test_purging_orphaned_alter_rows_is_one_delete_after_ensuring_the_table():
+    """The DELETE cannot fail on a sandbox that was never provisioned, so the
+    same `CREATE ... IF NOT EXISTS` statements run in front of it -- they create
+    nothing new and change no row."""
+    statements = _purge_statements()
+
+    assert len(statements) == 3
+    assert statements[0].startswith("CREATE SCHEMA IF NOT EXISTS")
+    assert statements[1].lstrip().startswith("CREATE TABLE IF NOT EXISTS")
+    assert statements[2].count("DELETE FROM") == 1
+
+
+def test_the_orphan_delete_is_scoped_to_both_halves_of_the_pre_fix_key():
+    """The scoping proof, in the one place it can be asserted without a
+    database: the predicate requires `kind = 'alter'` AND `object_name = ''`
+    together, and nothing else -- no schema, no table, no timestamp, and above
+    all no `OR`, which is the one edit that could widen it onto object rows."""
+    delete = " ".join(_purge_statements()[2].split())
+
+    assert "pgtp_editor_sandbox" in delete and '"applied"' in delete
+    assert delete.endswith("WHERE kind = 'alter' AND object_name = ''")
+    assert " OR " not in delete.upper()
+
+
+def test_no_row_this_version_writes_can_match_the_orphan_delete():
+    """Why the delete provably cannot eat a live row.
+
+    Half one -- `kind = 'alter'` is written by exactly one ref type
+    (`ui/main_window.py::AlterDdlRef`); no object row can carry it, which is
+    asserted against the real ref in `tests/ui/test_ddl_creation_wiring.py`.
+    Half two -- a post-fix alter row's `object_name` is `text_sha1` of the
+    statement, and that is never the empty string, not even for empty text.
+    """
+    from pgtp_editor.db.sandbox import text_sha1
+
+    for text in ("", "   ", "ALTER TABLE pr.invoice DROP COLUMN legacy;"):
+        assert len(text_sha1(text)) == 40
+        assert text_sha1(text) != ""

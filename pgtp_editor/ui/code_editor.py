@@ -739,17 +739,17 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         super().focusOutEvent(event)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        # Ctrl+Shift+B: bracket-select. Handled here (in addition to the
-        # QShortcut) so the behavior is reliably reachable when a key event is
-        # delivered directly to the editor, e.g. under the offscreen platform
-        # in tests where QShortcut activation is not guaranteed.
-        if (
-            event.key() == Qt.Key.Key_B
-            and event.modifiers()
-            == (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
-        ):
-            self.select_enclosing_brackets()
-            return
+        # NOTE (BUG-046, owner ruling 2026-08-10): Ctrl+Shift+B is NOT handled
+        # here. It is `Select ▸ Select Enclosing Block`'s QAction on every tab,
+        # and `CodeEditorDialog`'s own QShortcut in the menu-less dialog.
+        # `select_enclosing_brackets` is purely a slot. The duplicate branch
+        # that used to live here was justified by "QShortcut activation is not
+        # guaranteed under the offscreen platform", which is measurably FALSE:
+        # shortcuts do activate offscreen; what fails is key delivery to a
+        # widget that was never `show()`n (no `windowHandle()`, so QTest posts
+        # the event straight at the widget and the shortcut map is bypassed).
+        # A design that exists to satisfy the test harness rather than the
+        # product means the harness is what should change.
 
         # --- Template expansion (FQ-030) -----------------------------------
         #
@@ -778,9 +778,15 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
 
         # The two expansion gestures, in the `Ctrl+Alt+` editor-gesture family
         # Format Selection (`Ctrl+Alt+F`) established. Handled in the widget
-        # rather than as QShortcuts for the same reason that one is handled
-        # twice: QShortcut activation is not reliable under the offscreen
-        # platform the tests run on. SQL only -- the snippet set is plpgsql,
+        # rather than as QShortcuts because the whole family has NO menu
+        # command: these are widget *behaviours* (like auto-close brackets),
+        # not commands, so the widget is their one legitimate host. DEC-009
+        # decided this deliberately -- the defect DEC-004 ruled against was
+        # *two hosts for one gesture*, not *a widget answers a key*, and a
+        # gesture with no menu entry cannot have two hosts. They also depend on
+        # caret state and on `self._language`, which a window-level shortcut
+        # would have to reach back into the focused widget to discover.
+        # SQL only -- the snippet set is plpgsql,
         # and a `Ctrl+Alt+E` that expanded plpgsql into a PHP body would be a
         # bug, so in js/php these keys stay untouched.
         if self._language == "sql" and event.modifiers() == (
@@ -916,6 +922,26 @@ class CodeEditorDialog(QDialog):
         # OK and Cancel remain reachable by the button box, by `Return`/`Escape`
         # (Qt's own defaults for a QDialogButtonBox), and by the window's close
         # button, so nothing became unreachable.
+        #
+        # ONE key this dialog does own: `Ctrl+Shift+B` (bracket-select). It is
+        # `Select ▸ Select Enclosing Block` everywhere else, and this dialog has
+        # no menu bar to host that action, so the dialog hosts the chord itself
+        # (BUG-046). `WindowShortcut` — the dialog IS the window; never
+        # `ApplicationShortcut`, which would fight the MainWindow action. The
+        # reference is kept on `self` deliberately: a QShortcut whose only
+        # Python reference is dropped is garbage collected and stops working.
+        #
+        # Known limitation, deliberate: this is a literal `Ctrl+Shift+B` and
+        # does NOT follow a user rebinding of `Select ▸ Select Enclosing Block`
+        # (`MainWindow._apply_shortcut_bindings` only walks menu QActions).
+        # Making it follow means passing the resolved sequence in at both
+        # construction sites (`main_window._open_code_editor_dialog` and
+        # `activity_panel.open_viewer`, which has no MainWindow to ask).
+        self._select_enclosing_shortcut = QShortcut(QKeySequence("Ctrl+Shift+B"), self)
+        self._select_enclosing_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._select_enclosing_shortcut.activated.connect(
+            self._editor.select_enclosing_brackets
+        )
 
         # Open at 80% of the host (XML editor) window so there's room to work.
         self.setMinimumSize(480, 320)

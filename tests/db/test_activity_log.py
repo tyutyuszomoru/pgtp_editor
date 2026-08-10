@@ -8,6 +8,7 @@ DB-free -- real temp directories only, never writing outside `tmp_path`.
 import json
 from datetime import datetime, timedelta
 
+from pgtp_editor.db import activity_log as activity_log_module
 from pgtp_editor.db.activity_log import (
     ACTIVITY_FILENAME,
     FILE_VERB_MERGED,
@@ -23,7 +24,6 @@ from pgtp_editor.db.activity_log import (
     STATUS_ERROR,
     STATUS_SUCCESS,
     TIME_FORMAT,
-    VERB_APPLY_TARGET,
     VERB_RAN,
     ActivityEntry,
     ActivityLog,
@@ -39,6 +39,15 @@ from pgtp_editor.db.activity_log import (
     serialize_entries,
     timestamp_format,
 )
+
+# BUG-047: a local fixture payload, NOT an import from `db.activity_log`. The
+# apply verbs are gesture NAMES owned by `ui.ddl_object_editor::GESTURE_LABELS`
+# and are passed in by the `ui/` call sites; `db/` deliberately defines none, so
+# these tests spell one out rather than reaching across the layer for it.
+APPLY_VERB = "Apply to quality"
+
+#: The pre-BUG-047 spelling, still present in journals written by older builds.
+LEGACY_APPLY_VERB = "Apply to Target"
 
 # A long, multi-line DDL body: the realistic payload, and the reason previews
 # collapse whitespace before truncating.
@@ -149,7 +158,7 @@ def test_a_file_row_has_no_ddl_preview_and_a_success_row_no_error_preview():
 
 # --- JSONL round-trip --------------------------------------------------------
 def test_round_trip_preserves_the_full_ddl_and_the_full_error():
-    entry = _entry(verb=VERB_APPLY_TARGET, source=SOURCE_QUALITY_DB,
+    entry = _entry(verb=APPLY_VERB, source=SOURCE_QUALITY_DB,
                    status=STATUS_ERROR, error_full=LONG_ERROR)
     (restored,) = parse_jsonl(serialize_entries([entry]))
 
@@ -342,7 +351,7 @@ def test_the_store_is_a_sibling_of_settings_json(tmp_path):
 def test_append_creates_the_store_and_round_trips_through_disk(tmp_path):
     root = _project(tmp_path)
     first = _entry()
-    second = _entry(timestamp=AT + timedelta(minutes=2), verb=VERB_APPLY_TARGET,
+    second = _entry(timestamp=AT + timedelta(minutes=2), verb=APPLY_VERB,
                     source=SOURCE_QUALITY_DB, status=STATUS_ERROR,
                     error_full=LONG_ERROR)
 
@@ -383,7 +392,7 @@ def test_record_returns_the_entry_and_appends_it_to_the_displayed_log():
 
 def test_recording_an_error_implies_the_error_status():
     log = ActivityLog()
-    entry = log.record(SOURCE_QUALITY_DB, VERB_APPLY_TARGET, ddl=LONG_DDL,
+    entry = log.record(SOURCE_QUALITY_DB, APPLY_VERB, ddl=LONG_DDL,
                        error=LONG_ERROR)
     assert entry.status == STATUS_ERROR and entry.failed
 
@@ -478,3 +487,55 @@ def test_rendered_rows_of_a_log_share_one_format():
         "2026-08-08 09:00 - Quality files Opened success",
         "2026-08-09 09:00 - Quality files Saved success",
     ]
+
+
+# --- BUG-047: the journal speaks the app's vocabulary, and only the app's -----
+def test_this_module_defines_no_ddl_object_gesture_name():
+    """`db/activity_log.py` must define NO string that is a DDL-object gesture
+    name. Those names are owned once, by `ui.ddl_object_editor::GESTURE_LABELS`
+    (FQ-026's one-name-per-operation invariant), and are passed in from the
+    `ui/` call sites; a copy in this Qt-free module could only ever be a second
+    literal free to drift -- which is exactly what BUG-047 was. The deletion
+    guard, mirroring FQ-026's own.
+    """
+    from pgtp_editor.ui.ddl_object_editor import GESTURE_LABELS
+
+    defined: set[str] = set()
+    for name, value in vars(activity_log_module).items():
+        if name.startswith("__"):
+            continue
+        if isinstance(value, str):
+            defined.add(value)
+        elif isinstance(value, (tuple, frozenset, set)):
+            defined.update(v for v in value if isinstance(v, str))
+
+    assert not defined & set(GESTURE_LABELS.values())
+
+
+def test_a_journal_written_before_the_rename_still_loads_and_renders(tmp_path):
+    """The rename is WRITE-TIME, with no migration: `activity.jsonl` is
+    append-only and rows already on disk keep the name the app used when the
+    user clicked. That is only defensible if those rows keep working, so it is
+    asserted here rather than left as an assumption.
+    """
+    root = _project(tmp_path)
+    path = activity_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "timestamp": AT.isoformat(),
+                "source": SOURCE_QUALITY_DB,
+                "verb": LEGACY_APPLY_VERB,
+                "ddl_full": LONG_DDL,
+                "status": STATUS_SUCCESS,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    entries = load_activity(root)
+
+    assert [e.verb for e in entries] == [LEGACY_APPLY_VERB]
+    assert LEGACY_APPLY_VERB in render_row(entries[0])

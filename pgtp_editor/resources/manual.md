@@ -27,7 +27,7 @@ row**:
 |---|---|---|
 | **Standalone** | Edit a `.pgtp` with the XML tooling, or a custom PHP file beside it. No project, no sandbox. | **File ▸ Open**, **File ▸ Open PHP File…** |
 | **Project** | Work on the quality database through a local sandbox, or converge a deployable `.pgtp` by diff/merge. | **File ▸ New Project…**, **File ▸ Open Project…** |
-| **Maintenance** | One-off administrative work on the app's own schema. Trims the window menu bar for this session — see *Maintenance mode*, below. | **Schema ▸ Edit XSD**, **Schema ▸ Import XSD** |
+| **Maintenance** | One-off administrative work on the app's own schema and settings. Reshapes the window menu bar for this session — see *Maintenance mode*, below. | **Schema ▸ Edit XSD**, **Schema ▸ Import XSD** |
 
 **Every button on the launcher is the menu command it names**, which is why the
 buttons are labelled with menu paths such as `File › Open...`. Picking one closes
@@ -87,23 +87,38 @@ Session**.)
 
 Picking the launcher's **Maintenance** column does one extra thing beyond running
 the button you pressed: it puts the session into **Maintenance mode**, which
-**trims the window menu bar** so a one-off administrative task on the app's own
-schema is not surrounded by the whole application.
+**reshapes the window menu bar** so a one-off administrative task on the app's
+own schema and settings is not surrounded by the whole application: most menus
+go away, and one — **Settings** — appears.
 
 | Window menu | In Maintenance mode |
 |---|---|
-| **File** | trimmed to **New Session** alone |
+| **File** | trimmed to **New Session** and **Exit** |
 | **Schema** | whole — it is the mode's entire point |
+| **Settings** | **appears** — it exists in this mode and nowhere else |
 | **Help** | whole, so the manual (**F1**) is never out of reach |
 | **View**, **Database**, **Tools**, **Generation** | hidden |
+
+**Settings is the one menu that goes the other way.** Everything else this mode
+does is subtraction; **Settings** is absent in ordinary work and present here,
+because it is where the app is *configured* rather than used — configuring it is
+exactly what you came to Maintenance mode to do, and a distraction the rest of
+the time. It sits between **Generation** and **Help**, and today it holds one
+entry, **Edit Snippets…** (see *Snippets*).
+
+**Nothing on the Settings menu carries a keyboard shortcut, and nothing on it
+ever will.** Hiding a menu does not switch off the keys of the entries inside it
+— that is the same rule as the bullet about your own bindings, below — so a
+chord here would open a Maintenance-mode dialog while you were in the middle of
+ordinary work. These are rare, deliberate gestures, reached by opening the menu.
 
 - **It lasts for the session and nothing else.** Maintenance mode is never
   written to disk and never survives a restart — you cannot inherit a trimmed
   menu bar from last week without noticing.
-- **File ▸ New Session is the way out**, which is exactly why it is the one File
-  entry the mode keeps: a mode able to hide its own exit would be a trap. Coming
-  back through the launcher's **Standalone** or **Project** column leaves the
-  menu bar whole again.
+- **File ▸ New Session is the way out**, which is exactly why the mode keeps it:
+  a mode able to hide its own exit would be a trap. Coming back through the
+  launcher's **Standalone** or **Project** column leaves the menu bar whole
+  again.
 - **The Editor menu bar is deliberately untouched.** That is what keeps
   **Deployment ▸ Save XSD** right where it always is, so schema edits are
   saveable without leaving the mode (see *The Deployment Menu*). **Save XSD is
@@ -111,7 +126,12 @@ schema is not surrounded by the whole application.
   the app.
 - **A toolbar button keeps working**, even when it is pinned to a command this
   mode hides. The filter is the menu bar only, by design; pinning something to
-  the toolbar means you wanted it within reach.
+  the toolbar means you wanted it within reach. **This cuts both ways**, and it
+  is worth knowing: **Settings ▸ Edit Snippets…** can be pinned in **View ▸
+  Customize Toolbar…** like any other command, and that button opens the dialog
+  **outside Maintenance mode** as well. Hiding here means *"not in your way"*,
+  never *"prevented"* — so a menu placement is a statement about where a command
+  belongs, not a lock on it.
 - **A key you assigned yourself keeps working too — except on the File menu.**
   The two halves of the trim are built differently and behave differently, and
   it is better to know that than to be surprised by it. **File** is trimmed
@@ -125,8 +145,9 @@ schema is not surrounded by the whole application.
   *Appearance & Layout ▸ The toolbar*), and a shortcut you deliberately
   assigned is yours to keep. None of the commands ship with a key of their
   own, so nothing fires here unless you bound it yourself.
-- **File ▸ Exit is trimmed away with the rest**, so quit the way you would quit
-  any window — its close button — or leave the mode with **New Session** first.
+- **File ▸ Exit stays**, alongside **New Session**. A mode that hid the way out
+  of the application would be the same trap one level up, and a File menu with
+  no **Exit** reads as a broken app rather than a focused one.
 
 ### Hidden because it can't run, versus hidden because you said so
 
@@ -244,7 +265,9 @@ answer to a simple question: *what does this command act on?*
 - The **window menu bar** at the very top — **File · View · Schema · Database ·
   Tools · Generation · Help** — holds the commands that act on **the project or
   the application**: opening files, projects and connections, the schema,
-  generation, the panels and the theme.
+  generation, the panels and the theme. An eighth menu, **Settings**, slots in
+  between **Generation** and **Help** **only in Maintenance mode** — see
+  *Getting Started ▸ Maintenance mode* and *Snippets*.
 - The **Editor menu bar**, directly above the central working area, holds the
   commands that act on **whichever tab you are looking at**. Its five menus are:
 
@@ -260,11 +283,11 @@ Every one of those commands resolves the editor **at the moment you use it**, so
 Select, Navigation and the rest always act on the tab in front of you — never on
 the Raw XML document behind it.
 
-> **In Maintenance mode the window menu bar is trimmed** — **View**,
-> **Database**, **Tools** and **Generation** are hidden and **File** shows only
-> **New Session** — while **this** bar is left completely alone, which is what
-> keeps **Deployment ▸ Save XSD** available there. See *Getting Started ▸
-> Maintenance mode*.
+> **In Maintenance mode the window menu bar is reshaped** — **View**,
+> **Database**, **Tools** and **Generation** are hidden, **File** shows only
+> **New Session** and **Exit**, and **Settings** appears — while **this** bar is
+> left completely alone, which is what keeps **Deployment ▸ Save XSD** available
+> there. See *Getting Started ▸ Maintenance mode*.
 
 > **The bookmark menu is called Navigation now.** Its five entries kept their own
 > names; the menu was renamed because it is where jumping around a document
@@ -2424,8 +2447,9 @@ inserted** — the extra text is there to be read, never to land in your buffer.
 
 **Ctrl+Alt+E and Ctrl+Alt+C — the two expansions.**
 **Ctrl+Alt+E** expands the word immediately before the caret into its plpgsql
-snippet. **Ctrl+Alt+C** expands a bare `SELECT` at the caret into the column list
-the statement's own `FROM` implies — the schema-fed flavour of the same
+snippet — eight are shipped with the app and **the set is yours to edit** (see
+*Snippets*). **Ctrl+Alt+C** expands a bare `SELECT` at the caret into the column
+list the statement's own `FROM` implies — the schema-fed flavour of the same
 mechanism.
 
 Both are applied as **one undo step**, so a single **Ctrl+Z** takes the whole
@@ -2470,6 +2494,168 @@ because it is answering a key you just pressed — and a **`[SQL]` row in the
 Activity Log**, which is still readable a minute later. The reason is specific
 (*"'foo' is not a snippet"*, *"writing a JOIN needs a database schema, and this
 editor has none"*, *"this buffer is read-only"*), never a generic beep.
+
+---
+
+## Snippets
+
+A **snippet** is a trigger word you type in a SQL editor and expand with
+**Ctrl+Alt+E**: type `if`, press the chord, and the word is replaced by a whole
+`IF … THEN … END IF;` skeleton with the caret already on the condition. Eight
+are shipped with the app, and **the set is yours** — you can edit them, add your
+own, delete ours, and send the lot to a colleague.
+
+Expansion works in the two editable SQL surfaces only — an open **DDL object
+editor tab** and the **Sandbox SQL Console** — for the reasons given in *DDL
+Explorer ▸ Schema-aware completion and gestures in the SQL editors*. The whole
+expansion is **one undo step**: a single **Ctrl+Z** takes it back.
+
+### The shipped set
+
+| Trigger word | What it inserts |
+|---|---|
+| `case` | a `CASE WHEN … THEN … ELSE … END` expression |
+| `if` | `IF … THEN … END IF;` |
+| `ifelse` | `IF … THEN … ELSIF … THEN … ELSE … END IF;` |
+| `forloop` | `FOR … IN SELECT … LOOP … END LOOP;` |
+| `begin` | `BEGIN … EXCEPTION WHEN … THEN … END;` |
+| `raise` | a `RAISE NOTICE` line |
+| `cursor` | a cursor declaration |
+| `trigfn` | a whole trigger-function skeleton, `$$` body and `RETURN NEW;` included |
+
+**Trigger words are matched without regard to case**, so `case`, `Case` and
+`CASE` are one and the same snippet — which is also why two of them can never
+coexist in your set.
+
+### Placeholders, and walking them with Tab
+
+A snippet body is ordinary text plus a small placeholder syntax. There are only
+four pieces of it:
+
+| In the body | What it means |
+|---|---|
+| `{{1}}`, `{{2}}`, `{{3}}` … | a spot to fill in, visited in numeric order |
+| `{{1:condition}}` | the same, with placeholder text that is inserted and gets selected when the walk reaches it, so you can type straight over it |
+| `{{0}}` | where the caret finally lands. Always visited last |
+| `{{{{` | a literal `{{`, for the rare body that needs one |
+
+After an expansion that left placeholders, **Tab** jumps to the next one and
+selects it, **Shift+Tab** goes back, and **Escape** leaves the walk — from then
+on **Tab** inserts a tab character again, as it always does. Clicking elsewhere
+or leaving the editor also ends the walk.
+
+`{{n}}` was chosen over the more familiar `$1` because this is a *PostgreSQL*
+editor: `$1` is a positional parameter and `$$` opens a routine body, so a
+`$`-based syntax would need escaping in the most common snippet of all — the
+trigger-function skeleton. Braces never occur doubled in SQL, so `{{` collides
+with nothing. Anything else between braces is left exactly as you wrote it: a
+malformed body degrades to plain text rather than failing.
+
+### Editing them — Settings ▸ Edit Snippets…
+
+**Settings ▸ Edit Snippets…** opens the editor. The **Settings** menu exists
+**only in Maintenance mode** (see *Getting Started ▸ Maintenance mode*), because
+this is configuring the app rather than using it.
+
+The window is **not modal** — it stays beside your work, so you can copy a body
+out of the SQL you are looking at — and there is only ever one of it: asking
+again while it is open just brings it to the front.
+
+It has one table and one body pane:
+
+- **Trigger word** — what you type before pressing Ctrl+Alt+E. Editable.
+- **Description** — a one-line note for your own benefit. Editable.
+- **Origin** — **built-in**, **built-in, edited**, or **yours**. Read-only, and
+  it re-derives itself as you type: change a shipped snippet's body and its row
+  turns to *built-in, edited* on the spot. The column exists because your store
+  holds the *whole* set (below), so nothing else would tell our rows from yours.
+- **Body of the selected snippet** — the pane underneath, holding the template
+  in the syntax above. Bodies are multi-line by nature, which is why they live
+  in a pane of their own instead of a squashed table cell.
+
+Underneath sit **Add**, **Delete**, **Restore Built-ins**, **Export…** and
+**Import…**, and then **OK** / **Cancel**.
+
+- **Add** appends a row with a real, typeable trigger word (`newsnippet`, then
+  `newsnippet2`…) rather than an empty cell, so you never meet a complaint
+  before you have done anything.
+- **Delete** removes the selected row — **including a built-in**. A deleted
+  built-in stays gone until you ask for it back, which is exactly what the next
+  button is for.
+- **Restore Built-ins** appends every shipped snippet your set no longer has,
+  and tells you which. **It never touches a row you already have** — a built-in
+  you *edited* is your snippet now, and putting our version back over it would
+  be the silent overwrite this feature exists to avoid. When nothing is missing
+  it says so.
+- **OK** saves. **Cancel** changes nothing at all — not on disk and not in your
+  editors.
+
+**A saved set is live immediately**, in every SQL editor that is open and in
+every one you open afterwards. Nothing needs restarting.
+
+Two things stop OK, and both are about the trigger word, because that is the
+only field the expansion looks up: a **blank** one could never be typed, and a
+**duplicated** one would make the body you get depend on row order. The
+complaint appears inline, beside the rows it is about. **Bodies are never
+validated** — a half-written template is a perfectly good thing to save and come
+back to.
+
+### Sharing them — Export and Import
+
+- **Export…** writes the rows **as they currently stand**, edits included, to a
+  file you pick. You do not have to save first.
+- **Import…** reads such a file into the rows in front of you.
+
+**Import never overwrites anything without asking.** Trigger words that are new
+to you are added silently; trigger words you already have are **collisions**,
+and you are asked about them by name:
+
+- **Yes** replaces your versions with the imported ones, **in place**, so your
+  ordering survives.
+- **No** keeps every one of yours and still imports the new ones — so a
+  colleague's file is useful even when half of it clashes.
+- **Cancel** changes nothing.
+
+Collisions are matched **without regard to case**, so an incoming `CASE` collides
+with your `case`. Nothing is ever removed by an import.
+
+**An import lands in the dialog's rows, not on disk.** You can look at what
+arrived, undo a bad one by pressing **Cancel**, and only **OK** makes any of it
+permanent. A file that cannot be read, or that is not a valid snippet file, is
+**refused with the reason** and leaves your rows untouched.
+
+### Where the store lives, and what follows from it
+
+Your snippets are one file, **`snippets.json`**, in the application's per-user
+data folder — the same folder that already holds `generator_config.json` and the
+learned schema. It is plain, indented JSON, meant to be opened and edited by
+hand if you would rather.
+
+**It is deliberately not part of your project.** A snippet is a typing shortcut,
+not a property of a schema, and a `.pgtp` is a movable artifact that other
+people receive — so personal typing habits stay out of it, and crossing between
+people is always something you did on purpose.
+
+**The store file *is* the export file.** Export writes the same format the store
+uses, so "send your snippets to a colleague" can equally well be done by mailing
+`snippets.json` itself; the buttons are a convenience over a format that was
+already shareable.
+
+**The file holds the whole set, not just your changes.** That is what makes it
+readable and hand-editable — what you see in it is exactly what the editors
+expand — and it has one consequence worth knowing: **snippets added in a later
+version of the app will not appear for you once you have a store of your own.**
+They are not missing, they simply were not in the set the day your file was
+written. **Restore Built-ins** is how you pick them up.
+
+**A store the app cannot read is never written over.** If the file is corrupt or
+malformed, the editor opens **read-only** — the reason is shown at the top, the
+buttons and **OK** are disabled — and the **shipped defaults stay in force** in
+your SQL editors, with a `[Snippets]` line in the **Activity Log** naming the
+file and the problem. Read-only here does not mean "you have no snippets"; it
+means your file may be one typo away from being fine, and overwriting it is the
+one mistake you could not undo. Fix or move the file by hand, then restart the
+application.
 
 ---
 
@@ -3517,6 +3703,13 @@ mode*). That is deliberate: the mode is about getting the whole application out
 of your way, and something you pinned yourself is something you meant to keep
 within reach.
 
+**The same holds in reverse, and it is the one place a menu location does not
+predict the behaviour.** `Settings › Edit Snippets…` is offered in the Available
+list like any other command even though the **Settings** menu itself exists only
+in Maintenance mode — and a button you pin to it opens the snippet editor
+**outside** that mode too (see *Snippets*). Hiding a menu means *"not in your
+way"*, never *"prevented"*, so pinning is how you say you want it anyway.
+
 ### Choosing a button's icon
 
 Each row in the **On Toolbar** list shows the icon that button will actually
@@ -3631,6 +3824,10 @@ Console, **Edit code…** dialog)
 | **Tab** | Insert a tab character — **except** during a template walk, below |
 | **Ctrl+Alt+E** | Expand the word before the caret into its plpgsql snippet. **SQL buffers only** |
 | **Ctrl+Alt+C** | Expand a bare `SELECT` into the column list its `FROM` implies. **SQL buffers only** |
+
+**The set Ctrl+Alt+E expands is editable** — eight snippets ship with the app and
+you can change, add to or replace them in **Settings ▸ Edit Snippets…** (see
+*Snippets*). The chord itself stays what it is; only what it inserts changes.
 
 **Ctrl+Alt+E and Ctrl+Alt+C are SQL-only by design.** The snippet set is plpgsql,
 so in a **PHP** tab or a `js` **Edit code…** dialog these keys are untouched — an
@@ -3757,18 +3954,6 @@ was the last one, and it no longer answers Ctrl+S either (see *The Code
 Editor*). Neither key can be handed to a different command — see *What cannot be
 rebound, and why* — so the reflex cannot come back through the side door.
 
-**Ctrl+S and Ctrl+Shift+S are unbound app-wide, and that is stated here rather
-than merely left out of the table.** Every save is a named entry on the Editor
-bar's **Deployment** menu — **Save pgtp** / **Save as new pgtp** on Raw XML,
-**Save in Project** on a DDL object tab, **Save XSD**, **Save PHP File** (see
-*The Deployment Menu*). Pressing the old keys produces **no write, no message and
-no hint**: the dispatcher behind them had to guess which tab you meant and got it
-wrong on six of them, and one reflex that is right here and silently wrong there
-is worse than none. **There is no carve-out left** — the **Edit code…** dialog
-was the last one, and it no longer answers Ctrl+S either (see *The Code
-Editor*). Neither key can be handed to a different command — see *What cannot be
-rebound, and why* — so the reflex cannot come back through the side door.
-
 **Two chords were deleted and are not coming back as chords:** **Ctrl+Shift+F**
 (Find All) and **Ctrl+Alt+Return** (Replace All). Both commands are buttons on the
 now-permanent Find/Replace bar, which is in front of you whenever they apply — and
@@ -3815,6 +4000,15 @@ Messages**, **Database ▸ DDL Explorer (Quality)**,
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
+**The Settings menu contributes no chords at all, by rule.** It exists only in
+Maintenance mode, and hiding a menu does not switch off the keys of the entries
+inside it — so a shortcut on **Settings ▸ Edit Snippets…** would open that
+dialog in the middle of ordinary work and make nonsense of where the command
+lives. Nothing on that menu ships with a key. **View ▸ Customize Shortcuts…**
+will still let you assign one, because it lists every menu command in the app —
+but a key you assign there behaves exactly as described: it fires in any mode
+(see *Snippets*).
+
 **Ten keys have no menu entry at all** — **F3**, **Ctrl+L**, **Ctrl+Alt+F**,
 **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G**, and the four SQL editor gestures
 **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J** and **Ctrl+Shift+Space** (see
@@ -3834,8 +4028,8 @@ text mutates nothing. While the Caption Management tab itself is in front, the
 Editor menu bar is hidden entirely (see *The Two Menu Bars*).
 
 **Maintenance mode hides menus; it does not disable their keys.** The mode trims
-the window menu bar down to **File**, **Schema** and **Help** (see *Getting
-Started ▸ Maintenance mode*), and hiding means *"not in your way"*, never
+the window menu bar down to **File**, **Schema**, **Settings** and **Help** (see
+*Getting Started ▸ Maintenance mode*), and hiding means *"not in your way"*, never
 *"prevented"* — a command whose menu is hidden keeps working, from the toolbar and
 from its keyboard shortcut. In practice this changes nothing you can feel, because
 **none of the menus the mode hides ships with a shortcut**: every default chord in

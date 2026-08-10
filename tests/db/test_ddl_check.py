@@ -1536,3 +1536,205 @@ def test_green_requires_every_tier_to_have_passed():
     assert CheckReport(
         tier0=passed, tier1=unavailable, tier2=passed, tier3=passed
     ).green is False
+
+
+# --- BUG-044: an ALTER's bookkeeping identity is its STATEMENT --------------
+#
+# Before the fix every ALTER-family buffer on one table wrote the single key
+# `("alter", schema, "", table)` and silently overwrote the previous row, so
+# `Check Object in Sandbox` compared a buffer's sha1 against a row describing a
+# DIFFERENT statement. The sharp case is a false PASS, asserted below.
+
+
+class _AlterRef:
+    """The duck-type `ui/main_window.py::AlterDdlRef` presents to `from_ref`.
+
+    Stubbed rather than imported because `AlterDdlRef` lives in a Qt module and
+    this suite opens no window; `tests/ui/test_ddl_creation_wiring.py` asserts
+    the same properties on the REAL ref, so the two halves meet.
+    """
+
+    kind = "alter"
+    #: Empty on purpose, and asserted below: `name` feeds `checked_name`, which
+    #: is what switches tier 3 on.
+    name = ""
+    arg_types = ()
+
+    def __init__(self, schema="pr", table="invoice"):
+        self.schema = schema
+        self.table = table
+
+    def working_set_name(self, buffer_text):
+        from pgtp_editor.db.sandbox import text_sha1
+
+        return text_sha1(buffer_text)
+
+
+ADD_COLUMN = "ALTER TABLE pr.invoice ADD COLUMN note text;"
+DROP_COLUMN = "ALTER TABLE pr.invoice DROP COLUMN legacy;"
+DROP_OTHER_COLUMN = "ALTER TABLE pr.invoice DROP COLUMN note;"
+CREATE_TABLE = "CREATE TABLE pr.invoice (id integer);"
+
+
+def _alter_request(text):
+    return CheckRequest.from_ref(_AlterRef(), text)
+
+
+def _alter_applied_row(text, applied_at="2026-08-06T10:00:00+00:00"):
+    from pgtp_editor.db.sandbox import text_sha1
+
+    return AppliedObject(
+        kind="alter",
+        schema_name="pr",
+        object_name=text_sha1(text),
+        table_name="invoice",
+        applied_at=applied_at,
+        text_sha1=text_sha1(text),
+    )
+
+
+def test_two_alters_on_one_table_get_two_bookkeeping_rows_not_one():
+    """The direct regression: seventeen operations used to collapse onto one
+    key, so the second apply silently overwrote the first's row."""
+    add, drop = _alter_request(ADD_COLUMN), _alter_request(DROP_COLUMN)
+
+    assert add.working_set_ref != drop.working_set_ref
+    # ...and everything but the identity slot still describes the same table.
+    assert add.working_set_ref[:2] == drop.working_set_ref[:2] == ("alter", "pr")
+    assert add.working_set_ref[3] == drop.working_set_ref[3] == "invoice"
+
+
+def test_a_create_table_and_a_later_alter_of_it_do_not_collide():
+    """`OP_CREATE_TABLE` builds an alter ref through the same path -- it is the
+    seventeenth collider, not one of the sixteen submenu operations."""
+    created, altered = _alter_request(CREATE_TABLE), _alter_request(ADD_COLUMN)
+    assert created.working_set_ref != altered.working_set_ref
+
+
+def test_two_drop_column_generations_on_different_columns_do_not_collide():
+    """One operation colliding with ITSELF: `subject` is empty for every
+    `ALTER TABLE` flavour, so only the text tells these two apart."""
+    first, second = _alter_request(DROP_COLUMN), _alter_request(DROP_OTHER_COLUMN)
+    assert first.working_set_ref != second.working_set_ref
+
+
+def test_re_applying_the_identical_alter_text_stays_one_row():
+    """Idempotent, which is what keeps the event log from growing per apply."""
+    assert _alter_request(ADD_COLUMN).working_set_ref == (
+        _alter_request(ADD_COLUMN).working_set_ref
+    )
+
+
+def _legacy_alter_row(text, applied_at="2026-08-06T10:00:00+00:00"):
+    """A row in the PRE-fix shape: the empty `object_name` every ALTER on the
+    table shared, carrying whichever statement was applied LAST. This is what
+    the bug wrote, and what DEC-008's cleanup deletes."""
+    from pgtp_editor.db.sandbox import text_sha1
+
+    return AppliedObject(
+        kind="alter",
+        schema_name="pr",
+        object_name="",
+        table_name="invoice",
+        applied_at=applied_at,
+        text_sha1=text_sha1(text),
+    )
+
+
+def test_recheck_never_reports_a_never_applied_alter_as_already_applied():
+    """Reproduction B of BUG-044, the silent WRONG result: Add Column was
+    applied, a Drop Column tab on the same table never was. Tier 2 answered
+    `passed`/`REASON_ALREADY_APPLIED` for a statement the sandbox has never
+    seen, and `_tier0_outcome` mirrors tier 2, so tier 0 read `passed` too.
+
+    The row is in the pre-fix shape on purpose: that is the row the buggy
+    version wrote, so this is the case that used to be WRONG rather than a case
+    the fix invents. Post-fix it cannot be keyed onto at all -- which is also
+    why such rows are worthless orphans and are deleted at session open.
+    """
+    session = _AppliedSession([_legacy_alter_row(ADD_COLUMN)])
+
+    report = recheck(
+        session, _alter_request(DROP_COLUMN), _caps(), query=_Query(_resolved(), [])
+    )
+
+    assert report.tier2.status == STATUS_UNAVAILABLE
+    assert report.tier2.reason == ddl_check.REASON_NOT_IN_WORKING_SET
+    assert report.tier0.status != STATUS_PASSED
+    assert report.green is False
+
+
+def test_an_applied_alter_is_not_reported_stale_because_another_one_followed():
+    """Reproduction A of BUG-044: a buffer applied verbatim and never edited
+    was told it *"does NOT match what the sandbox holds"* -- because the row it
+    matched described the ALTER applied after it. The pre-fix row shape again:
+    post-fix nothing keys onto it, so the false DIFFERS is gone."""
+    session = _AppliedSession([_legacy_alter_row(DROP_COLUMN)])
+
+    report = recheck(
+        session, _alter_request(ADD_COLUMN), _caps(), query=_Query(_resolved(), [])
+    )
+
+    assert not any("has changed since it was last applied" in c for c in report.caveats)
+    assert report.tier2.reason == ddl_check.REASON_NOT_IN_WORKING_SET
+
+
+def test_recheck_still_finds_the_alter_that_was_applied():
+    """The other half: the fix must not make every ALTER unfindable."""
+    session = _AppliedSession(
+        [_alter_applied_row(ADD_COLUMN), _alter_applied_row(DROP_COLUMN)]
+    )
+
+    report = recheck(
+        session, _alter_request(ADD_COLUMN), _caps(), query=_Query(_resolved(), [])
+    )
+
+    assert report.tier2.status == STATUS_PASSED
+    assert "2026-08-06T10:00:00+00:00" in report.tier2.reason
+    # Reproduction A: the applied buffer is NOT reported as stale just because a
+    # different ALTER on the same table was applied after it.
+    assert not any("has changed since it was last applied" in c for c in report.caveats)
+
+
+def test_the_alter_identity_never_switches_tier_3_on():
+    """The fix's central gotcha: `working_set_name` must reach the bookkeeping
+    key and NOTHING else. An ALTER creates no routine, so asking
+    `plpgsql_check` to analyse one named after a hash would be nonsense."""
+    request = _alter_request(ADD_COLUMN)
+
+    assert request.working_set_name  # the identity is there...
+    assert request.name == ""        # ...and the routine name is still empty
+    assert request.checked_name == ""
+    assert request.identity == ""
+    assert request.regprocedure_text is None
+
+    plan = build_ladder(request, _caps(), ADD_COLUMN, record_applied=True)
+
+    assert plan.check_index is None and plan.resolve_index is None
+    assert not any("plpgsql_check" in sql for sql in plan.statements)
+    # ...while the bookkeeping row it DOES write carries the statement identity.
+    assert plan.bookkeeping_index is not None
+    assert request.working_set_name in plan.statements[plan.bookkeeping_index]
+
+
+def test_request_from_applied_round_trips_an_alter_row_without_naming_a_routine():
+    """The working-set sweep (the deployment generator's future reader) used to
+    see one ALTER per table, rebuilt as a request describing no statement."""
+    rows = [_alter_applied_row(ADD_COLUMN), _alter_applied_row(DROP_COLUMN)]
+
+    requests = [ddl_check.request_from_applied(row) for row in rows]
+
+    # Every applied ALTER is visible, and each key round-trips to its own row.
+    assert [r.working_set_ref for r in requests] == [ddl_check.applied_ref(r) for r in rows]
+    assert len({r.working_set_ref for r in requests}) == 2
+    # ...and no rebuilt request claims a routine for tier 3 to check.
+    assert all(r.name == "" and r.checked_name == "" for r in requests)
+
+
+def test_an_object_row_still_keys_by_its_name_not_by_its_text():
+    """The object half of `applied` is untouched: it stays a desired-state
+    table, one row per object, whatever its text becomes."""
+    request = _request(buffer_text="CREATE OR REPLACE FUNCTION pr.f(integer) ...")
+    assert request.working_set_name is None
+    assert request.working_set_ref == ("function", "pr", "f", "")
+    assert ddl_check.request_from_applied(_applied(object_name="f")).name == "f"

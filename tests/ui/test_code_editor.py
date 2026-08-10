@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QPlainTextEdit
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from pgtp_editor.ui.code_editor import (
     CodeEditor,
@@ -169,17 +170,49 @@ def test_selection_wrap_with_quote(qtbot):
 
 
 def test_ctrl_shift_b_selects_bracket_span_caret_at_start(qtbot):
-    editor = CodeEditor("js")
-    qtbot.addWidget(editor)
-    editor.setPlainText("a(bcd)e")
+    """BUG-046: the chord is no longer handled by `CodeEditor` itself, so it is
+    driven here through a host that owns it — `CodeEditorDialog`'s own
+    `QShortcut`. The window must be `show()`n and the key delivered at its
+    `windowHandle()`, or Qt's shortcut map never sees it (that, not the
+    offscreen platform, is what the old "QShortcut is unreliable" folklore
+    was measuring). `test_select_enclosing_brackets_*` below covers the pure
+    span logic by direct call."""
+    dialog = CodeEditorDialog("js", "handler")
+    qtbot.addWidget(dialog)
+    dialog.set_code("a(bcd)e")
+    dialog.show()
+    QApplication.processEvents()
+    editor = dialog._editor
     cursor = editor.textCursor()
     cursor.setPosition(3)  # inside the () pair
     editor.setTextCursor(cursor)
     editor.setFocus()
-    qtbot.keyClick(editor, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+    QApplication.processEvents()
+    QTest.keyClick(
+        dialog.windowHandle(),
+        Qt.Key.Key_B,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+    )
+    QApplication.processEvents()
     c = editor.textCursor()
     assert c.selectedText() == "bcd"
     assert c.position() == c.selectionStart()  # caret at start
+
+
+def test_select_enclosing_brackets_is_a_plain_slot(qtbot):
+    """The span logic itself, called directly — unchanged by BUG-046."""
+    editor = CodeEditor("js")
+    qtbot.addWidget(editor)
+    editor.setPlainText("a(bcd)e")
+    cursor = editor.textCursor()
+    cursor.setPosition(3)
+    editor.setTextCursor(cursor)
+
+    editor.select_enclosing_brackets()
+
+    c = editor.textCursor()
+    assert c.selectedText() == "bcd"
+    assert c.position() == c.selectionStart()
 
 
 def test_cut_copy_paste_round_trips(qtbot):

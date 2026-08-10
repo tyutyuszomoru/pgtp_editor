@@ -28,6 +28,7 @@ from PySide6.QtWidgets import QListWidget, QWidget
 
 from pgtp_editor.sql.snippet_store import (
     SNIPPETS_FILENAME,
+    load_snippets,
     save_snippets,
     serialize_snippets,
 )
@@ -345,3 +346,156 @@ def test_a_cancelled_file_chooser_imports_nothing(qtbot, lane, monkeypatch):
     )
     dialog.import_requested.emit()
     assert dialog.result_snippets() == DEFAULT_SNIPPETS
+
+
+def test_a_trigger_word_that_differs_only_in_case_still_collides(
+    qtbot, lane, tmp_path, monkeypatch
+):
+    """`find_snippet` matches case-insensitively, so `CASE` and `case` are the
+    same typing shortcut — importing one over the other must ASK."""
+    controller, _shell, _audit, _messages, _cfg = lane
+    controller.load()
+    dialog = _open(qtbot, controller)
+    shouty = Snippet(DEFAULT_SNIPPETS[0].prefix.upper(), "theirs", "THEIRS")
+    _pick(monkeypatch, _incoming(tmp_path, (shouty,)))
+    asked = []
+
+    def _no(*args, **kwargs):
+        asked.append(args[2] if len(args) > 2 else "")
+        return modals.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(modals.QMessageBox, "question", _no)
+    dialog.import_requested.emit()
+    assert asked
+    assert dialog.result_snippets() == DEFAULT_SNIPPETS
+
+
+def test_an_import_file_holding_no_snippets_says_so_and_asks_nothing(
+    qtbot, lane, tmp_path, monkeypatch
+):
+    controller, _shell, _audit, _messages, _cfg = lane
+    controller.load()
+    dialog = _open(qtbot, controller)
+    _pick(monkeypatch, _incoming(tmp_path, ()))
+    monkeypatch.setattr(
+        modals.QMessageBox, "question", lambda *a, **k: pytest.fail("asked")
+    )
+    dialog.import_requested.emit()
+    assert dialog.result_snippets() == DEFAULT_SNIPPETS
+    assert "no snippets" in dialog.message()
+
+
+def test_an_unreadable_import_file_is_reported_not_raised(
+    qtbot, lane, tmp_path, monkeypatch
+):
+    controller, _shell, _audit, _messages, _cfg = lane
+    controller.load()
+    dialog = _open(qtbot, controller)
+    missing = tmp_path / "gone.json"
+    _pick(monkeypatch, missing)
+    refusals = []
+    monkeypatch.setattr(
+        modals.QMessageBox, "critical", lambda *a, **k: refusals.append(a)
+    )
+    dialog.import_requested.emit()
+    assert refusals
+    assert dialog.result_snippets() == DEFAULT_SNIPPETS
+
+
+# -- the export file IS the store file -----------------------------------------
+
+
+def test_an_exported_file_loads_back_as_a_store(qtbot, lane, tmp_path, monkeypatch):
+    """"Mail this file to a colleague" only works if what export writes is what
+    the store reader accepts — one format, not an encoding of its own."""
+    controller, _shell, _audit, _messages, _cfg = lane
+    controller.load()
+    dialog = _open(qtbot, controller)
+    dialog.set_snippets((MINE, THEIRS))
+    target = tmp_path / "share.json"
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), "")
+    )
+    dialog.export_requested.emit()
+    loaded = load_snippets(target)
+    assert loaded.ok and loaded.snippets == (MINE, THEIRS)
+
+
+def test_a_failed_export_is_reported_and_the_rows_are_untouched(
+    qtbot, lane, tmp_path, monkeypatch
+):
+    controller, _shell, _audit, _messages, _cfg = lane
+    controller.load()
+    dialog = _open(qtbot, controller)
+    blocked = tmp_path / "dir.json"
+    blocked.mkdir()
+    monkeypatch.setattr(
+        modals.QFileDialog, "getSaveFileName", lambda *a, **k: (str(blocked), "")
+    )
+    failures = []
+    monkeypatch.setattr(
+        modals.QMessageBox, "critical", lambda *a, **k: failures.append(a)
+    )
+    dialog.export_requested.emit()
+    assert failures
+    assert dialog.result_snippets() == DEFAULT_SNIPPETS
+
+
+# -- saving: failures are said out loud, and Cancel undoes everything ----------
+
+
+def test_a_save_that_could_not_be_written_is_reported_and_changes_nothing(
+    qtbot, lane, monkeypatch
+):
+    """Unlike loading, a save the user asked for and that failed is never
+    silent — and the set in force must not pretend it took."""
+    controller, shell, _audit, _messages, cfg = lane
+    controller.load()
+    cfg.write_text("I am a file where the config directory should be")
+    failures = []
+    monkeypatch.setattr(
+        modals.QMessageBox, "critical", lambda *a, **k: failures.append(a)
+    )
+    assert controller.save((MINE,)) is False
+    assert failures
+    assert controller.snippets() == DEFAULT_SNIPPETS
+    assert shell.stage.ddl_explorer_panel().editor.snippets() == DEFAULT_SNIPPETS
+
+
+def test_cancelling_the_editor_undoes_every_edit_in_it(qtbot, lane, tmp_path):
+    """Nothing persists until OK — the rows are a scratch copy, so Cancel is a
+    working undo for adds, deletes and body edits alike."""
+    controller, shell, _audit, _messages, cfg = lane
+    save_snippets(cfg / SNIPPETS_FILENAME, (MINE, THEIRS))
+    controller.load()
+    dialog = _open(qtbot, controller)
+    dialog.remove_row(0)
+    dialog.add_snippet("brandnew", "mine", "SELECT {{0}};")
+    dialog.reject()
+    assert controller.snippets() == (MINE, THEIRS)
+    assert shell.stage.ddl_explorer_panel().editor.snippets() == (MINE, THEIRS)
+    assert load_snippets(cfg / SNIPPETS_FILENAME).snippets == (MINE, THEIRS)
+
+
+def test_a_corrupt_store_still_leaves_the_defaults_live_in_the_editors(lane):
+    """Read-only is not "no snippets": the lane must still push the defaults
+    into the SQL editors, or a broken file would disable the gesture."""
+    controller, shell, _audit, _messages, cfg = lane
+    cfg.mkdir(parents=True)
+    (cfg / SNIPPETS_FILENAME).write_text("{ nonsense", encoding="utf-8")
+    controller.load()
+    assert shell.stage.ddl_explorer_panel().editor.snippets() == DEFAULT_SNIPPETS
+
+
+def test_the_editor_over_a_corrupt_store_cannot_be_accepted(qtbot, lane):
+    """The OK button is disabled, and even a programmatic accept must not write
+    over a file we could not understand."""
+    controller, _shell, _audit, _messages, cfg = lane
+    cfg.mkdir(parents=True)
+    path = cfg / SNIPPETS_FILENAME
+    path.write_text("{ nonsense", encoding="utf-8")
+    controller.load()
+    dialog = _open(qtbot, controller)
+    dialog.accept()
+    assert path.read_text(encoding="utf-8") == "{ nonsense"
+    assert controller.snippets() == DEFAULT_SNIPPETS

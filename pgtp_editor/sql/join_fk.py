@@ -341,7 +341,9 @@ def foreign_keys_from_targets(
     `fk_target` is `db/introspect.py::ColumnInfo.fk_target` verbatim -- a
     `"schema.table.column"` string, or None for a column that is not a foreign
     key. This is the one place that string's shape is known, so the caller is a
-    one-liner over its `ColumnInfo` list and `sql/` still never sees a schema.
+    one-liner over `SchemaIndex.column_infos(table)` --
+    `[(c.name, c.fk_target) for c in index.column_infos(table)]` --
+    and `sql/` still never sees a schema.
 
     A target that is not exactly three segments is **skipped**, not guessed at:
     a two-segment target names no column and a four-segment one is not

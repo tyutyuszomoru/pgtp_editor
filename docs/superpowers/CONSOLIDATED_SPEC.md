@@ -1,6 +1,47 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-10 — **SIX SHIPPED THINGS FOLDED IN
+> **Status:** living document · **Last synthesized:** 2026-08-10 — **FQ-030's FINAL SLICE FOLDED IN, plus
+> three verified spec-vs-code divergences (three ledger rows, §28). `README.md` REWRITTEN in the same
+> pass** under this agent's standing README obligation: the project's front page still opened *"A
+> companion desktop editor for … `.pgtp` project files"* — a description it outgrew a year ago — and sent
+> readers to the **frozen** `docs/superpowers/specs/` for current design. It now states the app as it is,
+> an **IDE for applications that use `.pgtp` for CRUD and PostgreSQL functions for business logic**, and
+> points at this file.
+> **(1) FQ-030 IS COMPLETE (`229dc11`)** — §18.9's *"Still to come: the snippet store and the
+> Maintenance-mode snippet editor"* banner was a **dead assertion over shipped work** and is retired with
+> the whole *No snippet persistence in v1* subsection. What shipped: **`snippets.json`** in the app's
+> per-user folder through the **existing** injected `config_dir`, holding the **whole set, not a diff**
+> (an overlay cannot express deleting a shipped snippet without tombstones) and doubling as the **export
+> file**; a corrupt file yields defaults plus a reason, a **read-only lane**, and is **never overwritten**;
+> **import is a proposal, not a write** — collisions need an explicit Yes, land in the dialog's rows, and
+> compare prefixes case-insensitively. **`Settings` is the app's FIRST maintenance-only menu**, carried by
+> **`_MAINTENANCE_ONLY_MENU_TITLES` as the INVERSE of the existing survivor list inside the SAME
+> visibility loop** — not a second mechanism — and **nothing on it carries a shortcut, as a rule**, because
+> **DEC-006** established that hiding a `QMenu` leaves its children's chords live (*hiding means "not in
+> your way", never "prevented"* — now stated in §7, which forbids describing the mode as restricting
+> execution). **DEC-001 is folded in as a PRINCIPLE**: *where the project must stay portable, personal
+> state lives in the app's own folder and crosses between people only by an **explicit** export/import
+> gesture — never by silent embedding and never by merge.* The hidden action **stays pinnable** — FQ-027's
+> recorded trade, taken deliberately. **Two queue-entry statements corrected:** FQ-030 names `Schema` as
+> the editor's home (it is `Settings`), and no test actually pins the id to a toolbar — the guard asserts
+> **enumeration**.
+> **(2) FQ-026's rename is INCOMPLETE — BUG-047, OPEN.** §18.5's *"verified absent"* banner was read as the
+> whole rename having landed; a sweep of all eight retired names found one **user-visible** survivor pair:
+> `db/activity_log.py`'s `VERB_APPLY_SANDBOX = "Apply to Sandbox"` / `VERB_APPLY_TARGET = "Apply to
+> Target"`, rendered verbatim into every Activity Log row **and persisted to `activity.jsonl`**. The
+> journal is a surface like any other and does not read `GESTURE_LABELS`. Also corrected: §26's
+> `Apply to Sandbox` / `Apply to Target Database…` are **retired as Database target design**, since both
+> gestures ship on `Deployment` and FQ-026's rule is one home per gesture.
+> **(3) Two `Ctrl+Z`-family defects — BUG-048 and BUG-050, both OPEN.** §18.5 carve-out 1 named the hazard
+> exactly but scoped it to one tab; it is a property of the **window-scoped** `QShortcut`, and now fires
+> from the **read-only DDL Explorer** and the **Sandbox SQL Console**. **Read-only does not protect the
+> buffer** — a Ctrl chord is deliberately not a "text-modifying key", and `setPlainText` is a programmatic
+> write — so §12's **Compare/Merge data-loss lock** and §13's **Caption Mode** lock both fail to stop one
+> chord replacing the document they declare read-only. And **`Ctrl+Shift+Z`**, a second redo key in the XML
+> editors, had **no §27 row** and is **missing from `RESERVED_SEQUENCES`**, which claims to transcribe §27
+> — so a rebind can silently steal it. **Deliberately NOT folded: DEC-005's `DROP INDEX` exception**, which
+> was answered on a false premise and is `SUPERSEDED BY DEC-007`.
+> *(Previously the same day:)* **SIX SHIPPED THINGS FOLDED IN
 > (eight ledger rows, §28), plus the pass's own findings.**
 > **Landed while this pass was running, and folded in with it:** **FQ-030's schema gestures shipped
 > (`f5d2601`)** — `ui/schema_gesture_seam.py`, wired to **exactly two hosts** (the DDL object tab and the
@@ -367,7 +408,7 @@
 4. [Technology choices](#4-technology-choices)
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
-7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature***
+7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live*
 8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab*
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
@@ -389,7 +430,7 @@
     - [18.6 Schema-aware Ctrl+Space completion in the DDL object editor](#186-schema-aware-ctrlspace-completion-in-the-ddl-object-editor) — *implemented; **BUG-041 is FIXED** (2026-08-10) — `resolve_caret_context` now descends into a `$$ … $$` body before the opacity test, so `NEW.`/`OLD.`, `ALIAS_REF` and `LOCAL_REF` all fire **inside** a routine body; `CaretContext.kind` has **four** values and both new kinds have live UI consumers*
     - [18.7 Two live DDL Explorer instances — target vs. sandbox](#187-two-live-ddl-explorer-instances--target-vs-sandbox) — *settled design (2026-08-05), **now being implemented** (FQ-022, 2026-08-08): `DDL Explorer (Quality)` / `DDL Explorer (Sandbox)`, **session-free** (`bool(sandbox_params.host)`, never `has_session`)*
     - [18.8 The Project Status window](#188-the-project-status-window) — *implemented (5-node diagram, per-node click-through windows, Database ▸ Project Status…); Sandbox1's data-clone and Sandbox2's install buttons are **now wired** (`_refresh_project_status_sandbox_actions`, sandbox-configured predicate), and the App node's action window is still the flagged placeholder (§29). **FQ-028/FQ-018 (2026-08-10):** it gains a **30 s window-active-gated poller** — the app's first repeating-interval `QTimer` — shared with §7's status-bar connectivity dots, which makes this window **auto-refreshing while open** instead of static*
-    - [18.9 SQL authoring aids — snippets, expand-SELECT, JOIN-on-FK, signature help](#189-sql-authoring-aids--snippets-expand-select-join-on-fk-signature-help-fq-030) — *FQ-030 — **SHIPPED IN FULL** 2026-08-10 (pure layers; editor halves `d6e5aa2`; the schema gestures `f5d2601`). One `Expansion` and one `CodeEditor.apply_expansion` for every producer; a **deliberately non-TextMate** `{{1}}`/`{{1:placeholder}}`/`{{0}}` syntax because `$1` and `$$` are PostgreSQL syntax; **refusals over guesses**; **explicit-trigger only**, with the memoized `tokenize` identified and deliberately unbuilt (an owner call); **exactly two hosts** for the schema gestures, **inert not refusing** in the other three. Still to come: the **snippet store** and the Maintenance-mode editor — blocked **not** on Maintenance mode (which shipped) but on its **format**, now settled by DEC-001: one **per-user** store in the app's folder, shared by **explicit export/import**. Debt: **BUG-045***
+    - [18.9 SQL authoring aids — snippets, expand-SELECT, JOIN-on-FK, signature help](#189-sql-authoring-aids--snippets-expand-select-join-on-fk-signature-help-fq-030) — *FQ-030 — **SHIPPED IN FULL** 2026-08-10 (pure layers; editor halves `d6e5aa2`; the schema gestures `f5d2601`). One `Expansion` and one `CodeEditor.apply_expansion` for every producer; a **deliberately non-TextMate** `{{1}}`/`{{1:placeholder}}`/`{{0}}` syntax because `$1` and `$$` are PostgreSQL syntax; **refusals over guesses**; **explicit-trigger only**, with the memoized `tokenize` identified and deliberately unbuilt (an owner call); **exactly two hosts** for the schema gestures, **inert not refusing** in the other three. **The final slice shipped too (`229dc11`): the snippet store (`snippets.json`, per-user, whole-set-not-a-diff, corrupt ⇒ read-only and never overwritten), the editor, explicit export/import, and the app's FIRST maintenance-only menu — `Settings ▸ Edit Snippets…`, shortcut-free by rule (DEC-006).** DEC-001's principle — portable project, personal state in the app's folder, sharing only by an explicit gesture — is recorded here. Debt: **BUG-045***
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -398,8 +439,8 @@
 23. [MCP integration](#23-mcp-integration) — ***fully wired** (re-audited 2026-08-10): `pgtp_editor/mcp/` ships, headless `--mcp` works, and **Tools ▸ ☐ `Start MCP Server`** (`MainWindow._mcp_action`) is the GUI opt-in, unchecked at every launch with no persisted key. §23's *"remaining gap"* banner is **closed**; its *"opt-in in Preferences"* wording named the stub FQ-016 deleted and is corrected*
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
-26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section*
-27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*)*
+26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half*
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*). **`Ctrl+Shift+Z` gains its first row 2026-08-10** — a second redo key in the **XML editors only**, shipped long before and never written down, and **missing from `RESERVED_SEQUENCES`** despite that table claiming to transcribe this section (**BUG-050**, OPEN)*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
 30. [Testing policy](#30-testing-policy)
@@ -660,6 +701,13 @@ pgtp_editor/
 │   │                  # multiple tables, derived items and an already-written column list — §18.9
 │   ├── join_fk.py     # find_join_site / join_candidates → JoinOptions / render_join → Expansion;
 │   │                  # composite keys grouped ONLY by constraint name — §18.9
+│   ├── snippet_store.py # the snippet store's FORMAT + rules (§18.9, `229dc11`): SNIPPETS_FILENAME =
+│   │                  # "snippets.json", STORE_VERSION, parse_/serialize_/load_/save_snippets,
+│   │                  # plan_import/apply_import, origin_of/defaults_missing_from, and _key() — the one
+│   │                  # case-insensitive prefix comparison, matching find_snippet. Holds the WHOLE set,
+│   │                  # never a diff over DEFAULT_SNIPPETS. load_snippets NEVER raises; a corrupt file
+│   │                  # returns defaults + an error and the lane goes read-only. LOCATION lives in
+│   │                  # ui/snippet_controller.py, deliberately — this half stays Qt-free
 │   ├── signature_help.py # find_call_site / signature_help / routine_signature — §18.9
 │   └── formatter.py   # format_selection(text, *, indent_unit="    ") → FormatResult; _Reindenter frame walk
 ├── lint/              # §22 PHP linting — SHIPS (commit 90c6806), consumed by ui/php_file_tab.py (§21);
@@ -720,6 +768,11 @@ every destructive operation unless the injected `confirm_destructive` approves; 
 the DDL object tab's context-menu **`Run in Sandbox Console`**, both converging on
 `CenterStage.open_sandbox_sql_tab`; `SqlResultsPanel` has **no QAction of its own** — it is constructed
 only by `SqlConsolePanel` as the console's bottom half, so it is reachable transitively),
+`snippet_controller.py` / `edit_snippets_dialog.py` (§18.9's snippet store host and its editor,
+`229dc11` — the controller owns **location** (`snippets_path(base_dir=None)` over
+`QStandardPaths.AppDataLocation`, overridden by the injected `config_dir`) and **every modal** in the
+export/import lane; `EditSnippetsDialog` emits `export_requested`/`import_requested` and opens no file
+chooser of its own. Reached from `Settings ▸ Edit Snippets…`, the Maintenance-only menu, §7/§26),
 `manual_panel.py`, `about.py`, `icons.py` (the vendored-Breeze icon catalog + recolor/render
 pipeline, §7 — the string helpers are Qt-free, only `themed_icon` touches Qt), plus the two off-GUI-thread helpers
 `async_task.py` (`run_async(fn, on_result, on_error=None, pool=None)` — the executor behind MainWindow's
@@ -2040,8 +2093,38 @@ why it shows the `Schema` menu and gets everything else out of the way.
 |---|---|
 | **File** | **VISIBLE, trimmed** — `New Session` plus the save entries the File menu carries. Every other item (`Open…`, `Open PHP File…`, the four §18.2 project actions, `Discard Changes`, `Close`) is hidden; `Exit` stays. |
 | **Schema** | **VISIBLE, whole** — all five items (§11). It is the mode's entire point. |
+| **Settings** | **VISIBLE — AND VISIBLE IN NO OTHER MODE** (FQ-030 final slice, `229dc11`). The inverse rule, below. |
 | **Help** | **VISIBLE, whole** — `Manual` (F1) may never be filtered out of any mode. |
 | **View · Database · Tools · Generation** | **HIDDEN.** |
+
+##### The inverse rule — a maintenance-ONLY menu, in the same loop (FQ-030 final slice, `229dc11`)
+
+`Settings` is the app's **first menu that exists only inside the mode**, and it is implemented as the
+**inverse of the survivor list, inside the one loop that already decides menu-bar visibility per mode** —
+not as a second mechanism:
+
+| Table (`ui/main_window.py`, module level, adjacent) | Meaning |
+|---|---|
+| `_MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")` | survives the filter (everything else hides) |
+| `_MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")` | the File trim |
+| **`_MAINTENANCE_ONLY_MENU_TITLES = ("Settings",)`** | **present only inside the mode** |
+
+`_refresh_workflow_mode_affordances` walks `self.menuBar().actions()` once and branches on the same
+normalized title: a title in `_MAINTENANCE_ONLY_MENU_TITLES` gets `setVisible(maintenance)`, everything
+else gets `setVisible(not maintenance or title in _MAINTENANCE_MENU_TITLES)`. **A table rather than a
+special case per entry**, so a second maintenance-only menu is one tuple entry, and **one method still
+owns menu-bar visibility per mode** — the rule this section already states for the subtractive half.
+
+The menu is **built unconditionally** in `_build_settings_menu` (build-once rule) and starts hidden
+(`menu.menuAction().setVisible(self.in_maintenance_mode())`) purely so the constructed state agrees with
+what the loop would compute; it duplicates no decision.
+
+**`Settings` does not weaken the mode's justification, but it does refine it.** Rule B hides commands
+that *work*; this is the first thing the mode **adds**, and it is admissible for the same reason the mode
+hides the other four: it is administrative work on the app's own state, of no use while editing a project.
+**Nothing on a maintenance-only menu may carry a keyboard shortcut** — DEC-006 established that hiding a
+`QMenu` leaves its children's chords live, so a chord here would reach a Maintenance-only dialog from
+outside the mode. See §18.9 for the entry itself and for the pinnability trade.
 
 <!-- CONFLICT: FQ-027's owner answer Q1 words the File trim as "exactly New Session + Save + Save All —
 nothing else". Neither `Save` nor `Save All` names a File-menu action that exists: FQ-020 (2026-08-08)
@@ -2073,7 +2156,7 @@ scattered across the `_build_*_menu` methods.
 |---|---|---|
 | **Trigger** | A fact about what the app *can do right now*: `has_session`, `_configured_sandbox_params()`, `bool(sandbox_params.host)`, `self._ddl_project_folder is None`, the active tab kind, `hasattr(editor, "select_parent_block")` | A fact about what the user *said they were doing*: they picked the launcher's **Maintenance** column this session |
 | **Justification** | **No dead controls.** A command that cannot run is noise, and clicking it could only produce a refusal | **Focus.** A one-off administrative task on the app's own schema should not be surrounded by the whole application |
-| **Applies to** | Every gated affordance in the app (§18.5 carve-out 2, §18.7, §26's *absent, not disabled* statements, `Select ▸ Select Parent Block`, `Parsing`'s tab-kind gate, `Database ▸ Sandbox SQL Console…`) | The window menu bar's **View · Database · Tools · Generation**, and the non-`New Session` items of **File** — nothing else, in no other mode |
+| **Applies to** | Every gated affordance in the app (§18.5 carve-out 2, §18.7, §26's *absent, not disabled* statements, `Select ▸ Select Parent Block`, `Parsing`'s tab-kind gate, `Database ▸ Sandbox SQL Console…`) | The window menu bar's **View · Database · Tools · Generation**, the non-`New Session` items of **File**, and — since 2026-08-10, from the additive side — **`Settings`, which exists only inside the mode** (`_MAINTENANCE_ONLY_MENU_TITLES`). Nothing else, in no other mode |
 | **Does the command work if you could click it?** | **No** — that is precisely why it is hidden | **Yes** — the hidden commands run perfectly well; the app is deciding the user did not mean them |
 | **May it "state a reason" instead of vanishing?** | **Yes, and since FQ-023 it must** when the capability is *one click from applicable*: **present-and-reporting** rather than absent (§18.5 carve-out 2) | **No — there is nothing to report.** A refusal message would have to say "this works, but you said you were doing something else". The answer to a rule-B hide is `File ▸ New Session`, not a refusal string |
 | **Escape** | Acquire the capability (open a project, configure a sandbox, switch tabs) | `File ▸ New Session` — always visible, in every mode, by construction |
@@ -2106,6 +2189,15 @@ ruling, not an implementation detail.**
 - **`Help ▸ Manual` (F1) and the surface that clears the mode must never be filtered out of any mode.**
   Otherwise the app can hide the only documentation explaining why commands are missing, or strand the
   user inside the filter. This is why the File menu survives the trim at all.
+- **HIDING MEANS *"not in your way"*, NEVER *"prevented"* — `docs/DECISION_QUEUE.md` DEC-006, ANSWERED
+  2026-08-08, and the durable half of that answer.** Hiding a top-level `QMenu` does **not** disable its
+  child actions, so **every keyboard shortcut on a Maintenance-hidden menu stays live**: a hidden command
+  is still reachable by chord. Owner: the mode is *a guardrail, not a security boundary* — someone who
+  knows the chord knows what they are doing. **Neither this document nor the manual may describe the mode
+  as restricting what can be executed.** A future decision to genuinely *prevent* something must disable
+  the action; hiding its menu will not do it. The one place this bites is the mode's own **additions**: a
+  chord on a maintenance-**only** entry would reach it from outside the mode, which is why §18.9's
+  `Settings` menu is shortcut-free by rule.
 - **A hidden action is still enumerated by `ToolbarController._walk_menu_actions`** (it never tests
   `isVisible()`), so Customize Toolbar keeps offering every Maintenance-hidden command and **a pinned
   toolbar button for one keeps working**. **FQ-027 relies on this deliberately**: scope is the menu bar
@@ -6208,6 +6300,51 @@ required behavior:
   dirty Raw XML document, pressing Ctrl+Z changes the object buffer and leaves the Raw XML text
   **byte-identical**. This is a silent-wrong-result guard, not a nicety.
 
+> **⚠ THE RULE IS WIDENED — it is about the WINDOW SHORTCUT, not about the object tab (BUG-048, OPEN,
+> 2026-08-10).** This carve-out already named the hazard exactly — *"Ctrl+Z would silently revert the Raw
+> XML project buffer while the user is looking at SQL"* — but it was written as a property of
+> `DdlObjectEditorPanel` and was implemented on that tab only. The hazard is a property of
+> `MainWindow`'s **window-scoped** `QShortcut(QKeySequence("Ctrl+Z"))` → `_undo` → `_apply_history_text` →
+> `center_stage.xml_editor.setPlainText(...)`: **any** focused widget in the window that does not claim
+> the key first rewrites the Raw XML project buffer. It is now proved to fire from surfaces the original
+> wording never considered, so the rule is restated in the form that actually governs:
+>
+> **Every center-stage surface that hosts a text editor must claim `Ctrl+Z` / `Ctrl+Y` — by consuming the
+> key or by accepting the `ShortcutOverride` — even when its own buffer is READ-ONLY. A surface that has
+> no undo of its own does not thereby have "no undo"; it has the *project's* undo, aimed at a document
+> the user cannot see.**
+>
+> | Surface | Claims the key? | Mechanism |
+> |---|---|---|
+> | Raw XML (`XmlEditor`) | **yes** | `keyPressEvent` consumes and re-emits `undo_requested`/`redo_requested` → `_undo`/`_redo` |
+> | Edit XSD / Edit AutoXSD (`XmlEditor`) | **yes** | same, re-emitted into the XSD editor's own native stack |
+> | DDL object editor tab | **yes** | `eventFilter` accepting `ShortcutOverride`, then `editor.undo()`/`redo()` |
+> | PHP file tab | **yes** | the same `eventFilter` shape |
+> | **DDL Explorer (read-only `EditorPanel`)** | **NO — BUG-048** | its `eventFilter` handles `ContextMenu` **only**; `CodeEditor` has no `Key_Z` branch |
+> | **Sandbox SQL Console** | **NO — BUG-048** | binds five chords, none of them `Ctrl+Z`; no filter installed |
+> | **FQ-006 draft fragment tab** (`XmlEditor`) | **claims it, then drops it — BUG-049** | it consumes the key like every `XmlEditor` and emits `undo_requested` **to nobody**, so the chord is *dead* rather than dangerous: the project buffer is safe, and the tab's own native undo is suppressed by the very consumption meant to protect it |
+>
+> **BUG-049 is the same rule failing from the other end, and the pair is why the rule is stated as
+> *claim the key* rather than *install a filter*.** Consuming the chord without routing it anywhere
+> trades a silent wrong result for a dead key — better, but still not the requirement. A surface claims
+> `Ctrl+Z` **and** answers it: with its own undo, or with a deliberate no-op it can justify.
+>
+> **Read-only does not protect the project buffer, and this is the part most likely to be mis-reasoned.**
+> Two independent reasons: (a) `XmlEditor._is_text_modifying_key` deliberately returns `False` for any
+> Ctrl/Meta chord (a Ctrl chord is a *command*, §8 / FQ-015), so `setReadOnly(True)` never sees `Ctrl+Z`
+> as an edit attempt; and (b) `_apply_history_text` writes with `setPlainText`, a **programmatic** write
+> that `setReadOnly` does not gate at all. So §12's **Compare/Merge mode data-loss lock** and §13's
+> **Caption Mode** lock — both realized as `_raw_xml_read_only_reasons` → `xml_editor.setReadOnly(...)` —
+> **do not stop Ctrl+Z from rewriting the buffer they declare read-only.** That is the sharpest form of
+> the defect: a mode whose entire purpose is *"this document must not change while you merge into it"*
+> still lets one reflex chord replace it wholesale.
+>
+> **The fix is BUG-048's, not this document's.** The two shapes on the table — claiming the key at each
+> uncovered surface, versus gating `_undo`/`_redo` on the Raw XML editor actually being the active
+> surface **and** carrying no read-only reason — differ in more than mechanics, and the second one also
+> answers *"what should Ctrl+Z do on a tab with nothing to undo?"* (**nothing**, which is the answer the
+> read-only reasons set already implies). The spec states the requirement; the implementation is tracked.
+
 **2 — No sandbox button row in v1.** *Apply to Sandbox* / *Check* / *Check without applying* (and their
 menu twins — Database for Apply, `Parsing` for the two Checks since BUG-039) have their consumers in
 another lane; v1 therefore ships **no button row and none of
@@ -6479,6 +6616,31 @@ durable is not a save.
 > `MainWindow._deploy_this_edit_action` and `Database ▸ Deploy This Edit…`. Tombstone comments mark each
 > deletion site, and `tests/ui/test_ddl_object_editor.py::test_the_picker_and_its_whole_api_are_deleted`
 > is the guard.
+>
+> **⚠ BUT THE RENAME IS NOT COMPLETE — TWO RETIRED NAMES ARE STILL SHIPPING (BUG-047, OPEN;
+> status-corrected 2026-08-10).** A full sweep of `pgtp_editor/` for all eight retired strings found
+> exactly one genuine survivor pair, and it is **user-visible**, not a stale comment:
+> `db/activity_log.py` defines **`VERB_APPLY_SANDBOX = "Apply to Sandbox"`** and
+> **`VERB_APPLY_TARGET = "Apply to Target"`**, emitted from four `main_window.py` sites and rendered
+> verbatim into every Activity Log row (`[timestamp] - [source] [verb] [payload]`). **So the journal still
+> narrates the two gestures under the names FQ-026 retired**, while the menu, the confirmation title and
+> the `[Check]` line say `Check and commit to sandbox` / `Apply to quality` — the *exact* title-vs-label
+> drift this entry existed to end, displaced from the modal into the journal. `GESTURE_LABELS` is the
+> single owner of a gesture's name and **the activity log is a surface like any other**; it does not read
+> the table.
+>
+> **One constraint the fixer must not miss: these strings are PERSISTED.** They are written into each
+> project's `activity.jsonl`, so history already on disk holds the retired vocabulary. A rename therefore
+> needs a **read-side alias** (or an explicit decision to let old rows keep their old wording), or the fix
+> converts existing journals into a second inconsistency. `resources/manual.md` documents the current
+> rendering with a verbatim `Apply to Sandbox` example and **must move in the same commit** — it is the
+> `manual-maintainer` agent's file, not this one's.
+>
+> Everything else the sweep turned up is legitimate: the deletion tombstones and `GESTURE_*` comments in
+> `ui/ddl_object_editor.py` / `ui/main_window.py` / `db/ddl_check.py`, and the manual's Customize Toolbar
+> chapter, which names the old strings **on purpose** so a user can map a broken pinned button to its
+> replacement. No survivor of `Run on sandbox`, `Run on quality`, `Check Object Without Applying` or
+> `Deploy this edit…` exists outside those.
 >
 > **THREE STATEMENTS IN `docs/FEATURE_QUEUE.md`'s FQ-026 ENTRY WERE FALSIFIED BY THE IMPLEMENTATION.**
 > They are recorded here so nobody re-reads the entry as authoritative — a queue entry is written before
@@ -8540,10 +8702,12 @@ one uniform "opens an action window":**
 > flagged that module and the four keystrokes' host wiring as "specified, not yet confirmed" while the
 > sibling `ui/` work was in flight — **that flag is retired; all four gestures are verified in the tree.**)*
 >
-> **Still to come:** the **snippet store** and the **Maintenance-mode snippet editor** — the last
-> substantive piece of FQ-030. Its blocker was **not** "Maintenance mode is unbuilt" (that mode has
-> shipped); it is the store's **shape**, settled by DEC-001 on 2026-08-10 and folded in under *No snippet
-> persistence in v1* below. `docs/FEATURE_QUEUE.md`'s FQ-030 and this section must agree on that.
+> **The final slice SHIPPED TOO (`229dc11`, 2026-08-10): the snippet store, the snippet editor, its
+> export/import, and the app's first Maintenance-only menu, `Settings`.** *(This banner previously read
+> "Still to come: the snippet store and the Maintenance-mode snippet editor", and named neither `Settings`,
+> `snippets.json`, `Restore Built-ins` nor import/export — a dead assertion over shipped work, retired
+> here. `docs/FEATURE_QUEUE.md`'s FQ-030 is `PROCESSED`.)* Full contract under **The snippet store** below.
+> **FQ-030 is complete.** Outstanding debt against it is **BUG-045** only.
 
 **What it is.** Four explicit, keyboard-triggered authoring gestures in the app's SQL editors — §18.5's
 DDL object tab and §18.5 D4's Sandbox SQL Console — sitting beside §18.6's Ctrl+Space completion rather
@@ -8676,49 +8840,105 @@ closes the same loop for the two `f5d2601` gestures, which are the two most expe
 > shared with the formatter and the highlighter, and adding a cache changes **their** memory profile on
 > large buffers. Whoever wants as-you-type owes that decision first.
 
-#### No snippet persistence in v1 — and the blocker has MOVED, so state the current one
+#### The snippet store — one per-user file, edited in Maintenance mode, shared only on purpose (`229dc11`)
 
-`CodeEditor.set_snippets(snippets)` exists and layers a user store over `DEFAULT_SNIPPETS` (`None`
-restores the defaults) — **and it has no production caller.** There is **no QSettings key, no JSON file,
-no store module, and no snippet editor anywhere in the package**; the seam is the whole of the persistence
-story in v1.
+> *(This subsection was **No snippet persistence in v1**. It shipped. The old text — "no QSettings key, no
+> JSON file, no store module, and no snippet editor anywhere in the package" — is retired, and so is the
+> deferral it justified. What survives from it is the **principle**, restated below, because the principle
+> is what governs the next feature that wants to persist personal state.)*
 
-> **⚠ THE ORIGINALLY STATED BLOCKER HAS CLEARED — corrected 2026-08-10.** This section used to defer the
-> store on the ground that *"FQ-030 sequences the snippet editor into FQ-027's Maintenance mode, which is
-> **unbuilt**"*. **Maintenance mode SHIPPED.** Verified in the tree: `launcher_dialog.MODE_MAINTENANCE`
-> with the launcher's third column (`LAUNCHER_GROUPS` → `Maintenance`: `schema.edit-xsd`,
-> `schema.import-xsd`) and `GROUP_MODES` writing the mode; `MainWindow.workflow_mode` /
-> `in_maintenance_mode()` / `set_workflow_mode()` / `current_mode()`; and the filter itself,
-> `_refresh_workflow_mode_affordances`, over `_MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")` and
-> `_MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")`. *(Note `Exit` is in that set — §7's membership
-> table says so, and a mode that hides the way out of the **application** is the same trap `New Session`
-> exists to prevent, one level up.)* Leaving the old sentence standing would have sent a reader hunting
-> for work already done, and it was **load-bearing**: it was the stated reason another feature is
-> deferred.
+**The governing principle, stated once because it outlives this feature (DEC-001, ANSWERED 2026-08-10).**
+Owner, verbatim: the store *"should live in the software's folder, editable by the users, exportable and
+importable for sharing with others"*. Generalized — and it is **§17's `ProfileKey` ruling seen from the
+other side**:
 
-**The deferral still stands, and the surviving reason is the stronger of the original two: the stored
-FORMAT is the expensive thing to take back.** Snippet text is user-authored content; once a user's file
-exists its shape is a compatibility obligation. Deferring costs nothing; shipping the wrong shape costs a
-migration.
+> **Where the project must stay portable, personal state lives in the app's own folder and crosses between
+> people only by an EXPLICIT export/import gesture — never by silent embedding, and never by merge.**
 
-**The real remaining blocker is a design question, now answered — `docs/DECISION_QUEUE.md` DEC-001,
-ANSWERED 2026-08-10 — and it must be folded in before the store is built.** The owner's ruling, in their
-words, is that the store *"should live in the software's folder, editable by the users, exportable and
-importable for sharing with others"*. Concretely: **one per-user store**, in the **app's own folder**
-(never embedded in the `.pgtp` or the project); **directly user-editable**, which is what the
-Maintenance-mode editor edits; and **sharing by explicit export / import**, a deliberate gesture — the
-*"two stores, merged, with a precedence rule"* option is **explicitly rejected**, which keeps the store
-single and its precedence trivial.
+A project is a **movable artifact**, so a typing shortcut has no business inside it: a snippet is a
+property of the *person*, not of the schema. The *"two stores, merged, with a precedence rule"* option was
+**explicitly rejected** — it keeps the store single and its precedence trivial. Any future proposal to
+persist personal convenience into the project folder is refused on this ground.
 
-**The reasoning generalizes and is the same one §17's `ProfileKey` ruling rests on**, applied from the
-other side: **a project is a movable artifact, so personal convenience stays out of it** — a snippet is a
-typing shortcut, not a property of the schema. Stated once as a principle: *where the project must stay
-portable, personal state lives in the app's folder and crosses between people only by an **explicit**
-export/import gesture — never by silent embedding and never by merge.*
+**The store.**
 
-**`set_snippets()` is the named seam** the store will attach to, so what is left is the store file, its
-format, the Maintenance-mode editor and its export/import affordances — a wiring-and-format job against a
-settled design, not a redesign.
+| | |
+|---|---|
+| File | **`snippets.json`** (`sql/snippet_store.py::SNIPPETS_FILENAME`), `STORE_VERSION = 1` |
+| Location | the app's per-user data folder, resolved by `ui/snippet_controller.py::snippets_path(base_dir=None)` through `QStandardPaths.AppDataLocation` |
+| Injection | `SnippetController(shell, parent=None, *, config_dir: Path \| None = None)` — the **existing** injected config dir (`MainWindow`'s `generator_config_dir`, the §19/§22 override), not a second override mechanism. `SnippetController.path` is a property over it, so nothing else computes the location |
+| Split | **`sql/snippet_store.py` is Qt-free** (format + rules, pinned by `tests/sql/test_package_purity.py`); **`ui/snippet_controller.py`** owns location, dialogs and gestures. Same posture as every other `sql/` module (§5) |
+
+**The file holds the WHOLE SET, not a diff over `DEFAULT_SNIPPETS`, and this is a correctness decision.**
+An overlay cannot express *deleting* a shipped snippet without inventing tombstones, and a tombstone
+vocabulary is exactly the kind of format debt DEC-001's deferral existed to avoid. The accepted cost is
+stated rather than discovered: the shipped set **freezes into the user's file** the first time they save,
+so a later build's new built-in does not appear by itself — mitigated by `defaults_missing_from()` and the
+dialog's **`Restore Built-ins`** button, and made legible by `origin_of()`, which renders each row's
+**Origin** column as `built-in` / `built-in, edited` / `yours`. **The store file IS the export file** —
+one format, so export/import needs no second serializer.
+
+**A corrupt file is NEVER silently discarded, and never overwritten.** `load_snippets` never raises; a
+missing or empty file yields a clean `LoadedSnippets()` with no error. Anything unreadable yields the
+defaults **plus** a stated reason — *"not valid JSON (…)"*, *"could not be read (…)"*, `no "snippets" list
+in the file`, *"entry N has no trigger word"*, *"the trigger word 'x' appears more than once"* — and puts
+the whole lane **read-only**: the startup audit row reads *"… the built-in snippets are in force and the
+file will not be overwritten."*, the dialog opens with `read_only=True` and the note *"… saving is
+disabled so your file is not overwritten — fix or move it, then reopen the application."*, and `save`
+refuses outright with *"Not saving: the existing store could not be read, and overwriting it would lose
+whatever it holds."* A write that fails is **loud**, not swallowed (`Could Not Save Snippets`). The rule
+is the app's standing one: a tool that silently replaces a file it could not read is a tool that eats
+work.
+
+**The editor** — `ui/edit_snippets_dialog.py::EditSnippetsDialog`, window title `Edit Snippets`: a table of
+`Trigger word` · `Description` · `Origin` over a body editor, with `Add` · `Delete` · **`Restore
+Built-ins`** · **`Export…`** · **`Import…`**. Export and Import are **signals only**
+(`export_requested` / `import_requested`); the controller owns every modal, so the dialog opens no file
+chooser and shows no message box of its own.
+
+**Import never applies a collision without an explicit Yes, and lands in the dialog's rows, not on disk.**
+`plan_import` / `apply_import` (`sql/snippet_store.py`) are pure; the controller asks
+**`Trigger Words Already Exist`** — Yes replaces, **No imports only the new ones**, Cancel changes nothing
+(*"Import cancelled — nothing changed."*). The result is loaded into the open dialog, so the user still
+has to accept it: an import is a proposal, not a write. **Trigger words compare case-insensitively**
+(`_key(prefix) → prefix.strip().lower()`), because `find_snippet` matches that way — `CASE` and `case` are
+one snippet and must collide rather than shadow each other.
+
+**`CodeEditor.set_snippets(snippets)` is the seam it attaches to, unchanged** (`None` restores the
+defaults) — the store is a producer for a seam that already existed, not a new path into the editor.
+
+##### Where it is invoked from: `Settings ▸ Edit Snippets…`, the app's first Maintenance-only menu
+
+**A new top-level window-bar menu, `Settings`, visible ONLY in Maintenance mode** — see §7's Maintenance
+block and §26 for the mechanism, which is the **inverse** of the existing filter applied by the **same
+loop**, not a second mechanism. Its one entry today is **`Edit Snippets…`**; it is built as a menu rather
+than as a lone action because a second tenant is anticipated (FQ-033's autoformatter settings), and
+because the alternative — hanging editor-of-app-state entries off `Schema` — would make `Schema` mean two
+things. *(`docs/FEATURE_QUEUE.md`'s FQ-030 entry says the editor's home is `Schema`; that was overtaken by
+an owner redirection mid-build and the entry is wrong. This section is the truth.)*
+
+**Nothing in `Settings` carries a keyboard shortcut, deliberately, and this is a rule for the whole menu
+rather than a property of one entry.** Hiding a top-level `QMenu` does **not** disable its child actions
+(`docs/DECISION_QUEUE.md` **DEC-006**, ANSWERED: *hiding in this project means "not in your way", never
+"prevented"*), so a chord on a Maintenance-only entry would open the dialog from outside the mode — the
+one place the mode's own framing would actually be false. Two tests pin it, one of them recursively over
+submenus (`tests/ui/test_edit_snippets_menu.py`).
+
+**The accepted trade, recorded so it is not re-discovered as a defect: the hidden action is still
+PINNABLE.** `ToolbarController._walk_menu_actions` never tests `isVisible()` (§7), so `Edit Snippets…`
+enumerates into Customize Toolbar as `settings.edit-snippets` / `Settings › Edit Snippets`, and a user who
+pins it reaches the dialog outside Maintenance mode. That is **FQ-027's recorded trade taken deliberately,
+not a leak**: the command works fine everywhere, so a working button for it is correct behaviour
+(§7's hide/delete/report table, rule B). It is not in `DEFAULT_TOOLBAR_IDS`, so it is never pinned unless
+someone asks. *(Precision, since it is easy to mis-cite: the guard test is
+`tests/ui/test_edit_snippets_menu.py::test_the_command_is_enumerated_and_therefore_pinnable`, which
+asserts the command **enumerates** — nothing in the suite actually writes it into `toolbarIds`. Its
+complement, `test_nothing_else_reaches_the_editor`, asserts no other surface reaches the dialog.)*
+
+**The menu is constructed unconditionally and only `setVisible`-toggled**, like every other per-mode and
+per-tab affordance in the app (§7's build-once rule): an action that does not exist at enumeration time is
+invisible to `collect_menu_commands()`, which would break Customize Toolbar **and** silently drop the id
+from a saved toolbar.
 
 #### Reuse map — what FQ-030 builds on rather than duplicates
 
@@ -9050,7 +9270,7 @@ Only new module: `debuglog.py`. Log dir `%LOCALAPPDATA%\MDS\PGTP Editor\logs\` (
 
 | Bar | What it holds | Composability |
 |---|---|---|
-| **The window menu bar** (`QMainWindow`'s own, spanning the full width above the docks) | window-global commands: File, View, Schema, Database, Tools, Generation, Help | fixed |
+| **The window menu bar** (`QMainWindow`'s own, spanning the full width above the docks) | window-global commands, in shipped build order (`_build_menu_bar`): **File · View · Schema · Database · Tools · Generation · Settings · Help** — `Settings` sits between `Generation` and `Help` and is **visible in Maintenance mode only** (FQ-030 final slice, `229dc11`; §7's inverse rule, §18.9) | fixed |
 | **The Editor menu bar** (a child `QMenuBar` in an anonymous container widget that *is* `centralWidget()`, **strictly above the central pane**, `CenterStage` below it) | **editing** commands: **History · Select · Parsing · Navigation · Deployment** — the first three ship (`Select` added by FQ-015, `9146524`); **`Bookmarks` is renamed `Navigation`** and **`Deployment` is added**, both 2026-08-08 (FQ-021/FQ-020) | **fixed** — the app decides its contents. It is *not* the user-curated favourites toolbar (§7) |
 
 Both bars are walked by the **one** `ToolbarController` menu walk, so every command on either is
@@ -9152,9 +9372,11 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   are on **File** — see below); no new top-level menu is created for it, and no "locate binary" action
   is added, because v1 spawns no external process. **The remaining entries below are target design
   (2026-08-02) except ONE that SHIPS and is verified in `_build_database_menu` (re-verified 2026-08-10):
-  ☐ `Sandbox SQL Console…`. The rest — `Apply to Sandbox`, `Apply to Target Database…`,
-  `Generate Deployment SQL…` — do not exist on this menu; `Sandbox Setup…` no longer exists anywhere;
-  and `Deploy This Edit…` is DELETED (FQ-026, `310cf92`):**
+  ☐ `Sandbox SQL Console…`. Of the rest, **`Generate Deployment SQL…` is the one still-live target
+  design**; `Apply to Sandbox` / `Apply to Target Database…` are **retired as Database entries** (they
+  ship on `Deployment` as `Check and commit to sandbox` / `Apply to quality` — one home per gesture,
+  FQ-026); `Sandbox Setup…` no longer exists anywhere; and `Deploy This Edit…` is DELETED (FQ-026,
+  `310cf92`):**
   - *(The sandbox-scoped second Explorer entry is **no longer a sketch** — it is
     **`DDL Explorer (Sandbox)`**, named and specified in the inventory above, with the first entry renamed
     **`DDL Explorer (Quality)`**; FQ-022, 2026-08-08. It is **absent entirely when no sandbox exists**, keyed
@@ -9192,11 +9414,16 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
     `setVisible(self._ddl_project_folder is None)` rule, which existed for one day and whose premise —
     "in project mode all sandbox configuration already lives in Project Settings" — was false until this
     move made it true.)*
-    The remaining **target-design** Database entries, none of which exist: **Apply to Sandbox**;
-    **Apply to Target Database…** (the ellipsis marks the confirmation naming
-    object + database, and it is additionally gated on a green sandbox validation and refused outright on
-    a changed signature — §18.5); **Generate Deployment SQL…** (the feature's rank-1 deliverable;
-    disabled unless a sandbox profile is configured); and ~~**Deploy This Edit…**~~ — **DELETED from this
+    **~~Apply to Sandbox~~ and ~~Apply to Target Database…~~ are RETIRED as target design for this menu,
+    not merely "not built" (status-corrected 2026-08-10).** They were sketched here on 2026-08-02, before
+    the `Deployment` menu existed. Both gestures now ship, under FQ-026's names — `Check and commit to
+    sandbox` and `Apply to quality` — on the Editor bar's **`Deployment`** menu, and **FQ-026's rule is
+    one home and one name per gesture**: a Database twin would be a second surface with its own label
+    string, which is precisely what BUG-039 refused for the two Check gestures and FQ-026 refused for the
+    button row and the context menu. Building them here later would re-open a settled decision, so they
+    are struck rather than left standing as a to-do. The only genuinely **target-design** entry left on
+    this menu is **Generate Deployment SQL…** (the feature's rank-1 deliverable — no module, no action;
+    §18.5). And ~~**Deploy This Edit…**~~ — **DELETED from this
     menu by FQ-026 (`310cf92`, verified absent 2026-08-10; ledger §28).**
     The picker shipped here (`_build_database_menu`, `self._deploy_this_edit_action` →
     `_deploy_active_ddl_object_edit()`) as one of its three always-present surfaces, always visible and
@@ -9233,10 +9460,12 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
     > gesture that was removed. A user who had pinned either id has it silently dropped by `resolve_ids`
     > (the FQ-020 `save` precedent); **no `RENAMED_ID_ALIASES` row** — this is a deletion, not a rename.
 
-    **Apply to Sandbox / Apply to Target Database…** are **disabled unless a DDL object editor
-    tab is active**, kept in sync on `center_stage.currentChanged`; Apply is never automatic and never
-    implied by Save. Sandbox SQL Console and Generate Deployment SQL do **not** require an
-    object tab. There is
+    *(**Superseded 2026-08-10:** *"Apply to Sandbox / Apply to Target Database… are **disabled** unless a
+    DDL object editor tab is active."* Both the entries and the posture are gone — the entries to
+    `Deployment` under FQ-026's names, and the posture to §18.5 carve-out 2's **absent, never disabled**
+    rule, which `Deployment`'s per-tab `setVisible` toggling implements. The surviving substance is the
+    part that was never about those two entries: **Apply is never automatic and never implied by Save**,
+    and **Sandbox SQL Console and Generate Deployment SQL do not require an object tab**.)* There is
     no "locate binary" action — v1 spawns no external process, **except** §18.5 D2a's optional
     `pg_dump`/`pg_restore` sandbox data-cloning path, a narrowly-scoped exception to that invariant (§18.5
     D2a). **None of these entries shipped with the editable tab's first increment** — the sandbox lane was a
@@ -9280,6 +9509,13 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   exists to fix.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
   Own PHP), rePHPgen (Analyze Gap), Save reJSON…, Locate panGen Runtime….
+- **Settings — NEW, and MAINTENANCE-MODE ONLY** (FQ-030 final slice, `229dc11`; `_build_settings_menu`,
+  built between `Generation` and `Help`): **`Edit Snippets…`** — one entry today, a menu rather than a
+  lone action because FQ-033 is anticipated as a second tenant. It is the app's first
+  **maintenance-only** menu, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the
+  existing survivor list **inside the same visibility loop** (§7). **No entry on this menu carries a
+  shortcut**, by rule, because hiding a `QMenu` leaves its children's chords live (DEC-006) — see §18.9
+  for the store, the dialog and the accepted pinnability trade.
 - **Help:** Manual (F1), Open Log Folder, About. **`Manual` (F1) must never be filtered out of any launch
   mode** (§7) — otherwise the app can hide the only documentation explaining why commands are missing.
   The whole `Help` menu is therefore visible in Maintenance mode (below).
@@ -9296,6 +9532,7 @@ mode is entered by picking the launcher's Maintenance column, lasts for the **se
 |---|---|---|
 | **File** | **visible, trimmed to `New Session` (+ the menu's save entries, if any) and `Exit`** | the escape hatch must never be hidden (§7) |
 | **Schema** | **visible, whole** (all five items, §11) | the mode's entire purpose: administrative/setup work on the app's own schema |
+| **Settings** | **visible — and hidden in EVERY other mode** (`_MAINTENANCE_ONLY_MENU_TITLES`) | the same purpose from the additive side: editing the app's own state. **No shortcut on any entry** (DEC-006) |
 | **Help** | **visible, whole** | `Manual` (F1) may never be filtered out |
 | **View** | **hidden** | — |
 | **Database** | **hidden** | — |
@@ -9305,6 +9542,13 @@ mode is entered by picking the launcher's Maintenance column, lasts for the **se
 - **These four menus are hidden even though every command on them still works** — that is rule B, stated
   as such rather than blurred into the capability rule. A refusal message is *not* offered for them: there
   is nothing to refuse, and the way back is `New Session`.
+- **Hiding does not disable.** The four hidden menus' child actions keep their keyboard shortcuts and
+  remain reachable by chord (DEC-006, §7). The filter is a guardrail, not an enforcement boundary, and
+  neither this section nor the manual may say otherwise. Its one consequence for design: a
+  maintenance-**only** entry must carry no shortcut, or the mode leaks outward instead of inward.
+- **The table now has an additive half.** `Settings` is present only inside the mode, through
+  `_MAINTENANCE_ONLY_MENU_TITLES` in the **same** `_refresh_workflow_mode_affordances` loop — one method
+  still owns per-mode menu-bar visibility (§7).
 - **Visibility only, never enabled-state**, through **one** `_refresh_*_affordances`-style entry point —
   never ad-hoc `setVisible` inside the `_build_*_menu` methods. The app keeps exactly two postures.
 - **Standalone and Project get NO membership rule at all** (owner: *"Project and standalone are OK for
@@ -9471,6 +9715,7 @@ whichever `Deployment` entry they use (§7). `Undo`/`Redo`/`Validate` now resolv
 | **Ctrl+W** | **NOTHING — deliberately unbound** (owner decision, 2026-08-09; status-corrected 2026-08-10) | **`File ▸ Close` exists and is unchanged; it simply carries no shortcut.** *(Supersedes this table's 2026-08-09 row, which recorded it as "unchanged and still bound".)* **The reason is `Ctrl+O`'s, restated for closing:** this app closes projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to pick which *"close"* it means — and the one it actually meant was **the rarest of them**, closing the whole project. Like `Ctrl+O` and **unlike `Ctrl+S`**, the chord is **free rather than reserved**: a user may bind it through `View ▸ Customize Shortcuts…` to whichever close they mean. **The prerequisite the 2026-08-09 row named was real and was paid:** `File ▸ Close` had been the test suite's specimen for three shipped properties (FQ-012's default-capture test, FQ-012's shortcut-**steal** test, FQ-027's hidden-command-loses-its-key test), all of which needed a menu-bar QAction owning a real default binding — so unbinding it required a replacement specimen, and that requirement is recorded here as met rather than waived |
 | **Ctrl+S / Ctrl+Shift+S** | **NOTHING — deliberately unbound app-wide** | **Stated, not merely omitted** (FQ-020, 2026-08-08; ledger §28). Every save is a named click on the Editor bar's **`Deployment`** menu — `Save pgtp` / `Save as new pgtp` (Raw XML), `Save in Project` (a DDL object tab), `Save XSD`, `Save PHP File` (§26). `File ▸ Save`, `File ▸ Save As…` and the `_save_active_tab` router are **deleted**, and so is `PhpFileTab`'s own `Key_S` event-filter branch — owner: *"Dies at all, inconsistency is a bad driver"* — so the reflex has **one** answer everywhere instead of being right on one tab and silently wrong on the next. Pressing the key does **nothing at all: no write, no message, no status-bar hint** — a signpost was offered and **explicitly declined**, and implementers must not add one back. An absent row would read as an oversight, which is why this row exists; the manual's Keyboard Shortcuts chapter must say the same. **The one carve-out is the next row.** The former object-tab flow is unchanged apart from its trigger: the **first** `Deployment ▸ Save in Project` on a never-saved tab opens **Save As… (`*.sql`)** and remembers the path, and **cancelling that dialog from the close-confirmation prompt aborts the close** (§18.5). Save persists text only and **never** executes DDL |
 | Ctrl+Z / Ctrl+Y | Undo / Redo (single step) | Window — project snapshot history (`MainWindow._undo`). **Exception, pinned (implemented, §18.5 carve-out 1):** with the Edit XSD tab or a **DDL object editor tab** active, Ctrl+Z/Ctrl+Y drive **that editor's own native undo stack**. The object tab realizes it with an **event filter** on its editor that accepts the key and calls `editor.undo()`/`redo()` itself, because `CodeEditor` neither consumes nor re-emits the key and the window shortcut would otherwise revert the **Raw XML project buffer** |
+| **Ctrl+Shift+Z** | **Redo — a SECOND redo key, in the XML editors only** (*row added 2026-08-10; the chord shipped long before and this table had never carried it*) | **`XmlEditor.keyPressEvent` only** (`ui/xml_editor.py`), where the same branch answers `Ctrl+Y` **or** `Ctrl+Shift+Z` with `redo_requested.emit()` + `event.accept()`. So it means the **project snapshot redo** in the Raw XML editor and the **XSD editor's own native redo** in Edit XSD / Edit AutoXSD, following `Ctrl+Y`'s existing routing exactly. It is **dead on every `CodeEditor` surface** — the DDL object tab, the DDL Explorer, PHP tabs, the Sandbox SQL Console and `CodeEditorDialog` — which is what the manual already says. **⚠ It is MISSING from `ui/shortcut_registry.py::RESERVED_SEQUENCES` — BUG-050, OPEN.** The registry's header says it is *"transcribed from CONSOLIDATED_SPEC.md §27"*, and its own rule reserves any chord *"handled inside a widget's own key handling"* — which is precisely this one, and precisely why `Ctrl+Alt+F` and FQ-030's four are reserved. Until the registry row lands, `Customize Shortcuts…` will hand `Ctrl+Shift+Z` to a menu command that then **silently never fires while an XML editor has focus**, because the editor accepts the key first. **The registry row and this spec row are one change and must land together** — a transcription that is only half-applied is how the gap arose |
 | Ctrl+F / Ctrl+R | **FOCUS** the owning tab's Find field / Replace field (FQ-016, 2026-08-07 — they no longer *show* a bar; the bar is permanently visible, §8/§15) | **Per tab, NOT window-level:** each of the six `FindReplaceBar` hosts installs its own pair of `WidgetWithChildrenShortcut` `QShortcut`s via `find_replace_bar.install_focus_shortcuts(host, bar)` — Raw XML tab, Edit XSD tab, DDL Explorer (`ddl_editor_panel`), the DDL object editor tab, a PHP file tab, a draft fragment tab — and `CaptionManagementPanel` owns an equivalent panel-scoped pair of its own (§13/FQ-017). **A window-level `Ctrl+F` is forbidden**: it would be *ambiguous* against those panel-scoped ones and Qt would fire **neither** (§7). Consequences: exactly one match is live for any focus location; **`Ctrl+F` is a NO-OP on tabs with no bar** (Manual, Diff/Merge) instead of yanking the user to Raw XML — which **closes** §29's reveal question in the recommended direction — and `FindValidateController.active_find_bar()`'s reveal fallback now serves **`F3` only**. Replace is **inert in the DDL Explorer** — that buffer is read-only (`CodeEditor.replace_current_selection` returns early on `isReadOnly()`) — and **live** in the DDL object editor, PHP and draft tabs. **No menu entry advertises either key any more** (the Edit menu is dissolved) and neither key is mode-gated, so the long-standing "the menu advertises one behaviour while the key does another" conflict disappears from both ends, and `set_find_actions`/`set_find_actions_enabled` are deleted (§7) |
 | **F3** | **Find Next** — routed to `active_find_bar().find_next()` | **Window-level shortcut with NO menu entry** (FQ-016, 2026-08-07). Owner ruling: *"why does F3 die? it should find next."* It survives the Edit menu's dissolution rebound onto the same window-level, menu-less shape as **Ctrl+L Go To XSD** (next block), using the exact dispatch the deleted Edit QAction used. **`F3` and `Ctrl+F` are deliberately ASYMMETRIC on
 a tab with no bar** (Manual, Diff/Merge, and §18.5 D4's Sandbox SQL Console): `Ctrl+F` is a **no-op** there,
@@ -9499,6 +9744,7 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | *(no shortcut, deliberately)* | **Next Difference** / **Previous Difference** / **Apply Changes to Target** | **Editor menu bar ▸ `Navigation`, MODE-ONLY** — visible only inside Compare/Merge mode, hidden by `set_diff_mode_members_visible` otherwise (FQ-021 third leg, shipped `1ccfe9d`; status-corrected 2026-08-10). Off `Tools` entirely. `Prev Difference` is **relabelled `Previous Difference`**, and because the label is the id's last segment the ids are `navigation.next-difference` / `navigation.previous-difference` / `navigation.apply-changes-to-target`, reached from the old `tools.*` ids through `RENAMED_ID_ALIASES` |
 | ~~*(no shortcut — and NO GESTURE AT ALL)*~~ | ~~**Apply Changes to Target** is unreachable~~ | **ROW RETIRED — the regression is CLOSED.** It was real, lasted from FQ-020 until `1ccfe9d`, and was found by spec harmonization rather than by a test, which is why the fact is kept rather than deleted. FQ-021's third leg shipped and rehomed the command onto the mode-only `Navigation` menu — see the row **above**, which is now the live one. *(This row directly contradicted its own neighbour for a day; that is what a status-accuracy pass looks like when only half of it lands.)* |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the **twelve `Alter Table ▸`** operations (eight column + four constraint) | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slices 1 and 2 **implemented** 2026-08-09; slice 3's six further operations are **not yet on any menu**, so they have no row here). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
+| *(no shortcut, deliberately — as a RULE, not per entry)* | **Every entry on the `Settings` menu**, today `Edit Snippets…` | The window bar's **Maintenance-only** `Settings` menu (FQ-030 final slice, `229dc11`; §18.9/§26). The reason is structural rather than stylistic: **hiding a `QMenu` does not disable its children** (DEC-006), so a chord on a maintenance-only entry would open its dialog from **outside** the mode the entry exists inside. This applies to every future entry on this menu and to any future maintenance-only menu. Two tests pin it, one recursively over submenus |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Escape | **Return focus to the document** — never hide anything | Any editor's `FindReplaceBar` returns focus to its editor; the Caption Management tab's `CaptionFindReplaceBar` returns focus to the grid (FQ-016/FQ-017, 2026-08-07). Both bars used to *hide* on Escape; both are now permanent |
 | Ctrl+G | Go to line in XML | Caption grid |
@@ -9775,6 +10021,9 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-10 | **§18.9's own status banner, written hours earlier** (row above), flagging `ui/schema_gesture_seam.py` and the `Ctrl+Alt+J` / `Ctrl+Shift+Space` host wiring as **specified, not yet confirmed** — the module being untracked and test-less at the time | **THE SCHEMA GESTURES SHIPPED (`f5d2601`) — §18.9 is confirmed in full.** `ui/schema_gesture_seam.py` is tracked, wired and covered by `tests/ui/test_schema_gestures.py` (24 tests). **Three facts that are design, not wiring detail.** (1) **Exactly TWO hosts, and the other three are INERT rather than refusing:** `SchemaGestureHostMixin` is mixed into `DdlObjectEditorPanel` and `SqlConsolePanel` only; the DDL Explorer's read-only `EditorPanel`, `PhpFileTab` and `CodeEditorDialog` **do not import the module at all**. That asymmetry is deliberate and sharpens carve-out 2's rule: a **refusal** is right when a capability is *one click from applicable*, and wrong when the surface **could never have a schema** — those three have no schema to have. (2) **Signature help is a QUERY and inserts NOTHING** — it answers into a transient tooltip at the caret via `CodeEditor.show_hint`, never touching `apply_expansion` or the cursor, and an **answered** query files **no** `[SQL]` Audit row while a refusal does: the Audit surface records what the app declined to do, not what it did. (3) **`RESERVED_SEQUENCES` gained FOUR rows, not two** — `Ctrl+Alt+E` and `Ctrl+Alt+C` **shipped in an earlier FQ-030 slice without ever being registered**, so `Customize Shortcuts…` could have retargeted a menu command onto a chord a widget already answered to; `f5d2601` closed that latent gap alongside registering its own two. **Key hosting is deliberately NOT unified** (the console uses `QShortcut`, the DDL tab its `eventFilter`) — each panel follows the convention it already uses for `Ctrl+Space` and `Ctrl+Alt+F`, and the in-code reason is that `QShortcut` activation is unreliable under the offscreen test platform. **One debt recorded, not hidden:** `db/schema_index.py` publishes no `ColumnInfo` list and no routine accessor, so `sql/join_fk.py`'s docstring describes a caller that **cannot be written**, and the seam reaches the underlying `DatabaseSchema` through a public-`schema()`-then-private-`_schema` fallback — **dispatched to `bug-triager`, not fixed here** |
 | 2026-08-10 | §18.9's deferral of the **snippet store**, resting on *"FQ-030 sequences the snippet editor into FQ-027's Maintenance mode, which is **UNBUILT**"* — a store shipped then would have been *"a file nobody can edit"* | **THE STATED BLOCKER IS A DEAD ASSERTION — MAINTENANCE MODE SHIPPED — AND THE REAL ONE IS NOW ANSWERED (DEC-001).** Verified in the tree: `launcher_dialog.MODE_MAINTENANCE`, the launcher's third column and `GROUP_MODES`, `MainWindow.workflow_mode`/`in_maintenance_mode()`/`set_workflow_mode()`/`current_mode()`, and the filter `_refresh_workflow_mode_affordances` over `_MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")` and `_MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")`. **This row exists because the stale sentence was LOAD-BEARING** — it was the stated reason a *different* feature was deferred, so it did not merely misinform, it justified inaction; that is the class of dead assertion §31's sweep exists to catch. **The deferral itself still stands**, on the surviving and stronger of its two original grounds: the stored **format** is user-authored content and becomes a compatibility obligation the moment a user's file exists. **`docs/DECISION_QUEUE.md` DEC-001 (ANSWERED 2026-08-10) settles the shape** — owner, verbatim: the store *"should live in the software's folder, editable by the users, exportable and importable for sharing with others."* **One per-user store, in the app's own folder** (never embedded in the project), **directly user-editable** (that is what the Maintenance-mode editor edits), with **sharing by explicit export/import** — the *two-stores-merged-with-a-precedence-rule* option **explicitly rejected**, which keeps the store single and its precedence trivial. **The reasoning is §17's `ProfileKey` ruling from the other side:** a project is a **movable artifact**, so personal convenience stays out of it — a snippet is a typing shortcut, not a property of the schema. Stated once as a principle: **where the project must stay portable, personal state lives in the app's folder and crosses between people only by an EXPLICIT export/import gesture — never by silent embedding and never by merge.** What remains is the store file, its format, the editor and its export/import affordances |
 | 2026-08-10 | §7's *"a live, accepted caveat that falls out of the same mechanism — **recorded, not fixed**"*: `[Project]` narration emitted while a project is **closing** reaches the closing project's `activity.jsonl` but **vanishes from the panel**, because FQ-019's journal replaces its display buffer on the transition — with the spec's own judgment that *"fixing it would mean either buffering across the swap or holding two panels, both of which cost more than the defect"* | **FIXED — BUG-042 (`b9d1359`); the shipped fix does NEITHER of the two things the spec had priced.** The defect mattered more than "a caveat" reads: the wiped line is the **pending-deploy reminder**, which is the entire point of narrating a close — *a reminder nobody can read is a reminder that did not happen*. **The mechanism is a RUN-STATE FLAG, not a wording test:** `AuditRouter.project_closing`, a plain instance attribute in the **exact shape of the pre-existing `schema_run`** flag — one mechanism for *"a run of kind X is in flight"*, not two — set around `close_project`'s narration in `ui/ddl_project_controller.py` in a **`try`/`finally`**, and **save-and-restore rather than reset-to-`False`**, so nesting cannot corrupt it and a **modal that raises cannot strand every later `[Project]` row on the wrong surface**. It wraps **both** close-time calls, not just the reminder. `classify(text, *, schema_verify=False, project_closing=False)` returns the new **`TO_ACTIVITY_AND_RESULTS`** for a `[Project]` row while the flag is set. **`DESTINATIONS` IS UNCHANGED — `PROJECT_PREFIX` still maps to `TO_ACTIVITY`**, and any spec text or test quoting that default remains correct: the dual destination is reachable only through the flag, never through the table. **`TO_ACTIVITY_AND_RESULTS` is the app's only two-destination row type and it means BOTH, never either** — one branch with no `elif` between them: the `activity.jsonl` write is unchanged (the line belongs to the **closing project's** history) and the **Messages** tab *additionally* renders it, through the same `_route_results` path an ordinary row takes, so it is not a second-class row. **It is not a fourth surface** — it is a pairing of two of the three that already exist. **One gap named rather than glossed:** nothing exercises the `finally` restore path, so that guard is correct but unverified by the suite |
+| 2026-08-10 | §18.9's *"Still to come: the snippet store and the Maintenance-mode snippet editor"* banner and its whole **No snippet persistence in v1** subsection — *"no QSettings key, no JSON file, no store module, and no snippet editor anywhere in the package"*, with the deferral resting on the store's unsettled **format**; plus §7/§26 listing the window menu bar as **seven** menus | **FQ-030's FINAL SLICE SHIPPED (`229dc11`) — the store, the editor, export/import, and the app's FIRST MAINTENANCE-ONLY MENU.** **(1) The store is `snippets.json` in the app's per-user folder**, resolved through the **existing** injected `config_dir` rather than a new override; `sql/snippet_store.py` is the Qt-free format layer and `ui/snippet_controller.py` owns location and gestures. **It holds the WHOLE SET, not a diff over `DEFAULT_SNIPPETS`** — an overlay cannot express *deleting* a shipped snippet without inventing tombstones — and **the store file IS the export file**, so there is one format and no second serializer. The accepted cost (the shipped set freezes into the user's file) is named, with `Restore Built-ins` and the `Origin` column as its mitigations. **A corrupt file yields defaults plus a stated reason and puts the lane READ-ONLY; it is never overwritten**, and a failed write is loud. **Import is a proposal, not a write**: collisions require an explicit Yes (`Trigger Words Already Exist`; No imports only the new ones), the result lands in the dialog's rows rather than on disk, and prefixes compare **case-insensitively** because `find_snippet` does. **(2) `Settings` is a new top-level window-bar menu, visible ONLY in Maintenance mode** — carried by `_MAINTENANCE_ONLY_MENU_TITLES = ("Settings",)` as the **inverse** of the existing survivor list **inside the same `_refresh_workflow_mode_affordances` loop**, an `if/else` on one iteration, so one method still owns per-mode menu-bar visibility and a second such menu is one tuple entry. A menu rather than a lone action because FQ-033 is anticipated as a second tenant. **(3) Nothing on it carries a shortcut, as a RULE** — DEC-006 established that hiding a `QMenu` leaves its children's chords live, so a chord on a maintenance-**only** entry would open its dialog from **outside** the mode; §7 now states DEC-006's wider principle, that **hiding here means *"not in your way"*, never *"prevented"***, and forbids this document and the manual from describing the mode as restricting execution. **(4) DEC-001's answer is folded in as a PRINCIPLE, not a detail**, because it governs future features: *where the project must stay portable, personal state lives in the app's own folder and crosses between people only by an **explicit** export/import gesture — never by silent embedding and never by merge* — §17's `ProfileKey` portability ruling seen from the other side. **(5) The pinnability trade is recorded, not hidden:** `_walk_menu_actions` never tests `isVisible()`, so `settings.edit-snippets` enumerates into Customize Toolbar and a pinned button reaches the dialog outside Maintenance mode — **FQ-027's recorded trade taken deliberately**, since the command works fine everywhere. **Two statements of the queue entry are corrected here:** FQ-030 says the editor's home is `Schema` (it is `Settings`, by owner redirection mid-build), and the pinnability guard is `test_the_command_is_enumerated_and_therefore_pinnable`, which asserts **enumeration** — **nothing in the suite actually pins the id to a toolbar** |
+| 2026-08-10 | §18.5's FQ-026 banner: *"Every deletion below is **verified absent** from `pgtp_editor/`"*, read as the whole rename having landed; and §26's Database menu carrying **`Apply to Sandbox`** / **`Apply to Target Database…`** as live target design, the latter *"**disabled** unless a DDL object editor tab is active"* | **TWO CORRECTIONS FROM A FULL SWEEP OF ALL EIGHT RETIRED NAMES.** **(a) The rename is INCOMPLETE and the survivor is USER-VISIBLE — BUG-047, OPEN.** `db/activity_log.py` still defines `VERB_APPLY_SANDBOX = "Apply to Sandbox"` and `VERB_APPLY_TARGET = "Apply to Target"`, emitted from four `main_window.py` sites and rendered verbatim into every Activity Log row. **The journal narrates two gestures under the names FQ-026 retired** while the menu, the confirmation title and the `[Check]` line use the new ones — the same title-vs-label drift FQ-026 existed to end, displaced into a surface the entry never enumerated. The lesson generalizes: `GESTURE_LABELS` owns a gesture's name, and **the activity log is a surface like any other**. The strings are **persisted to `activity.jsonl`**, so a fix owes a read-side alias or an explicit decision about old rows, and `resources/manual.md` (which shows a verbatim `Apply to Sandbox` example) must move in the same commit. **Code is wrong, spec is right — dispatched, not rewritten to match.** **(b) The two Database entries are RETIRED as target design, not merely unbuilt.** They were sketched 2026-08-02, before `Deployment` existed; both gestures now ship there under FQ-026's names, and **FQ-026's rule is one home and one name per gesture**, the same rule BUG-039 applied to the Check pair. Leaving them listed would invite someone to build a second surface that a settled decision forbids. Their *"disabled unless…"* posture goes with them, superseded by carve-out 2's **absent, never disabled**. `Generate Deployment SQL…` is now the **only** live target-design entry on the Database menu |
+| 2026-08-10 | §18.5 carve-out 1, which stated the `Ctrl+Z` hazard exactly — *"Ctrl+Z would silently revert the Raw XML project buffer while the user is looking at SQL"* — but scoped the requirement to **`DdlObjectEditorPanel`**; and §27's shortcut table, which carried **no `Ctrl+Shift+Z` row at all** | **THE CARVE-OUT IS WIDENED TO THE RULE THAT ACTUALLY GOVERNS, AND §27 GAINS A MISSING ROW.** **(a) BUG-048, OPEN.** The hazard is a property of `MainWindow`'s **window-scoped** `Ctrl+Z` `QShortcut` → `_undo` → `setPlainText` on the Raw XML editor, not of one tab: **any** focused widget that does not claim the key first rewrites the project buffer. Restated: **every center-stage surface hosting a text editor must claim `Ctrl+Z`/`Ctrl+Y` — even when its own buffer is READ-ONLY**, because a surface with no undo of its own does not have "no undo", it has the *project's* undo aimed at a document the user cannot see. Covered today: Raw XML, Edit XSD, the DDL object tab, PHP tabs. **Uncovered: the read-only DDL Explorer** (its `eventFilter` handles `ContextMenu` only) **and the Sandbox SQL Console** (five chords bound, not this one). **BUG-049 is the same rule failing from the other end** — an FQ-006 draft tab *consumes* the chord and emits `undo_requested` to nobody, so the key is **dead** rather than dangerous, and the tab's own native undo is suppressed by the consumption meant to protect it; that pair is why the requirement is *claim the key **and answer it***, not merely *install a filter*. **The sharpest form of the defect: read-only does NOT protect the buffer** — `_is_text_modifying_key` returns `False` for any Ctrl chord by design (§8/FQ-015), and `setPlainText` is a programmatic write `setReadOnly` never gates — so §12's **Compare/Merge data-loss lock** and §13's **Caption Mode** lock both fail to stop one reflex chord replacing the very document they declare read-only. **(b) BUG-050, OPEN.** `Ctrl+Shift+Z` is a **second redo key in the XML editors only**, shipped long before and never written down here; §27 now carries it. It is **absent from `ui/shortcut_registry.py::RESERVED_SEQUENCES`**, whose header claims to transcribe §27 and whose own rule reserves any chord answered inside a widget's key handling — so `Customize Shortcuts…` can hand it to a menu command that then **silently never fires while an XML editor has focus**. **The registry row and the spec row are one change and must land together**; a half-applied transcription is how the gap arose |
 
 ---
 
@@ -9786,15 +10035,20 @@ unrecorded — nothing below was invented in the body above:
 - **~~The launch mode's per-mode menu membership is UNDECIDED~~ — LARGELY RESOLVED 2026-08-09 (FQ-027,
   owner ruling; ledger §28), and what remains open is narrower than it was.** **Answered:** the mode is
   **session-only** (no QSettings key), the launcher is **three columns**, **Maintenance** has a concrete
-  membership (File trimmed to `New Session` · Schema whole · Help whole; View/Database/Tools/Generation
-  hidden), the **escape hatch is `File ▸ New Session`** — sub-question (a) closed — and sub-question (c)
+  membership (File trimmed to `New Session` · Schema whole · Help whole · **`Settings` present, and
+  present in no other mode**, 2026-08-10; View/Database/Tools/Generation hidden), the **escape hatch is `File ▸ New Session`** — sub-question (a) closed — and sub-question (c)
   is **sidestepped, not answered**: `Generate PHP…` is *not* hidden in project mode, because **only
   Maintenance gets a membership rule**. **Still open, and no table may be invented for them:** whether
   **Standalone** and **Project** should ever filter anything at all (*"Project and standalone are OK for
   now"* — owner). **Still open, sub-question (b):** whether Customize Toolbar's **Available list** should
   filter by mode. FQ-027 answers it *by default* — it does not filter, and a pinned toolbar button for a
   Maintenance-hidden command keeps working, which is deliberate — but whether that is the permanent answer
-  or an accepted-for-now consequence is an owner call. **Closed by scoping:** a mode affects the **window
+  or an accepted-for-now consequence is an owner call. **Sharpened 2026-08-10 by `Settings ▸ Edit
+  Snippets…`, the first maintenance-ONLY command:** the same mechanism now lets a pinned button reach a
+  command the app shows **only inside** the mode, which reads differently from a pinned button for a
+  command the mode merely got out of the way of. Recorded as the same open question with a concrete case,
+  **not** resolved here — §18.9 accepts the trade on FQ-027's precedent, and the chord half of it *is*
+  settled (nothing on the menu carries a shortcut, DEC-006). **Closed by scoping:** a mode affects the **window
   menu bar only** — not docks, not left-dock tabs, not the toolbar, not the Editor menu bar.
 - **~~The launcher's "Maintenance mode" group membership is explicitly open~~ — RESOLVED 2026-08-09
   (FQ-027):** the Maintenance **column** is exactly **`Edit XSD` + `Import XSD`**. The former group's

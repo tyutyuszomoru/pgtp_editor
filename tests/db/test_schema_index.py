@@ -197,6 +197,75 @@ def test_known_columns_is_unchanged_by_the_richer_accessor():
     assert index.known_columns("pr.nosuch") == []
 
 
+def test_column_infos_returns_real_column_objects():
+    """BUG-045: the accessor publishes `ColumnInfo`, not names and not display
+    strings -- `fk_target`/`is_pk`/`default` are reachable through it."""
+    schema = _schema()
+    schema.tables["pr.equipment"].columns.append(
+        ColumnInfo(
+            name="owner_id", data_type="integer", is_pk=False, is_fk=True,
+            is_nullable=False, default="0", fk_target="hr.employee.id",
+        )
+    )
+    columns = SchemaIndex(schema).column_infos("pr.equipment")
+    assert [column.name for column in columns] == ["id", "tag", "owner_id"]
+    assert columns[0].is_pk is True
+    assert columns[2].fk_target == "hr.employee.id"
+    assert columns[2].default == "0"
+
+
+def test_column_infos_empty_for_unknown_table():
+    index = SchemaIndex(_schema())
+    assert index.column_infos("pr.nosuch") == []
+    assert index.column_infos("pr.eq_view") == []
+
+
+def test_column_infos_returns_a_copy_the_caller_cannot_damage():
+    """The list is the caller's to sort or trim; the fetch behind
+    `known_columns`/`column_entries` must not move with it."""
+    index = SchemaIndex(_schema())
+    columns = index.column_infos("pr.equipment")
+    columns.clear()
+    assert index.column_infos("pr.equipment") != []
+    assert index.known_columns("pr.equipment") == ["id", "tag"]
+    assert [key for key, _ in index.column_entries("pr.equipment")] == ["id", "tag"]
+
+
+def test_column_entries_is_unchanged_by_the_richer_accessor():
+    """The sibling of `test_known_columns_is_unchanged_by_the_richer_accessor`:
+    §18.6 completion still gets `(key, display)` pairs with bare-name keys."""
+    entries = SchemaIndex(_schema()).column_entries("pr.equipment")
+    assert [key for key, _ in entries] == ["id", "tag"]
+    assert all(isinstance(display, str) for _, display in entries)
+
+
+def test_routines_returns_every_fetched_routine_in_order():
+    routines = SchemaIndex(_schema()).routines()
+    assert isinstance(routines, tuple)
+    assert [routine.name for routine in routines] == ["audit_log", "calc_total"]
+    assert routines[1].return_type == "numeric"
+
+
+def test_routines_keeps_overloads_as_separate_entries():
+    """`DatabaseSchema.routines` is keyed by the full signature (§18.1), so two
+    overloads of one name are two entries -- signature help ranks them."""
+    schema = _schema()
+    schema.routines["pr.calc_total(text)"] = RoutineInfo(
+        schema="pr", name="calc_total", arg_types=["text"],
+        return_type="numeric", language="plpgsql", source="...",
+        kind="function",
+    )
+    routines = SchemaIndex(schema).routines()
+    overloads = [r for r in routines if r.name == "calc_total"]
+    assert [r.arg_types for r in overloads] == [["integer"], ["text"]]
+
+
+def test_routines_empty_for_a_tables_only_schema():
+    """`fetch_schema`'s shape: tables but no routines."""
+    schema = DatabaseSchema(tables=_schema().tables)
+    assert SchemaIndex(schema).routines() == ()
+
+
 def test_trigger_for_function_finds_attached_trigger():
     index = SchemaIndex(_schema())
     trigger = index.trigger_for_function("pr", "audit_log")

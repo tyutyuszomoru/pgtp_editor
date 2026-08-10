@@ -4,6 +4,7 @@ from unittest.mock import patch
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent, QKeySequence
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 
 from tests.ui._menu_helpers import find_action, find_top_menu
 
@@ -398,3 +399,155 @@ def test_history_menu_undo_and_redo_step_distinctly(qtbot, tmp_path):
     assert window.center_stage.xml_editor.toPlainText() == "edit one"
     # History… exists as the combined navigator (opens non-modally).
     assert find_action(history_menu, "History…") is not None
+
+
+# -- BUG-048: the project history writes only where it may -------------------
+#
+# `Ctrl+Z` used to revert the **Raw XML project buffer** from tabs that show a
+# different document, and through FQ-021's read-only Compare/Merge lock. Two
+# independent causes: a read-only `QPlainTextEdit` does not claim the
+# `ShortcutOverride` for undo/redo, so the window-level `QShortcut` fired; and
+# `_apply_history_text` writes with `setPlainText`, which `setReadOnly` never
+# gates. Both are closed, and both are asserted below.
+#
+# Delivery matters: `QTest.keyClick(widget, …)` posts straight at the widget and
+# never reaches Qt's shortcut map, so it CANNOT observe this bug. The key goes to
+# `window.windowHandle()` on a `show()`n window — which is what a real key press
+# does, and it works fine under the offscreen platform.
+
+
+def _armed_history_window(qtbot, tmp_path):
+    """A shown window whose Raw XML history has something to undo."""
+    window = _window(qtbot, tmp_path)
+    path = _make_project(tmp_path)
+    window.open_project_file(str(path))
+    window.center_stage.xml_editor.setPlainText("edit one")
+    window._capture_snapshot_now()
+    window.show()
+    QApplication.processEvents()
+    assert window.windowHandle() is not None
+    assert window._history.can_undo()
+    return window
+
+
+def _press_ctrl_z(window):
+    QApplication.processEvents()
+    QTest.keyClick(window.windowHandle(), Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    QApplication.processEvents()
+
+
+def test_ctrl_z_on_the_ddl_explorer_tab_never_touches_the_raw_xml_buffer(
+    qtbot, tmp_path
+):
+    """§18.5 carve-out 1's hazard at the sibling site nobody filtered: the DDL
+    Explorer's buffer is read-only, so the window shortcut used to fire here and
+    revert a document the user is not even looking at."""
+    window = _armed_history_window(qtbot, tmp_path)
+    before = _text(window)
+    stage = window.center_stage
+    index = stage.ddl_explorer_tab_index()
+    stage.setTabVisible(index, True)
+    stage.setCurrentIndex(index)
+    assert stage.currentIndex() == index
+    panel = stage.ddl_explorer_panel()
+    panel.editor.setPlainText("CREATE FUNCTION pr.f() ...")
+    panel.editor.setFocus()
+
+    _press_ctrl_z(window)
+
+    assert _text(window) == before  # byte-identical
+    assert window._history.current_index == 1
+
+
+def test_ctrl_z_on_the_sandbox_sql_console_never_touches_the_raw_xml_buffer(
+    qtbot, tmp_path
+):
+    """The same unscoped path from the other sandbox tab — reached whenever
+    focus is on anything in the console that is not the editor itself."""
+    window = _armed_history_window(qtbot, tmp_path)
+    before = _text(window)
+    panel = window.center_stage.open_sandbox_sql_tab()
+    panel.results.setFocus()
+
+    _press_ctrl_z(window)
+
+    assert _text(window) == before
+    assert window._history.current_index == 1
+
+
+def test_ctrl_z_does_not_walk_through_the_compare_merge_read_only_lock(
+    qtbot, tmp_path
+):
+    """FQ-021 holds Raw XML read-only for the whole of Compare/Merge as a
+    DATA-LOSS guard. A read-only editor does not claim the ShortcutOverride, so
+    Ctrl+Z walked straight through the lock and rewrote the buffer mid-merge."""
+    window = _armed_history_window(qtbot, tmp_path)
+    before = _text(window)
+    stage = window.center_stage
+    stage.enter_diff_merge_mode()
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    stage.xml_editor.setFocus()
+    assert stage.xml_editor.isReadOnly()
+
+    _press_ctrl_z(window)
+
+    assert _text(window) == before
+    assert window._history.current_index == 1
+
+
+def test_the_history_menu_also_refuses_a_locked_raw_xml_buffer(qtbot, tmp_path):
+    """The lock is not a view state, so the explicit menu click is refused too —
+    with a stated reason, never silently. (The TAB scope is different: History ▸
+    Undo from another tab is a deliberate "undo the project" and still works.)"""
+    window = _armed_history_window(qtbot, tmp_path)
+    before = _text(window)
+    window.center_stage.enter_diff_merge_mode()
+    history_menu = find_top_menu(window, "History")
+
+    find_action(history_menu, "Undo").trigger()
+
+    assert _text(window) == before
+    assert "compare/merge mode" in window.statusBar().currentMessage()
+
+
+def test_apply_history_text_refuses_a_read_only_buffer_on_its_own(qtbot, tmp_path):
+    """BUG-048's SECOND independent cause, closed at its own level: `setPlainText`
+    is a QTextCursor-level write that `setReadOnly(True)` does not gate, so the
+    last-ditch check lives here — no caller can write a locked buffer even by
+    calling this directly."""
+    window = _armed_history_window(qtbot, tmp_path)
+    window.center_stage.enter_diff_merge_mode()
+    before = _text(window)
+
+    window._apply_history_text("something else entirely")
+
+    assert _text(window) == before
+
+
+def test_ctrl_z_still_undoes_on_a_writable_raw_xml_tab(qtbot, tmp_path):
+    """The positive half — the scope guard must not turn Ctrl+Z into a dead key
+    where it belongs."""
+    window = _armed_history_window(qtbot, tmp_path)
+    stage = window.center_stage
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    # Focus something that is NOT the editor, so the WINDOW shortcut is the path
+    # under test rather than the editor's own key handling.
+    window._undo_shortcut.activated.emit()
+
+    assert _text(window) != "edit one"
+    assert window._history.current_index == 0
+
+
+def test_a_drafts_ctrl_z_never_reaches_the_raw_xml_buffer(qtbot, tmp_path):
+    """The negative half of BUG-049: a draft tab's undo is its own editor's, so
+    wiring it can never regress into BUG-048's wrong-document mutation."""
+    window = _armed_history_window(qtbot, tmp_path)
+    before = _text(window)
+    tab = window.center_stage.open_draft_fragment_tab("page", "customers", "<Page/>")
+    tab.editor.setFocus()
+    tab.editor.insertPlainText("<Extra/>")
+
+    _press_ctrl_z(window)
+
+    assert _text(window) == before
+    assert window._history.current_index == 1

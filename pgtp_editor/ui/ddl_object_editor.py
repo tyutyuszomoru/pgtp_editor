@@ -873,8 +873,20 @@ class DdlObjectEditorPanel(
             QEvent.Type.KeyPress,
         ):
             key = event.key()
-            is_undo = key == Qt.Key.Key_Z and event.modifiers() == Qt.KeyboardModifier.ControlModifier
-            is_redo = key == Qt.Key.Key_Y and event.modifiers() == Qt.KeyboardModifier.ControlModifier
+            mods = event.modifiers()
+            ctrl = Qt.KeyboardModifier.ControlModifier
+            shift = Qt.KeyboardModifier.ShiftModifier
+            is_undo = key == Qt.Key.Key_Z and mods == ctrl
+            # Ctrl+Shift+Z is the second redo chord (BUG-050), reserved
+            # app-wide in `shortcut_registry.RESERVED_SEQUENCES`. The sibling
+            # `DdlEditorPanel._is_undo_redo_chord` matches the same three
+            # chords, but only the MATCHING is shared: that buffer is
+            # synthesized and read-only, so it refuses with a reason, whereas
+            # this tab is editable and must route the chord into its own redo
+            # stack exactly as Ctrl+Y does.
+            is_redo = (key == Qt.Key.Key_Y and mods == ctrl) or (
+                key == Qt.Key.Key_Z and mods == (ctrl | shift)
+            )
             if is_undo or is_redo:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     # Claim the sequence so Qt never also fires the
@@ -895,8 +907,14 @@ class DdlObjectEditorPanel(
                     self.format_selection()
                 return True
             # Ctrl+Space: schema-aware completion (§18.6). Handled here rather
-            # than as a QShortcut for the same reason as Ctrl+Alt+F above --
-            # reliable under the offscreen platform in tests.
+            # than as a QShortcut for the same reason as Ctrl+Alt+F above: it
+            # has no menu command, so it is a widget behaviour and not a
+            # command with a second host (DEC-009), and it needs the injected
+            # `SchemaIndex` plus this panel's own caret/popup state -- neither
+            # of which a `CodeEditor` widget may hold (§18.5 D1: the editor
+            # panel never talks to a database). Completion is also
+            # intrinsically focus-scoped: a window shortcut would fire it for
+            # whichever widget happened to be focused.
             if key == Qt.Key.Key_Space and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     event.accept()

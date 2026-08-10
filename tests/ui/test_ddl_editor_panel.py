@@ -2,7 +2,8 @@
 """EditorPanel: the CenterStage "DDL Explorer" tab (spec §18.1) -- a read-only
 sql-mode CodeEditor plus its own FindReplaceBar instance (the same per-tab
 routing precedent as the Edit XSD tab)."""
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QEvent, QPoint, Qt
+from PySide6.QtGui import QKeyEvent
 
 from pgtp_editor.ui.code_editor import CodeEditor, _SQL_KEYWORDS
 from pgtp_editor.ui.ddl_editor_panel import EditorPanel
@@ -502,3 +503,67 @@ def test_right_click_moves_the_caret_to_the_clicked_line_first(qtbot):
     ref, _source = got[0]
     assert ref.kind == "trigger"
     assert panel.editor.textCursor().blockNumber() == trigger_span.start_line - 1
+
+
+# -- BUG-048: the undo chords are CLAIMED and ANSWERED here -------------------
+
+
+def _key_event(kind, key, mods):
+    return QKeyEvent(kind, key, mods)
+
+
+def _deliver(panel, kind, key, mods):
+    """Send `panel.editor` an event exactly as Qt would, through the panel's
+    installed filter, and report whether the filter consumed it."""
+    event = _key_event(kind, key, mods)
+    consumed = panel.eventFilter(panel.editor, event)
+    return consumed, event
+
+
+_CTRL = Qt.KeyboardModifier.ControlModifier
+_CTRL_SHIFT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+
+
+def test_the_panel_claims_the_shortcut_override_for_the_undo_chords(qtbot):
+    """The half that actually stops the window-level Ctrl+Z QShortcut. A
+    read-only QPlainTextEdit does not accept the ShortcutOverride itself (it has
+    no undo to offer), which is how the shortcut used to fire here and revert the
+    Raw XML project buffer — a different document than this tab shows."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+
+    for key, mods in (
+        (Qt.Key.Key_Z, _CTRL),
+        (Qt.Key.Key_Y, _CTRL),
+        (Qt.Key.Key_Z, _CTRL_SHIFT),  # the second redo chord (BUG-050)
+    ):
+        consumed, event = _deliver(
+            panel, QEvent.Type.ShortcutOverride, key, mods
+        )
+        assert consumed is True
+        assert event.isAccepted() is True
+
+
+def test_the_panel_states_why_there_is_nothing_to_undo(qtbot, monkeypatch):
+    """The other half: claiming the key without answering it would trade a
+    wrong-document mutation for a silent dead key (FQ-023 — state the reason)."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    said = []
+    monkeypatch.setattr(panel.editor, "report_refusal", said.append)
+
+    consumed, _ = _deliver(panel, QEvent.Type.KeyPress, Qt.Key.Key_Z, _CTRL)
+
+    assert consumed is True
+    assert said == ["this buffer is read only — there is nothing to undo here"]
+
+
+def test_other_keys_still_fall_through_the_panel_filter(qtbot):
+    """The filter must not become a key sink: anything else goes to super()."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+
+    consumed, _ = _deliver(panel, QEvent.Type.KeyPress, Qt.Key.Key_Z, Qt.KeyboardModifier.NoModifier)
+    assert consumed is False
+    consumed, _ = _deliver(panel, QEvent.Type.KeyPress, Qt.Key.Key_F, _CTRL)
+    assert consumed is False

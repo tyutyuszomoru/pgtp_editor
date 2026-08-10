@@ -375,12 +375,23 @@ class GenerationController(QObject):
     def _re_phpgen_runtime(self) -> tuple[str, str, dict[str, str]] | None:
         """(python, root, extra_env) or None after showing guidance."""
         root = load_re_phpgen_root(base_dir=self._config_dir)
-        if not validate_re_phpgen_root(root):
+        if root is None:
             modals.QMessageBox.information(
                 self._shell.window,
                 "panGen",
                 "re_phpgen runtime not found. Set it via "
                 "Generation > Locate panGen Runtime...",
+            )
+            return None
+        if not validate_re_phpgen_root(root):
+            # A root *was* stored: say so, and name it. A moved checkout, an
+            # unmounted drive or a corrupted config must not be reported as
+            # "you never configured this".
+            modals.QMessageBox.information(
+                self._shell.window,
+                "panGen",
+                f"The configured panGen runtime is no longer valid:\n{root}\n\n"
+                "Set it via Generation > Locate panGen Runtime...",
             )
             return None
         python = resolve_re_phpgen_python(root)
@@ -560,7 +571,8 @@ class GenerationController(QObject):
         root = modals.QFileDialog.getExistingDirectory(
             self._shell.window,
             "Locate panGen Runtime (re_phpgen repo)",
-            load_re_phpgen_root(base_dir=self._config_dir),
+            # "" is Qt's "no preferred directory"; None is a type error here.
+            load_re_phpgen_root(base_dir=self._config_dir) or "",
         )
         if not root:
             return

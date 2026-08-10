@@ -424,9 +424,38 @@ no code change.
 
 ## DEC-007 — What identity should an ALTER statement have in the `applied` bookkeeping table?
 
-- **Status:** OPEN
-- **Raised:** 2026-08-10, by `bug-triager` from BUG-044 (`docs/BUGFIX_QUEUE.md:3873`)
-- **Supersedes:** DEC-005
+- **Status:** ANSWERED (2026-08-10)
+- **In flight as of this writing.** The implementation is being built in an isolated worktree. Read this
+  entry as **decided-and-being-built**, not decided-and-pending: do not re-open the choice, and do not start
+  a second implementation of it.
+- **Answer:** **Key an ALTER by its statement text.** The alter row's identity is
+  `db/sandbox.py::text_sha1(buffer_text)`, carried in a **new `CheckRequest.working_set_name`** that feeds
+  **only `working_set_ref`** and **never `checked_name`** — the latter is what gates tier 3, so keeping it
+  untouched is what stops `plpgsql_check` switching on for ALTERs. It reuses the existing `object_name`
+  column, so there is **no DDL migration**. The semantic consequence is **accepted and must be recorded**:
+  the alter half of `applied` becomes an **append-only event log**, while the object half stays a
+  **desired-state** table — one table, two meanings, stated plainly in §18.5 rather than avoided.
+- **The cost was accepted, not overlooked — do not silently "fix" it later.** The alter half grows
+  **without bound** (one row per distinct ALTER text ever applied), and the single table carries two
+  meanings. Both were weighed and taken. A future reader who finds this untidy and "corrects" it back to an
+  object-shaped key reintroduces BUG-044. If the growth ever becomes a real problem, that is a **new
+  decision**, not a cleanup.
+- **Owner's reasoning:** a **wrong verdict is strictly worse than an untidy table** — silent wrong results
+  are the invariant this project holds above all. The **no-migration property is what makes the fix
+  deployable to sandboxes that already exist**: `_CREATE_BOOKKEEPING_SQL` is `CREATE TABLE IF NOT EXISTS`
+  with no migration path, so the operation+subject alternative (which needs a new key column) could never
+  reach an existing sandbox — and it *still* mis-handles two `Drop Column` generations on different columns
+  (`subject` is `""` for every `ALTER TABLE` flavour), so it does not even fix the reported defect.
+  Statement-text keying is correct for every collider, stays idempotent (identical text upserts in place),
+  and needs no migration. The object/event semantic split is **real** — an ALTER genuinely *is* an event,
+  not an object — and pretending otherwise is what produced this bug, so it is recorded, not hidden.
+- **Docstring caveat to state (owner-specified):** `CAVEAT_STALE_BUFFER` becomes **structurally
+  unreachable for `kind == "alter"`**, which is **correct** — an edited ALTER is a *different statement*,
+  not a stale version of one object. The docstring must say so, so the next reader does not read the
+  unreachability as a bug.
+- **Wider principle:** where the same table serves an object identity and an event, do not force one shape
+  onto both; record the split explicitly. Correctness of the verdict outranks uniformity of the record.
+- **Supersedes:** DEC-005 (whose question was put on a false premise; this is the real question).
 - **Blocks:** yes — BUG-044's fix cannot be implemented until this is settled. BUG-044 is a **silent wrong
   result**, the invariant this project holds above all others, so the block is on a correctness fix.
 
@@ -479,24 +508,45 @@ switches `plpgsql_check` on for ALTERs. `tests/ui/test_ddl_creation_wiring.py:50
   wrong answer by removing the answer. *Cost:* loses already-applied detection for alters entirely, a feature
   in current use, and the deployment generator would then never see an ALTER at all.
 
-**Recommendation: key by statement text.** A wrong verdict is strictly worse than an untidy table, and the
-no-migration property is what makes the fix deployable to sandboxes that already exist — the other correct
-shape cannot reach them. The semantic split is real and should be *recorded* in §18.5 rather than avoided: an
-ALTER genuinely is an event, and pretending otherwise is what produced this bug.
+**Recommendation (ADOPTED by the owner): key by statement text.** A wrong verdict is strictly worse than an
+untidy table, and the no-migration property is what makes the fix deployable to sandboxes that already
+exist — the other correct shape cannot reach them. The semantic split is real and should be *recorded* in
+§18.5 rather than avoided: an ALTER genuinely is an event, and pretending otherwise is what produced this
+bug.
 
-**Unblocks:** implementing BUG-044's fix (`CheckRequest.working_set_name`, the `AlterDdlRef.working_set_name`
-property, and the six new test cases listed at `docs/BUGFIX_QUEUE.md:4036-4044`), and `spec-maintainer`
-restating §18.5 D2's working-set section (~:6906-6931), which describes `applied` purely in terms of objects
-and predates FQ-025's ALTER buffers.
+**Unblocks (with DEC-008): BUG-044.** The two answers together are the whole precondition for that fix —
+DEC-007 decides the new key, DEC-008 decides what happens to the rows written under the old one, and they
+ship in **one commit**. BUG-044 is a **confirmed silent-wrong-result defect**: a false
+`REASON_ALREADY_APPLIED` (`STATUS_PASSED`) for a statement the sandbox has never seen. Concretely unblocked:
+`CheckRequest.working_set_name`, the `AlterDdlRef.working_set_name` property, the six new test cases listed
+at `docs/BUGFIX_QUEUE.md:4036-4044`, and `spec-maintainer` restating §18.5 D2's working-set section
+(~:6906-6931), which describes `applied` purely in terms of objects and predates FQ-025's ALTER buffers.
 
 ---
 
 ## DEC-008 — What happens to the `applied` rows already written under the colliding alter key?
 
-- **Status:** OPEN
-- **Raised:** 2026-08-10, by `bug-triager` from BUG-044 (`docs/BUGFIX_QUEUE.md:4015-4018`)
-- **Blocks:** no on its own, but it must ship **with** DEC-007's fix — deciding it afterwards means a release
-  in which the old rows are still being read.
+- **Status:** ANSWERED (2026-08-10)
+- **Answer:** **Delete the orphan rows once, at session open**, scoped to the **old empty-name key shape** —
+  `DELETE FROM pgtp_editor_sandbox.applied WHERE kind = 'alter' AND object_name = ''`. Ships **with**
+  DEC-007's fix, in the same commit.
+- **Scoping is a requirement, not a caution.** The delete must be scoped **precisely enough that it is
+  provably incapable of touching object rows** — both predicates, `kind = 'alter'` **and**
+  `object_name = ''`, and a test that pins it. This is not "be careful"; it is the condition on which the
+  answer was given.
+- **Owner's reasoning:** same as DEC-007 — those rows can only ever produce a **wrong answer or no answer,
+  never a right one**, so **nothing of value is lost** by deleting them. Deleting also **removes the
+  standing dependency** on a "no reader constructs the old key" claim holding true forever as the code
+  changes around it — the "leave them" option's safety rests entirely on that claim staying true, which is
+  a fragile thing to bet correctness on.
+- **Why the orphans exist at all — record this, it is the non-obvious part.** `SandboxSession.reset()`
+  **deliberately spares** the bookkeeping schema (`pgtp_editor/db/sandbox.py:1050-1067`). So an orphan
+  otherwise **survives a reset** and keeps answering *"already applied"* for a sandbox that no longer holds
+  the change. The rows are not merely inert clutter; sparing bookkeeping on reset is what turns them into a
+  live source of wrong answers.
+- **Supersedes:** DEC-005's withdrawn cleanup concern is subsumed here.
+- **Unblocks (with DEC-007): BUG-044** — the migration/cleanup half of the fix, so it lands in the same
+  commit as the new key and leaves no window in which stale rows are still consulted.
 
 **Context.** Whatever DEC-007 decides, the rows already written under the key `("alter", schema, "", table)`
 will match no future request. They become inert orphans that read as "not in working set" — honest, since they
@@ -517,11 +567,11 @@ must be **verified in the implementation**, not assumed, before "leave them" is 
   it. *Cost:* a destructive one-off against user data, executed silently at open, with no undo — and the
   predicate must be exactly right or it deletes live rows.
 
-**Recommendation: delete them at session open,** on the same reasoning as DEC-007 — the rows can only ever
-produce a wrong answer or no answer, never a right one, so there is nothing to preserve, and deleting removes
-the dependency on a verification claim holding true forever as the code changes around it. If you prefer to
-leave them, the fix must carry an explicit test that no reader can still construct the empty-`object_name`
-alter key.
+**Recommendation (ADOPTED by the owner): delete them at session open,** on the same reasoning as DEC-007 —
+the rows can only ever produce a wrong answer or no answer, never a right one, so there is nothing to
+preserve, and deleting removes the dependency on a verification claim holding true forever as the code
+changes around it. If you prefer to leave them, the fix must carry an explicit test that no reader can still
+construct the empty-`object_name` alter key.
 
 **Unblocks:** the migration/cleanup half of BUG-044's fix, so it can ship in one commit rather than leaving a
 window in which stale rows are still consulted.
@@ -530,16 +580,24 @@ window in which stale rows are still consulted.
 
 ## DEC-009 — Does DEC-004's ruling extend to the `Ctrl+Alt+` editor-gesture family?
 
-- **Status:** OPEN
-- **Raised:** 2026-08-10, by `owner-decision`, as the scope question left open by DEC-004's ruling
-- **Blocks:** no. Nothing is waiting on it today. But it hardens: every future editor gesture added to this
-  family will copy whichever pattern is in place, so the longer it stands the more sites a later conversion
-  has to touch.
-- **May become cheaper shortly:** `bug-triager` is already reporting on DEC-004's conversion — whether a
-  `QShortcut` activates at all under the offscreen platform, and what the conversion costs in tests. If the
-  answer is "conversion is straightforward", this question is largely mechanical; if it is "`QShortcut` does
-  not fire offscreen", the cost side of the options below changes materially. **It is reasonable to defer
-  this entry until that report lands.**
+- **Status:** ANSWERED (2026-08-10)
+- **Answer:** **Keep the family as a documented widget-only category — decided now, not deferred.** Keep
+  `Ctrl+Alt+E`, `Ctrl+Alt+C`, `Ctrl+Alt+F`, `Ctrl+Alt+J` and `Ctrl+Space` hosted in their widgets; keep
+  `RESERVED_SEQUENCES` (`shortcut_registry.py:233-244`) and the manual's non-rebindable list **as they
+  are**; and **rewrite the misleading offscreen comments** at the widget sites to state the real *product*
+  reason instead. Do **not** convert them to `QShortcut`s.
+- **Owner's reasoning:** DEC-004's defect was **two hosts for one gesture**, not "a widget handles a key".
+  These gestures have **no menu entry**, so they are widget *behaviours* — like auto-close brackets — and
+  hosting them in the widget is a legitimate product decision, not a harness artefact. `Ctrl+Alt+J` and
+  `Ctrl+Space` already have **independent product reasons** (`Ctrl+Alt+J` needs a `SchemaIndex`, which no
+  editor widget may hold, §18.5 D1; completion is intrinsically a widget behaviour). The offscreen sentence
+  in those comments is a **bad justification for a defensible design** — a *documentation* defect, not a
+  design one — so the fix is to correct the justification, not the design.
+- **Wider principle:** DEC-004's rule ("the harness must not shape the product") bites only where the
+  harness is the *only* reason a design exists. A widget-hosted gesture with no menu command has a standing
+  product reason to live in the widget, so it is not in scope — but where a comment *cites the harness* for
+  such a gesture, the comment is wrong and must be rewritten to the real reason, lest the next reader read a
+  defensible design as the very defect DEC-004 ruled against.
 
 **Context.** DEC-004 ruled that `Ctrl+Shift+B` must be hosted as a normal shortcut, on the principle that
 *a design existing to satisfy the test harness rather than the product means the harness should change*.
@@ -590,7 +648,7 @@ down, is the crux.
   same harness-shaped-the-product defect DEC-004 just ruled against. These gestures also stay
   non-rebindable, which is a real limitation the manual must keep stating.
 
-**Recommendation: keep them as a documented widget-only category, and rewrite the comments.** The principle
+**Recommendation (ADOPTED by the owner): keep them as a documented widget-only category, and rewrite the comments.** The principle
 DEC-004 established is about *the harness shaping the product*, and for `Ctrl+Alt+J` and `Ctrl+Space` there
 is already an independent product reason (`SchemaIndex` ownership; completion is intrinsically a widget
 behaviour) — the offscreen sentence in those comments is a bad justification for a defensible design, which
@@ -603,3 +661,148 @@ and stricter reading of the same principle, and the owner is the one who set its
 DEC-004's fix, or (b) a `spec-maintainer` pass recording "widget-only editor gestures" as a named category
 with its product rationale, plus a comment rewrite at the four sites and confirmation that
 `RESERVED_SEQUENCES` and the manual's non-rebindable list stay as they are.
+
+---
+
+## DEC-010 — Did FQ-026 retire §26's `Apply to Sandbox` / `Apply to Target Database…`, or do they survive as future work?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-030 — it made the judgement, struck the
+  entries, and filed this rather than letting the strike pass as bookkeeping.
+- **Blocks:** nothing in code — **these two entries were never built**. It decides only what §26 *promises*,
+  so the whole cost of a wrong answer is in what future work gets aimed at. It hardens as soon as anyone
+  designs a Database-menu feature against §26 as it now reads.
+- **Already actioned, so "survive" means reverting:** the strike is **in the spec now** (reported as commit
+  `d1722f1`; verified present today at `CONSOLIDATED_SPEC.md:9376-9379`, `:9417`, `:9463`, and summarised in
+  the harmonization note at `:32-34`).
+
+**Context.** §26 (the Database menu) carried `Apply to Sandbox` and `Apply to Target Database…` as target
+design at three sites, with a "disabled unless a DDL tab is active" posture. FQ-026 then established **one
+home per gesture**: eight names collapsed to four operations, `Deployment` became the single apply
+affordance, and the duplicate button row and context-menu entries were deleted. Both gestures ship today on
+`Deployment`, as `Check and commit to sandbox` and `Apply to quality`.
+
+`spec-maintainer` read FQ-026's rule as retiring the two Database entries and struck them at all three
+sites, superseding the "disabled unless a DDL tab is active" posture by §18.5 carve-out 2 (build the reason
+instead of the dead control). It offered instead to restore them with the contradiction flagged.
+
+**Options.**
+- **Retired — what the spec now says.** Two Database entries duplicating `Deployment` gestures are exactly
+  the duplication FQ-026 deleted everywhere else. *Cost:* if the owner did intend a database-centric route
+  to these operations — reaching them from the Database menu rather than from a DDL tab — that intent is now
+  **erased** rather than **deferred**, and a struck entry is far harder to rediscover than a pending one.
+- **Survive as future work.** The entries stay in §26 as unbuilt target design, annotated that when built
+  they must not duplicate `Deployment`'s vocabulary. *Cost:* the spec then carries two entry points for
+  operations FQ-026 just unified — the ghost-in-the-spec problem the harmonize pass exists to remove. The
+  next person designing against §26 sees a Database route the shipped design says should not exist.
+
+**Recommendation: retired**, as `spec-maintainer` judged. FQ-026's rule is recent, deliberate and
+owner-driven, and a "future work" entry that contradicts a shipped rule is precisely the rot harmonization
+removes. If a Database-menu route is genuinely wanted, it should be **re-raised through `feature-triage`**
+stating why a second home is worth its cost — not inherited by default from a pre-FQ-026 spec.
+
+**Unblocks:** either confirming §26 as it now stands (no work; this entry becomes the record of why the
+entries are gone), or a `spec-maintainer` pass to restore them with the FQ-026 contradiction flagged.
+
+---
+
+## DEC-011 — Is panGen / rePHPgen (§20) meant to be Windows-only, or must it work on Linux too?
+
+- **Status:** ANSWERED (2026-08-10)
+- **Answer:** **Cross-platform.** `resolve_re_phpgen_python` learns **both** layouts —
+  `venv/Scripts/python.exe` **and** `venv/bin/python` — and the fix **ships together with BUG-051**, as one
+  fix rather than split into two.
+- **Owner's reasoning:** re_phpgen is a **separate Python repo**, invoked as `python -m re_phpgen`, and has
+  **no inherent Windows dependency** — unlike the vendor's `PgPHPGeneratorPro.exe`, which genuinely is a
+  Windows binary. So the tempting argument *"the vendor is Windows-only, therefore §20 is"* **does not
+  carry**, and it is recorded here as **explicitly rejected** so nobody re-derives it and reaches the
+  opposite conclusion. The current behaviour was judged **the worst of the three options**: on Linux panGen
+  silently runs under **the editor's own interpreter** and dies as a bare `panGen failed (exit N)` — a run
+  that appears to start and names nothing.
+- **Cost accepted:** the project is **now committed to keeping panGen working on Linux**, and **nothing
+  currently exercises it there**. `tests/generation/test_re_runner.py:17-26` pins the Windows-only
+  behaviour and is being **changed rather than extended**, with a **Linux-layout test added**.
+- **Wider principle:** *a platform constraint belongs to the component that actually carries it, and does
+  not propagate to its neighbours by association.* The vendor generator is a Windows executable; panGen is
+  Python invoked as a module. Sharing a feature section (§20) does not make them share a platform scope —
+  each component's scope is decided from its own dependencies. Corollary, consistent with DEC-007 and
+  FQ-023: **a refusal that names its reason beats a run that starts and fails anonymously** — whichever
+  scope had been chosen, today's silent-wrong-interpreter behaviour was not an acceptable third answer.
+- **Unblocks: BUG-051**, and decides that it ships as **one** fix: the two-layout probe in
+  `resolve_re_phpgen_python` bundled with the `DEFAULT_RE_PHPGEN_ROOT` removal, in a single commit (the
+  splittable step 7 at `docs/BUGFIX_QUEUE.md:4942` is **not** taken). §20 also gains the explicit
+  platform-scope sentence it lacks today — *panGen is cross-platform* — which is `spec-maintainer`'s to
+  write, along with correcting `CONSOLIDATED_SPEC.md:9045-9046`, which currently documents the
+  Windows-only layout (`<root>\venv\Scripts\python.exe` if present else `sys.executable`) **as the design**.
+- **Implementation in flight (verified in the tree at the time of writing).**
+  `pgtp_editor/generation/re_runner.py:43-51` now probes both layouts and its docstring names them; the
+  root check `validate_re_phpgen_root` (`:63-65`) was already cross-platform (`Path(root) / "src" /
+  "re_phpgen"`), so the spec's `src\re_phpgen` spelling at `:9046` is a **prose backslash only**, not a
+  second Windows assumption in code. Read this entry as decided-and-being-built.
+- **Raised:** 2026-08-10, by `bug-triager` while root-causing BUG-051 — it found the second Windows
+  assumption in the same feature and flagged it rather than deciding the platform scope itself.
+- **Blocks:** **BUG-051's fix shape.** That fix is written with the venv change bundled but explicitly
+  splittable (`docs/BUGFIX_QUEUE.md:4942`, step 7). This answer decides whether BUG-051 ships as one fix or
+  two, so it wants answering **before** BUG-051 is implemented, not after. Nothing else is blocked, but the
+  assumption hardens with every further §20 change made without a stated scope.
+
+**Context — all verified in the tree today.**
+
+`pgtp_editor/generation/re_runner.py:43-46` resolves the interpreter panGen runs under:
+
+```python
+def resolve_re_phpgen_python(root: str) -> str:
+    """The re_phpgen repo's venv python if present, else the editor's own."""
+    venv_python = Path(root) / "venv" / "Scripts" / "python.exe"
+    return str(venv_python) if venv_python.is_file() else sys.executable
+```
+
+`venv/Scripts/python.exe` is the **Windows** virtualenv layout. On Linux the runtime's real interpreter at
+`venv/bin/python` is never considered, so the branch silently falls through to `sys.executable` — the
+**editor's own** interpreter. If a re_phpgen dependency is absent there, the user gets a bare
+`panGen failed (exit N)` naming nothing. It is used live at `pgtp_editor/ui/generation_controller.py:386`.
+
+Confirmed alongside it:
+- `CONSOLIDATED_SPEC.md:9045-9046` (§20) **documents** the Windows layout as the design
+  (`<root>\venv\Scripts\python.exe` if present else `sys.executable`), and **§20 nowhere states a platform
+  scope** for the feature as a whole.
+- `tests/generation/test_re_runner.py:17-26` pins the current behaviour: one test creates
+  `venv/Scripts/python.exe` and expects it, one expects the `sys.executable` fallback. There is **no test
+  that exercises the Linux layout**, so nothing would catch it either way.
+- This is the **second** Windows-only assumption in the same feature. The first is BUG-051 itself:
+  `pgtp_editor/generation/config.py:81` ships `DEFAULT_RE_PHPGEN_ROOT = r"C:\Users\BotondZalai-RuzsicsP\…"`
+  as the fallback root for every user.
+
+Two independent Windows assumptions in one feature is either a deliberate platform scope nobody wrote down,
+or drift from working only on Windows — and the fix differs completely depending on which.
+
+**One fact that bears on it:** the **vendor** generator is intrinsically Windows (`PgPHPGeneratorPro.exe`,
+spec `:516`), but **panGen/re_phpgen is a separate Python repo** invoked as `python -m re_phpgen` — it has
+no inherent Windows dependency. So "the vendor is Windows-only" does not by itself settle §20. `CLAUDE.md`
+states development happens on **both Windows and Linux**, which is what makes this a real question.
+
+**Options.**
+
+- **Windows-only, stated.** Drop the venv fix; have §20 say plainly that panGen requires Windows, and make
+  the four Generation actions **refuse with that reason** on other platforms. *Cost:* a documented
+  capability gap on the platform this checkout runs on, and a narrowing of the product — which should be a
+  decision, not the description of an accident. It is still strictly better than today (a clear refusal
+  beats a silent wrong interpreter), but it forecloses Linux use of the feature.
+- **Cross-platform, fixed.** `resolve_re_phpgen_python` learns both layouts — `venv/Scripts/python.exe` and
+  `venv/bin/python`. *Cost:* small and mechanical, but it commits the project to keeping panGen working on
+  Linux, which means it must be exercised there; nothing currently does, and the existing tests would need
+  a Linux-layout case added.
+- **Leave it.** *Cost:* the silent-wrong-interpreter behaviour stays, and it fails in the worst available
+  way — not a refusal, but a run that appears to start and dies with an exit code that names nothing.
+  **Recommend against**; whichever scope is chosen, today's behaviour is not it.
+
+**Recommendation: decide the scope explicitly, and make the code say it.** If the answer is Windows-only,
+it must appear **in §20 and in the refusal the user sees**, because the current behaviour is neither
+Windows-only nor cross-platform. Between the two real options I lean **cross-platform**: it is the smaller
+change and matches a project developed on both platforms. But only the owner knows whether panGen is meant
+to run outside Windows at all.
+
+**Unblocks:** BUG-051 gets implemented as one fix (cross-platform: bundle the two-layout probe with the
+`DEFAULT_RE_PHPGEN_ROOT` removal) or two (Windows-only: ship the config fix alone and route the platform
+refusal + §20 scope statement through `spec-maintainer` and `feature-triage`). Either way §20 gains an
+explicit platform-scope sentence it does not have today.

@@ -4173,7 +4173,12 @@ FQ-028 Part 2 if FQ-028 is folded first (they touch the same label).
 ---
 
 ## FQ-030: Deepen §18.6 completion into a plpgsql editing assistant — schema/alias/column completion, expand-SELECT, a snippet engine, and plpgsql-semantic completion (4 slices)
-**Status:** QUEUED
+**Status:** PROCESSED (spec §18.9; slices 0/1/3 in `f5d2601`, the store/editor/export-import in `229dc11`).
+Three claims in this entry were falsified by the implementation and the spec supersedes them: the editor's
+menu home is **`Settings`**, not `Schema` (owner redirection mid-build, anticipating FQ-033 as a second
+tenant); the "sequences AFTER FQ-027" note is spent, since Maintenance mode shipped; and the proposed
+"trigger word ↔ body ↔ tab-stops" table is wrong — stops are `{{n}}` markers inside the body, not a
+separate field. Where the store lives was left open here and was settled by DEC-001.
 **Requested:** 2026-08-09
 **Idea (verbatim/summarized):** Converged product-brainstorm (owner picked all four slices, "love the
 ideas!", plpgsql semantics explicitly in scope): turn the shipped single-hop §18.6 completion into a real

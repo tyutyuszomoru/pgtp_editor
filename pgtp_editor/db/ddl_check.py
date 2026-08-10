@@ -447,6 +447,22 @@ def _sql_literal(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
 
 
+def _working_set_name_for(ref: Any, buffer_text: str) -> str | None:
+    """The `object_name` slot of the `applied` key for `ref`, or `None` when
+    the ref's own `name` is it (BUG-044).
+
+    Duck-typed exactly like every other field `from_ref` reads: a ref that
+    cannot be named as an object publishes a `working_set_name(buffer_text)`
+    hook and answers with a per-statement identity; every other ref has no such
+    attribute and gets `None`. No `kind` branching lives here -- the ref knows
+    what it is, and `from_ref` deliberately does not.
+    """
+    hook = getattr(ref, "working_set_name", None)
+    if not callable(hook):
+        return None
+    return str(hook(buffer_text) or "") or None
+
+
 @dataclass(frozen=True)
 class CheckRequest:
     """What to check, and in which buffer its lines are counted.
@@ -496,6 +512,19 @@ class CheckRequest:
     #: (`tgoldtable`/`tgnewtable`); passed through to plpgsql_check.
     oldtable: str | None = None
     newtable: str | None = None
+    #: The `object_name` slot of the `applied` bookkeeping key when it is NOT
+    #: the checked routine's name (BUG-044 / DEC-007). `None` means "use
+    #: `name`", which is every object tab.
+    #:
+    #: **An ALTER has no routine name and must never be given one**: `name`
+    #: feeds `checked_name`, and `build_ladder` switches tier 3's
+    #: `plpgsql_check` statements on for any request that has one. So an ALTER
+    #: keeps `name == ""` (tier 3 honestly off) and carries its bookkeeping
+    #: identity here, where only `working_set_ref` reads it. Nothing else may
+    #: start reading it -- `identity`, `regprocedure_text`,
+    #: `trigger_drop_target` and `checked_arg_types` all keep deriving from
+    #: `name`.
+    working_set_name: str | None = None
 
     @classmethod
     def from_ref(
@@ -524,6 +553,16 @@ class CheckRequest:
         editor's NEW./OLD. completion does — `SchemaIndex.trigger_for_function`
         — and contributes nothing when the function is attached to no trigger
         (BUG-038).
+
+        **The bookkeeping identity comes off the ref, not off a `kind` test
+        here** (BUG-044). A ref that has no object identity to put in the
+        `applied` key publishes a `working_set_name(buffer_text)` hook
+        (`ui/main_window.py::AlterDdlRef`) and derives one from the statement
+        itself; a ref that IS an object publishes none and keeps `name`. It is
+        a hook taking the text rather than a plain property because the
+        identity must follow the buffer as it is edited, and the ref -- an
+        identity, built once when the tab is opened -- deliberately does not
+        hold the text.
         """
         return cls(
             kind=str(getattr(ref, "kind", "function")),
@@ -538,6 +577,7 @@ class CheckRequest:
             newtable=newtable,
             relation_schema=relation_schema,
             relation_table=relation_table,
+            working_set_name=_working_set_name_for(ref, buffer_text),
         )
 
     @property
@@ -597,8 +637,26 @@ class CheckRequest:
         the `applied` bookkeeping table's PRIMARY KEY, and what
         `db/sandbox.py::applied_upsert_sql` and `applied_ref` both use. One
         spelling of the key, so `apply_and_check`'s row and a later sweep's
-        lookup cannot miss each other."""
-        return (self.kind, self.schema, self.name, self.table or "")
+        lookup cannot miss each other.
+
+        **`object_name` is `working_set_name` when the request carries one**
+        (BUG-044/DEC-007). For an object that is its `name`; for an ALTER --
+        which has no object identity, and must keep `name` empty so tier 3
+        stays off -- it is `text_sha1` of the statement itself. The stated
+        consequence, so the next reader does not "fix" the inconsistency: the
+        **alter half of `applied` is an append-only event log** (one row per
+        distinct ALTER ever applied) while the object half stays a
+        desired-state table (one row per object). That is what an ALTER is --
+        an event, not a state -- and it is the only key that tells two
+        `ALTER TABLE pr.invoice DROP COLUMN …` generations apart. A second
+        consequence worth stating rather than discovering: `CAVEAT_STALE_BUFFER`
+        becomes structurally unreachable for `kind == "alter"`, because a row
+        can only be found when the hashes already agree. That is right -- an
+        edited ALTER is a *different statement*, not a stale version of one
+        object, and it reads as `REASON_NOT_IN_WORKING_SET`.
+        """
+        object_name = self.name if self.working_set_name is None else self.working_set_name
+        return (self.kind, self.schema, object_name, self.table or "")
 
     @property
     def trigger_drop_target(self) -> tuple[str, str, str] | None:
@@ -1907,12 +1965,22 @@ def request_from_applied(row: Any) -> CheckRequest:
     A caller that *has* the tabs (which do carry arg types and buffer text) is
     expected to pass its own `request_for=` to `check_working_set` instead of
     accepting these degradations.
+
+    An **alter** row is the one case where `object_name` is not a name at all:
+    since BUG-044 it is `text_sha1` of the statement, so it goes into
+    `working_set_name` and `name` stays empty. Both halves of that matter. The
+    key round-trips (the rebuilt request's `working_set_ref` is the row it came
+    from, so the sweep now sees *every* ALTER applied to a table rather than
+    only the last one), and `checked_name` stays empty, so the sweep does not
+    ask `plpgsql_check` to analyse a routine named after a hash.
     """
     kind, schema_name, object_name, table_name = applied_ref(row)
+    is_alter = kind == "alter"
     return CheckRequest(
         kind=kind,
         schema=schema_name,
-        name=object_name,
+        name="" if is_alter else object_name,
+        working_set_name=object_name if is_alter else None,
         table=table_name or None,
     )
 

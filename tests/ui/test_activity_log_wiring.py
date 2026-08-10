@@ -43,12 +43,15 @@ from pgtp_editor.db.activity_log import (
     SOURCE_QUALITY_FILES,
     SOURCE_SANDBOX_DB,
     STATUS_ERROR,
-    VERB_APPLY_TARGET,
     ActivityEntry,
     activity_path,
     load_activity,
 )
 from pgtp_editor.ui.activity_panel import ActivityPanel
+from pgtp_editor.ui.ddl_object_editor import (
+    GESTURE_APPLY_TO_QUALITY,
+    GESTURE_LABELS,
+)
 from pgtp_editor.ui.main_window import MainWindow
 
 from ._menu_helpers import action_labels, find_top_menu
@@ -338,7 +341,7 @@ def test_a_caller_cannot_report_a_failure_as_a_success(qtbot, tmp_path):
 
     entry = window.record_activity(
         SOURCE_QUALITY_DB,
-        VERB_APPLY_TARGET,
+        GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY],
         ddl="drop table t",
         error="boom",
         status="success",

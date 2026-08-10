@@ -1,7 +1,6 @@
 import json
 
 from pgtp_editor.generation.config import (
-    DEFAULT_RE_PHPGEN_ROOT,
     generator_config_path,
     load_executable_path,
     load_re_phpgen_root,
@@ -57,8 +56,8 @@ def test_save_merges_into_existing_json_preserving_other_keys(tmp_path):
     assert data == {"other": "keep", "executable_path": "gen.exe"}
 
 
-def test_re_phpgen_root_defaults_when_unset(tmp_path):
-    assert load_re_phpgen_root(base_dir=tmp_path) == DEFAULT_RE_PHPGEN_ROOT
+def test_re_phpgen_root_is_none_when_unset(tmp_path):
+    assert load_re_phpgen_root(base_dir=tmp_path) is None
 
 
 def test_re_phpgen_root_roundtrip(tmp_path):
@@ -72,40 +71,40 @@ def test_re_phpgen_root_preserves_executable_key(tmp_path):
     assert load_executable_path(base_dir=tmp_path) == r"C:\gen.exe"
 
 
-def test_re_phpgen_root_defaults_when_file_absent(tmp_path):
+def test_re_phpgen_root_is_none_when_file_absent(tmp_path):
     assert not (tmp_path / "generator_config.json").exists()
-    assert load_re_phpgen_root(base_dir=tmp_path) == DEFAULT_RE_PHPGEN_ROOT
+    assert load_re_phpgen_root(base_dir=tmp_path) is None
 
 
-def test_re_phpgen_root_defaults_when_json_malformed(tmp_path):
+def test_re_phpgen_root_is_none_when_json_malformed(tmp_path):
     (tmp_path / "generator_config.json").write_text("{not json", encoding="utf-8")
-    assert load_re_phpgen_root(base_dir=tmp_path) == DEFAULT_RE_PHPGEN_ROOT
+    assert load_re_phpgen_root(base_dir=tmp_path) is None
 
 
-def test_re_phpgen_root_defaults_when_json_not_dict(tmp_path):
+def test_re_phpgen_root_is_none_when_json_not_dict(tmp_path):
     (tmp_path / "generator_config.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")
-    assert load_re_phpgen_root(base_dir=tmp_path) == DEFAULT_RE_PHPGEN_ROOT
+    assert load_re_phpgen_root(base_dir=tmp_path) is None
 
 
-def test_re_phpgen_root_defaults_when_value_wrong_type(tmp_path):
+def test_re_phpgen_root_is_none_when_value_wrong_type(tmp_path):
     (tmp_path / "generator_config.json").write_text(
         json.dumps({"re_phpgen_root": 123}), encoding="utf-8"
     )
-    assert load_re_phpgen_root(base_dir=tmp_path) == DEFAULT_RE_PHPGEN_ROOT
+    assert load_re_phpgen_root(base_dir=tmp_path) is None
 
 
-def test_re_phpgen_root_defaults_when_value_empty_string(tmp_path):
+def test_re_phpgen_root_is_none_when_value_empty_string(tmp_path):
     (tmp_path / "generator_config.json").write_text(
         json.dumps({"re_phpgen_root": ""}), encoding="utf-8"
     )
-    assert load_re_phpgen_root(base_dir=tmp_path) == DEFAULT_RE_PHPGEN_ROOT
+    assert load_re_phpgen_root(base_dir=tmp_path) is None
 
 
-def test_re_phpgen_root_defaults_when_key_missing(tmp_path):
+def test_re_phpgen_root_is_none_when_key_missing(tmp_path):
     (tmp_path / "generator_config.json").write_text(
         json.dumps({"something_else": "x"}), encoding="utf-8"
     )
-    assert load_re_phpgen_root(base_dir=tmp_path) == DEFAULT_RE_PHPGEN_ROOT
+    assert load_re_phpgen_root(base_dir=tmp_path) is None
 
 
 def test_re_phpgen_root_save_creates_the_directory_if_missing(tmp_path):

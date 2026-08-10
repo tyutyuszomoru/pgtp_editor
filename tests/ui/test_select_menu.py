@@ -11,11 +11,12 @@ that would have caught that, and it is written as a pair: the active editor's
 selection changed AND the Raw XML editor's cursor did not move.
 """
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QKeySequence, QTextCursor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
-from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.code_editor import CodeEditor, CodeEditorDialog
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
 from tests.ui._menu_helpers import action_labels, editor_menu_titles, find_action
@@ -482,16 +483,32 @@ def test_no_selection_action_is_bound_to_a_widget_at_build_time(qtbot, tmp_path)
     assert window.center_stage.xml_editor.textCursor().hasSelection() is False
 
 
-# -- the duplicate Ctrl+Shift+B handler --------------------------------------
+# -- Ctrl+Shift+B has ONE host per window (BUG-046) --------------------------
+#
+# The chord used to be handled twice: this menu QAction *and* an unconditional
+# branch in `CodeEditor.keyPressEvent`, justified by "QShortcut activation is not
+# guaranteed under the offscreen platform". That premise is false — what fails is
+# key delivery to a widget whose top level was never `show()`n, and
+# `qtbot.keyClick(widget, …)`, which posts straight at the widget. Every test
+# below therefore `show()`s its window and delivers the key at
+# `window.windowHandle()`, which is what a real key press does.
+
+
+def _press_ctrl_shift_b(window):
+    QTest.keyClick(
+        window.windowHandle(),
+        Qt.Key.Key_B,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+    )
+    QApplication.processEvents()
 
 
 def test_ctrl_shift_b_on_a_focused_code_editor_is_handled_once(qtbot, tmp_path):
-    """FQ-015 trap 1. `CodeEditor.keyPressEvent` ALSO handles Ctrl+Shift+B, so
-    one chord has two handlers. The menu action WINS: Qt's shortcut map consumes
-    the key event before it reaches the focused widget, so the editor-side
-    handler does not also run. Both paths now resolve to the SAME editor anyway,
-    and the operation is idempotent, so a double delivery is harmless — asserted
-    below so a future Qt/platform change cannot turn it into a bug."""
+    """The menu action is the ONLY host, and this counts both candidate hosts to
+    prove it: the action's own `triggered` (the winner) and the editor method
+    both handlers used to land on (the total). One each — the previous version of
+    this test counted only the total, so it could not tell the two apart and
+    "proved" the duplicate harmless."""
     window = _window(qtbot, tmp_path)
     tab = _php_tab(window, tmp_path)
     window.show()
@@ -500,6 +517,8 @@ def test_ctrl_shift_b_on_a_focused_code_editor_is_handled_once(qtbot, tmp_path):
     QApplication.processEvents()
     _put_caret(tab.editor, _PHP.index("'shout'"))
 
+    triggered = []
+    window._select_enclosing_action.triggered.connect(lambda: triggered.append(1))
     calls = []
     original = tab.editor.select_enclosing_brackets
 
@@ -509,38 +528,68 @@ def test_ctrl_shift_b_on_a_focused_code_editor_is_handled_once(qtbot, tmp_path):
 
     tab.editor.select_enclosing_brackets = counted
 
-    qtbot.keyClick(
-        tab.editor,
-        Qt.Key.Key_B,
-        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
-    )
+    _press_ctrl_shift_b(window)
+
+    assert triggered == [1]  # the QAction answered
+    assert calls == [1]  # exactly once, so no second host ran
+    assert tab.editor.textCursor().selectedText() == "'shout'"
+
+
+def test_the_code_editor_dialog_answers_ctrl_shift_b_through_its_own_shortcut(qtbot):
+    """Claim A of the retired justification, kept as a real host: the menu-less
+    `CodeEditorDialog` has no Editor menu bar, so it owns the chord itself
+    (BUG-046) — driven here by a real key press, not by calling the slot."""
+    dialog = CodeEditorDialog("sql", "handler")
+    qtbot.addWidget(dialog)
+    dialog.set_code(_SQL)
+    dialog.show()
+    QApplication.processEvents()
+    _put_caret(dialog._editor, _SQL.index("a + 1"))
+    dialog._editor.setFocus()
     QApplication.processEvents()
 
-    assert len(calls) == 1
-    assert tab.editor.textCursor().selectedText() == "'shout'"
-    # Idempotent: a second application selects the same span, so even if both
-    # handlers ever fired the result would be identical.
-    original()
-    assert tab.editor.textCursor().selectedText() == "'shout'"
+    _press_ctrl_shift_b(dialog)
+
+    assert dialog._editor.textCursor().selectedText() == "a + 1"
 
 
-def test_the_editor_side_ctrl_shift_b_handler_is_retained_for_menuless_hosts(qtbot):
-    """Why the duplicate is KEPT rather than deleted: a bare `CodeEditor` (as in
-    `CodeEditorDialog`) has no Editor menu bar, so `keyPressEvent` is the only
-    host for the chord there — and it is the reliable path under the offscreen
-    test platform, where QShortcut activation is not guaranteed."""
+def test_the_dialogs_shortcut_is_retained_on_the_dialog(qtbot):
+    """The GC failure mode, pinned: a QShortcut whose only Python reference is
+    dropped is collected and stops working."""
+    dialog = CodeEditorDialog("sql", "handler")
+    qtbot.addWidget(dialog)
+
+    assert dialog._select_enclosing_shortcut is not None
+    assert dialog._select_enclosing_shortcut.key() == QKeySequence("Ctrl+Shift+B")
+
+
+def test_a_bare_code_editor_no_longer_answers_ctrl_shift_b_itself(qtbot):
+    """The negative half: with no dialog and no window action there is nothing
+    to answer the chord, because `CodeEditor.keyPressEvent` no longer does. This
+    is what pins the deleted branch as deleted."""
     editor = CodeEditor(language="sql")
     qtbot.addWidget(editor)
     editor.setPlainText(_SQL)
+    editor.show()
+    QApplication.processEvents()
     _put_caret(editor, _SQL.index("a + 1"))
+    editor.setFocus()
+    QApplication.processEvents()
 
-    qtbot.keyClick(
-        editor,
-        Qt.Key.Key_B,
-        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
-    )
+    _press_ctrl_shift_b(editor)
 
+    assert editor.textCursor().hasSelection() is False
+    # The operation itself is untouched — it is purely a slot now.
+    editor.select_enclosing_brackets()
     assert editor.textCursor().selectedText() == "a + 1"
+
+
+def test_ctrl_shift_b_stays_rebindable_because_it_is_a_menu_command(qtbot):
+    """The point of the ruling: the chord is hosted like every other shortcut,
+    so `Customize Shortcuts…` may move it. It must NOT be reserved."""
+    from pgtp_editor.ui.shortcut_registry import RESERVED_SEQUENCES
+
+    assert "Ctrl+Shift+B" not in RESERVED_SEQUENCES
 
 
 def test_caret_lands_at_the_start_of_every_structural_selection(qtbot):

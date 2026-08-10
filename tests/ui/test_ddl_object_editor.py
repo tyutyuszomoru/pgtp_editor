@@ -505,6 +505,75 @@ def test_event_filter_ctrl_z_key_press_calls_the_panels_own_undo(qtbot):
     assert panel.text() == "alpha\n"
 
 
+def test_event_filter_claims_ctrl_shift_z_shortcut_override(qtbot):
+    """BUG-053: Ctrl+Shift+Z is the second redo chord (BUG-050) and is
+    reserved app-wide, so this editable tab must claim it exactly as it
+    claims Ctrl+Y -- not leave it to the window."""
+    panel = _panel(qtbot, text="alpha\n")
+    modifiers = (
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+    )
+    event = _shortcut_override(Qt.Key.Key_Z, modifiers)
+
+    handled = panel.eventFilter(panel.editor, event)
+
+    assert handled is True
+    assert event.isAccepted() is True
+
+
+def test_event_filter_ctrl_shift_z_key_press_redoes(qtbot):
+    """BUG-053: the sibling `DdlEditorPanel` REFUSES this chord because its
+    buffer is read-only; this panel is editable, so the chord must reach
+    `editor.redo()`. Copying the sibling's refusal would break redo here."""
+    panel = _panel(qtbot, text="alpha\n")
+    panel.editor.setFocus()
+    _move_cursor_to_end(panel)
+    panel.editor.insertPlainText("beta")
+    assert (
+        panel.eventFilter(
+            panel.editor,
+            _key_press(Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier),
+        )
+        is True
+    )
+    assert panel.text() == "alpha\n"
+    modifiers = (
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+    )
+
+    handled = panel.eventFilter(panel.editor, _key_press(Qt.Key.Key_Z, modifiers))
+
+    assert handled is True
+    assert panel.text() == "alpha\nbeta"
+
+
+def test_ctrl_shift_z_redoes_through_a_real_key_press(qtbot):
+    """The end-to-end half: a real key press through a shown top level.
+
+    Note this one passes with OR without the fix -- `QPlainTextEdit` binds
+    `QKeySequence.StandardKey.Redo` (Ctrl+Shift+Z on this platform) natively,
+    exactly as it does Ctrl+Z/Ctrl+Y, which is why the file's other undo/redo
+    tests drive `panel.eventFilter` directly (see the note above). It is kept
+    as the user-visible assertion; the two `eventFilter` tests above are the
+    ones that fail without the fix."""
+    panel = _panel(qtbot, text="alpha\n")
+    panel.show()
+    qtbot.waitExposed(panel)
+    panel.editor.setFocus()
+    _move_cursor_to_end(panel)
+    panel.editor.insertPlainText("beta")
+    QTest.keyClick(panel.editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    assert panel.text() == "alpha\n"
+
+    QTest.keyClick(
+        panel.editor,
+        Qt.Key.Key_Z,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+    )
+
+    assert panel.text() == "alpha\nbeta"
+
+
 def test_shortcut_override_claims_ctrl_alt_f(qtbot):
     """Unlike Ctrl+Z/Ctrl+Y, Ctrl+Alt+F has no native QPlainTextEdit binding,
     so this genuinely proves the panel's own QShortcut/eventFilter claims it

@@ -275,7 +275,7 @@ def test_locate_runtime_rejects_invalid_dir(qtbot, tmp_path):
         window._gen_ui.locate_pangen_runtime()
 
     assert mock_warn.called
-    # Nothing valid saved: still the machine default (bad root not persisted).
+    # Nothing valid saved: the bad root was not persisted.
     assert load_re_phpgen_root(base_dir=cfg) != str(bad)
 
 
@@ -556,3 +556,90 @@ def test_locate_runtime_cancel_dialog_is_noop(qtbot, tmp_path):
 
     assert not mock_warn.called
     assert load_re_phpgen_root(base_dir=cfg) == before
+
+
+# --------------------------------------------------------------------------- #
+# 12. Never-configured vs. stored-but-invalid are distinguishable (BUG-051).
+# --------------------------------------------------------------------------- #
+def _unconfigured_window(qtbot, tmp_path):
+    """Window whose generator config has never been written at all."""
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    fake = FakeRunner()
+    window = MainWindow(generator_config_dir=cfg, generator_runner=fake)
+    qtbot.addWidget(window)
+    assert load_re_phpgen_root(base_dir=cfg) is None
+    return window, fake, cfg
+
+
+def test_pangen_unconfigured_runtime_names_the_remedy(qtbot, tmp_path):
+    window, fake, cfg = _unconfigured_window(qtbot, tmp_path)
+    _prep_project(window, tmp_path)
+
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
+        window._gen_ui.pangen()
+
+    assert mock_info.called
+    message = mock_info.call_args.args[2]
+    assert "runtime not found" in message
+    assert "Locate panGen Runtime" in message
+    assert fake.calls == []
+
+
+def test_analyze_unconfigured_runtime_names_the_remedy(qtbot, tmp_path):
+    window, fake, cfg = _unconfigured_window(qtbot, tmp_path)
+    _prep_project(window, tmp_path)
+
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
+        window._gen_ui.analyze_gap()
+
+    assert mock_info.called
+    message = mock_info.call_args.args[2]
+    assert "Locate panGen Runtime" in message
+    assert fake.calls == []
+
+
+def test_pangen_stored_but_invalid_runtime_reports_the_stored_path(qtbot, tmp_path):
+    """A configured root that no longer validates (moved checkout, corrupted
+    config) must not be reported as 'you never set this'."""
+    window, fake, cfg, _ = _configured_window(qtbot, tmp_path, with_root=False)
+    _prep_project(window, tmp_path)
+    stored = load_re_phpgen_root(base_dir=cfg)
+    assert stored is not None
+
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
+        window._gen_ui.pangen()
+
+    assert mock_info.called
+    message = mock_info.call_args.args[2]
+    assert stored in message
+    assert "no longer valid" in message
+    assert "Locate panGen Runtime" in message
+    assert fake.calls == []
+
+
+def test_analyze_stored_but_invalid_runtime_reports_the_stored_path(qtbot, tmp_path):
+    window, fake, cfg, _ = _configured_window(qtbot, tmp_path, with_root=False)
+    _prep_project(window, tmp_path)
+    stored = load_re_phpgen_root(base_dir=cfg)
+
+    with patch("pgtp_editor.ui.modals.QMessageBox.information") as mock_info:
+        window._gen_ui.analyze_gap()
+
+    assert mock_info.called
+    assert stored in mock_info.call_args.args[2]
+    assert fake.calls == []
+
+
+def test_locate_runtime_unconfigured_starts_dialog_at_empty_string(qtbot, tmp_path):
+    """QFileDialog needs a str; None would be a type error at the Qt boundary."""
+    window, fake, cfg = _unconfigured_window(qtbot, tmp_path)
+
+    with patch(
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
+        return_value="",
+    ) as mock_dialog:
+        window._gen_ui.locate_pangen_runtime()
+
+    assert mock_dialog.called
+    assert mock_dialog.call_args.args[2] == ""

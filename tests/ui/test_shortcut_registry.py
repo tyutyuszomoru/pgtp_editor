@@ -286,3 +286,35 @@ def test_resolve_shortcut_overrides_drops_a_hand_written_reserved_key():
     # A settings file is editable by hand; a Ctrl+F written into it would
     # install exactly the ambiguity this module exists to prevent.
     assert resolve_shortcut_overrides({"file.open": "Ctrl+F"}, ["file.open"]) == {}
+
+
+# -- BUG-050: the second redo chord ------------------------------------------
+
+
+def test_ctrl_shift_z_is_reserved_beside_the_history_pair():
+    """`XmlEditor.keyPressEvent` answers Ctrl+Shift+Z as a second redo and
+    CONSUMES it, so a menu command retargeted here would fire only while no XML
+    editor has focus — a focus-dependent silence, which is worse than a clean
+    loss and exactly what this table exists to prevent."""
+    assert "Ctrl+Shift+Z" in RESERVED_SEQUENCES
+    assert RESERVED_SEQUENCES["Ctrl+Shift+Z"].strip()
+    # Grouped with the pair it belongs to, which the dict's order is meant to
+    # show: the reader must find the three history chords together.
+    keys = list(RESERVED_SEQUENCES)
+    assert keys.index("Ctrl+Shift+Z") == keys.index("Ctrl+Y") + 1
+
+
+def test_ctrl_shift_z_is_refused_as_a_target_not_stolen():
+    refusal = refusal_for("file.open", "Ctrl+Shift+Z")
+    assert refusal and "Ctrl+Shift+Z" in refusal
+    with pytest.raises(ValueError):
+        assign_shortcut({"file.open": "Ctrl+O"}, "file.open", "ctrl+shift+z")
+
+
+def test_the_format_selection_reason_names_its_shortcut_hosts():
+    """The reason string is USER-FACING text in the dialog's greyed row, and it
+    used to say only "a context-menu command" — Ctrl+Alt+F is additionally a
+    QShortcut in the SQL Console and the DDL object tabs."""
+    reason = RESERVED_SEQUENCES["Ctrl+Alt+F"]
+    assert "context-menu" in reason
+    assert "SQL Console" in reason
