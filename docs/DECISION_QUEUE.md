@@ -1106,7 +1106,31 @@ through **`feature-triage`** (foreground) into `docs/FEATURE_QUEUE.md`, not stra
 
 ## DEC-014 — Must every surface that claims `Ctrl+Z`/`Ctrl+Y` also claim `Ctrl+Shift+Z`, or is `PhpFileTab` correctly excluded?
 
-- **Status:** OPEN
+> **CAUTION (2026-08-10, added after this entry was answered) — the INVARIANT stands; the WORKED EXAMPLE has
+> been RE-RULED by DEC-015.** Minutes after this was answered the owner said `Ctrl+Z` and `Ctrl+Shift+Z` are
+> *"totally different"* and that `Ctrl+Shift+Z` should be the **counterpart of `Ctrl+Shift+A`** (shrink the
+> structural selection), not a second redo chord. **DEC-015 is now ANSWERED (2026-08-10):** *"Redo is always,
+> on all systems Ctrl+Y"* — `Ctrl+Y` explicitly bound on every platform, `Ctrl+Shift+Z` freed from redo. So
+> this is **settled, not contested**.
+>
+> - **Unaffected — read this entry's answer as written.** The invariant — *"for every chord
+>   `RESERVED_SEQUENCES` reserves because an editor answers it, every editing surface states its answer"* — is
+>   about **reserved chords generally**, sourced from the registry rather than any literal chord list.
+>   `Ctrl+Shift+Z` remains reserved and every surface must still state its answer; **only the answer changes,
+>   from "redo" to "not redo; this is shrink"** — and each surface must keep actively intercepting the chord,
+>   because Qt's binding table carries it as native `Redo` under `KB_Win | KB_X11`.
+> - **Simplified, not weakened:** with redo down to a single chord the set is symmetric across the two
+>   operations, so the classify-not-boolean constraint holds with one less member on the redo side. This entry's
+>   *"the undo/redo chords"* phrasing now means `Ctrl+Z` and `Ctrl+Y`.
+> - **`Alt+Backspace` / `Alt+Shift+Backspace` remains the open implementation call** this answer flagged, and
+>   DEC-015 sharpens it: under *"a chord is bound by this app, not inherited from Qt's platform table"*, a
+>   native Qt undo/redo chord left unclaimed is the same defect as Linux's missing `Ctrl+Y`.
+> - **BUG-056's hold is LIFTED; the bug is RESCOPED** to *bind `Ctrl+Y` explicitly on all platforms*. Its
+>   **step 2 (adding `Ctrl+Shift+Z` redo branches to `PhpFileTab`) is WITHDRAWN** by DEC-015. Its step 4 shared
+>   matcher survives unchanged in principle.
+> - **DEC-014 is not reopened.** Its answer stands as given; DEC-015 rules on what the chord *means*.
+
+- **Status:** ANSWERED (2026-08-10)
 - **Raised:** 2026-08-10, by `spec-maintainer`'s placement gate, which found the spec contradicting **itself**
   on this and refused to pick a winner rather than editing one side away as bookkeeping.
 - **Blocks:** yes, and with a deadline. It decides the **data shape** of the keyboard-hosting feature the
@@ -1214,3 +1238,262 @@ platform table as the app's answer of last resort.
 3. **BUG-056** gets a rule to implement against instead of a per-surface judgement — in particular whether
    its step 2 (`PhpFileTab` gains the branch) and step 4 (the shared matcher, currently written assuming a
    fixed three-chord set) are right as proposed.
+
+### Answer (2026-08-10)
+
+**Option (A) — fixed set, with the set sourced from `RESERVED_SEQUENCES` rather than written out as a literal
+triple.**
+
+**The invariant, verbatim — this is the durable part:**
+
+> For every chord `RESERVED_SEQUENCES` reserves *because an editor answers it*, every editing surface states
+> its answer.
+
+**Owner's reasoning.** It ties two artifacts that already exist to each other instead of inventing a third
+list, and it makes the app's answer **stated** rather than derived from Qt's platform table — which is the
+condition BUG-056 exists to end. The shared matcher is therefore a plain function taking **no per-surface
+parameter**.
+
+**Constraint on the shared matcher — `Ctrl+Z` and `Ctrl+Shift+Z` are different operations.** `Ctrl+Z` is
+**undo**; `Ctrl+Shift+Z` and `Ctrl+Y` are **redo**. The phrase *"the undo/redo chords"* used throughout this
+entry treats them as one set, and the existing extracted form invites exactly that collapse:
+`DdlEditorPanel._is_undo_redo_chord` returns a **bool** — *"is this one of the three?"* — which tells a caller
+nothing about *which* operation to run.
+
+> The fixed set governs **which chords a surface intercepts**. It does **not** unify what they do. The shared
+> matcher must **classify** — undo versus redo — and never return a bare *"is an undo/redo chord"* boolean. A
+> caller that trusts such a boolean and re-derives the operation itself is how a redo becomes an undo.
+
+Not hypothetical: BUG-053's fix had to keep them apart explicitly, and the shipped code does
+(`pgtp_editor/ui/ddl_object_editor.py:904-922`):
+
+```python
+is_undo = key == Qt.Key.Key_Z and mods == ctrl
+is_redo = (key == Qt.Key.Key_Y and mods == ctrl) or (
+    key == Qt.Key.Key_Z and mods == (ctrl | shift)
+)
+...
+self.editor.undo() if is_undo else self.editor.redo()
+```
+
+Any extraction that flattens those two into one predicate loses the distinction the fix just established, and
+the loss is **silent**: the chord is still claimed, so nothing looks broken, and the wrong operation runs.
+
+**The platform wrinkle this interacts with, same subject.** `Ctrl+Y` is **Windows-only** in Qt's binding table
+(BUG-056 measured this), so *redo* has two spellings of which one is platform-conditional while *undo* has
+one. That asymmetry is a second reason the matcher must return the **operation** rather than a membership
+test — the set is not symmetric across the two operations.
+
+**Consequences, recorded explicitly.**
+
+- **§27's `PhpFileTab` exception is deleted.** That also resolves the §18.5-vs-§27 body-vs-body contradiction
+  **in §18.5's favour**. Note that §27's *"dead on `PhpFileTab`"* sentence had to go **regardless** of which
+  option won, since BUG-056 measured it false as a behaviour claim.
+- **The `Alt+Backspace` / `Alt+Shift+Backspace` pair now has a decidable home**: either it enters
+  `RESERVED_SEQUENCES` and is claimed, or it is deliberately left out — a stated decision either way, which
+  is what neither other option produced. This is a **required call during implementation**, not an open
+  question to defer.
+- **Accepted cost.** The claim is forced onto surfaces where nothing can steal the key — `CodeEditorDialog` is
+  a short-lived modal no window `QShortcut` reaches, so its claim buys only uniformity. The owner accepted
+  that.
+- **Why (C) was rejected, though it is the more elegant rule** — *arguable and rejected*, recorded so it is
+  not re-proposed later as an improvement: it makes correctness depend on a window-level shortcut list nobody
+  consults when adding a surface, and it leaves unstolen chords resting on Qt's platform table.
+
+**Unblocks.** **BUG-056**, including its **step 4 shared matcher**, which was assuming a fixed triple and now
+has a sanctioned source for the set. The race recorded in this entry is **closed**: the rule was stated before
+the implementation settled it, which is what this register exists to do.
+
+**For `spec-maintainer`.** Both **§27** and **§18.5** need this fold, and §27's false behaviour claim
+(*"dead on `PhpFileTab`, the Sandbox SQL Console and `CodeEditorDialog`"*) must be removed.
+
+---
+
+## DEC-015 — If `Ctrl+Shift+Z` becomes shrink-selection, what happens to redo's second spelling — and to redo on Linux, where `Ctrl+Y` does not exist?
+
+- **Status:** ANSWERED (2026-08-10)
+- **Raised:** 2026-08-10, by the main session, from three unprompted owner messages during BUG-056 work.
+- **Blocks:** **BUG-056 (OPEN) is held on this** — its step 2 adds a `Ctrl+Shift+Z` redo branch to
+  `PhpFileTab`, which would foreclose the reassignment by shipping it. It also contests **DEC-014**'s worked
+  example (a CAUTION is recorded there; DEC-014's invariant survives untouched). And it settles **FQ-034's
+  open question (1)**, the shrink chord, which is queued and undesigned.
+
+**This entry reverses recorded design.** That is the cost, and it is the point of filing rather than deciding.
+
+**What the owner said, verbatim, across three messages.**
+
+> *"hey Ctrl+Z and Ctrl+shift+Z are totally different!"* · *"Ctrl+shift+Z is the counterpart of Ctrl+shift+A,
+> Ctrl+Z is undo"* · *"(ctrlshiftA being the select incrementally the structures)"*
+
+**The reading this entry rests on — stated as a reading, PENDING CONFIRMATION, not as settled.** `Ctrl+Shift+A`
+grows the selection outward one structural level per press; the owner wants **`Ctrl+Shift+Z` as its inverse —
+shrink the selection back inward** — and therefore **not** as a redo chord. `Ctrl+Z` remains undo; redo remains
+`Ctrl+Y`. If that reading is wrong, everything below is moot and the entry closes.
+
+**Current state, verified in the tree today (2026-08-10).**
+
+- `pgtp_editor/ui/shortcut_registry.py:220` reserves the chord *as redo*:
+  `"Ctrl+Shift+Z": "project history Redo, the second chord — answered inside every XML editor's own key
+  handling…"`. Under the reassignment that reason string is **wrong**, not merely dated.
+- `pgtp_editor/ui/main_window.py:2552` binds `Ctrl+Shift+B` → `Select Enclosing Block` (innermost);
+  `:2556` binds `Ctrl+Shift+A` → `Select Parent Block` (one nesting level up).
+- **`Ctrl+Shift+A` is XML-only today.** `_select_parent_block` (`main_window.py:2604-2616`) exists only for
+  `XmlEditor`, and the menu entry is **hidden** on `CodeEditor` tabs — which also drops the chord there, since
+  Qt keeps a shortcut live only while its action is enabled *and* visible. So *"select incrementally the
+  structures"* describes **FQ-034's proposed SQL behaviour**, not shipped behaviour; today it is a single
+  parent-walk in the XML editors, not a repeatable ladder.
+- **No shrink / contract-selection operation exists anywhere.** Grep for shrink/contract/narrow-selection and
+  an expansion stack across `pgtp_editor/` returns nothing in the selection code — the only hits are FQ-034's
+  own queue text. The inverse the owner is naming has no implementation to rebind.
+- `pgtp_editor/ui/ddl_object_editor.py:904-922` **answers `Ctrl+Shift+Z` as redo** (BUG-053, RESOLVED).
+- Spec and manual both describe it as redo: `CONSOLIDATED_SPEC.md` §18.5 (`:6544` — *"`Ctrl+Shift+Z` is part
+  of the claim, not a separate chord"*), §27 (`:10064`), plus the §27 Ledger row; and
+  `pgtp_editor/resources/manual.md` at `:750`, `:1952`, `:3823`, `:3949`, `:4158` (*"Ctrl+Shift+Z is a second
+  redo key"*).
+
+**What the reassignment reverses — enumerated, because the cost IS the decision.**
+
+- **BUG-050 (RESOLVED)** reserved the chord *as a redo chord*; its registry reason string becomes wrong.
+- **BUG-053 (RESOLVED)** implemented it *as redo* in the DDL object tab. That implementation would be
+  **withdrawn, not extended** — a resolved bug's fix partly undone.
+- **DEC-014 (ANSWERED today)** used it as the worked example throughout. **The invariant survives** (it is
+  sourced from `RESERVED_SEQUENCES` generally); the example does not, and the `Alt+Backspace` reasoning may
+  shift, since if redo loses its second spelling the native Alt pair stops being a tidy-up and becomes the
+  platform-coverage question itself.
+- **BUG-056 (OPEN)** is built entirely on the redo reading; its step 2 adds a `Ctrl+Shift+Z` redo branch to
+  `PhpFileTab`. **Held pending this.**
+- **Spec §27 + §18.5 and five manual passages** would need refolding by `spec-maintainer` /
+  `manual-maintainer`. Not touched here.
+
+**The question is not "redo or shrink" — the owner has said. It is what happens to redo's SECOND SPELLING.**
+
+**Options.**
+
+- **(A) Redo becomes `Ctrl+Y` only.** Cleanest: one spelling per operation, the chord is freed for shrink, and
+  the registry reason string becomes true again. *Cost, and it needs answering in the same breath:* `Ctrl+Y` is
+  **`KB_Win`-only in Qt's compiled binding table** (BUG-056 measured this, M1–M4), so **on Linux redo would
+  have no chord at all** unless one is explicitly bound. That is a live regression on the owner's own dev
+  machine, and it is the same mechanism that already makes `Ctrl+Y` a dead key in the Sandbox SQL Console on
+  Linux. Choosing (A) therefore also requires naming Linux's redo chord — or accepting that redo is
+  Windows-only-by-keyboard.
+- **(B) Redo keeps a second spelling under a different chord** (e.g. an explicitly bound alternate claimed by
+  the same shared matcher on every surface). Preserves two-spelling redo and cross-platform coverage without
+  contesting the owner's intent. *Cost:* the app invents a redo chord no platform convention supplies, so it
+  must be discoverable — manual, `Select ▸`/menu surfacing, and `RESERVED_SEQUENCES` all have to carry it —
+  and users' muscle memory for `Ctrl+Shift+Z` now does something visually dramatic (a selection jump) instead
+  of nothing.
+- **(C) Shrink takes a different chord; `Ctrl+Shift+Z` stays redo.** No reversal at all: BUG-050/BUG-053 stand,
+  BUG-056 proceeds as written, spec and manual are untouched, DEC-014's example survives. *Cost:* it
+  **contradicts the owner's stated intent** — recorded as an option so the trade is visible rather than assumed
+  away — and it gives up the mnemonic pairing (`Ctrl+Shift+A` out / `Ctrl+Shift+Z` in) that motivated the
+  request. Note FQ-034 already treats the shrink chord as open, so (C) costs nothing structurally; it costs
+  only the pairing.
+
+**Recommendation: (B), and only after the reading above is confirmed.** The reassignment itself is the owner's
+to make and they have effectively made it; what should not be swallowed silently is the Linux consequence.
+(A) is more elegant but its measured cost is *"redo has no keyboard on this machine"*, and discovering that
+after the withdrawal of BUG-053's branch is the expensive order to discover it in. (C) is the cheapest in work
+and the only option with zero reversal, which is exactly why it is recorded — but buying zero reversal by
+overriding a clearly stated preference is not a trade an agent should make on the owner's behalf.
+
+**A fact that shrinks the work considerably — the shrink feature is already queued.** Shrink-selection is new
+surface (it does not exist today), so it would normally route through `feature-triage`; **it already has.**
+`docs/FEATURE_QUEUE.md` **FQ-034** (QUEUED, 2026-08-10) is *"Structural expand-selection for plpgsql/SQL
+editors — a repeatable Ctrl+Shift+A that grows the selection … plus a shrink counterpart"*, placed as EXTEND
+§8 (the `Select ▸` menu and its keybindings) plus a new Qt-free span model in `sql/`, and it names FQ-032's
+deferred motion/text-object work as a future consumer of the same span model. Its **open question (1) is
+"exact default chord for shrink"**. So confirming this reading does not create a feature — it **answers
+FQ-034's open question 1**, and the shrink operation is designed there, not here. This entry deliberately does
+not design it.
+
+**What an answer unblocks, concretely.**
+1. **BUG-056** comes off hold — either implemented as written (C) or with step 2's `Ctrl+Shift+Z` branch
+   removed and, under (A)/(B), a redo-chord decision folded in.
+2. **FQ-034's open question 1** is settled, so its keybinding section can be designed.
+3. **`spec-maintainer`** gets a ruling to fold into §27 and §18.5, and `manual-maintainer` a list of five
+   manual passages to correct — or an explicit "no change", under (C).
+4. **DEC-014's worked example** can be restated (its invariant needs no change).
+5. Under (A)/(B), the **`shortcut_registry.py:220` reason string** is rewritten and BUG-053's redo branch in
+   `ddl_object_editor.py:904-922` is withdrawn — work that must not start before this is answered.
+
+### Answer (2026-08-10)
+
+**Option (A) — one chord per operation, on every platform.** The reading this entry rests on is **confirmed**.
+
+**The ruling, verbatim:**
+
+> Redo is always, on all systems Ctrl+Y
+
+So: **`Ctrl+Z` = undo. `Ctrl+Y` = redo, EXPLICITLY BOUND on every platform** rather than inherited from Qt's
+platform table. **`Ctrl+Shift+Z` is freed from redo** and reserved for the shrink-selection counterpart to
+`Ctrl+Shift+A`.
+
+**Owner's reasoning — why this is a good trade and not merely a preference.** `Ctrl+Y` is **`KB_Win`-only** in
+Qt's compiled binding table, which is *exactly the defect BUG-056 is open for* (dead redo key on Linux).
+Binding `Ctrl+Y` explicitly on all platforms therefore **resolves that bug rather than adding work**, and it
+makes redo **stated rather than derived** — which is the invariant DEC-014 adopted and the condition BUG-056
+exists to end. The reassignment pays for itself: the chord the owner wants for shrink is freed *by the same
+change that fixes the platform hole*. One chord per operation, everywhere.
+
+**The wider principle, and it is the durable part.** *An operation's chord is bound by this app on every
+platform, not inherited from Qt's platform table.* Two spellings of one operation were how the platform table
+got to decide, and the platform table is what produced the only measured divergence in this area. This
+generalises past redo: any future gesture that relies on Qt answering a chord natively is relying on a
+per-platform table nobody in this repo reads.
+
+**Owner's constraint on the change:** *"not the underlying logics, just the keys"* — **no undo/redo logic
+changes**, only which keys reach which handler.
+
+**Mechanical scope, verified.** Three code sites each carry the second-chord condition —
+`pgtp_editor/ui/ddl_object_editor.py:913`, `pgtp_editor/ui/xml_editor.py:1178`,
+`pgtp_editor/ui/ddl_editor_panel.py:164` — plus one `RESERVED_SEQUENCES` reason row
+(`shortcut_registry.py:220`), 14 test lines across 3 files, 8 spec references and 7 manual references.
+
+**THE GOTCHA — this is not a three-line deletion, and getting it wrong silently defeats the whole
+reassignment.** BUG-056 measured Qt's compiled binding table: the `Ctrl+Shift+Z` → `StandardKey.Redo` row
+carries **`KB_Win | KB_X11`**, so `QPlainTextEdit` **redoes on that chord natively on both platforms**. If the
+three sites merely *drop* their condition, the chord falls through to Qt and still redoes — and shrink-selection
+would be bound to a chord that also redoes.
+
+> Every editing surface must **actively intercept `Ctrl+Shift+Z` and refuse to let Qt's native redo run.** The
+> chord stays **reserved** and every surface still **states its answer** — fully coherent with DEC-014's
+> invariant — but the answer changes from *"redo"* to *"not redo; this is shrink"*.
+
+That is the difference between deleting a condition and changing one. The condition at each of the three sites
+is **re-routed, not removed**.
+
+**Sequencing — the two halves are separable, and the keys half ships now.**
+
+1. **The keybinding change can ship immediately**: bind `Ctrl+Y` explicitly on all platforms, free
+   `Ctrl+Shift+Z` from redo, keep intercepting it so Qt's native redo cannot fire, and rewrite the registry
+   reason. This *is* BUG-056, rescoped.
+2. **Shrink-selection itself is new feature surface that does not exist today** (verified: no shrink / contract
+   / narrow-selection operation anywhere in `pgtp_editor/`), so it routes through **`feature-triage`** into
+   `docs/FEATURE_QUEUE.md`, and it plausibly belongs with `Select ▸` and FQ-032's motion work rather than
+   standing alone. **Not designed here.** Note for whoever dispatches that: **FQ-034 already exists** and
+   already contains the shrink counterpart with *"exact default chord for shrink"* as its open question (1) —
+   this ruling **answers that question**, so `feature-triage` is extending FQ-034, not creating a sibling.
+   `owner-decision` does not write the feature queue.
+
+**Consequences, recorded explicitly.**
+
+- **BUG-056's hold is LIFTED and the bug is RESCOPED.** Its **step 2 — adding `Ctrl+Shift+Z` redo branches to
+  `PhpFileTab` — is WITHDRAWN by this ruling.** What remains is: bind `Ctrl+Y` explicitly on all platforms.
+  Its step 4 shared matcher survives (see below).
+- **BUG-050 (RESOLVED)** keeps its reservation of the chord; only the **reason** changes — reserved now because
+  every surface must refuse Qt's native redo on it, not because our editors answer it as redo.
+- **BUG-053 (RESOLVED)** loses the redo arm of its fix. Its *distinction* — undo and redo are different
+  operations — is what survives and is exactly what the owner restated as *"totally different"*.
+- **DEC-014's invariant is unaffected**, and its worked example is now **settled rather than contested**:
+  `Ctrl+Shift+Z` remains a reserved chord every surface must answer; the answer is no longer redo. DEC-014's
+  classify-not-boolean constraint still holds and now has one less member on the redo side — which is a
+  *simplification*, since redo becomes a single chord and the set is symmetric again.
+- **`Alt+Backspace` / `Alt+Shift+Backspace`** remain the open call DEC-014 flagged, and this ruling sharpens
+  it: under *"bound by this app, not inherited"*, a native Qt undo/redo chord left unclaimed is the same defect
+  as Linux's missing `Ctrl+Y`.
+
+**For `spec-maintainer` / `manual-maintainer` — 8 spec and 7 manual references now diverge.**
+`CONSOLIDATED_SPEC.md` §18.5 (`:6544` — *"`Ctrl+Shift+Z` is part of the claim, not a separate chord"* — the
+claim survives, the redo meaning does not), §27 (`:10064`) and the §27 Ledger row; `manual.md:750`, `:1952`,
+`:3823`, `:3949` (*"Ctrl+Shift+Z is a second redo key"*), `:4158`. `owner-decision` does not edit either
+document.
