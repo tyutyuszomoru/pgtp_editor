@@ -4704,7 +4704,15 @@ prefs. Confirm the live §18.4 / §18.x / FQ-027 section numbers at spec-fold ti
 ---
 
 ## FQ-035: New Project dialog — attach a .pgtp (open-file) and reveal a quality-server section auto-populated from it
-**Status:** QUEUED
+**Status:** PROCESSED (spec §18.2; buildable remainder `82f2be6`, the two rulings `caed134`).
+Both open decisions are answered and shipped: `DEC-260810134914` copies at accept through ONE copier —
+`check_out_pgtp`, which **raises** rather than deciding, so the open-time path can swallow an unreadable
+source while the creation path must not; and `DEC-260810134915` adds one advisory instead of a gate, which
+is DEC-013's first worked example from its quiet side (a notice about an action that SUCCEEDED, so
+journal-only rather than at the caret). Two entry claims were falsified: there is no reusable
+connection-field widget, and the XmlEditor host count is three.
+**The readers were NOT hardened by this** — `BUG-260810173246` covers `resolve_pgtp_path` redirecting an
+open of the real source to a missing copy, and half-links already written to disk.
 **Requested:** 2026-08-10
 **Idea (verbatim/summarized):** "When creating a new Project, the New Project window should let you add a .pgtp file too (open-file dialog). If a .pgtp is loaded, a new section for the quality-server setup should also be shown, so everything can be done instantly." (Owner: "auto-populate the quality connection from the pgtp"; and "this is just a UX feature that makes the project more understandable.")
 

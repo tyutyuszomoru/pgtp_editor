@@ -44,7 +44,8 @@ The app opens on a **launcher** offering its three modes — **Standalone** (a `
 - **DDL object editor.** An editable single-object tab with schema-aware Ctrl+Space completion, `Ctrl+Alt+F` Format Selection, and a gutter that shows **body-relative line numbers** beside absolute ones, because `plpgsql_check` reports by body line.
 - **Authoring aids.** Snippets (`Ctrl+Alt+E`), **Expand SELECT** into its column list (`Ctrl+Alt+C`), **JOIN on foreign key** (`Ctrl+Alt+J`) and **signature help** (`Ctrl+Shift+Space`). Snippets are editable and stored per user in `snippets.json`, with explicit Export/Import for sharing (**Settings ▸ Edit Snippets…**, Maintenance mode).
 - **Object creation and table ALTERing.** Add Trigger / New Function or Procedure, and an `Alter Table ▸` submenu of twelve column and constraint operations. All of them only generate DDL into an editable tab — nothing reaches a database until you say so.
-- **The sandbox and the check ladder.** A local, disposable PostgreSQL sandbox (provisioned from **Project Settings ▸ Connections**, optionally cloned with data) runs a layered check: parse, apply, then `plpgsql_check`. Findings land as clickable `[Check]` rows. A **Sandbox SQL Console** tab runs ad-hoc SQL — sandbox-only, structurally, with a row cap and a mandatory statement timeout.
+- **Projects.** **New Project** creates the whole thing in one pass: the folder, an optional local sandbox (provisioned and tested for superuser there and then, with or without cloned data), an optional attached `.pgtp`, and — revealed by that attachment — the quality-server connection, pre-filled from the file's own connection block. Nothing about a project is inferred from the fact that opening one thing populates another.
+- **The sandbox and the check ladder.** A local, disposable PostgreSQL sandbox (provisioned from **New Project** or **Project Settings ▸ Connections**, optionally cloned with data) runs a layered check: parse, apply, then `plpgsql_check`. Findings land as clickable `[Check]` rows. A **Sandbox SQL Console** tab runs ad-hoc SQL — sandbox-only, structurally, with a row cap and a mandatory statement timeout.
 - **Deployment.** Every save and every outward effect is a named entry on the **Deployment** menu, per active tab: `Check and commit to sandbox`, `Apply to quality`, `Save in Project`, `Deploy .pgtp`, `Save XSD`, `Save PHP File`. **None of them carries a keyboard shortcut** — an irreversible outward effect must not be one keystroke away, and `Ctrl+S` is deliberately dead app-wide so a save reflex can never hit the wrong target.
 - **Project Status.** A five-node diagram of the project, its `.pgtp`, the quality database and the sandbox, with per-node drill-down, refreshing while open.
 
@@ -71,7 +72,7 @@ Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/t
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q -n 10
 
-6714 passing / 51 skipped / 1 xfailed as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
+6746 passing / 51 skipped as of this writing, spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. `docs/TEST_LOG.md` is the committed record of verified runs.
 
 **Windows release:** `python optimized_build.py` produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`; package it with `docs/installer.iss` (Inno Setup).
 
