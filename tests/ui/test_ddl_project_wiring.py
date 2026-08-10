@@ -2071,13 +2071,14 @@ def test_creating_a_project_without_a_pgtp_is_byte_for_byte_todays_behaviour(
     assert loaded.target == ConnectionParams()
 
 
-def test_creation_does_not_copy_the_pgtp_yet_and_leaves_the_copier_free_to_run(
+def test_creation_checks_the_pgtp_out_into_the_project_folder(
     qtbot, tmp_path, monkeypatch
 ):
-    """DEC-260810134914 is OPEN, so the copy is deliberately NOT done here.
-    Recording `source_path` alone is the state that does not pre-empt it: the
-    `working_copy_path` guard in `link_pgtp_if_needed` stays clear, so opening
-    the source still links it exactly as before."""
+    """DEC-260810134914: the copy happens AT ACCEPT, so creation produces the
+    same three-field link the open-time path produces -- never a recorded
+    identity pointing at nothing."""
+    from pgtp_editor.db.ddl_project import content_hash
+
     window = _window(qtbot, tmp_path)
     project_dir = tmp_path / "proj"
     source = tmp_path / "erp.pgtp"
@@ -2086,17 +2087,202 @@ def test_creation_does_not_copy_the_pgtp_yet_and_leaves_the_copier_free_to_run(
 
     window._ddl_project_ui.create_project(dialog)
 
+    working_copy = project_dir / "erp.pgtp"
     link = load_settings(project_dir).pgtp
-    assert link.working_copy_path is None
-    assert link.last_known_source_checksum is None
-    assert not (project_dir / "erp.pgtp").exists()
+    assert link.source_path == str(source)
+    assert link.working_copy_path == str(working_copy)
+    assert link.last_known_source_checksum == content_hash(_ATTACHED_PGTP)
+    assert working_copy.read_text(encoding="utf-8") == _ATTACHED_PGTP
 
+
+def test_creation_and_the_open_time_linker_share_ONE_copier(
+    qtbot, tmp_path, monkeypatch
+):
+    """§18.2 requires one definition of linking. Both entry points call
+    `check_out_pgtp`, so a stub on it starves both."""
+    from pgtp_editor.ui import ddl_project_controller as controller_module
+
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    calls = []
+    real = controller_module.check_out_pgtp
+    monkeypatch.setattr(
+        controller_module, "check_out_pgtp",
+        lambda folder, path: calls.append((folder, path)) or real(folder, path),
+    )
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert calls == [(project_dir, source)]
+    # The open-time entry point is now a no-op for this project (the guard), and
+    # opening the source resolves straight to the working copy.
     window.open_project_file(str(source))
+    assert calls == [(project_dir, source)]
+    assert window._current_project_path == str(project_dir / "erp.pgtp")
 
-    linked = load_settings(project_dir).pgtp
-    assert linked.working_copy_path == str(project_dir / "erp.pgtp")
-    assert linked.last_known_source_checksum is not None
-    assert (project_dir / "erp.pgtp").exists()
+
+def test_an_unreadable_source_costs_the_link_not_the_project(
+    qtbot, tmp_path, monkeypatch
+):
+    """The creation path deliberately does NOT inherit the open-time copier's
+    silent no-op: the project is created with NO link, the failure is reported,
+    and the file can still be attached later by opening it."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "gone.pgtp"  # never written -- unreadable
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    before = len(window.activity_panel.row_texts())
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert window._ddl_project_folder == project_dir  # the project still exists
+    assert load_settings(project_dir).pgtp == PgtpLink()  # no half-link at all
+    rows = _journal_rows(window, before)
+    assert any("Could not copy the attached .pgtp" in row for row in rows)
+
+    # ... and the open-time path is still free to link it once it is readable.
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    window.open_project_file(str(source))
+    assert load_settings(project_dir).pgtp.working_copy_path == str(
+        project_dir / "gone.pgtp"
+    )
+
+
+def test_an_existing_destination_is_adopted_never_overwritten(
+    qtbot, tmp_path, monkeypatch
+):
+    """Matched, not tightened, from the open-time copier: an existing file at the
+    destination is left alone. The link is still whole -- three fields, all
+    true -- so no forbidden state is reachable this way."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+    (project_dir / "erp.pgtp").write_text("<Project>local edits</Project>", encoding="utf-8")
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert (project_dir / "erp.pgtp").read_text(encoding="utf-8") == (
+        "<Project>local edits</Project>"
+    )
+    link = load_settings(project_dir).pgtp
+    assert link.working_copy_path == str(project_dir / "erp.pgtp")
+    assert link.last_known_source_checksum is not None
+
+
+def test_opening_a_project_created_with_a_pgtp_reports_no_false_drift(
+    qtbot, tmp_path, monkeypatch
+):
+    """`report_project_drift` keys on `source_path` alone -- with the checksum
+    now written at creation it reports "unchanged", not phantom drift."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    window._ddl_project_ui.create_project(dialog)
+    before = len(window.activity_panel.row_texts())
+
+    settings = load_settings(project_dir)
+    window._ddl_project_ui.report_project_drift(project_dir, settings)
+
+    rows = _journal_rows(window, before)
+    assert any("unchanged since last opened" in row for row in rows)
+
+
+def test_auto_open_loads_the_working_copy_written_at_creation(
+    qtbot, tmp_path, monkeypatch
+):
+    """`auto_open_linked_pgtp` returns early on a set `working_copy_path`; the
+    file it points at now always exists, so the early return opens something."""
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    window._ddl_project_ui.create_project(dialog)
+
+    window._ddl_project_ui.auto_open_linked_pgtp(project_dir, load_settings(project_dir))
+
+    assert window._current_project_path == str(project_dir / "erp.pgtp")
+
+
+# --- DEC-260810134915: no gate, one accept-time advisory ----------------------
+def _journal_rows(window, before: int) -> list[str]:
+    """`[Project]` narration is routed to the Activity Log, not the Messages
+    tab -- so that is where a creation-time notice has to be looked for."""
+    return list(window.activity_panel.row_texts()[before:])
+
+
+def test_a_blank_quality_connection_is_reported_once_and_never_gates(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    dialog._quality_host_edit.setText("")
+    before = len(window.activity_panel.row_texts())
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert window._ddl_project_folder == project_dir  # accepted, never refused
+    rows = _journal_rows(window, before)
+    matches = [row for row in rows if "no quality (target) server" in row]
+    assert len(matches) == 1
+    assert "[Project]" in matches[0]  # journalled with its provenance prefix
+
+
+def test_an_untested_quality_connection_is_reported_once(qtbot, tmp_path, monkeypatch):
+    window = _window(qtbot, tmp_path)
+    project_dir = tmp_path / "proj"
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, project_dir, source, monkeypatch)
+    before = len(window.activity_panel.row_texts())
+
+    window._ddl_project_ui.create_project(dialog)
+
+    rows = _journal_rows(window, before)
+    assert len([row for row in rows if "was never tested" in row]) == 1
+
+
+def test_a_tested_quality_connection_says_nothing_and_neither_does_no_pgtp(
+    qtbot, tmp_path, monkeypatch
+):
+    window = _window(qtbot, tmp_path)
+    source = tmp_path / "erp.pgtp"
+    source.write_text(_ATTACHED_PGTP, encoding="utf-8")
+    tested_dir = tmp_path / "tested"
+    dialog = _new_project_dialog_with_pgtp(qtbot, window, tested_dir, source, monkeypatch)
+    dialog._run_async = lambda work, on_result, on_error=None: on_result(work())
+    dialog._tester = lambda params: (True, "Connected.")
+    dialog.test_quality()
+    before = len(window.activity_panel.row_texts())
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert not [
+        row for row in _journal_rows(window, before)
+        if "quality (target)" in row
+    ]
+
+    # And a project with no `.pgtp` at all is created as silently as before.
+    plain_dir = tmp_path / "plain"
+    plain = NewProjectDialog(parent=window)
+    qtbot.addWidget(plain)
+    plain._folder_edit.setText(str(plain_dir))
+    before = len(window.activity_panel.row_texts())
+
+    window._ddl_project_ui.create_project(plain)
+
+    assert _journal_rows(window, before) == []
 
 
 def test_a_target_supplied_at_creation_is_not_overwritten_on_first_open(
