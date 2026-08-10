@@ -3461,10 +3461,11 @@ for every other consumer, and `dollar_body_at` should be named on `tokenizer.py`
 ---
 
 ## BUG-042: `[Project]` narration emitted *during* a project close is journalled but never seen — the transition that triggers the line also wipes the panel
-**Status:** DECIDED — **option C** (route close-time `[Project]` narration to the **Messages** tab), owner
-ruling 2026-08-10. **Implementation in flight, not yet committed** — see *Owner ruling* below for exactly what
-was and was not in the working tree when this was written. Flip to `RESOLVED (<commit>)` once the change lands
-and the commit hash can be verified; do not backfill a hash that has not been observed.
+**Status:** RESOLVED (b9d1359) — **option C**, shipped 2026-08-10 as a **run-state flag**, not as a prefix move
+and not as a content marker. See *Resolution* at the end of this entry: it records what actually shipped and
+closes the sub-decision that the *Owner ruling* section below left open. Read the *Owner ruling*,
+*Proposed fix* and *Test impact* sections as the state of knowledge **before** the fix; where they conflict
+with *Resolution*, *Resolution* wins.
 **Reported:** 2026-08-10
 **Report (verbatim):** "FQ-019's Activity Log replaces its display buffer on a project transition (`open_project`/`close_project` on the core, driven from `_on_activity_project_changed`). `[Project]` lines narrated *during* a close — the example given is *'N DDL object(s) have local edits pending a batch deploy'* — reach the closing project's `activity.jsonl` correctly, but vanish from the panel immediately, because the transition that triggered them also clears what the panel shows. So a user is told something at exactly the moment they can no longer read it."
 
@@ -3499,18 +3500,23 @@ move between stores; `db/activity_log.py:554-573`) stays untouched. This ruling 
 renders** the line, never **which store persists** it. Any implementation that starts moving entries between
 stores has misread the ruling.
 
-**One open sub-decision — record, do not pre-resolve here.** `audit_router.DESTINATIONS` routes by **prefix**,
-so there are two shapes:
+**Sub-decision — SETTLED by the implementation, see *Resolution*; do not re-open.** It was recorded here as
+open, and the answer turned out to be *neither of the two shapes below*: a run-state flag
+(`AuditRouter.project_closing`) targets the close-time window directly, so no `[Project]` emitter and no
+prefix mapping had to move. The two shapes are kept below only as the alternatives that were considered.
+`audit_router.DESTINATIONS` routes by **prefix**, so the two shapes were:
 
 1. move the whole `[Project]` prefix to the Messages tab (`PROJECT_PREFIX: TO_RESULTS`), or
 2. move only the close-time lines, via a **content marker** — the mechanism `[Schema]` already uses with
    `SCHEMA_VERIFY_MARKER` (`audit_router.py:117`, consumed in `classify` at :141).
 
 The sibling implementing this was told to decide by **reading the actual `[Project]` emitters** rather than
-guessing which lines exist. Whichever shape lands, record it when flipping the Status line — it determines
-whether non-close `[Project]` narration (e.g. the checkout-drift path) also moved.
+guessing which lines exist. It did, found seven of the eight already correct, and therefore moved neither the
+prefix nor any emitter — non-close `[Project]` narration (the checkout-drift path included) is **unchanged**
+and still journal-only. Recorded in *Resolution*.
 
-**Implementation state observed in the working tree while writing this entry (uncommitted):**
+**Implementation state observed in the working tree while writing this entry (uncommitted) — historical
+snapshot, superseded by *Resolution*; all of it has since landed in `b9d1359`:**
 
 - The **rename is partly in flight**: `pgtp_editor/ui/findings_panel.py:52-59` already defines
   `RESULTS_TAB_TITLE = "Messages"` with the collision rationale, `main_window.py:3010-3015` adds the view
@@ -3619,7 +3625,8 @@ table. Gotcha for option C: producers call `audit.addItem(...)` and see nothing 
 quacks like the `QListWidget` they were written against) — a per-call destination override does not exist and
 adding one reopens the design FQ-028 closed.
 
-**Test impact:** **⚠ `tests/ui/test_ddl_project_wiring.py` currently ASSERTS THIS DEFECT AS INTENDED
+**Test impact:** *(pre-fix assessment; ADDRESSED in `b9d1359` — see the test paragraph in *Resolution* for
+what was actually kept, corrected and added.)* **⚠ `tests/ui/test_ddl_project_wiring.py` currently ASSERTS THIS DEFECT AS INTENDED
 BEHAVIOUR — comment and all — and must be REWRITTEN, NOT EXTENDED.** The close-time assertion (the
 `window._ddl_project_ui.close_project()` case, ~:1203-1212) is followed by a comment that spells the bug out as
 if it were the design (*"this particular line is emitted DURING the close -- after which FQ-019's project
@@ -3660,6 +3667,66 @@ sweep the **Results → Messages** tab rename through the FQ-028 sections, and (
 rename encodes: the bottom-dock **Messages** tab (a message log) is *not* the Sandbox SQL Console's **Results**
 grid (`ui/sql_results_panel.py`), which keeps its name. `manual-maintainer` is also implicated by the rename
 (the tab is named in the manual and in the View menu). Still: do not edit the spec or manual from this entry.
+
+**Resolution — `b9d1359`, verified against the tree, 2026-08-10.** Option C, in a third shape that the entry
+did not list. Full suite at the time of the fix: 6190 passed, 45 skipped.
+
+*Shape that shipped — a run-state flag, so neither sub-decision option was needed.* `AuditRouter` gains
+`self.project_closing = False` (`ui/audit_router.py:217`), read by `addItem` (:227-229) and honoured in
+`classify(text, *, schema_verify=False, project_closing=False)` at :175-177:
+
+```
+176    if prefix == PROJECT_PREFIX and project_closing:
+177        return TO_ACTIVITY_AND_RESULTS
+```
+
+`DESTINATIONS[PROJECT_PREFIX]` is **still `TO_ACTIVITY`** (:109), and no `[Project]` content marker exists.
+The flag is set around the two close-time emitters in `DdlProjectController.close_project`
+(`ui/ddl_project_controller.py:456-463`) in a `try/finally` that restores the previous value, so a modal that
+raises inside `offer_pgtp_deploy_on_close` cannot leave later `[Project]` lines mis-routed. This is the same
+run-state mechanism `schema_run` already used for `[Schema]` verify rows — the precedent the entry cited for
+shape 2, applied at the run level rather than at the text level. "Was this emitted during a close?" is a fact
+about the run, and no wording test can answer it.
+
+*Why the prefix was not moved.* All eight `[Project]` emit sites were read: `ddl_project_controller.py:390`
+(multiple `.pgtp` found), `:497` (the pending-deploy reminder), `:570` and `:609` (async capability/target
+probe failures), the `:626/631/634/638` source-`.pgtp` checksum group, `main_window.py:4249` (sandbox content
+inspection) and `:4842` (live-definition drift). Seven are already readable: FQ-019's store-switch-first
+ordering puts the open-time ones **after** `project_changed.emit`, and the probe failures are off-transition
+entirely. Only `remind_pending_deploys_on_close` emits upstream of a transition. Relocating seven correct
+journal lines to fix one is not a fix — which is the concrete answer to the sub-decision above.
+
+*Destination is BOTH, not either.* `TO_ACTIVITY_AND_RESULTS = "activity+results"` (:101-103) is a pairing of
+two existing destinations, not a fourth surface. `addItem` (:231-237) calls the activity sink **and**
+`_route_results` for that row: the `activity.jsonl` write is unchanged because the line remains part of the
+closing project's history, and Messages additionally renders it. This is the only two-destination row type in
+the router, and the core's no-migration rule (`db/activity_log.py:554-573`) was not touched — nothing moves
+between stores.
+
+*Rename.* `RESULTS_TAB_TITLE = "Messages"` (`ui/findings_panel.py:59`); internals keep the "results" spelling
+(`TO_RESULTS`, `results_panel`, `results_tab_index`) on purpose — a label is not a schema. The dock title and
+its View-menu toggle were renamed with it (each with a `RENAMED_ID_ALIASES` row in `ui/toolbar_registry.py`),
+since both named the tab and would otherwise point at nothing. `ui/sql_results_panel.py` is untouched and
+keeps the name "Results".
+
+*Test outcome — the warning below was acted on, with one honest qualification.* No surviving assertion encodes
+the defect. `tests/ui/test_ddl_project_wiring.py::test_close_project_reminds_about_pending_ddl_deploys` still
+asserts the journal write (`activity_path(project_dir)`), which is **correct and deliberate** under the
+two-destination outcome; what was removed is its misleading prose (*"So the reminder is asserted where it
+durably landed"*, which read the loss as the design) — replaced with *"The journal write is unchanged and
+still the durable record"*. To be precise about the phrasing used in the commit message: the old test's
+**comment** was rewritten, its assertion was kept as the no-migration guard, and the corrected behaviour
+arrived as two **new** tests immediately after it (~:1217 onward):
+`test_the_close_time_reminder_is_still_readable_after_the_close` (project gone, `activity_panel` no longer
+shows the line, `results_panel` does) and
+`test_ordinary_project_narration_still_goes_only_to_the_journal` (an open-time `[Project]` row stays
+journal-only and is **not** duplicated onto Messages — the guard on the seven untouched emitters). The new
+coverage was verified to fail with the flag forced off. Re-verified green at triage time: 3 passed.
+
+*Left for `spec-maintainer`* — the four items listed above still apply, with item (2) now concrete: the
+prefix→destination table keeps `[Project] → Activity Log` as its default and gains the close-time
+`project_closing` qualification plus the `TO_ACTIVITY_AND_RESULTS` pairing; the *"recorded, not fixed"*
+blockquote must be replaced, and the manual carries the Messages rename.
 
 ---
 
