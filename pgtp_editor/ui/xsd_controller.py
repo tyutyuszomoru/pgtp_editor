@@ -237,7 +237,8 @@ class XsdController(QObject):
     def ensure_bootstrap(self) -> None:
         """One-time seed of the user's curated.xsd when it is absent — never
         overwrites an existing file (curated.xsd is hand-owned, spec §11).
-        Prefers copying the schema bundled with the app (Curated v1.2); falls
+        Prefers copying the schema bundled with the app (see
+        `CURATED_BUNDLED_VERSION`); falls
         back to generating one from the learning engine's state only when no
         bundled resource is present."""
         curated = curated_xsd_path(self._schema_storage_dir)

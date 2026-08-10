@@ -90,7 +90,7 @@ def test_malformed_curated_keeps_last_good(window):
 
 def test_init_seeds_curated_from_bundled_and_audits_version(window):
     """MainWindow.__init__ runs the one-time bootstrap: with the app-bundled
-    Curated v1.2 resource present, curated.xsd is seeded by copying it
+    curated resource present, curated.xsd is seeded by copying it
     verbatim and an audit line names the bundled schema + version."""
     path = curated_xsd_path(window._schema_storage_dir)
     assert path.exists()

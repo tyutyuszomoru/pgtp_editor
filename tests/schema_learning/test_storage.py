@@ -35,14 +35,32 @@ def test_curated_and_learned_xsd_paths(tmp_path):
 
 
 def test_curated_bundled_version_constant():
-    assert CURATED_BUNDLED_VERSION == "1.2"
+    assert CURATED_BUNDLED_VERSION == "1.3"
 
 
 def test_bundled_curated_xsd_text_is_present_and_versioned():
     text = bundled_curated_xsd_text()
     assert text is not None
-    assert "v1.2" in text
+    assert "v1.3" in text
     assert "<xs:schema" in text
+
+
+def test_bundled_curated_xsd_marker_agrees_with_the_version_constant():
+    """Structural guard for BUG-260810141459: the `vX.Y` marker in the shipped
+    resources/curated.xsd and CURATED_BUNDLED_VERSION are two independent
+    literals, and a curation once moved the schema's CONTENT while leaving both
+    at 1.2 — two different schemas under one identity. §29's "re-seed the
+    bundled schema?" question is answered by comparing versions, so a marker
+    that can silently disagree with the constant breaks it. Parse the marker
+    out of the shipped file and require agreement, so the next curation cannot
+    move one without the other."""
+    import re
+
+    text = bundled_curated_xsd_text()
+    assert text is not None
+    markers = re.findall(r"<!--\s*PGTP Editor curated schema v(\d+\.\d+)\s*-->", text)
+    assert len(markers) == 1, f"expected exactly one version marker, found {markers}"
+    assert markers[0] == CURATED_BUNDLED_VERSION
 
 
 def test_bundled_curated_xsd_loads_and_verifies_clean():
