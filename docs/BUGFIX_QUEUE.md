@@ -4058,3 +4058,78 @@ question this bug supersedes: the actual `DROP INDEX` row today carries **neithe
 distinguishing value, and is one of the seventeen colliders above. Do not write to `DECISION_QUEUE.md`.
 
 ---
+## BUG-045: `SchemaIndex` publishes no `ColumnInfo` list and no routine accessor — `ui/schema_gesture_seam.py` reaches into the private `_schema`, and `sql/join_fk.py`'s docstring describes a caller that cannot be written
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`db/schema_index.py::SchemaIndex` publishes no `ColumnInfo` list and no routine accessor, so FQ-030's schema gestures reach around it into a private attribute — and `sql/join_fk.py`'s docstring describes a caller that cannot be written. (1) `SchemaIndex`'s entire public surface is `known_schemas` / `known_tables` / `known_columns` (names only) / `column_entries` (pre-rendered display strings) / `trigger_for_function`; the underlying `DatabaseSchema` is the private `self._schema`, there is no `schema()` accessor, no accessor returning `ColumnInfo` objects, and nothing that touches `schema.routines` at all. (2) Consequence A — a docstring that describes an impossible caller: `foreign_keys_from_targets`' docstring says the caller 'is a one-liner over its `ColumnInfo` list', which cannot be written against `SchemaIndex`'s public API. (3) Consequence B — `ui/schema_gesture_seam.py::_database_schema` probes for a public `schema()` and falls back to `index._schema`. §5's dependency posture exists to keep `ui/` off other packages' internals; the docstring is actively false; and it silently pins `SchemaIndex.__init__`'s attribute name. Behaviour today is correct — this is a structural/encapsulation defect plus a false docstring. Note `known_columns`/`column_entries` are relied on by §18.6 completion and must stay exactly as they are — this is a widening, not a change. Also note `known_tables` and `trigger_for_function` both take a *parameter* named `schema`."
+
+**Root cause:** Confirmed in the tree at HEAD (2026-08-10). Three files, one missing accessor pair.
+
+1. `pgtp_editor/db/schema_index.py:45-143` — `SchemaIndex`'s public surface is exactly `known_schemas` (:76), `known_tables` (:81), `known_columns` (:91, `[column.name for column in info.columns]` — names only), `column_entries` (:99, `(key, display)` pairs built once in `__init__` at :70-73) and `trigger_for_function` (:125). The `DatabaseSchema` is stored as the private `self._schema` at :49 and is read only from inside the class. **`ColumnInfo.fk_target` and `DatabaseSchema.routines` are therefore unreachable through the public API** — `known_columns` flattens columns to names, `column_entries` flattens them to display strings, and nothing anywhere on the class touches `.routines`.
+
+2. `pgtp_editor/ui/schema_gesture_seam.py:75-85` — `_database_schema(index)` works around (1):
+```python
+getter = getattr(index, "schema", None)
+if callable(getter):
+    try:
+        return getter()
+    except TypeError:  # pragma: no cover - a stub with a different arity
+        return None
+return getattr(index, "_schema", None)
+```
+   Its two consumers are `table_columns` (:88-93, reads `schema.tables[qualified].columns` to get the `ColumnInfo` list `foreign_keys_for` at :96-114 needs for `fk_target`) and `routine_signatures` (:133-150, reads `schema.routines.values()` for `args`/`return_type`/`kind`). Both are fully duck-typed with empty defaults, so a keystroke path cannot raise — the fallback is honest and commented (module docstring :34-45, "READING FACTS `SchemaIndex` DOES NOT PUBLISH"), but it is `ui/` reading a `db/` object's private attribute on a path that runs from a keystroke, and it silently pins the name `_schema`: renaming that attribute would break `Ctrl+Alt+J` and `Ctrl+Shift+Space` with **no test failing at the `db/` end** (`tests/db/test_schema_index.py` never touches it).
+
+3. `pgtp_editor/sql/join_fk.py:339-344` — `foreign_keys_from_targets`' docstring: *"This is the one place that string's shape is known, so the caller is a one-liner over its `ColumnInfo` list and `sql/` still never sees a schema."* That one-liner cannot be written against `SchemaIndex` today; the actual caller (`schema_gesture_seam.foreign_keys_for`) gets its `ColumnInfo` list from the private-attribute reach. The docstring is actively false, and it is the docstring of the module that owns the `"schema.table.column"` shape — the first place a future reader looks to learn how to call it.
+
+Nothing is user-visibly broken: both gestures work correctly today (24 tests in `tests/ui/test_schema_gestures.py`). Rank this as structural debt, not a user-facing defect.
+
+**Proposed fix:** A **widening** of `SchemaIndex` plus a seam rewire and a docstring correction. `known_columns` and `column_entries` are **not touched** — §18.6 completion and the `hr.employee.` cascade depend on their exact shapes.
+
+**(a) `pgtp_editor/db/schema_index.py` — two new accessors, next to the existing column accessors.** Suggested names and contracts (avoid `schema()`: `known_tables` and `trigger_for_function` both take a parameter spelled `schema`, and `_column_display`/`__init__` use the name locally — a method called `schema` would read as a shadow at every call site even though Python would not actually break):
+
+```python
+def column_infos(self, table: str) -> list[ColumnInfo]:
+    """`table`'s `ColumnInfo` objects (the schema-qualified `"schema.table"`
+    key `known_columns` uses), or `[]` when the fetch never saw it."""
+    info = self._schema.tables.get(table)
+    return list(info.columns) if info is not None else []
+
+def routines(self) -> tuple[RoutineInfo, ...]:
+    """Every fetched routine, in `DatabaseSchema.routines` order.
+    Overloads are separate entries (that dict is keyed by
+    `RoutineInfo.signature` — name PLUS argument types, §18.1)."""
+    return tuple(self._schema.routines.values())
+```
+- `column_infos` must return a **new list**, not `info.columns` itself, so a caller cannot mutate the fetch.
+- `routines()` must preserve `dict.values()` order — `routine_signatures` feeds `signature_help`, which ranks overloads by arity fit and is otherwise order-stable; reordering here could reshuffle equally-ranked overloads and break `tests/ui/test_schema_gestures.py`'s signature assertions.
+- `RoutineInfo` must be added to the `from .introspect import ...` line at `schema_index.py:35` (`ColumnInfo`, `DatabaseSchema`, `TriggerInfo` are already there).
+- **Do NOT import anything from `sql/` into `db/schema_index.py`** — the `RoutineSignature` adaptation stays in the seam. `db/` returning its own `RoutineInfo` keeps `sql/`'s "never sees a schema" property intact.
+
+**(b) `pgtp_editor/ui/schema_gesture_seam.py` — delete `_database_schema` (:74-85) and point both consumers at the new accessors.** Keep the duck-typed tolerance (a stub index, an index that predates the accessors, a table the fetch never saw must all yield "nothing to offer", never an exception — this runs off a keystroke):
+```python
+def table_columns(index, qualified: str) -> list:
+    getter = getattr(index, "column_infos", None)
+    if not callable(getter):
+        return []
+    try:
+        return list(getter(qualified) or ())
+    except Exception:      # pragma: no cover - defensive at a keypress
+        return []
+```
+and the same shape in `routine_signatures` over `getattr(index, "routines", None)`. `foreign_keys_for` (:96-114) and `signature_help_at` (:153-160) need no change.
+- **GOTCHA — do not add a `db.introspect` import to this module.** `tests/ui/test_schema_gestures.py::test_signature_help_reads_no_database` reads the module source and asserts `"db.introspect" not in source`. Keep reading `column.name` / `column.fk_target` / `routine.args` duck-typed via `getattr` exactly as today (:110-111, :144-147); no `ColumnInfo`/`RoutineInfo` type annotations or `TYPE_CHECKING` import.
+- Rewrite the module docstring's "READING FACTS `SchemaIndex` DOES NOT PUBLISH" block (:34-45) — after the fix it publishes them; the paragraph should instead say the two gestures read `column_infos`/`routines` and that everything stays tolerant of absence because this runs off a keystroke.
+
+**(c) `pgtp_editor/sql/join_fk.py:339-344` — correct the docstring** so it names the caller that now exists, e.g. *"…so the caller is a one-liner over `SchemaIndex.column_infos(table)` — `[(c.name, c.fk_target) for c in index.column_infos(qualified)]` — and `sql/` still never sees a schema."* Docstring only; `foreign_keys_from_targets`' behaviour is unchanged.
+
+**(d) Optional, only if the resolver wants it enforced:** `tests/ui/test_collaborator_boundaries.py` polices `ui/*_controller.py` modules by source inspection; a "no `ui/` module reaches a `_`-prefixed attribute on an injected `db/` object" rule is **out of scope for this fix** — do not widen that test here.
+
+**Test impact:**
+- `tests/db/test_schema_index.py` (235 lines, 21 tests) — **extend, do not create a new file.** New cases, following the existing fixture style: `column_infos` returns real `ColumnInfo` objects carrying `fk_target`/`is_pk`/`default` (not names, not display strings); `column_infos` on an unknown table is `[]`; mutating the returned list does not disturb `known_columns`/`column_entries` (the copy guarantee); `routines()` returns every fetched routine with two overloads of the same name as two entries; `routines()` is `()` for a tables-only `DatabaseSchema` (`fetch_schema`'s shape). The existing `test_known_columns_is_unchanged_by_the_richer_accessor` (:187) is the precedent for a "the widening changed nothing" test — add its sibling for `column_infos`.
+- `tests/ui/test_schema_gestures.py` (24 tests) — the **regression guard**: every one must stay green *unchanged*, since behaviour is identical. Add one source-inspection test in the style of the existing `test_signature_help_reads_no_database` asserting the seam no longer reaches the private attribute. **GOTCHA:** a naive `assert "_schema" not in source` will FALSE-POSITIVE — `SchemaGestureHostMixin` legitimately reads `self._schema_index` (:218, :264) and the docstring mentions it (:191). Assert on the reach itself: `"_database_schema" not in source` and `'"_schema"' not in source` (the `getattr` string literal).
+- `tests/sql/test_join_fk.py` — docstring-only change, no test needed.
+- No new test file. `tests/sql/test_package_purity.py` stays satisfied (nothing new is imported into `sql/`).
+
+**Spec impact:** **Three places in `CONSOLIDATED_SPEC.md` must be updated by `spec-maintainer` after the fix lands — this is a spec-recorded debt being paid, so the record must be retired or it becomes a dead assertion.** (1) §18.9's blockquote "⚠ A DEBT THE SEAM PAYS FOR, RECORDED SO IT IS NOT MISTAKEN FOR THE INTENDED SHAPE" (~lines 8742-8754) describes the private-attribute fallback and the false `join_fk.py` docstring as current state and says the fix was *"filed to `bug-triager` on 2026-08-10 rather than fixed here"* — retire or rewrite it once resolved. (2) §18.6's `SchemaIndex` member table (~lines 8040-8046) lists the public surface and must gain rows for `column_infos` and `routines`. (3) The repository-map line for `schema_index.py` (~line 615, *"SchemaIndex — known_schemas/known_tables/known_columns/trigger_for_function"*) needs the new members. Also note the 2026-08-10 Supersession Ledger row (~line 9764) ends with *"One debt recorded, not hidden … dispatched to `bug-triager`, not fixed here"* — a follow-up ledger row should record that it was paid. **The current behaviour was never an intentional design decision** — the spec explicitly calls it debt, not the intended shape, so the fix needs no design reversal. `bug-triager` does not edit the spec; flag for `spec-maintainer`.
+
+---

@@ -3322,7 +3322,11 @@ with the two new sections empty.
 ---
 
 ## FQ-026: Eight names, four operations — one vocabulary per apply/check gesture, a yes/no answer for the sandbox comparison, and the death of the button row
-**Status:** QUEUED
+**Status:** PROCESSED (spec §18 intro / §18.5 — `GESTURE_LABELS`, `GESTURE_UNAVAILABLE_REASONS`, the
+four-state comparison modal, and the retired button-row claims). Note for anyone reading this entry as a
+record of what was built: `spec-maintainer` found three of its claims falsified by the implementation, and
+the spec — not this entry — states what shipped. The manual was NOT updated by this feature and still
+describes the deleted entry points; that is being corrected separately.
 
 **OWNER RULING (2026-08-10) — `Deploy this edit…` GOES, knowingly.** The owner: *"Deploy this edit… picker
 is not needed if the other menus are explicit of the target."* The condition is already met — `Deployment`
@@ -4309,7 +4313,9 @@ reference it for the Maintenance home and sequence after it.
 ---
 
 ## FQ-031: Dual gutter line numbering for function/procedure bodies — show a body-relative (AS-anchored) number beside the absolute one, matching plpgsql error line numbers
-**Status:** QUEUED
+**Status:** PROCESSED (spec §8, *The gutter's SECOND number column*). The anchor is a position, the column
+costs nothing when off, and the `setViewportMargins`-vs-`setGeometry` hazard is recorded as a property of
+the mixin rather than of this feature — so the next gutter change inherits the warning.
 **Requested:** 2026-08-09
 **Idea (verbatim/summarized):** "all function and procedure line numbering must start from the line with AS
 because error messages from plpgsql start numbering from AS down."
@@ -4368,5 +4374,296 @@ section. No new introspection, no DB, no new parsing — `body_line_offset` alre
    editor); keep it to the DDL object editor.
 2. Exact two-number gutter layout — separator glyph, alignment, and whether the body-relative number is dimmed
    relative to the primary absolute number.
+
+---
+
+## FQ-032: Vim editing mode — an Esc-entered, per-tab Command mode over the editors (motions/operators/counts, shared-clipboard yank/paste, a menu-derived ':' palette), Windows editing untouched
+**Status:** QUEUED
+**Requested:** 2026-08-10
+**Idea (verbatim/summarized):** "Add a vim editing mode over the code/XML editors — but NOT 'vim for vim
+fans.' The editor needs advanced editing OPERATIONS anyway (go-to-line, go-N-lines-relative, delete-line,
+delete-word…); the real choice is 'adopt a standard command vocabulary or INVENT one,' and inventing
+keybindings is the made-up-commands trap. Vim is the 40-year-stable standard grammar for exactly these ops,
+so vim mode IS the specification for the editing-primitive layer we need regardless. Sharpest proof: 'go DOWN
+42 lines' (`42j`) has no alternative in any Windows editor and no menu equivalent — vim is the only
+principled answer. Secondary bet: toolchain consistency (vim serverside + this IDE = one command language;
+learning transfers)." (Fully-converged: product-brainstorming + spec-maintainer JOB-2 placement gate + a
+command-by-command owner walkthrough. Owner gave the green light.)
+
+**Problem:** The editors already need a set of advanced editing primitives (absolute go-to-line, relative
+count-motions, delete/change/yank by word/line/motion) that today do not exist and have no menu equivalent.
+Building them means either (a) inventing a bespoke parallel keymap of Ctrl-chords — the "made-up commands"
+trap, with the additional handicap that Windows editors offer no such commands to copy — or (b) adopting an
+existing, stable, well-documented grammar. The load-bearing example the owner keeps returning to is "move
+down 42 lines" (`42j`): a relative count-motion that no Windows editor and no menu can express. Vim's
+NORMAL-mode grammar is precisely the vocabulary for this layer, so "vim mode" is not a fan feature — it is
+the SPECIFICATION of the editing-primitive layer the editor needs anyway, chosen over inventing one.
+
+**Proposed approach (owner-final, walked command-by-command):**
+
+MODE MODEL — this SUPERSEDES an earlier mid-brainstorm opt-in-toggle idea; the final model has NO toggle:
+- **NO enable/disable setting, NO persistence.** Vim is always available; this is vim-authentic (vim has no
+  "enable vim" option). Command mode is transient runtime state only — nothing is stored anywhere.
+- **TERMINOLOGY (owner-agreed — the word "normal" is dropped entirely because it collides with vim's own
+  NORMAL):** **Edit mode** = the default, ordinary Windows-style typing (== vim's INSERT); **Command mode** =
+  the Esc-entered vim command state (== vim's NORMAL). These two labels are used throughout; never write
+  "normal mode."
+- Every editable editor starts in **Edit mode** — today's editor, 100% unchanged. **`Esc` (when no completion
+  popup is open) → Command mode.** Insert-entry commands (below) return to Edit mode.
+- **Command mode is TRANSIENT and PER-TAB:** losing focus (tab switch / click away) drops that tab back to
+  Edit mode; every tab is independent; refocusing never resurrects Command mode.
+- **Read-only editors: `Esc` does nothing, vim is inactive entirely** (read-only is read-only; vim ⊆ editable
+  windows — this deliberately eliminates all motion-vs-mutation-in-read-only complexity).
+- **Non-vim-user safety = mode indicator + exit hint ONLY (owner accepted, no other guard).** Because
+  Esc→Command is always on for everyone, the indicator must show **EDIT vs COMMAND** prominently and, in
+  Command mode, a discoverable exit hint (e.g. "COMMAND — press i to type"). Accepted that a non-vim user may
+  enter Command mode by accident; the hint is the escape. No opt-out.
+- **Mouse stays fully live in both modes** (click positions caret, drag selects) and never changes the mode.
+- **The plain (Edit-mode) editor gains NOTHING** — no new ops, no new Ctrl-bindings. ALL advanced ops live
+  only in Command mode. This is the whole point: no invented parallel keymap in Edit mode.
+
+v1 COMMAND SET (this IS the agreed scope, walked with the owner):
+- **Enter Edit mode from Command (then `Esc` re-enters Command):** `i a I A o O s S cc C` — AND **`v` / `V`**.
+  There is **NO vim visual mode**: `v`/`V` simply drop to Edit mode so the user selects the WINDOWS-native way
+  (owner: selection is a Windows method). So `v`/`V` are insert-entry aliases, consistent with `i/a/o`.
+- **Motions** (Command mode + operator-pending): `h j k l` · `w b e` · `0 ^ $` · `gg G` · `NG` (go to line N)
+  · `f t F T` (find/till char, forward + backward) · `%` (matching bracket) · `{ }` (paragraph).
+- **Counts:** `N{motion}` — `5j`, `3w`, `42G`. LOAD-BEARING — the relative count-motion (`42j`) is the whole
+  motivating case and has no alternative anywhere in the app.
+- **Operators — MOTION-ONLY (no visual-selection target, since there is no visual mode):** `d{motion}`
+  `c{motion}` (delete/change → Edit mode) `y{motion}`; doubled `dd yy cc`; `x` `X`; `D` `Y`; `p` `P`;
+  `r{char}`. Consequence to state as a contract: the vim "select-with-v-then-d" reflex does NOT exist here —
+  you either operate via operator+motion in Command mode, or select Windows-style and use Windows
+  Ctrl+C/X/Del in Edit mode.
+- **Clipboard — ONE shared SYSTEM clipboard, NO vim registers:** `y`/`Y` AND all deletes (`d`/`x`/`c`/`dd`)
+  write the SYSTEM clipboard (vim unnamed-register behavior → `dd`+`p` moves text, and it interops with
+  Windows Ctrl+C/V); `p`/`P` paste **plain-text INLINE** from it (exactly like Ctrl+V). Accepted costs,
+  recorded deliberately: `dd` clobbers the clipboard (vim's own behavior); and there is **NO linewise paste**
+  — `yy`+`p` inserts inline, not as a new line, because introducing a linewise flag would re-introduce a
+  parallel register, which is exactly what the single-system-clipboard choice avoids. Payoff: seamless
+  clipboard across Edit mode, Command mode, and Windows apps.
+- **Undo/redo:** `u` / `Ctrl-R` → the editor's own existing undo stack.
+- **Search:** `/` `n` `N` — `/` opens and drives the app's EXISTING Find bar (reuse; no second search engine).
+- **`:` command palette (Command mode only):** the app's MENU ACTIONS made keyboard-addressable, with verbs
+  DERIVED from the menu tree via the shipped FQ-012 enumeration — `command_id_for()` / `menu_path_label()`
+  (`ui/toolbar_registry.py:212` / `:219`) and `ToolbarController.collect_menu_commands()`
+  (`ui/toolbar_controller.py:194`). (NOTE: the brainstorm placed all three in `ui/shortcut_registry.py`;
+  verified they actually live in `toolbar_registry.py` / `toolbar_controller.py` — `shortcut_registry.py`
+  holds the ambiguous-chord lesson only.) E.g. `:deploy quality` → the real "Deploy ▸ Quality" QAction
+  `.trigger()`; `:bookmark add` etc. **Derive, don't design** — the `:` namespace IS the menu tree (auto-syncs
+  as the menu changes; no second vocabulary), and the `:` line **fuzzy-completes** from the menu so verbs are
+  discovered, not memorized. PLUS `:set <option>` for editor options (`:set nowrap`, `:set number`, …).
+  Nothing else — see exclusions.
+
+EXPLICITLY EXCLUDED FROM v1 (owner-confirmed):
+- **ALL file/buffer/window operations** ("totally leave out"): `:w :q :wq ZZ :e :bn :bp`, `Ctrl-W`
+  window/splits, tab commands. Save/close/tab-switch stay 100% the app's existing mechanisms (menus, Ctrl+S,
+  tab bar; Save is reachable through the `:` menu palette via the app's own Save action). This DROPS the
+  `:w`/`:q` reflexes floated mid-brainstorm AND removes `Ctrl-W` from the collision map.
+- Vim **visual mode** and blockwise `Ctrl-V` (selection is Windows-native).
+- Text objects (`ciw`, `di"`), registers, macros, `.` repeat, marks, `:s///` substitution.
+
+ARCHITECTURE / REUSE (verified file:line this session; corrections to brainstorm noted):
+- **Write the vim engine ONCE, family-agnostic** (both editors mutate via `QTextCursor`). Attach to BOTH
+  `CodeEditor` (`ui/code_editor.py:253`; keyPressEvent :708) and `XmlEditor` (`ui/xml_editor.py:413`;
+  keyPressEvent :1151) via the shared-mixin idiom both families already use (like `GutterBookmarkFoldMixin` /
+  `CompletionPopupHostMixin` — both editor classes are declared with those mixins at those lines). Do NOT
+  write per-family vim logic (duplication trap). (NOTE: brainstorm cited `ui/code_editor.py:239` and
+  keyPressEvent :389; verified the real positions are class :253 / keyPressEvent :708.)
+- **The interception seam already exists and is already used this way:** `installEventFilter` +
+  `eventFilter` on a CodeEditor to grab keys before the widget — `ui/ddl_object_editor.py:776`
+  (`self.editor.installEventFilter(self)`) and :867 (`def eventFilter`). The app's editors are plain
+  `QPlainTextEdit` (NOT QScintilla), so the vim layer is a custom key-interposer translating chords to
+  `QTextCursor` ops (movePosition / setPosition / KeepAnchor / insertText / beginEditBlock…). No editor
+  rewrite. (NOTE: brainstorm cited :762; verified installEventFilter is at :776.)
+- **EDIT/COMMAND is an ORTHOGONAL, PER-TAB indicator dimension, NOT a 4th minor mode.** The shipped minor
+  mode is winner-take-all (Caption > Compare/Merge > Edit XSD); EDIT/COMMAND is independent and per-tab, so
+  extend the shipped `ui/mode_indicator.py::ModeIndicator` (class at :133) with a new independent dimension
+  (EDIT/COMMAND label + the "press i to type" exit hint) rather than folding it into the winner-take-all major/
+  minor stack.
+- **Collision-restore discipline (the load-bearing engineering risk).** Qt: two enabled bindings on one chord
+  fire NEITHER — the shipped FQ-012 `activatedAmbiguously` lesson, written down at `ui/shortcut_registry.py`
+  (~:41). Command mode captures several Ctrl-chords the app also binds: Ctrl+R (redo/redraw) and Ctrl+Y
+  (redo/scroll) are the hot ones. Ctrl+V is now MOOT (no blockwise visual) and Ctrl+W is MOOT (no window ops).
+  Whatever Command mode steals MUST be restored in Edit mode / on focus loss, or copy-paste / find-focus
+  silently break. The editor keyPressEvent/eventFilter wins over window QShortcuts, so local capture works —
+  and therefore **the exit/restore path is as load-bearing as the entry path.** Ctrl+D / Ctrl+U (half-page
+  scroll) are unbound today = free.
+- **Completion popup ordering (state as a contract, not a conflict):** when the completion popup is open it
+  WINS — it consumes Esc/Enter/Tab/↑↓ (`ui/completion_popup.py`; `Key_Escape` handled at :109). So
+  `Esc`→Command mode and FQ-030's future Tab-stop only apply when NO popup is showing; Esc-with-popup-open
+  cancels the popup.
+- **Persistence: NONE** (Command mode is transient per-tab runtime state).
+
+**Alternatives considered:**
+- **Invent a bespoke Ctrl-chord keymap for the advanced ops** — REJECTED as the core rationale: it is the
+  "made-up commands" trap, has no Windows-editor precedent to copy, and cannot even express the motivating
+  `42j` relative count-motion cleanly. Vim is the stable, documented, transferable standard grammar for exactly
+  this op layer, so it is adopted AS the specification rather than reinvented.
+- **Opt-in enable/disable toggle with persistence** (floated mid-brainstorm) — REJECTED/SUPERSEDED: not
+  vim-authentic (vim has no such setting), and it adds a persisted preference for a state the owner wants to be
+  transient. Replaced by always-available + prominent EDIT/COMMAND indicator + exit hint.
+- **Full vim (visual mode, registers, text objects, `:w`/`:q`, window ops)** — REJECTED for v1: visual mode
+  duplicates Windows selection (owner wants selection Windows-native); registers duplicate the system
+  clipboard; file/window ops duplicate the app's own save/close/tab mechanisms and would re-introduce the very
+  parallel-vocabulary problem the `:`-derives-from-the-menu design avoids. Scoped out explicitly above.
+- **Body-of-work "per-family vim logic" and "a new 4th minor mode"** — REJECTED on architecture grounds:
+  family-specific logic duplicates the `QTextCursor` engine, and a 4th winner-take-all minor mode
+  mis-models an orthogonal per-tab indicator dimension.
+
+**Suggested placement:** CREATE a new subsection **§8.x "Vim editing mode"** — §8 owns the shared editor
+infrastructure (gutter/fold/completion base that BOTH editor families share; a reader looking for "how the
+editor handles keys" looks there), which is exactly where the family-agnostic key-interposer belongs. NOT a
+new top-level section. Cross-reference the Ctrl-chord collision/precedence + reserved-chord rules (the
+`activatedAmbiguously` section — brainstorm called it §27) and the ModeIndicator dimension (brainstorm called
+it §7). Confirm the live §8 / §7 / §27 numbers at spec-fold time. Reuse contracts it must NOT violate: the
+`:` palette must route through FQ-012's menu-command enumeration (`command_id_for` / `menu_path_label` /
+`ToolbarController.collect_menu_commands`) and must NOT be given a second hand-maintained vocabulary; the vim
+keymap itself is a SEPARATE keymap living in the editor interposer and must NOT be routed through FQ-012's
+menu-QAction shortcut registry (that governs menu-action shortcuts only); the EDIT/COMMAND display must extend
+the shipped `ModeIndicator` (FQ-028) rather than adding a parallel widget; and the completion-popup ordering
+above is the same contract FQ-030's Tab-stop yields to. Both FQ-012 and FQ-028 are SHIPPED — reuse now, do not
+wait; FQ-030 (snippets) is still QUEUED but only shares the popup-ordering contract, so this is independent of
+it.
+
+**Open questions (non-blocking; for spec-maintainer/implementer):**
+1. `:` verb-derivation rule — full menu path vs leaf-only (largely mooted by fuzzy-complete, but the fold
+   should pick one).
+2. The `:set` option list for v1 (nowrap / number / …?).
+3. Exact restore mechanics for the stolen Ctrl-chords (Ctrl+R, Ctrl+Y) across Edit-mode / focus-loss
+   transitions — the load-bearing part; a stolen-and-not-restored chord silently breaks redo/scroll.
+4. Does executing a `:` command that changes focus (opens a dialog / switches tab) reset Command mode?
+   Presumably yes, via the normal focus-loss reset — confirm rather than assume.
+
+---
+
+## FQ-033: Configurable SQL formatter (keyword casing + configurable line-breaks/indent) + a new XML indentation formatter + an Autoformatter-settings window (Maintenance mode) — EXPANDS §18.4 and intentionally overrides its "never change casing" non-goal
+**Status:** QUEUED
+**Requested:** 2026-08-10
+**Idea (verbatim/summarized):** "Make the Format-Selection formatter configurable: (A) let the user choose SQL
+keyword casing (UPPER / lower / as-is); (B) turn today's hardcoded clause/block line-break + indent rules into
+a config-driven ruleset (which breaks fire, whether the new line indents, by how much); (C) add a SEPARATE XML
+indentation formatter that reindents by element-nesting depth only, sharing the same Format-Selection gesture on
+the XML editors; and (D) surface all of this in a new `Settings` menu → `Autoformatter settings…` dialog shown
+ONLY in Maintenance mode, persisted per-user in QSettings. Owner-decided: keyword casing is KEYWORDS ONLY (never
+identifiers/built-ins/literals), plpgsql layout is already handled so that item is DROPPED, XML is
+indentation-only with a distinct engine, byte-round-trip is explicitly NOT a concern, and §18.4's 'never change
+casing' + 'no rule catalog' non-goals are intentionally retired." (Fully-converged: owner-defined feature +
+this session's ground-map of the current formatter + all clarifications resolved. Owner gave the green light.)
+
+**>>> EXPLICIT, OWNER-APPROVED SUPERSESSION — READ THIS FIRST (for spec-maintainer) <<<**
+This feature **EXPANDS §18.4 and DELIBERATELY OVERWRITES two of §18.4's stated non-goals.** When
+`spec-maintainer` folds this in, treat the casing change and the rule-catalog change as **intentional,
+owner-approved supersessions, each getting its own Supersession Ledger row** — NOT as spec-vs-request drift to
+flag or a contradiction to reconcile away. The owner has explicitly decided the old "never change casing" rule
+is retired for keywords. Concretely:
+- **OVERRIDES §18.4 "the formatter never changes keyword/identifier casing"** → now: configurable keyword
+  casing (UPPER / lower / as-is), KEYWORDS ONLY; identifiers, built-in types/functions, and literals are still
+  NEVER cased. Ledger-worthy.
+- **OVERRIDES §18.4 "no rule catalog / tokenize-balance floor only"** → now: a bounded, config-driven
+  break/indent ruleset replaces the hardcoded clause/block rules. Ledger-worthy.
+- **The formatter's headline invariant CHANGES** from "the output's non-whitespace tokens are identical to the
+  input's" TO "identical **except keyword casing** (when casing is enabled)." **Idempotence is PRESERVED**
+  (formatting a formatted buffer with the same config is a no-op).
+- **PRESERVED, unchanged (do NOT reconcile these away):** refuse-don't-guess on invalid/unbalanced input;
+  offline / no-DB / token-only classification; idempotence; opaque regions (strings / dollar-quotes / comments)
+  never cased or reindented; selection-only invocation; identifiers / built-ins / literals never cased.
+
+**Problem:** The Format-Selection formatter (`sql/formatter.py::format_selection`, formatter.py:246 — pure,
+Qt-free, tokenizes via `sql/tokenizer.py`, walks the token stream in `_Reindenter` at formatter.py:293 and
+rewrites ONLY inter-token whitespace/line-breaks) is currently non-configurable beyond `indent_unit` (default
+4 spaces, formatter.py:58). Its clause-starter break set (SELECT/FROM/WHERE/JOIN/ON/GROUP/ORDER/…,
+formatter.py:66-71) and plpgsql block-keyword layout are HARDCODED, and it deliberately never changes casing.
+The owner wants: user-chosen keyword casing, a configurable break/indent ruleset, and a parallel
+indentation-only formatter for XML — none of which today's fixed design allows. plpgsql block layout (BEGIN/
+DECLARE/EXCEPTION/IF/ELSE/ELSIF/END/WHEN/LOOP dedents, tested) is ALREADY handled, so the earlier "extend to
+plpgsql" item is DROPPED as already-covered.
+
+**Proposed approach (owner-final; four parts A–D, resolved decisions — do NOT re-open):**
+
+**A. SQL keyword casing — KEYWORDS ONLY.** Configurable UPPER / lower / **as-is** applied to SQL keyword tokens
+only (the `sql/keywords.py::SQL_KEYWORDS` set — the only tokens the offline/token-only formatter can classify
+safely; no new classification needed). Identifiers, built-in types/functions, and literals are NEVER cased —
+owner explicitly rejected casing identifiers because the offline formatter has no schema knowledge and
+Postgres quoted-identifier case-sensitivity makes it a silent-wrong-result risk. Applied at token emit in
+`_Reindenter`. **Default = as-is** (preserves current behavior; no surprise). Idempotent (case-again = same).
+This is the change that overrides §18.4's never-change-casing non-goal.
+
+**B. Configurable line-breaks + per-break indentation.** Turn today's hardcoded clause/block break rules into a
+CONFIG-DRIVEN ruleset: for each break point (the clause starters, the plpgsql block keywords, after `;` / `--`,
+the JOIN-phrase rule, etc.) the user configures whether it breaks, whether the new line is indented, and by how
+much (in units), plus the existing `indent_unit`. **HARD DESIGN CONSTRAINT: the config space must be BOUNDED so
+it cannot break idempotence** — a formatted buffer re-formatted under the same config must be stable. This
+overrides §18.4's "no rule catalog" non-goal.
+
+**C. A new XML indentation formatter — a SEPARATE ENGINE, NOT part of the SQL formatter.** Reindent by
+element-nesting depth ONLY: no attribute reordering, no case changes, no content/text changes, no self-closing
+rewrites — purely whitespace/indentation by element depth. It shares the **"Format Selection" gesture**
+(Ctrl+Alt+F / context item) but runs a distinct XML-aware engine (the SQL tokenizer does NOT apply to XML —
+never wire the SQL path onto XML). Target surfaces: the raw `.pgtp` XML editor AND the Edit XSD editor (both
+`XmlEditor`, `ui/xml_editor.py`) — **XSD schema files are an explicit, first-class target of this XML
+formatter, not incidental** (owner: "xml formatting is also meant for xsd"). XSD is XML, so the identical
+element-depth reindent engine formats `.xsd` content on the same terms as `.pgtp` XML. Base indentation depth is derived from the selection's actual position in the
+document, so a selected fragment indents relative to its real ancestor depth. **XML config = indent width ONLY
+— NO casing, NO break-rules for XML** (state this so nobody wires keyword-casing into the XML path).
+**Byte-round-trip is explicitly NOT a concern (owner): editing the `.pgtp` already changes it, so a deliberate
+Format-Selection reindent is no different — no warning/guard needed.**
+
+**D. An "Autoformatter settings" window — new `Settings` menu, MAINTENANCE MODE ONLY.** A detailed settings
+dialog reached via a **new `Settings` menu → `Autoformatter settings…`**, shown **only in Maintenance mode**.
+It configures: the SQL keyword-casing choice (A), the SQL configurable break/indent ruleset (B), and the XML
+indent width (C). Persisted **per-user in QSettings** (`QSettings("MDS","PGTP Editor")`, alongside lightTheme /
+toolbarIds / shortcutOverrides). **This dialog SEQUENCES AFTER FQ-027** (the Maintenance-mode / Settings-menu
+gating feature), which is still QUEUED — so this targets the Maintenance surface but DEPENDS on FQ-027 landing;
+reference FQ-027, do not assume it as spec.
+
+**Reuse map (verified file:line this session):**
+- Extend `sql/formatter.py` in place for A + B — the `_Reindenter` (formatter.py:293) plus the clause/block
+  rule tables (formatter.py:66-71) become config-driven; keyword casing applied at token emit. Keep it
+  pure / Qt-free; `format_selection` signature (formatter.py:246) grows a config parameter.
+- `sql/keywords.py::SQL_KEYWORDS` — the casing target set (no new classification).
+- `sql/tokenizer.py` — UNCHANGED; still the token source; opaque regions never cased or reindented.
+- Refusal model UNCHANGED and reused as-is: `sql/issues.py:38` fatal `Issue` spans, rendered as non-clickable
+  `[SQL]` Audit lines (main_window.py:4957) + red underline in the DDL editor.
+- Format-Selection wiring: `ui/ddl_object_editor.py` (~783 shortcut / ~945-977 wiring) and
+  `ui/sql_console_panel.py` (~520 shortcut / ~783-797 wiring) — the SQL path passes the new config to
+  `format_selection`.
+- XML formatter (C): a NEW pure, Qt-free module (implementer's call on placement — new `xml/` module or
+  alongside `sql/`), hooked into the same Format-Selection gesture on the two `XmlEditor` surfaces.
+- Settings dialog (D): new `Settings` menu + `Autoformatter settings…` dialog, Maintenance-gated per FQ-027;
+  persist via `QSettings("MDS","PGTP Editor")`.
+
+**Alternatives considered:**
+- **Also case identifiers / built-in types / functions** — REJECTED by owner: the offline/token-only formatter
+  has no schema knowledge, and Postgres quoted-identifier case-sensitivity makes identifier casing a
+  silent-wrong-result risk. Keywords-only is the safe boundary the tokenizer can actually classify.
+- **Keep casing off entirely (honor §18.4's non-goal)** — REJECTED by owner: the never-change-casing rule is
+  explicitly retired for keywords; this is the whole point of the request (see supersession block).
+- **Reuse the SQL formatter for XML (one engine)** — REJECTED: the SQL tokenizer does not apply to XML; a
+  distinct element-depth reindenter is required. Kept separate on purpose, sharing only the Format-Selection
+  gesture.
+- **Full XML pretty-printer (attribute normalization, self-closing rewrites, text reflow)** — REJECTED for v1:
+  scope creep and a byte-changing risk surface; owner scoped XML to indentation-by-depth only.
+- **Ship the settings dialog now / in every mode** — REJECTED: it targets the Maintenance surface and must
+  sequence after FQ-027's mode gating; surfacing it everywhere would contradict the Maintenance-only decision.
+
+**Suggested placement:** EXPAND §18.4 (`docs/superpowers/CONSOLIDATED_SPEC.md` ~5401-5626 — the Format-Selection
+formatter) for parts A + B: rewrite its non-goals/invariant per the supersession block above (two Ledger rows),
+document the config-driven break/indent ruleset and the keyword-casing option, and restate the preserved
+invariants (refuse-don't-guess, offline/token-only, idempotence, opaque regions untouched, identifiers never
+cased). CREATE a new sibling subsection under §18 for part C ("XML indentation formatter") — nothing existing
+covers an XML-aware reindenter; it must still reuse the shared Format-Selection gesture and the selection-only
+invocation contract, and must NOT reuse the SQL tokenizer or any casing/break config. For part D, place the
+`Autoformatter settings…` dialog with the other Settings-menu/Maintenance-mode content owned by FQ-027 (confirm
+the live section at fold time) — it is the UI front-end for A/B/C and persists to QSettings like theme/toolbar
+prefs. Confirm the live §18.4 / §18.x / FQ-027 section numbers at spec-fold time.
+
+**Open questions (non-blocking; design-time, for spec-maintainer/implementer):**
+1. XML formatter: selection-only (consistent with SQL) vs whole-element / whole-document, and the exact
+   mechanism for deriving a selected fragment's base depth from its document position.
+2. The exact shape/schema of the configurable break/indent ruleset (per-keyword table? per break-point
+   record?) and the precise bounds that guarantee idempotence.
+3. Casing UI granularity — a single keyword-casing choice (UPPER / lower / as-is) vs. per-category later;
+   v1 = the single choice.
 
 ---
