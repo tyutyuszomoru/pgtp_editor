@@ -36,6 +36,12 @@
   to extend an existing feature vs. create a new one — so the project grows
   cohesive complex features instead of near-duplicate parallel functionality. A
   `PreToolUse` hook on the brainstorming skill injects this reminder automatically.
+- **The same agent owns `README.md`.** Every time it touches the spec it revisits the README in the
+  same pass — identity, what is built today, and direction. The README drifted for a year because
+  nobody owned it: the project became an **IDE for applications using `.pgtp` for CRUD and PostgreSQL
+  functions for business logic** while its front page still called it a companion `.pgtp` file editor.
+  The README is not a summary of the spec; it answers what this is, what it does today, and where it
+  is going, for someone who has never seen the project.
 - Other agents (`feature-tester`, `manual-maintainer`) that were dispatched with
   "spec paths under `docs/superpowers/`" now take the relevant **section of
   `CONSOLIDATED_SPEC.md`** (plus the feature's plan under
