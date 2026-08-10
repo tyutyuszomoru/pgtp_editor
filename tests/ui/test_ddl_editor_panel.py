@@ -702,3 +702,64 @@ def test_reload_is_a_signal_so_the_panel_never_touches_a_database(qtbot):
     panel.reload_requested.connect(lambda *args: got.append(args))
     panel.reload_requested.emit()
     assert got == [()]  # no role argument to get wrong
+
+
+# ---------------------------------------------------------------------------
+# BUG-062's HOST side. The panel-side tests all connect their own lambda, so
+# they prove the panels emit while asserting nothing about a consumer -- which
+# is exactly how this shipped half-done with a green suite. These assert the
+# real wiring instead.
+# ---------------------------------------------------------------------------
+
+
+def _fresh_window(qtbot, tmp_path):
+    from PySide6.QtCore import QSettings
+
+    from pgtp_editor.ui.main_window import MainWindow
+
+    settings = QSettings(str(tmp_path / "app.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    return window
+
+
+def test_each_role_reloads_only_its_own_explorer(qtbot, tmp_path, monkeypatch):
+    """Both panel families, both roles, four emitters -- and never the other
+    role's connection. Per-role binding is the whole reason the chord is hosted
+    on the panel rather than the window."""
+    from pgtp_editor.ui.center_stage import (
+        DDL_EXPLORER_SANDBOX,
+        DDL_EXPLORER_TARGET,
+    )
+
+    window = _fresh_window(qtbot, tmp_path)
+    seen = []
+    monkeypatch.setattr(
+        type(window), "_open_ddl_explorer", lambda self, role: seen.append(role)
+    )
+
+    for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+        seen.clear()
+        window._ddl_browser_panels[role].reload_requested.emit()
+        assert seen == [role], f"browser panel for {role} reloaded {seen}"
+
+        seen.clear()
+        window.center_stage.ddl_explorer_panel(role).reload_requested.emit()
+        assert seen == [role], f"editor panel for {role} reloaded {seen}"
+
+
+def test_the_database_menu_reload_entry_exists_and_carries_no_shortcut(
+    qtbot, tmp_path
+):
+    """The entry two comments claimed existed before it did. No shortcut:
+    Ctrl+Shift+R is hosted on the panel, and DEC-012 allows exactly one host."""
+    from pgtp_editor.ui.ddl_buffer_panel import RELOAD_LABEL
+
+    from tests.ui._menu_helpers import action_labels, find_top_menu
+
+    window = _fresh_window(qtbot, tmp_path)
+    # `_database_menu` is not stored on the host, so locate it the way the menu
+    # tests do rather than adding an attribute just for this assertion.
+    labels = action_labels(find_top_menu(window, "Database"))
+    assert RELOAD_LABEL in labels, labels
+    assert window._reload_ddl_action.shortcut().isEmpty()

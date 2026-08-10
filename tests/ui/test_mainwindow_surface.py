@@ -169,6 +169,13 @@ EXPECTED_HOST_SURFACE = {
     # does: an editor must not reach it, which is exactly why the draft tabs
     # route through CenterStage's aggregator to get here.
     "_report_xml_format_refusal",
+    # BUG-062. Both belong to the host on purpose: the panels emit and never
+    # touch a database (§18.5 D1), so the host is the only place that can run
+    # the re-introspection, and it is the sole consumer of `reload_requested`
+    # for both roles. `reload_ddl_explorer` is public because it is also the
+    # Database-menu action's slot.
+    "_reload_ddl_action",
+    "reload_ddl_explorer",
     "_enter_caption_mode",
     "_fetch_ddl_schema",
     "_file_menu",

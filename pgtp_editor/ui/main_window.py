@@ -148,6 +148,7 @@ from pgtp_editor.ui.ddl_project_controller import DdlProjectController
 from pgtp_editor.ui.diff_merge_controller import DiffMergeController
 from pgtp_editor.ui.find_controller import FindValidateController
 from pgtp_editor.ui.ddl_buffer_panel import (
+    RELOAD_LABEL as RELOAD_DDL_LABEL,
     OP_ADD_COLUMN,
     OP_ADD_CONSTRAINT,
     OP_ADD_FOREIGN_KEY,
@@ -850,6 +851,15 @@ class MainWindow(QMainWindow):
             DDL_EXPLORER_TARGET: self.ddl_browser_tab_index,
             DDL_EXPLORER_SANDBOX: self.sandbox_ddl_browser_tab_index,
         }
+        # BUG-062: the ONLY consumer of `reload_requested`. Bound per role --
+        # each panel reloads its own connection, never the other's, which is
+        # also why the chord is hosted on the panel rather than the window
+        # (§18.7 gives each role its own Explorer, so a window-level chord would
+        # have two candidate actions and no way to choose).
+        for _role, _browser in self._ddl_browser_panels.items():
+            _browser.reload_requested.connect(
+                lambda role=_role: self.reload_ddl_explorer(role)
+            )
         # FQ-028 Part 1: the navigable findings tab, in the LEFT dock beside
         # the project tree -- NOT the centre pane, which would hide the very
         # editor each hit jumps into. Hidden until a navigable op runs, exactly
@@ -982,6 +992,13 @@ class MainWindow(QMainWindow):
         # DDL Explorer's read-only buffer's own right-click ▸ Edit DDL (spec
         # §18.5, D1 entry point 2) -- same target handler as BrowserPanel's
         # tree entry point.
+        # BUG-062's other half. HERE and not with the browser-panel connects
+        # above, because `center_stage` does not exist yet at that point -- the
+        # first attempt wired it there and broke construction for every test.
+        for _role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+            self.center_stage.ddl_explorer_panel(_role).reload_requested.connect(
+                lambda role=_role: self.reload_ddl_explorer(role)
+            )
         self.center_stage.ddl_editor_panel.edit_requested.connect(
             self._on_ddl_edit_requested
         )
@@ -3766,6 +3783,17 @@ class MainWindow(QMainWindow):
             DDL_EXPLORER_TARGET: self._ddl_explorer_action,
             DDL_EXPLORER_SANDBOX: self._sandbox_ddl_explorer_action,
         }
+        # BUG-062's third affordance, which two comments already claimed existed
+        # before it did. Quality-scoped: the sandbox Explorer's reload lives on
+        # its own panel, because a menu entry cannot say WHICH role it means and
+        # a second checkable-looking entry beside the two above would read as a
+        # third Explorer. Carries NO shortcut -- `Ctrl+Shift+R` is hosted on the
+        # panel, and DEC-012 allows exactly one host, not two.
+        reload_ddl_action = menu.addAction(RELOAD_DDL_LABEL)
+        reload_ddl_action.triggered.connect(
+            lambda: self.reload_ddl_explorer(DDL_EXPLORER_TARGET)
+        )
+        self._reload_ddl_action = reload_ddl_action
         menu.addSeparator()
         # FQ-002: creating a routine is not scoped to a parent object, so it
         # earns a menu entry as well as the tree's context menu. Its trigger
@@ -4006,6 +4034,28 @@ class MainWindow(QMainWindow):
             self._open_ddl_explorer(role)
         else:
             self.center_stage.hide_ddl_explorer(role)
+
+    def reload_ddl_explorer(self, role=DDL_EXPLORER_TARGET) -> None:
+        """BUG-062: re-introspect `role`'s DDL Explorer.
+
+        Deliberately the same full fetch `_open_ddl_explorer` runs for the
+        Database-menu toggle, NOT a redraw from the cached `_ddl_schema_index`:
+        serving it from the cache would answer the gesture with exactly the data
+        the gesture exists to replace.
+
+        Nothing of the user's is at risk, which is why there is no dirty prompt.
+        Reload replaces the read-only synthesized buffer, the tree, the drift
+        markers and the completion index; editable DDL object tabs keep their
+        documents and their modified flags, since only `set_schema_index` is
+        re-pushed. A completion popup is a transient child of the editor and is
+        not reopened by an index swap -- the next `Ctrl+Space` simply queries the
+        new index.
+
+        Reached three ways per role, all landing here: the panel's
+        `Ctrl+Shift+R`, its context item, and `Database ▸ Reload DDL`. The
+        panels never touch a database themselves (§18.5 D1, the BUG-045
+        lesson) -- they emit, and this is the only consumer."""
+        self._open_ddl_explorer(role)
 
     def _ddl_explorer_label(self, role) -> str:
         """What the user-facing messages call `role`'s Explorer -- the same words
