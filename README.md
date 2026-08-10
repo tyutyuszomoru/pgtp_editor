@@ -15,7 +15,7 @@ PHPGen remains the canonical thing that compiles `.pgtp` → PHP. This tool does
 
 **The specification is [`docs/superpowers/CONSOLIDATED_SPEC.md`](docs/superpowers/CONSOLIDATED_SPEC.md)** — the single authoritative source for current design, with a supersession ledger recording every overridden decision. (`docs/superpowers/specs/` is frozen historical record; read it for rationale, never for current behaviour. `docs/superpowers/plans/` holds per-feature implementation plans.) End users want **Help ▸ Manual** in the running app instead.
 
-**How this project is built is itself documented:** [`docs/VIBE_CODING_MANUAL.md`](docs/VIBE_CODING_MANUAL.md) describes the agent-driven development loop — one orchestrating session, a cast of specialist subagents, and a set of queue files each with exactly one writer (spec, manual, test log, bug queue, feature queue, decision queue). Read it before contributing; it explains who owns which file and why nothing ships without its spec, its tests and its manual entry caught up.
+**How this project is built is itself documented:** [`docs/DEVELOPMENT_MANUAL.md`](docs/DEVELOPMENT_MANUAL.md) is the full development guide. Part I is the operational loop — sync `main`, open Claude Code at the repo root, cut a branch, run the tests, open a PR, and how the owner reviews and merges it. Part II describes the agent-driven build model — one orchestrating session, a cast of specialist subagents, and a set of queue files each with exactly one writer (spec, manual, test log, bug queue, feature queue, decision queue). Read it before contributing; it explains who owns which file and why nothing ships without its spec, its tests and its manual entry caught up.
 
 ## What it can do today
 
