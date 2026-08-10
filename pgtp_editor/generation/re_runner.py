@@ -19,7 +19,7 @@
 Subprocess-boundary counterpart of runner.build_generate_command: pure
 functions over paths, fully unit-testable; commands are executed by the same
 injectable GeneratorRunner the vendor generation uses. The caller must run the
-subprocess with cwd=<re_phpgen_root> and PYTHONPATH=<root>\\src so
+subprocess with cwd=<re_phpgen_root> and PYTHONPATH=<root>/src so
 `-m re_phpgen` resolves even without the package installed in the venv.
 
 CLI exit codes (implemented in the re_phpgen repo's cli.py): 0 = ran fine
@@ -41,9 +41,23 @@ def pangen_output_dir(output_folder: str) -> str:
 
 
 def resolve_re_phpgen_python(root: str) -> str:
-    """The re_phpgen repo's venv python if present, else the editor's own."""
-    venv_python = Path(root) / "venv" / "Scripts" / "python.exe"
-    return str(venv_python) if venv_python.is_file() else sys.executable
+    """The re_phpgen repo's venv python if present, else the editor's own.
+
+    Both venv layouts are probed — venv/Scripts/python.exe (Windows) and
+    venv/bin/python (POSIX) — the host's own layout first, so a venv copied
+    between platforms is still found rather than silently falling through to
+    the editor's interpreter (which may lack re_phpgen's dependencies)."""
+    venv = Path(root) / "venv"
+    windows_layout = venv / "Scripts" / "python.exe"
+    posix_layout = venv / "bin" / "python"
+    candidates = (
+        (windows_layout, posix_layout) if sys.platform == "win32"
+        else (posix_layout, windows_layout)
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
 
 
 def validate_re_phpgen_root(root: str) -> bool:

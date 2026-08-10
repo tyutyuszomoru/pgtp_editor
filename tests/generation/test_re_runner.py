@@ -14,11 +14,29 @@ def test_pangen_output_dir_is_sibling_subfolder():
     assert pangen_output_dir(r"C:\out") == str(Path(r"C:\out") / PANGEN_SUBFOLDER)
 
 
-def test_resolve_python_prefers_repo_venv(tmp_path):
-    venv_python = tmp_path / "venv" / "Scripts" / "python.exe"
-    venv_python.parent.mkdir(parents=True)
-    venv_python.write_bytes(b"")
+def _make_interpreter(root: Path, *parts: str) -> Path:
+    interpreter = root.joinpath("venv", *parts)
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_bytes(b"")
+    return interpreter
+
+
+def test_resolve_python_prefers_repo_venv_windows_layout(tmp_path):
+    venv_python = _make_interpreter(tmp_path, "Scripts", "python.exe")
     assert resolve_re_phpgen_python(str(tmp_path)) == str(venv_python)
+
+
+def test_resolve_python_prefers_repo_venv_posix_layout(tmp_path):
+    venv_python = _make_interpreter(tmp_path, "bin", "python")
+    assert resolve_re_phpgen_python(str(tmp_path)) == str(venv_python)
+
+
+def test_resolve_python_prefers_the_host_layout_when_both_exist(tmp_path):
+    import sys
+    windows = _make_interpreter(tmp_path, "Scripts", "python.exe")
+    posix = _make_interpreter(tmp_path, "bin", "python")
+    expected = windows if sys.platform == "win32" else posix
+    assert resolve_re_phpgen_python(str(tmp_path)) == str(expected)
 
 
 def test_resolve_python_falls_back_to_sys_executable(tmp_path):

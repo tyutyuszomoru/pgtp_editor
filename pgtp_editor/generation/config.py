@@ -14,12 +14,14 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/generation/config.py
-"""Per-user persistence of the PHP Generator executable path.
+"""Per-user persistence of the PHP Generator executable path and the
+re_phpgen (panGen) repo root.
 
 Mirrors pgtp_editor/schema_learning/storage.py: a `base_dir` override (used by
 tests with a tmp_path) falls back to the OS AppData location. Stored as a small
-JSON object {"executable_path": "..."}; load tolerates an absent, unreadable,
-malformed, or key-missing file by returning None (never raises).
+JSON object {"executable_path": "...", "re_phpgen_root": "..."}; every loader
+tolerates an absent, unreadable, malformed, or key-missing file by returning
+None (never raises), and none of them ships a guessed default.
 """
 from __future__ import annotations
 
@@ -78,18 +80,29 @@ def save_executable_path(path: str, base_dir: Path | None = None) -> None:
 
 
 _RE_PHPGEN_ROOT_KEY = "re_phpgen_root"
-DEFAULT_RE_PHPGEN_ROOT = r"C:\Users\BotondZalai-RuzsicsP\Software dev\re_phpgen"
 
 
-def load_re_phpgen_root(base_dir: Path | None = None) -> str:
-    """Stored re_phpgen repo root, falling back to the machine default."""
+def load_re_phpgen_root(base_dir: Path | None = None) -> str | None:
+    """Return the stored re_phpgen repo root, or None if it cannot be
+    determined (file absent / unreadable / not valid JSON / key missing).
+
+    Ships no default: a guessed path is indistinguishable from a configured
+    one, and callers must be able to say "not configured" out loud."""
     path = generator_config_path(base_dir)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return DEFAULT_RE_PHPGEN_ROOT
-    value = data.get(_RE_PHPGEN_ROOT_KEY) if isinstance(data, dict) else None
-    return value if isinstance(value, str) and value else DEFAULT_RE_PHPGEN_ROOT
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get(_RE_PHPGEN_ROOT_KEY)
+    # An empty string is treated as unconfigured (unlike load_executable_path):
+    # "" is a valid Qt "no preferred directory" sentinel, never a real root.
+    return value if isinstance(value, str) and value else None
 
 
 def save_re_phpgen_root(root: str, base_dir: Path | None = None) -> None:
