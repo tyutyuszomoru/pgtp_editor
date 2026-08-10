@@ -16,7 +16,12 @@ from PySide6.QtTest import QTest
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
-from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+from pgtp_editor.ui.ddl_object_editor import (
+    GESTURE_APPLY_TO_QUALITY,
+    GESTURE_CHECK_AND_COMMIT,
+    GESTURE_LABELS,
+    DdlObjectRef,
+)
 from pgtp_editor.ui.main_window import MainWindow
 
 from ._sandbox_stubs import sync_run
@@ -617,7 +622,10 @@ def test_an_apply_to_sandbox_journals_the_ddl_against_the_sandbox_source(
 
     entry = window.activity_log.entries[-1]
     assert entry.source == "Sandbox DB"
-    assert entry.verb == "Apply to Sandbox"
+    # BUG-047: asserted against `GESTURE_LABELS`, not a re-typed literal, so a
+    # future rename of the gesture moves this test with it instead of leaving a
+    # stale string behind -- the assertion shape that would have caught the bug.
+    assert entry.verb == GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]
     assert entry.ddl_full == text
     assert entry.status == "success"
 
@@ -707,7 +715,8 @@ def test_an_apply_to_target_journals_the_irreversible_write(qtbot, tmp_path, mon
 
     entry = window.activity_log.entries[-1]
     assert entry.source == "Quality DB"
-    assert entry.verb == "Apply to Target"
+    # BUG-047: see the sandbox case above -- the label, never a literal.
+    assert entry.verb == GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]
     assert entry.ddl_full == text
     assert entry.status == "success"
 
