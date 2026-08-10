@@ -1031,6 +1031,12 @@ class MainWindow(QMainWindow):
                 params
             ),
         )
+        # BUG-043: route the sandbox lane's off-thread runner through the SAME
+        # call-time trampoline every other lane uses, so `window._run_async =
+        # sync_run` reaches it too. It used to capture `async_task.run_async`
+        # at construction, so a test that injected at the window left this lane
+        # on the real threadpool and its worker outlived the window.
+        self.sandbox_controller._run_async = self._shell_run_async
         self.sandbox_controller.session_changed.connect(self._on_sandbox_session_changed)
         self.sandbox_controller.operation_finished.connect(
             self._on_sandbox_operation_finished

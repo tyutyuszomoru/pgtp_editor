@@ -20,7 +20,7 @@ from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 
 from ._menu_helpers import find_action, find_top_menu
-from ._sandbox_stubs import stub_sandbox_provisioning
+from ._sandbox_stubs import stub_sandbox_provisioning, sync_run
 from pgtp_editor.ui import modals
 
 
@@ -31,6 +31,12 @@ def _empty_settings(tmp_path):
 def _window(qtbot, tmp_path):
     window = MainWindow(settings=_empty_settings(tmp_path))
     qtbot.addWidget(window)
+    # BUG-043: the window-wide off-thread seam. `_shell_run_async` re-reads this
+    # at call time, and since BUG-043 the sandbox controller goes through that
+    # trampoline too, so this one line makes EVERY lane run in-test -- including
+    # `refresh_target_connection_status`, which really dialled a configured
+    # target host and delivered the result after this window was destroyed.
+    window._run_async = sync_run
     # FQ-007: New Project now CREATES + provisions the sandbox database, so the
     # controller's db/sandbox.py seams are stubbed here -- no test may reach a
     # real server, and none of these tests is about provisioning.

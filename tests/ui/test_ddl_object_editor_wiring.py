@@ -18,6 +18,8 @@ from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import DatabaseSchema, RoutineInfo
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
+
+from ._sandbox_stubs import sync_run
 from pgtp_editor.ui import modals
 
 
@@ -49,6 +51,11 @@ def comparison_modals(monkeypatch):
 def _window(qtbot, tmp_path):
     window = MainWindow(settings=_empty_settings(tmp_path))
     qtbot.addWidget(window)
+    # BUG-043: `_TARGET` carries a real host, so `set_active_project` fires
+    # `refresh_target_connection_status` and genuinely tries to resolve it on a
+    # worker thread -- which then outlives this window's teardown. Two tests
+    # below already stub this per-test; the helper does it for all of them.
+    window._run_async = sync_run
     return window
 
 

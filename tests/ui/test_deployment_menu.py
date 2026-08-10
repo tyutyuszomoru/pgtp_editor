@@ -44,6 +44,7 @@ from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui import modals
 from tests.ui._menu_helpers import action_labels, find_action, find_top_menu
+from tests.ui._sandbox_stubs import fake_session, sync_run
 
 _REF = DdlObjectRef(kind="function", schema="pr", name="recalc")
 _SOURCE = "CREATE OR REPLACE FUNCTION pr.recalc() RETURNS void AS $$ BEGIN END $$;"
@@ -64,6 +65,16 @@ def _window(qtbot, tmp_path):
         settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
     )
     qtbot.addWidget(window)
+    # BUG-043: the window-wide off-thread seam, stubbed for the whole file
+    # rather than per test. `_shell_run_async` re-reads it at call time, and
+    # since BUG-043 the sandbox controller is routed through that trampoline
+    # too, so this single line covers every lane a test in here can start --
+    # the capability probe, the target connection test, and `open_session`.
+    # This file is where BUG-043 was found: one test set a sandbox `database`,
+    # BUG-040's auto-open dialled it for real on a worker thread, and the
+    # failure landed in whichever test was running when the TCP attempt gave
+    # up -- a different name every run.
+    window._run_async = sync_run
     return window
 
 
@@ -541,16 +552,21 @@ def test_the_sandbox_confirmation_also_names_the_host_now(qtbot, tmp_path):
         sandbox=ConnectionParams(host="localhost", port="5433", database="sbox")
     )
     save_settings(project_dir, settings)
-    # Opening a project starts an off-thread capability probe. Stubbed and made
-    # synchronous so its result cannot land after this window is destroyed --
-    # otherwise `capability_status_changed` fires on a deleted C++ object and the
-    # RuntimeError surfaces inside whichever test runs next.
-    window._ddl_project_ui._run_async = (
-        lambda work, on_result=None, on_error=None: on_result(work())
-    )
+    # Opening a project starts an off-thread capability probe AND, because this
+    # project's sandbox names a `database`, BUG-040's automatic `open_session`.
+    # `_window` makes both synchronous via `window._run_async`; this test only
+    # has to stop the probe reaching a real server. It used to stub
+    # `window._ddl_project_ui._run_async` by hand, which covered the probe and
+    # not the session -- see BUG-043, and `_window`'s comment.
     window._ddl_project_ui.probe_sandbox_capabilities = (
         lambda params: SandboxCapabilities(is_superuser=True)
     )
+    # The probe passing means `open_session` proceeds to `_opener`, which is the
+    # real `db/sandbox.py::open_sandbox` -- the thing that was actually dialling
+    # localhost:5433. Now that the lane is synchronous the dial would merely
+    # block this test instead of poisoning a later one; stub it so no test in
+    # this file reaches a server at all.
+    window.sandbox_controller._opener = lambda params, **kwargs: fake_session(params)
     window._ddl_project_ui.set_active_project(project_dir, settings)
     assert window._sandbox_database_label() == "sbox on localhost:5433"
 

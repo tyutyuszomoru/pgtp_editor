@@ -16,10 +16,20 @@ otherwise, can leak into another.
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QSettings, Qt, QThreadPool
 from PySide6.QtGui import QGuiApplication, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
+
+from pgtp_editor.ui import async_task
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_async: this test drives ui/async_task.py's real threadpool on "
+        "purpose, so `_no_leaked_async_tasks` drains it without failing it.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -107,3 +117,59 @@ def _flush_deferred_deletes(qapp):
     yield
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     qapp.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def _no_leaked_async_tasks(qapp, request):
+    """Fail the test that leaks an off-GUI-thread task, not the bystander.
+
+    BUG-043: a `ui/async_task.py::run_async` worker started by one test can
+    finish after that test's `MainWindow` is gone. Delivery is a queued signal
+    on the GUI thread, so the callback runs during *whatever test happens to be
+    running* when it lands, touching a deleted C++ object and raising out of the
+    Qt event loop. pytest-qt charges that to the innocent test -- which is why
+    the failing name rotated between runs, why the file passed when run alone,
+    and why a real defect got dismissed on sight for a day. Making the leak stop
+    is not enough; it has to be **attributed**, or the next one costs the same
+    day again.
+
+    So the rule this enforces is a testability invariant, not a cleanup: **no
+    test may end with a task still in flight.** Every off-thread seam in the app
+    is reachable from `window._run_async` (BUG-043 made the sandbox lane the
+    last exception), so the fix in a failing test is always the same one line --
+    inject `tests/ui/_sandbox_stubs.py::sync_run` and the lane runs
+    synchronously, in-test, where its result belongs.
+
+    Deliberate exceptions (`tests/ui/test_async_task.py` exercises the real
+    threadpool on purpose) mark themselves with ``@pytest.mark.real_async``;
+    they are still drained, just not failed.
+
+    Ordering matters and is the reason this fixture is declared LAST in this
+    file: same-scope autouse fixtures tear down in reverse declaration order, so
+    this runs BEFORE `_flush_deferred_deletes` actually destroys the widgets.
+    Draining after destruction would be too late -- it would make the crash
+    deterministic rather than prevent it. `qtbot`'s own teardown has already
+    run, but it only *schedules* deletion via `deleteLater()`, so the receivers
+    are still alive here and a drained task delivers harmlessly.
+    """
+    yield
+    leaked = set(async_task._INFLIGHT)
+    if not leaked:
+        return
+    # Drain first, so this test's leak cannot go on to poison a later one even
+    # though we are about to fail this one for it.
+    QThreadPool.globalInstance().waitForDone(5000)
+    qapp.processEvents()
+    async_task._INFLIGHT.clear()
+    if request.node.get_closest_marker("real_async") is not None:
+        return
+    pytest.fail(
+        f"{len(leaked)} async_task worker(s) were still in flight when this test "
+        f"ended; their callbacks would have landed inside an unrelated test and "
+        f"failed it instead (BUG-043).\n"
+        f"Fix it here, not there: stub the off-thread seam with "
+        f"`from tests.ui._sandbox_stubs import sync_run` and "
+        f"`window._run_async = sync_run` (the window-wide trampoline reaches "
+        f"every lane, sandbox included). If this test exercises the real "
+        f"threadpool on purpose, mark it `@pytest.mark.real_async`."
+    )

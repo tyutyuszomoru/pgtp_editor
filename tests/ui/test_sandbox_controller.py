@@ -18,7 +18,14 @@ derivation). They assert the four things a *lifecycle host* alone can get wrong:
 The whole sandbox layer is injected as fakes — no PostgreSQL, no `pg_dump`, no
 psycopg — and no dialog exists to reach, because the controller opens none.
 """
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
+import shiboken6
+from PySide6.QtCore import QCoreApplication, QEvent, QObject
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.sandbox import (
@@ -33,6 +40,8 @@ from pgtp_editor.ui.sandbox_controller import (
     SandboxController,
     SandboxOperation,
 )
+
+from ._sandbox_stubs import sync_run
 
 pytestmark = pytest.mark.usefixtures("qapp")
 
@@ -1440,3 +1449,204 @@ def test_the_maintenance_database_is_one_constant_shared_with_project_settings()
 
     assert MAINTENANCE_DATABASE == "postgres"
     assert project_settings_dialog.DEFAULT_MAINTENANCE_DATABASE is MAINTENANCE_DATABASE
+
+
+# ---------------------------------------------------------------------------
+# 5. BUG-043: the off-thread seam is reachable from the window, and a result
+#    that lands after its receivers are gone is dropped rather than raised
+# ---------------------------------------------------------------------------
+def test_the_controllers_runner_is_the_windows_call_time_trampoline(qtbot, tmp_path):
+    """`window._run_async = sync` must actually reach the SANDBOX lane.
+
+    This is the asymmetry BUG-043 was: `DdlProjectController` took its runner
+    from `UiShell.run_async` (i.e. `MainWindow._shell_run_async`, which re-reads
+    `window._run_async` at CALL time), while `SandboxController` captured the
+    module-level `run_async` in `__init__`. So the project's one documented
+    injection point silently did not cover the sandbox -- a test could stub it,
+    believe it had stubbed everything, and still start a real worker.
+
+    Asserting the identity is the durable form: it fails the moment someone
+    reverts the wiring, rather than waiting for a race to show up somewhere else.
+    """
+    from PySide6.QtCore import QSettings
+
+    from pgtp_editor.ui.main_window import MainWindow
+
+    window = MainWindow(
+        settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    )
+    qtbot.addWidget(window)
+    window._run_async = sync_run
+
+    assert window.sandbox_controller._run_async == window._shell_run_async
+
+    # Not just the identity -- the injection has to be observed end to end, and
+    # observed on a DB-touching operation rather than a refusal.
+    layer = Layer()
+    controller = window.sandbox_controller
+    controller._prober = layer.prober
+    controller._opener = layer.opener
+    controller.set_project(sandbox_params=SANDBOX, target_params=TARGET)
+    results = []
+    controller.operation_finished.connect(results.append)
+
+    controller.open_session()
+
+    # `sync_run` ran the worker inline, so the outcome is already here -- no
+    # event loop was needed, and nothing is left in flight to outlive `window`.
+    assert results and results[-1].ok
+    assert controller.has_session
+
+
+def test_a_result_landing_after_the_window_is_gone_is_dropped_not_raised(tmp_path):
+    """The end-to-end shape of the bug: start an operation, destroy the window
+    while the worker is still out, then let the worker land.
+
+    In production nothing cancels an in-flight sandbox operation when a project
+    closes or the app quits, so this is reachable by a user closing the window
+    mid-probe -- not only by a test. `_finish` runs as a QUEUED slot, so there
+    is no caller to hand a `RuntimeError` to: raising there tears out of the Qt
+    event loop, which under pytest-qt gets charged to whatever test is running
+    when it lands. Dropping is correct -- there is nobody left to report to.
+    """
+    from PySide6.QtCore import QSettings
+
+    from pgtp_editor.ui.main_window import MainWindow
+
+    # Deliberately NOT `qtbot.addWidget`: destroying the window is the point of
+    # the test, and qtbot's teardown would then `close()` an already-deleted C++
+    # object and raise on its own account.
+    window = MainWindow(
+        settings=QSettings(str(tmp_path / "s.ini"), QSettings.Format.IniFormat)
+    )
+
+    # A runner that holds the worker instead of running it -- exactly a task
+    # still sitting on the threadpool when teardown begins.
+    pending = []
+    window._run_async = lambda fn, on_result, on_error=None: pending.append(
+        (fn, on_result, on_error)
+    )
+    layer = Layer()
+    controller = window.sandbox_controller
+    controller._prober = layer.prober
+    controller._opener = layer.opener
+    controller.set_project(sandbox_params=SANDBOX, target_params=TARGET)
+    controller.open_session()
+    assert pending, "open_session must go through the injected seam"
+
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qapp_instance = QCoreApplication.instance()
+    qapp_instance.processEvents()
+
+    # The controller was parented to the window, so its C++ side is gone too.
+    fn, on_result, on_error = pending.pop()
+    assert not shiboken6.isValid(controller), "precondition: the receiver is gone"
+
+    # The worker returns now, into a dead world. Neither channel may raise.
+    on_result(fn())
+
+
+def test_finish_survives_a_dead_receiver_on_both_the_on_done_and_emit_paths():
+    """`on_done` runs BEFORE the emit, so guarding only the emit is not enough:
+    a callback bound to a deleted panel would raise first and the signal would
+    never even be reached. Both channels are asserted, and independently -- a
+    dead `on_done` must not cost a still-live window its `operation_finished`.
+    """
+    layer = Layer()
+    controller, _, results = _controller(layer)
+
+    def dead_callback(_result):
+        raise RuntimeError("Internal C++ object (SandboxSetupPanel) already deleted.")
+
+    # 1. A dead on_done is swallowed, and the still-live signal still fires.
+    before = len(results)
+    controller._finish(SandboxOperation.OPEN, True, "", dead_callback)
+    assert len(results) == before + 1, "a dead callback must not eat the signal"
+
+    # 2. A dead SIGNAL SOURCE is swallowed too, and `on_done` still ran first.
+    #    The source has to be genuinely deleted rather than a slot that raises:
+    #    PySide routes a raising slot to its uncaught-exception handler, so a
+    #    slot-side raise never reaches `emit`'s caller and would prove nothing
+    #    about this guard. Deleting the parent is the real mechanism -- the
+    #    controller is parented to the window, so the window going takes the
+    #    controller's C++ side with it.
+    parent = QObject()
+    dying = SandboxController(parent)
+    seen = []
+    shiboken6.delete(parent)
+    assert not shiboken6.isValid(dying), "precondition: the signal source is gone"
+
+    dying._finish(SandboxOperation.OPEN, True, "", seen.append)
+    assert seen, "on_done runs before the emit and must still be called"
+
+    # 3. And the SUCCESS path, which never reaches `_finish`: an open that lands
+    #    after teardown raises at `session_changed` first. The filed bug only
+    #    saw the failure path, so this is the half a `_finish`-only guard misses.
+    dying._set_session(object())
+
+
+def test_the_leak_guard_fails_the_test_that_leaked(tmp_path):
+    """The conftest guard's own self-test: a test that leaves a real threadpool
+    task in flight must GO RED ITSELF, naming itself, while its neighbours stay
+    green.
+
+    This is the actual success criterion of BUG-043. The flake was never the
+    expensive part -- the misattribution was. A red line pointing at an innocent
+    test teaches everyone to ignore red lines, and this one was waved away a
+    dozen times in a day. So the thing worth pinning is not that the leak stops;
+    it is that the NEXT leak is charged to its author.
+
+    Run as a nested pytest because the claim is about pytest's own attribution,
+    which by definition cannot be observed from inside the test that would be
+    misattributed. A plain `subprocess` rather than the `pytester` fixture:
+    `pytester` needs `pytest_plugins`, which pytest permits only in the
+    ROOT conftest, and `tests/ui/conftest.py` is not one. A subprocess is also
+    what isolation demands anyway -- an in-process run would share this
+    process's `async_task._INFLIGHT`, so the leak it creates on purpose would be
+    charged to THIS test by the outer copy of the very guard under test.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+
+    # Imported BY NAME, not `import *`: the guard is `_`-prefixed and
+    # star-import skips exactly those, so a nested run that silently imported
+    # nothing would go green while proving nothing.
+    (tmp_path / "conftest.py").write_text(
+        "from tests.ui.conftest import _no_leaked_async_tasks  # noqa: F401\n"
+        "from tests.ui.conftest import pytest_configure  # noqa: F401\n"
+    )
+    (tmp_path / "test_leaky.py").write_text(
+        "from pgtp_editor.ui.async_task import run_async\n"
+        "import time\n"
+        "\n"
+        "def test_innocent_bystander(qapp):\n"
+        "    pass\n"
+        "\n"
+        "def test_the_one_that_leaks(qapp):\n"
+        "    # Never waited for: the callback lands after this test is over.\n"
+        "    run_async(lambda: time.sleep(0.4), lambda v: None)\n"
+        "\n"
+        "def test_another_innocent_bystander(qapp):\n"
+        "    pass\n"
+    )
+
+    env = {**os.environ, "PYTHONPATH": str(repo_root), "QT_QPA_PLATFORM": "offscreen"}
+    env.pop("PYTEST_CURRENT_TEST", None)
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:randomly", "-p", "no:xdist",
+         "--timeout=60", str(tmp_path)],
+        cwd=str(tmp_path), env=env, capture_output=True, text=True, timeout=300,
+    )
+    out = run.stdout + run.stderr
+
+    # Red, and red because of the leak -- not merely mentioning it.
+    assert run.returncode != 0, out
+    # It lands as a teardown ERROR rather than a call-phase failure, because
+    # teardown is when a leak becomes observable. What matters is WHO it names.
+    assert "ERROR test_leaky.py::test_the_one_that_leaks" in out, out
+    assert "bystander" not in out.split("short test summary info")[-1], out
+    assert "3 passed" in out and "1 error" in out, out
+    # And it is loud: it says what happened, and what to do about it.
+    assert "still in flight" in out
+    assert "BUG-043" in out
+    assert "sync_run" in out

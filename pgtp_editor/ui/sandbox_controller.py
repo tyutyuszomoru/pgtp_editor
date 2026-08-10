@@ -31,12 +31,22 @@ install gate's reason strings, which provisioning strategy a mode implies) is
 delegated to the function in `db/` that already owns it.
 
 **Off the GUI thread, through the established seam.** Every DB-touching
-operation goes through `self._run_async`, a plain attribute set to
-`ui/async_task.py::run_async` in `__init__` -- the same convention
+operation goes through `self._run_async`, a plain attribute defaulting to
+`ui/async_task.py::run_async` -- the same convention
 `ConnectionSetupDialog`/`NewProjectDialog`/`ProjectSettingsDialog` use, and the
 same one tests replace with a synchronous stand-in. Nothing here blocks the
 event loop, and results come back on the GUI thread where the caller may touch
 widgets.
+
+`MainWindow` **repoints that attribute at its `_shell_run_async` trampoline**
+right after constructing the controller, so `window._run_async = sync_run` --
+the one documented, window-wide injection point every other lane already
+honours -- reaches this lane too. It did not, before BUG-043: this attribute
+captured the module-level `run_async` at construction time, so a test that
+injected at the window silently left the sandbox lane on the real threadpool,
+and its worker outlived the window it was started from. Do NOT "simplify" this
+back to a constructor kwarg captured at build time; the trampoline's value is
+that it re-reads `window._run_async` at CALL time.
 
 **Never silently destroys data.** Provisioning, `reset()` and re-cloning all
 drop and recreate schemas, and §18's whole posture is surface-don't-auto-resolve:
@@ -71,6 +81,7 @@ dialog, and needs no `QApplication` interaction beyond `QObject.__init__`.
 """
 from __future__ import annotations
 
+import logging
 import re
 import secrets
 from collections.abc import Callable, Sequence
@@ -106,6 +117,8 @@ from ..db.sandbox import (
     REASON_REQUIRES_SUPERUSER as REQUIRES_SUPERUSER_REASON,
 )
 from .async_task import run_async
+
+_log = logging.getLogger(__name__)
 
 
 #: The maintenance database `create_sandbox_database`'s admin connection targets,
@@ -477,8 +490,12 @@ class SandboxController(QObject):
         probe_checker: Callable[..., object] = probe_check,
     ) -> None:
         super().__init__(parent)
-        # Plain attribute, replaced wholesale by a synchronous stub in tests --
-        # the ConnectionSetupDialog/NewProjectDialog convention.
+        # Plain attribute, replaced wholesale in tests -- the
+        # ConnectionSetupDialog/NewProjectDialog convention. This module-level
+        # default is only the standalone fallback: `MainWindow` overwrites it
+        # with `self._shell_run_async` immediately after construction, so the
+        # window-wide `window._run_async` injection point covers this lane too
+        # (BUG-043 -- it did not, and workers outlived their window).
         self._run_async = run_async
 
         self._confirm_destructive = confirm_destructive
@@ -730,7 +747,7 @@ class SandboxController(QObject):
         if self._session is None:
             return
         self._session = None
-        self.session_changed.emit(False)
+        self._announce_session(False)
 
     def provision(
         self,
@@ -1118,9 +1135,7 @@ class SandboxController(QObject):
                 capabilities=caps,
                 report=report,
             )
-            if on_done is not None:
-                on_done(result)
-            self.operation_finished.emit(result)
+            self._report(result, on_done)
 
         self._run_async(work, on_result=on_result, on_error=self._error_handler(
             SandboxOperation.CHECK, on_done
@@ -1198,9 +1213,7 @@ class SandboxController(QObject):
                 capabilities=caps,
                 report=report,
             )
-            if on_done is not None:
-                on_done(result)
-            self.operation_finished.emit(result)
+            self._report(result, on_done)
 
         self._run_async(work, on_result=on_result, on_error=self._error_handler(
             SandboxOperation.APPLY, on_done
@@ -1246,7 +1259,7 @@ class SandboxController(QObject):
 
     def _set_session(self, session: SandboxSession) -> None:
         self._session = session
-        self.session_changed.emit(True)
+        self._announce_session(True)
 
     def _blocking_reason(self, caps: SandboxCapabilities) -> str | None:
         """Why a session cannot be opened against `caps`, or None.
@@ -1375,6 +1388,54 @@ class SandboxController(QObject):
             capabilities=capabilities,
             database_name=database_name,
         )
+        # BUG-043: a worker can land after its receivers are gone. Nothing in
+        # the app cancels an in-flight sandbox operation when a project closes
+        # or the window is destroyed, so `on_done` may be a bound method of a
+        # dead panel and `self` may be a QObject whose C++ side went with its
+        # parent window -- both raise `RuntimeError` ("Internal C++ object
+        # already deleted" / "Signal source has been deleted"). There is no
+        # one left to report the outcome TO at that point, so dropping it is
+        # the correct answer; what is not correct is raising out of a queued
+        # slot, where Qt has no caller to hand the exception to (under pytest
+        # it surfaces as a teardown error charged to an unrelated test).
+        # `on_done` runs BEFORE the emit, so both need the guard, separately:
+        # a dead panel must not cost the still-live window its signal.
+        self._report(result, on_done)
+
+    def _report(
+        self,
+        result: SandboxOperationResult,
+        on_done: Callable[[SandboxOperationResult], None] | None,
+    ) -> None:
+        """Announce one finished operation to whoever is still there to hear it.
+
+        The single delivery point for `on_done` + `operation_finished`, because
+        BUG-043 showed the pair had been open-coded in three places (`_finish`
+        and the `run_check`/`run_apply` result callbacks) and a guard added to
+        one of them would have left the other two raising.
+        """
         if on_done is not None:
-            on_done(result)
-        self.operation_finished.emit(result)
+            try:
+                on_done(result)
+            except RuntimeError as exc:
+                _log.debug(
+                    "sandbox %s: on_done receiver is gone (%s)", result.operation, exc
+                )
+        try:
+            self.operation_finished.emit(result)
+        except RuntimeError as exc:
+            _log.debug("sandbox %s: signal source is gone (%s)", result.operation, exc)
+
+    def _announce_session(self, present: bool) -> None:
+        """`session_changed`, guarded the same way and for the same reason.
+
+        Not a duplicate of `_report`'s guard but the other half of it: a
+        SUCCESSFUL open landing after teardown never reaches `_report` -- it
+        raises here first, at `_set_session`. The filed bug only ever saw the
+        failure path (a refused connection), so guarding `_finish` alone would
+        have left the success path raising exactly as before.
+        """
+        try:
+            self.session_changed.emit(present)
+        except RuntimeError as exc:
+            _log.debug("sandbox: session_changed source is gone (%s)", exc)
