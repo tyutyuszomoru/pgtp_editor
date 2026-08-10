@@ -67,6 +67,7 @@ from pgtp_editor.sql.templates import (
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
 from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names)
     CLAIMED_NOT_UNDO_REDO,
+    EDITOR_PASTE_CHORDS,
     EDITOR_UNDO_REDO_CHORDS,
     REDO,
     SUPPRESSED,
@@ -129,6 +130,29 @@ def classify_undo_redo_chord(event) -> str | None:
       is not bound at all.
     """
     return _UNDO_REDO_COMBINATIONS.get((event.key(), event.modifiers()))
+
+
+# The same trick for the paste family, and for the same reason: this must NOT be
+# `event.matches(QKeySequence.StandardKey.Paste)`, which is Qt's per-scheme table
+# and hands the app two different keyboards (DEC-015). Parsed from
+# `EDITOR_PASTE_CHORDS` so the chords have one source.
+_PASTE_COMBINATIONS = {
+    (
+        QKeySequence(sequence)[0].key(),
+        QKeySequence(sequence)[0].keyboardModifiers(),
+    )
+    for sequence in EDITOR_PASTE_CHORDS
+}
+
+
+def is_paste_chord(event) -> bool:
+    """True if `event` is one of the paste chords THIS APP owns.
+
+    Used by the read-only surfaces to decide whether a keystroke was an edit
+    attempt worth a hint. See `EDITOR_PASTE_CHORDS` for why the set is spelled
+    out rather than taken from Qt's `StandardKey.Paste`.
+    """
+    return (event.key(), event.modifiers()) in _PASTE_COMBINATIONS
 
 
 # Keyword lists kept as Qt-free module constants (unit-tested for existence /

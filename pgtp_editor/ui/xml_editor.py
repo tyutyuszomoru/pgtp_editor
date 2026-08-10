@@ -74,6 +74,7 @@ from pgtp_editor.ui.code_editor import (
     REDO,
     UNDO,
     classify_undo_redo_chord,
+    is_paste_chord,
 )
 from pgtp_editor.ui.event_body import event_body_line_ranges
 from pgtp_editor.ui.format_settings import current_xml_config
@@ -1175,8 +1176,15 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         other Ctrl+letter command) while flashing the "this editor is read-only"
         hint. Paste is checked first and keeps its hint: Ctrl+V really is an edit
         attempt.
+
+        The paste test goes through `is_paste_chord`, which reads the app's own
+        `EDITOR_PASTE_CHORDS`, and NOT through
+        `event.matches(QKeySequence.StandardKey.Paste)`: that call answers Qt's
+        per-scheme table, so the hint used to fire for `Ctrl+Shift+Ins` and `F18`
+        on Linux and for neither on Windows (DEC-015 -- a chord means the same
+        thing on both systems or the app does not claim it).
         """
-        if event.matches(QKeySequence.StandardKey.Paste):
+        if is_paste_chord(event):
             return True
         if event.key() in (
             Qt.Key.Key_Backspace,

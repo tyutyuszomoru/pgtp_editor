@@ -996,6 +996,47 @@ def test_readonly_ctrl_a_selects_all_instead_of_emitting_the_hint(qtbot):
     assert editor.toPlainText() == "<Page/>"
 
 
+def test_readonly_paste_hint_uses_the_apps_own_chords_not_qts_table(qtbot):
+    """BUG-260810140553 Part 1 / DEC-015. The test used to be
+    `event.matches(QKeySequence.StandardKey.Paste)`, which answers Qt's
+    per-scheme table: the hint fired for `Ctrl+Shift+Ins` and `F18` on Linux and
+    for neither on Windows. It now goes through `code_editor.is_paste_chord` and
+    `shortcut_registry.EDITOR_PASTE_CHORDS`, so the set is the app's own and is
+    identical on both platforms.
+
+    Asserted through the app's handler and never against
+    `QKeySequence.keyBindings(...)`: the offscreen platform reports Qt's Windows
+    scheme, so a comparison with Qt's own answer would be meaningless here.
+    """
+    editor = XmlEditor()
+    qtbot.addWidget(editor)
+    editor.setPlainText("<Page/>")
+    editor.setReadOnly(True)
+    emitted = []
+    editor.read_only_edit_attempted.connect(lambda: emitted.append(True))
+
+    # Every chord in the app-owned set raises the hint...
+    _send_key(editor, _Qt2.Key.Key_V, "v", _Qt2.KeyboardModifier.ControlModifier)
+    _send_key(editor, _Qt2.Key.Key_Insert, "", _Qt2.KeyboardModifier.ShiftModifier)
+    _send_key(editor, _Qt2.Key.Key_Paste)
+    assert len(emitted) == 3
+
+    # ...and `Ctrl+Shift+Ins`, which Qt binds as Paste on the Linux/KDE scheme
+    # ONLY, does not: whether the app binds or suppresses it is an open ruling,
+    # and inheriting it is exactly the platform-conditional behaviour DEC-015
+    # forbids. (On Linux this is a change: the hint used to fire there and not on
+    # Windows. Qt's own read-only refusal still blocks the paste itself.)
+    emitted.clear()
+    _send_key(
+        editor,
+        _Qt2.Key.Key_Insert,
+        "",
+        _Qt2.KeyboardModifier.ControlModifier | _Qt2.KeyboardModifier.ShiftModifier,
+    )
+    assert emitted == []
+    assert editor.toPlainText() == "<Page/>"
+
+
 def test_readonly_navigation_key_does_not_emit(qtbot):
     editor = XmlEditor()
     qtbot.addWidget(editor)

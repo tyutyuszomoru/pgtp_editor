@@ -316,9 +316,37 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # never-implemented stubs and "Ctrl+C/X/V remain Qt built-ins" -- handled
     # inside the widgets. A window-level shortcut on one of them would take
     # precedence over the widget and break copy/cut/paste everywhere.
-    "Ctrl+C": "Copy — a Qt built-in inside every editor widget (§26/§27)",
+    #
+    # `Ctrl+C` and `Ctrl+V` have a SECOND host, and the reason text says so
+    # because it is what the Customize Shortcuts dialog shows the user when it
+    # refuses the key: the caption grid binds both to real slots
+    # (`caption_management_panel.py`). `Ctrl+X` deliberately does NOT get the
+    # same sentence -- nothing in the app hosts a Cut shortcut, so "a Qt
+    # built-in" is the whole truth there and symmetry would make it a lie.
+    # Two operations, two reasons (DEC-014): never one merged "the clipboard
+    # chords" statement.
+    "Ctrl+C": "Copy — Qt's built-in inside every editor widget, and a shortcut "
+              "on the Caption Management grid (§26/§27)",
     "Ctrl+X": "Cut — a Qt built-in inside every editor widget (§26/§27)",
-    "Ctrl+V": "Paste — a Qt built-in inside every editor widget (§26/§27)",
+    "Ctrl+V": "Paste — Qt's built-in inside every editor widget, and a shortcut "
+              "on the Caption Management grid; the Raw XML editor also refuses "
+              "it with the read-only hint in Caption Mode (§26/§27)",
+    # The older spellings of the same three clipboard operations. Qt binds them
+    # as `StandardKey.Copy` / `.Paste` / `.Cut` on **both** keyboard schemes
+    # (measured 2026-08-10), so unlike `Ctrl+Shift+Ins` / `F16` / `F18` / `F20`
+    # they are not a platform split and need no bind-or-suppress ruling -- but
+    # they were free targets in Customize Shortcuts, which is a live hole:
+    # putting a menu command on `Shift+Ins` would kill paste-by-`Shift+Ins` in
+    # every editor on every platform. Reserving them is the pure widening of the
+    # stance three rows above.
+    "Ctrl+Insert": "Copy — Qt's older spelling of the chord, a built-in inside "
+                   "every editor widget on both keyboard schemes (§26/§27)",
+    "Shift+Insert": "Paste — Qt's older spelling of the chord, a built-in "
+                    "inside every editor widget on both keyboard schemes; the "
+                    "Raw XML editor also refuses it with the read-only hint in "
+                    "Caption Mode (§26/§27)",
+    "Shift+Delete": "Cut — Qt's older spelling of the chord, a built-in inside "
+                    "every editor widget on both keyboard schemes (§26/§27)",
     # §27: Manual. Universal convention, and `Help ▸ Manual` is the one menu
     # entry §7 pins as never filtered out of any launch mode.
     "F1": "Manual — pinned (§27)",
@@ -372,6 +400,26 @@ EDITOR_UNDO_REDO_CHORDS: dict[str, str] = {
     "Alt+Backspace": SUPPRESSED,
     "Alt+Shift+Backspace": SUPPRESSED,
 }
+
+
+# -- the paste chords this app owns (DEC-015) --------------------------------
+#
+# Read-only editing surfaces flash a *"this editor is read-only"* hint when a
+# keystroke would have modified the document, and paste is one such keystroke.
+# `XmlEditor` used to ask `event.matches(QKeySequence.StandardKey.Paste)`, which
+# is Qt's per-scheme table and therefore a different set of keys on Windows and
+# on Linux -- the hint fired for `Ctrl+Shift+Ins` and `F18` on one platform and
+# not the other. This table is the app's own answer instead, spelled out, so the
+# behaviour is identical on both.
+#
+# It is exactly Qt's Windows-scheme `StandardKey.Paste` set, which is the subset
+# native on BOTH schemes, so nothing that used to raise the hint on Windows
+# stopped doing so. `Ctrl+Shift+Ins` (Linux/KDE only) is deliberately absent:
+# whether the app binds it on both schemes or suppresses it on both is an open
+# owner ruling, and inheriting it in the meantime is the very defect this table
+# removes. Qt's own read-only refusal still blocks the paste itself either way;
+# what is uniform here is the app's hint.
+EDITOR_PASTE_CHORDS: tuple[str, ...] = ("Ctrl+V", "Shift+Insert", "Paste")
 
 
 RESERVED_COMMAND_IDS: dict[str, str] = {

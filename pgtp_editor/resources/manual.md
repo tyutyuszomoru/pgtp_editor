@@ -3961,8 +3961,8 @@ the editor underneath would have done:
 |---|---|
 | **Ctrl+F** / **Ctrl+R** | Focus the caption bar's **Find** / **Replace with** field |
 | **Escape** | Return focus from the bar to the **grid** |
-| **Ctrl+G** | Go to the current row's line in the Raw XML |
-| **Ctrl+C** / **Ctrl+V** | Copy the selection out of the grid / paste into the New value column |
+| **Ctrl+G** | Go to the current row's line in the Raw XML — and it works from inside the **Find** field too, so you can search for a caption and jump straight to its line without leaving the field |
+| **Ctrl+C** / **Ctrl+V** | Copy the selection out of the grid / paste into the New value column. Both belong to the **grid**: pressed while the cursor is in the Find or Replace field they copy and paste that field's text, as they would anywhere else |
 
 **In the Edit code… dialog** (and the Activity Log's read-only payload viewer)
 
@@ -4222,7 +4222,7 @@ hunting for a row that was never there. None of these is arbitrary:
 | **Escape** | Returns focus from a Find/Replace bar to the document — and leaves a template walk, where one is in progress. |
 | **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level, per-panel or context-menu commands with no menu entry at all — the same reason they cannot be put on the toolbar. |
 | **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J**, **Ctrl+Shift+Space** | The four SQL editor gestures. Each is answered by the editor or its panel rather than by a menu command, so the dialog has no row it could move — and a menu command retargeted onto one of them would fight for the key and neither would fire. **Ctrl+Alt+J** and **Ctrl+Space** are answered by the *panel* specifically, because they need the database schema and no editor widget is allowed to hold one — that is the same rule that keeps an editor from ever talking to a database. |
-| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy, cut and paste are the editors' **own** built-ins. A window-level shortcut on one of them would outrank the editor and break copy, cut or paste everywhere in the app. |
+| **Ctrl+C** / **Ctrl+X** / **Ctrl+V**, and **Ctrl+Insert** / **Shift+Insert** / **Shift+Delete** | Copy, cut and paste are the editors' **own** built-ins, and the Insert/Delete trio is the older spelling of the same three — every text field and table in the app answers both spellings. A window-level shortcut on any of them would outrank the editor and break copy, cut or paste everywhere in the app. **Ctrl+C** and **Ctrl+V** are additionally the caption grid's own copy and paste. |
 | **F1**, and **Help ▸ Manual** itself | The universal convention, and **Help ▸ Manual** is the one entry no mode may put out of reach — including Maintenance mode (see *Getting Started ▸ Maintenance mode*). It is the only case locked from both ends: nothing else may take **F1**, and Manual may not leave it, so its row is present but read-only. |
 
 **Customize Shortcuts… is itself an ordinary menu command**, so it appears in its
