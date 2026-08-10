@@ -2735,6 +2735,63 @@ project active, these dialogs behave as before and default to the operating
 system's own last-used directory. It's only a starting point in every case:
 you can always navigate elsewhere.
 
+### Installing PostgreSQL and plpgsql_check (Windows)
+
+Before a project's sandbox can do anything, your machine needs a local
+**PostgreSQL** server, and the sandbox check ladder's **tier 3 static analysis**
+(see *The Sandbox ▸ The validation ladder*) needs the **`plpgsql_check`**
+extension *available on that server*. The app runs `CREATE EXTENSION IF NOT
+EXISTS plpgsql_check` for you when it provisions a sandbox — but it cannot
+install the server itself or the extension's files, so this is a **one-time
+setup you do up front**, before or while you fill in a project's sandbox
+connection. These steps are for **Windows** and take the simplest route, with no
+compiler.
+
+**1. Install PostgreSQL — use version 16.** Download the official installer from
+[postgresql.org/download/windows](https://www.postgresql.org/download/windows/)
+and run it (it bundles pgAdmin and the command-line tools). **Choose PostgreSQL
+16**, not 17 or 18 — the ready-made `plpgsql_check` file in step 2 is built for
+versions 15 and 16, and matching versions is what keeps this compiler-free.
+During setup, **remember the `postgres` superuser password**: the sandbox
+connection you give the project must be a superuser, because `CREATE EXTENSION`
+requires it.
+
+**2. Add `plpgsql_check` — a drop-in file, nothing to build.** The extension's
+author publishes precompiled Windows files, so you never touch a compiler:
+
+- Download **`plpgsql_check-2.5.4-x64.zip`** from
+  [pgsql.cz/files/plpgsql_check-2.5.4-x64.zip](https://pgsql.cz/files/plpgsql_check-2.5.4-x64.zip)
+  (it covers PostgreSQL 15 and 16) and extract it.
+- Copy three items into your PostgreSQL install (default location
+  `C:\Program Files\PostgreSQL\16\`):
+
+  | From the zip | Copy into | Note |
+  |---|---|---|
+  | `plpgsql_check-16.dll` | `…\PostgreSQL\16\lib\` | **rename it to `plpgsql_check.dll`** — drop the `-16` |
+  | `plpgsql_check.control` | `…\PostgreSQL\16\share\extension\` | |
+  | `plpgsql_check--*.sql` | `…\PostgreSQL\16\share\extension\` | copy all the `.sql` files |
+
+That makes the extension *available* to the server. You do **not** need to edit
+`postgresql.conf` or touch `shared_preload_libraries` — the app uses
+`plpgsql_check` in its function-call mode, which only needs the extension created
+in the database.
+
+**3. Enable it — easiest is to let the app do it.** Once you have a project with
+a sandbox, open **File ▸ Project Status…**, click the **plpgsql_check** node, and
+press **Install the plpgsql_check extension** (see *Project Status ▸ Clicking a
+node*). That runs the `CREATE EXTENSION` for you against the sandbox — and the
+app already does it automatically the first time it provisions a sandbox, so
+often there is nothing left to do. To enable it by hand instead, connect to the
+sandbox database as the superuser and run:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS plpgsql_check;
+```
+
+> **If you install PostgreSQL 17 or 18** there is no ready-made file, and the
+> only way to get `plpgsql_check` is to build it from source. Avoid that — install
+> **PostgreSQL 16** and use the drop-in file above.
+
 ### Creating a project
 
 **New Project…** opens a dialog with:
@@ -3183,7 +3240,9 @@ own dated header:
   extension is absent, available but not created, or its state could not be
   determined, and those are three different answers. Install it from the
   **plpgsql_check** node in the **Project Status** window — the one place that
-  install button lives.
+  install button lives. On a fresh machine the extension has to be made available
+  to the PostgreSQL server first; see *Local DDL-Versioning Projects ▸ Installing
+  PostgreSQL and plpgsql_check (Windows)*.
 
 **On a tab holding a generated `ALTER TABLE` statement, tier 3 is absent
 altogether** — not unavailable, not failed: an ALTER creates no function for
@@ -3424,7 +3483,7 @@ appends below the first rather than overwriting it.
 
 ## Project Status
 
-**Database ▸ Project Status…** opens a separate **Project Status** window that
+**File ▸ Project Status…** opens a separate **Project Status** window that
 shows, at a glance, how much of the working setup is actually in place. It reads
 left to right as a chain that splits at the end:
 
@@ -3438,7 +3497,7 @@ below it, the reminder **"Click a node for details and actions."** A
 that died since you opened the project shows as unreachable here, and invoking
 the menu entry again probes again rather than just raising the window.
 **Re-check** does the same on demand. Closing the window is never final —
-**Database ▸ Project Status…** brings it back, re-probed, as often as you like.
+**File ▸ Project Status…** brings it back, re-probed, as often as you like.
 
 The diagram follows the app's Light/Dark theme automatically (see *Appearance &
 Layout*) and is drawn as vector artwork, so it stays sharp on a high-resolution
@@ -3509,7 +3568,10 @@ you work:
 - **plpgsql_check** — explains whether the extension is installed, and when it is
   not, offers **Install the plpgsql_check extension**. Once it *is* installed the
   window is purely informational: re-running the install would do nothing, so no
-  button is shown.
+  button is shown. (The button can only install the extension into the database
+  once the extension's files are present on the PostgreSQL server — on a fresh
+  machine, set that up first: see *Local DDL-Versioning Projects ▸ Installing
+  PostgreSQL and plpgsql_check (Windows)*.)
 
 Both of those two need a **live sandbox session**, because that is what they run
 through. With a sandbox configured the button is there whether or not a session
@@ -4028,7 +4090,7 @@ Session**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsi
 Validate Project**, **History ▸ History…**, **Navigation ▸ Clear All Bookmarks**,
 **Navigation ▸ List All Bookmarks**, **View ▸ Activity Log**, **View ▸
 Messages**, **Database ▸ DDL Explorer (Quality)**,
-**Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Project Status…** and
+**Database ▸ DDL Explorer (Sandbox)**, **File ▸ Project Status…** and
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
