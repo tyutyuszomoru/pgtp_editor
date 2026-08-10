@@ -399,10 +399,18 @@ shaped that way.*
 > "Here's a bug: opening the XSD editor leaves a tab you can't close."
 
 The main session dispatches `bug-triager` in the background. It investigates read-only,
-finds the root cause (down to file and line), and appends a `BUG-NNN` entry with
+finds the root cause (down to file and line), and appends a `BUG-<YYMMDDHHMMSS>` entry with
 `Status: OPEN`. You are **not** blocked and the resolve happens on a separate pass — often
 another thread entirely. Don't ask to fix it right now unless you mean to open the whole
 resolve workflow.
+
+**Bug ids are timestamps, not sequential.** The id is a `date +%y%m%d%H%M%S` snapshot
+taken at the moment of filing — e.g. `BUG-260810143025` — never a running counter. This is
+deliberate: two people can triage bugs on two machines at once and their entries never
+collide on the same number, so git merges the two appends cleanly in either direction with
+no renumbering. (The legacy `BUG-001`…`BUG-064` predate this rule and stay exactly as they
+are — never renumber an existing entry.) Feature-queue ids (`FQ-NNN`) and decision ids
+(`DEC-NNN`) remain sequential for now; only the bug queue is timestamp-keyed.
 
 **Status lifecycle:** `OPEN` → `RESOLVED (<commit>)`, flipped in place by whoever does the
 resolve pass.
