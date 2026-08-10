@@ -639,3 +639,45 @@ and stricter reading of the same principle, and the owner is the one who set its
 DEC-004's fix, or (b) a `spec-maintainer` pass recording "widget-only editor gestures" as a named category
 with its product rationale, plus a comment rewrite at the four sites and confirmation that
 `RESERVED_SEQUENCES` and the manual's non-rebindable list stay as they are.
+
+---
+
+## DEC-010 — Did FQ-026 retire §26's `Apply to Sandbox` / `Apply to Target Database…`, or do they survive as future work?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-10, by `spec-maintainer`, while folding FQ-030 — it made the judgement, struck the
+  entries, and filed this rather than letting the strike pass as bookkeeping.
+- **Blocks:** nothing in code — **these two entries were never built**. It decides only what §26 *promises*,
+  so the whole cost of a wrong answer is in what future work gets aimed at. It hardens as soon as anyone
+  designs a Database-menu feature against §26 as it now reads.
+- **Already actioned, so "survive" means reverting:** the strike is **in the spec now** (reported as commit
+  `d1722f1`; verified present today at `CONSOLIDATED_SPEC.md:9376-9379`, `:9417`, `:9463`, and summarised in
+  the harmonization note at `:32-34`).
+
+**Context.** §26 (the Database menu) carried `Apply to Sandbox` and `Apply to Target Database…` as target
+design at three sites, with a "disabled unless a DDL tab is active" posture. FQ-026 then established **one
+home per gesture**: eight names collapsed to four operations, `Deployment` became the single apply
+affordance, and the duplicate button row and context-menu entries were deleted. Both gestures ship today on
+`Deployment`, as `Check and commit to sandbox` and `Apply to quality`.
+
+`spec-maintainer` read FQ-026's rule as retiring the two Database entries and struck them at all three
+sites, superseding the "disabled unless a DDL tab is active" posture by §18.5 carve-out 2 (build the reason
+instead of the dead control). It offered instead to restore them with the contradiction flagged.
+
+**Options.**
+- **Retired — what the spec now says.** Two Database entries duplicating `Deployment` gestures are exactly
+  the duplication FQ-026 deleted everywhere else. *Cost:* if the owner did intend a database-centric route
+  to these operations — reaching them from the Database menu rather than from a DDL tab — that intent is now
+  **erased** rather than **deferred**, and a struck entry is far harder to rediscover than a pending one.
+- **Survive as future work.** The entries stay in §26 as unbuilt target design, annotated that when built
+  they must not duplicate `Deployment`'s vocabulary. *Cost:* the spec then carries two entry points for
+  operations FQ-026 just unified — the ghost-in-the-spec problem the harmonize pass exists to remove. The
+  next person designing against §26 sees a Database route the shipped design says should not exist.
+
+**Recommendation: retired**, as `spec-maintainer` judged. FQ-026's rule is recent, deliberate and
+owner-driven, and a "future work" entry that contradicts a shipped rule is precisely the rot harmonization
+removes. If a Database-menu route is genuinely wanted, it should be **re-raised through `feature-triage`**
+stating why a second home is worth its cost — not inherited by default from a pre-FQ-026 spec.
+
+**Unblocks:** either confirming §26 as it now stands (no work; this entry becomes the record of why the
+entries are gone), or a `spec-maintainer` pass to restore them with the FQ-026 contradiction flagged.
