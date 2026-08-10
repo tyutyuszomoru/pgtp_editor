@@ -89,6 +89,25 @@ def test_every_transient_message_becomes_an_activity_log_entry(qtbot, tmp_path):
     assert any("Saved /tmp/x.pgtp" in row for row in rows)
 
 
+def test_a_refusal_lands_as_exactly_one_activity_log_row(qtbot, tmp_path):
+    """BUG-055: this is the assertion whose absence let *"the ~15 refusals reach
+    nobody"* be believed twice. `showMessage` painting nothing is FQ-028's design,
+    not a dropped message — the text is journalled, and a refusal is a durable row
+    rather than a flash. The `timeout` argument is gone from every call site in
+    `main_window.py` because it never meant anything after FQ-028; nothing about
+    the sink changed with it."""
+    window = _window(qtbot, tmp_path)
+    window.activity_panel.clear()
+    window.activity_log._entries = []
+
+    window._on_read_only_edit_attempted()
+
+    rows = window.activity_panel.row_texts()
+    assert len(rows) == 1
+    assert "Caption Mode" in rows[0]
+    assert window.statusBar().displayed_message() == ""
+
+
 def test_an_empty_message_is_not_journalled(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     before = len(window.activity_panel.row_texts())

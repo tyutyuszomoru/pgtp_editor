@@ -65,6 +65,71 @@ from pgtp_editor.sql.templates import (
     find_snippet,
 )
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
+from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names)
+    CLAIMED_NOT_UNDO_REDO,
+    EDITOR_UNDO_REDO_CHORDS,
+    REDO,
+    SUPPRESSED,
+    UNDO,
+)
+
+# The three operation names are re-exported deliberately: a surface imports the
+# matcher and the answers it can return from ONE module, and never spells a
+# chord out for itself.
+
+
+# -- the one undo/redo chord matcher every editing surface calls (DEC-014) ----
+#
+# DEC-014, verbatim: *"For every chord `RESERVED_SEQUENCES` reserves because an
+# editor answers it, every editing surface states its answer."* The set is
+# therefore **fixed** and this function takes **no per-surface parameter** -- the
+# rejected alternative (option B, a per-surface chord list) was rejected because
+# per-surface variation is how BUG-053 happened.
+#
+# It **classifies** -- undo, redo, or claimed-but-neither -- and deliberately
+# never returns a bare boolean. DEC-014 spells out why: a caller that gets
+# "yes, an undo/redo chord" and re-derives which one is how a redo silently
+# becomes an undo. Only the MATCHING is shared here; the ANSWER stays per
+# surface, because the answers genuinely differ (own undo stack / a stated
+# refusal on a read-only buffer / re-emission into the project's snapshot
+# history), and four sites hand-repeating the match is what made this the fourth
+# Ctrl+Z-family bug (BUG-048, BUG-049, BUG-053, BUG-056).
+#
+# Parsed from the registry's chord strings so the set has exactly one source. A
+# QKeySequence spelling is turned into the (key, modifiers) pair a QKeyEvent
+# carries; nothing here consults Qt's platform-dependent StandardKey table,
+# which is the whole point (DEC-015: *"an operation's chord is bound by this
+# app, not inherited from Qt's platform table"*).
+def _chord_combinations() -> dict[tuple[int, Qt.KeyboardModifier], str]:
+    table: dict[tuple[int, Qt.KeyboardModifier], str] = {}
+    for sequence, operation in EDITOR_UNDO_REDO_CHORDS.items():
+        combination = QKeySequence(sequence)[0]
+        table[(combination.key(), combination.keyboardModifiers())] = operation
+    return table
+
+
+_UNDO_REDO_COMBINATIONS = _chord_combinations()
+
+
+def classify_undo_redo_chord(event) -> str | None:
+    """`UNDO`, `REDO`, `CLAIMED_NOT_UNDO_REDO`, `SUPPRESSED`, or None.
+
+    **Any non-None answer must be consumed by the caller**, including the two
+    that run no operation. Neither is an "ignore me": letting the key fall
+    through hands it to Qt, whose compiled binding table is per-platform, and
+    then the app has two different keyboards.
+
+    - `CLAIMED_NOT_UNDO_REDO` -- `Ctrl+Shift+Z`, which Qt binds as
+      `StandardKey.Redo` under `KB_Win | KB_X11` (BUG-056 read both schemes).
+      DEC-015 freed it from redo, so every surface must actively refuse Qt's
+      answer; FQ-034 will bind shrink-selection there.
+    - `SUPPRESSED` -- `Alt+Backspace` / `Alt+Shift+Backspace`, which Qt binds as
+      native Undo/Redo under `KB_Win` **only**. Suppressed on every platform, per
+      the owner's rule that a chord means the same thing on Windows and Linux or
+      is not bound at all.
+    """
+    return _UNDO_REDO_COMBINATIONS.get((event.key(), event.modifiers()))
+
 
 # Keyword lists kept as Qt-free module constants (unit-tested for existence /
 # non-triviality); the highlighter consumes them below.
@@ -943,6 +1008,17 @@ class CodeEditorDialog(QDialog):
             self._editor.select_enclosing_brackets
         )
 
+        # The reserved undo/redo chord set, stated here too (DEC-014's fixed
+        # set: *every* editing surface states its answer, and this dialog hosts
+        # a full CodeEditor). Nothing can steal these keys from a modal -- no
+        # window `QShortcut` reaches it -- so `Ctrl+Z`/`Ctrl+Y` would have worked
+        # natively on Windows and `Ctrl+Y` would have been dead on Linux, which
+        # is exactly the divergence BUG-056 measured in the Sandbox SQL Console.
+        # DEC-014 accepted the uniformity cost here knowingly; the part that is
+        # NOT cosmetic is `Ctrl+Shift+Z`, which Qt answers with a native redo on
+        # both schemes and which DEC-015 freed from redo.
+        self._editor.installEventFilter(self)
+
         # Open at 80% of the host (XML editor) window so there's room to work.
         self.setMinimumSize(480, 320)
         if parent is not None:
@@ -954,6 +1030,31 @@ class CodeEditorDialog(QDialog):
                         int(ref_size.width() * 0.8),
                         int(ref_size.height() * 0.8),
                     )
+
+    def eventFilter(self, obj, event) -> bool:
+        """The dialog's stated answer to the reserved undo/redo chords.
+
+        Same two halves as every other surface (claim the `ShortcutOverride`,
+        answer the `KeyPress`), routed into this editor's own native stack --
+        the dialog holds no snapshot history.
+        """
+        if obj is self._editor and event.type() in (
+            QEvent.Type.ShortcutOverride,
+            QEvent.Type.KeyPress,
+        ):
+            operation = classify_undo_redo_chord(event)
+            if operation is not None:
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    event.accept()
+                elif operation == UNDO:
+                    self._editor.undo()
+                elif operation == REDO:
+                    self._editor.redo()
+                # else: the two answers that run nothing -- Ctrl+Shift+Z
+                # (DEC-015) and the suppressed Alt+Backspace pair. Consumed so
+                # Qt's own platform-conditional handling cannot answer instead.
+                return True
+        return super().eventFilter(obj, event)
 
     def set_code(self, text: str) -> None:
         self._editor.setPlainText(text)

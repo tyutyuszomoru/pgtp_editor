@@ -737,17 +737,23 @@ def test_a_draft_tabs_ctrl_z_undoes_its_own_edit(qtbot):
 
     assert tab.toPlainText() == "<Page/>"
 
-    # ...and Ctrl+Y puts it back, as does the second redo chord.
+    # ...and Ctrl+Y puts it back. It is redo's ONE spelling (DEC-015: "Redo is
+    # always, on all systems Ctrl+Y").
     _press(tab.editor, Qt.Key.Key_Y)
     assert tab.toPlainText() == "<Page/><Extra/>"
     _press(tab.editor, Qt.Key.Key_Z)
     assert tab.toPlainText() == "<Page/>"
+
+    # Ctrl+Shift+Z is NOT a second redo chord any more — and it is still consumed
+    # here, which is the load-bearing half: Qt binds it as native
+    # `StandardKey.Redo` under `KB_Win | KB_X11`, so an editor that let it fall
+    # through would redo on both platforms regardless of the reassignment.
     _press(
         tab.editor,
         Qt.Key.Key_Z,
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
     )
-    assert tab.toPlainText() == "<Page/><Extra/>"
+    assert tab.toPlainText() == "<Page/>"
 
 
 def test_every_draft_gets_its_own_wiring(qtbot):

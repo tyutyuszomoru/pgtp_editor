@@ -70,6 +70,11 @@ from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
     _FOLD_GLYPH_WIDTH,
     GutterBookmarkFoldMixin,
 )
+from pgtp_editor.ui.code_editor import (
+    REDO,
+    UNDO,
+    classify_undo_redo_chord,
+)
 from pgtp_editor.ui.event_body import event_body_line_ranges
 from pgtp_editor.ui.format_settings import current_xml_config
 from pgtp_editor.xmlfmt import format_xml_selection
@@ -1193,25 +1198,41 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
             self.read_only_edit_attempted.emit()
             return
 
-        # Route Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z to the document-level snapshot
-        # undo/redo (MainWindow) rather than QPlainTextEdit's native char-level
-        # undo, which would otherwise win while the editor has focus (C1).
-        # Consume the key here so the coexisting window QShortcut does not also
-        # fire (no double-undo).
-        mods = event.modifiers()
-        ctrl = Qt.KeyboardModifier.ControlModifier
-        shift = Qt.KeyboardModifier.ShiftModifier
-        if mods == ctrl and event.key() == Qt.Key.Key_Z:
+        # Route Ctrl+Z / Ctrl+Y to the document-level snapshot undo/redo
+        # (MainWindow) rather than QPlainTextEdit's native char-level undo,
+        # which would otherwise win while the editor has focus (C1). Consume the
+        # key here so the coexisting window QShortcut does not also fire (no
+        # double-undo).
+        #
+        # The chord set and the classification come from the ONE matcher every
+        # editing surface calls (DEC-014's fixed set, `code_editor`); this
+        # surface must not spell the chords out for itself.
+        operation = classify_undo_redo_chord(event)
+        if operation == UNDO:
             self.undo_requested.emit()
             event.accept()
             return
-        if (mods == ctrl and event.key() == Qt.Key.Key_Y) or (
-            mods == (ctrl | shift) and event.key() == Qt.Key.Key_Z
-        ):
+        if operation == REDO:
             self.redo_requested.emit()
             event.accept()
             return
+        if operation is not None:
+            # The reserved chords that answer NO operation, consumed rather than
+            # passed on -- which is the whole behaviour, because Qt would answer
+            # them itself and differently per platform:
+            #   Ctrl+Shift+Z -- freed from redo by DEC-015 ("Redo is always, on
+            #     all systems Ctrl+Y"). Qt binds it as native Redo under
+            #     `KB_Win | KB_X11`, so merely dropping the old redo branch would
+            #     have left Qt redoing anyway. FQ-034's shrink-selection lands
+            #     here.
+            #   Alt+Backspace / Alt+Shift+Backspace -- suppressed app-wide, so
+            #     the keyboard is identical on both systems (Qt binds them
+            #     `KB_Win` only).
+            event.accept()
+            return
 
+        mods = event.modifiers()
+        ctrl = Qt.KeyboardModifier.ControlModifier
         if mods == ctrl and event.key() == Qt.Key.Key_Space:
             self._show_attribute_completions()
             event.accept()

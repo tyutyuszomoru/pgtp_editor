@@ -29,7 +29,12 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.code_editor import (
+    REDO,
+    UNDO,
+    CodeEditor,
+    classify_undo_redo_chord,
+)
 from pgtp_editor.ui.ddl_buffer_panel import resolve_edit_target
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
@@ -141,7 +146,8 @@ class EditorPanel(QWidget):
                 return span
         return None
 
-    #: Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, claimed AND answered here (BUG-048).
+    #: The reserved undo/redo chord set (`EDITOR_UNDO_REDO_CHORDS`), claimed AND
+    #: answered here (BUG-048).
     #: Shaped after `DdlObjectEditorPanel.eventFilter`'s §18.5 carve-out 1, for
     #: the same hazard at the sibling site nobody filtered: a read-only
     #: `QPlainTextEdit` does not claim the `ShortcutOverride` for undo/redo, so
@@ -153,30 +159,29 @@ class EditorPanel(QWidget):
     #: state the reason (FQ-023) rather than to leave a dead key.
     _UNDO_REDO_REFUSAL = "this buffer is read only — there is nothing to undo here"
 
-    def _is_undo_redo_chord(self, event) -> bool:
-        ctrl = Qt.KeyboardModifier.ControlModifier
-        shift = Qt.KeyboardModifier.ShiftModifier
-        mods = event.modifiers()
-        key = event.key()
-        if mods == ctrl and key in (Qt.Key.Key_Z, Qt.Key.Key_Y):
-            return True
-        # Ctrl+Shift+Z is the second redo chord (BUG-050).
-        return mods == (ctrl | shift) and key == Qt.Key.Key_Z
-
     def eventFilter(self, obj, event) -> bool:
-        if (
-            obj is self.editor
+        operation = (
+            classify_undo_redo_chord(event)
+            if obj is self.editor
             and event.type()
             in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
-            and self._is_undo_redo_chord(event)
-        ):
+            else None
+        )
+        if operation is not None:
             if event.type() == QEvent.Type.ShortcutOverride:
                 # Claiming the sequence is what stops the window shortcut;
                 # answering the KeyPress is what stops the silence. Both halves
                 # are required — writing only the second changes nothing.
                 event.accept()
-            else:
+            elif operation in (UNDO, REDO):
                 self.editor.report_refusal(self._UNDO_REDO_REFUSAL)
+            # else: `Ctrl+Shift+Z` (freed from redo by DEC-015) and the
+            # `Alt+Backspace` pair (suppressed app-wide so the keyboard is
+            # identical on both platforms). Both are claimed here for the same
+            # reason as everywhere else — Qt would otherwise answer them itself —
+            # but the read-only refusal above must NOT be stated for them: none
+            # of them asks for an undo, so answering "nothing to undo here" would
+            # be a wrong reason, which is worse than none.
             return True
         if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
             menu = self._build_context_menu_at(event.pos())

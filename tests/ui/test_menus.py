@@ -180,9 +180,16 @@ def test_history_menu_contents_and_order(qtbot):
     menu = find_top_menu(window, "History")
     # History… FIRST: the owner's ordering, on the reasoning that "everyone uses
     # Ctrl+Z/Ctrl+Y anyway", so the entry with no shortcut leads.
-    assert action_labels(menu) == ["History…", "Undo", "Redo"]
-    assert find_action(menu, "Undo") is window._undo_action
-    assert find_action(menu, "Redo") is window._redo_action
+    # The two step commands are named for their PROJECT scope (BUG-064): they
+    # mean "undo the project, wherever you are", which is a different command
+    # from the one Ctrl+Z drives in the focused surface.
+    assert action_labels(menu) == [
+        "History…",
+        "Undo Project Edit",
+        "Redo Project Edit",
+    ]
+    assert find_action(menu, "Undo Project Edit") is window._undo_action
+    assert find_action(menu, "Redo Project Edit") is window._redo_action
     assert find_action(menu, "History…") is window._history_action
 
 

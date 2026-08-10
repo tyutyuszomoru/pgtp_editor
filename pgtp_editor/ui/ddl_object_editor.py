@@ -85,7 +85,12 @@ from pgtp_editor.sql.caret_context import (
     resolve_caret_context,
 )
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
-from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.code_editor import (
+    REDO,
+    UNDO,
+    CodeEditor,
+    classify_undo_redo_chord,
+)
 from pgtp_editor.ui.format_settings import current_sql_config
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
 from pgtp_editor.ui.expand_select_seam import expand_select_expansion
@@ -799,10 +804,13 @@ class DdlObjectEditorPanel(
         # fails is key delivery to a widget that was never `show()`n, so the
         # test must send the key at the top level's `windowHandle()`), and the
         # `CodeEditorDialog` Ctrl+S/Ctrl+W double-hosting it cited as precedent
-        # was itself removed by BUG-046. The sibling `SqlConsolePanel` already
-        # ships this exact gesture with the QShortcut alone -- same scope, same
-        # selection gate, no `eventFilter` -- so this is the shape that already
-        # works, not a new one.
+        # was itself removed by BUG-046. The sibling `SqlConsolePanel` ships this
+        # exact gesture the same way -- one `QShortcut` as the only keyboard
+        # host, same scope, same selection gate, and **no `Ctrl+Alt+F` branch in
+        # its `eventFilter` either** -- so this is the shape that already works,
+        # not a new one. (It also ships a click-only context-menu item, as this
+        # tab does, since BUG-063; the point being made here is about the
+        # keyboard host, which is single on both surfaces.)
         #
         # A consequence worth stating: the deleted branch was unconditional, so
         # a selection-less Ctrl+Alt+F used to reach `format_selection`. It now
@@ -899,28 +907,32 @@ class DdlObjectEditorPanel(
             QEvent.Type.KeyPress,
         ):
             key = event.key()
-            mods = event.modifiers()
-            ctrl = Qt.KeyboardModifier.ControlModifier
-            shift = Qt.KeyboardModifier.ShiftModifier
-            is_undo = key == Qt.Key.Key_Z and mods == ctrl
-            # Ctrl+Shift+Z is the second redo chord (BUG-050), reserved
-            # app-wide in `shortcut_registry.RESERVED_SEQUENCES`. The sibling
-            # `DdlEditorPanel._is_undo_redo_chord` matches the same three
-            # chords, but only the MATCHING is shared: that buffer is
-            # synthesized and read-only, so it refuses with a reason, whereas
-            # this tab is editable and must route the chord into its own redo
-            # stack exactly as Ctrl+Y does.
-            is_redo = (key == Qt.Key.Key_Y and mods == ctrl) or (
-                key == Qt.Key.Key_Z and mods == (ctrl | shift)
-            )
-            if is_undo or is_redo:
+            # DEC-014's fixed set, matched by the ONE shared matcher: only the
+            # MATCHING is shared, never the answer. The sibling
+            # `DdlEditorPanel.eventFilter` matches the same chords and answers
+            # differently -- its buffer is synthesized and read-only, so it
+            # refuses with a stated reason, whereas this tab is editable and
+            # routes undo/redo into its own native stack.
+            operation = classify_undo_redo_chord(event)
+            if operation is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     # Claim the sequence so Qt never also fires the
                     # window-level Ctrl+Z/Ctrl+Y QShortcut for this key press
                     # (no double-undo, no leak into the Raw XML buffer).
                     event.accept()
-                else:
-                    self.editor.undo() if is_undo else self.editor.redo()
+                elif operation == UNDO:
+                    self.editor.undo()
+                elif operation == REDO:
+                    self.editor.redo()
+                # else: the two answers that run no operation, and in both cases
+                # the claim is load-bearing rather than tidiness. Ctrl+Shift+Z
+                # (freed from redo by DEC-015): Qt carries it as native
+                # `StandardKey.Redo` under `KB_Win | KB_X11`, so letting it fall
+                # through would redo on both platforms and silently defeat the
+                # reassignment -- FQ-034's shrink-selection will answer it.
+                # Alt+Backspace / Alt+Shift+Backspace: Qt binds them `KB_Win`
+                # only, so suppressing them here is what keeps the keyboard
+                # identical on both systems.
                 return True
             # NOTE (BUG-054/DEC-012): there is deliberately NO Ctrl+Alt+F
             # branch here. Format Selection has a context-menu command, so it

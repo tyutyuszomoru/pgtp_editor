@@ -23,8 +23,8 @@ The "session" is an opaque sentinel: the panel must hand it straight to
 sandbox-only boundary (a `SandboxSession`, never `ConnectionParams`).
 """
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent, QKeySequence
 from PySide6.QtWidgets import QSpinBox, QSplitter
 
 from pgtp_editor.db.sandbox_query import QueryError, QueryOutcome, QueryResult
@@ -573,6 +573,151 @@ def test_format_selection_requires_a_selection_and_reindents_in_place(qtbot):
     console.format_selection()
 
     assert "select 1" in console.sql_text
+
+
+# -- BUG-063: Format Selection's click-only command form --------------------
+
+
+def test_the_context_menu_has_a_format_selection_entry(qtbot):
+    """BUG-063: the console had the chord and no command. DEC-012 rests on this
+    gesture HAVING a command form — that is why it sits under the one-keyboard-
+    host rule rather than in DEC-009's menu-less family — and the console was the
+    one surface where the command did not exist.
+
+    `_build_context_menu` is driven directly and never `exec`ed (no test may
+    reach a real modal `QMenu.exec`), which is the DDL object tab's shape."""
+    console, _query = make_console(qtbot)
+
+    labels = [action.text() for action in console._build_context_menu().actions()]
+
+    assert "Format Selection" in labels
+    # Nothing else was added: the console IS the run target, so there is no
+    # `Run in Sandbox Console` bridge, and FQ-026 keeps apply gestures off this
+    # kind of menu.
+    assert "Run in Sandbox Console" not in labels
+    assert not [label for label in labels if label.startswith("Apply")]
+
+
+def test_the_context_menu_entry_follows_the_chords_selection_gate(qtbot):
+    console, _query = make_console(qtbot)
+    console.set_sql("select 1\nfrom t\n")
+
+    def format_action(menu):
+        return next(a for a in menu.actions() if a.text() == "Format Selection")
+
+    assert format_action(console._build_context_menu()).isEnabled() is False
+
+    cursor = console.editor.textCursor()
+    cursor.select(cursor.SelectionType.Document)
+    console.editor.setTextCursor(cursor)
+    action = format_action(console._build_context_menu())
+
+    assert action.isEnabled() is True
+    action.trigger()
+    assert "select 1" in console.sql_text
+
+
+def test_the_menu_entry_is_click_only_and_hosts_no_shortcut(qtbot):
+    """DEC-012 permits exactly ONE keyboard host per gesture, and the
+    `QShortcut` in `__init__` is it. A `setShortcut` on this action would
+    re-create the double-hosting the ruling exists to forbid — and it is the
+    easiest thing for a later edit to break silently, hence the guard."""
+    console, _query = make_console(qtbot)
+
+    action = next(
+        a
+        for a in console._build_context_menu().actions()
+        if a.text() == "Format Selection"
+    )
+
+    assert action.shortcut().isEmpty()
+    assert console._format_shortcut.key() == QKeySequence("Ctrl+Alt+F")
+
+
+# -- BUG-056: the undo/redo chords are stated here, not inherited from Qt ----
+
+
+def _deliver(console, kind, key, mods):
+    event = QKeyEvent(kind, key, mods)
+    return console.eventFilter(console.editor, event), event
+
+
+_CTRL = Qt.KeyboardModifier.ControlModifier
+_CTRL_SHIFT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+_ALT = Qt.KeyboardModifier.AltModifier
+
+
+def test_the_console_claims_the_shortcut_override_for_the_reserved_chords(qtbot):
+    """The half that stops the window-level shortcut. Without it `Ctrl+Y` on
+    Linux fell through to `MainWindow`'s window `Ctrl+Y`, which returns at once
+    because this is not the Raw XML tab (BUG-048's scoping) — no redo, no
+    refusal, no journal line, while the same source redid the buffer on
+    Windows."""
+    console, _query = make_console(qtbot)
+
+    for key, mods in (
+        (Qt.Key.Key_Z, _CTRL),
+        (Qt.Key.Key_Y, _CTRL),
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
+        (Qt.Key.Key_Backspace, _ALT),
+    ):
+        consumed, event = _deliver(console, QEvent.Type.ShortcutOverride, key, mods)
+        assert consumed is True, (key, mods)
+        assert event.isAccepted() is True
+
+
+def test_the_console_answers_undo_and_redo_from_its_own_stack(qtbot):
+    """The other half: claiming without answering leaves the key dead. The
+    console buffer is editable (unlike the DDL Explorer's), so the answer is its
+    own undo stack rather than a refusal. Asserted through the FILTER — the
+    offscreen platform runs Qt's Windows scheme, where the native path would pass
+    for the wrong reason."""
+    console, _query = make_console(qtbot)
+    console.editor.setPlainText("select 1")
+    console.editor.insertPlainText(" -- note")
+    typed = console.sql_text
+
+    consumed, _ = _deliver(console, QEvent.Type.KeyPress, Qt.Key.Key_Z, _CTRL)
+    assert consumed is True
+    assert console.sql_text != typed
+
+    consumed, _ = _deliver(console, QEvent.Type.KeyPress, Qt.Key.Key_Y, _CTRL)
+    assert consumed is True
+    assert console.sql_text == typed
+
+
+def test_the_console_claims_the_non_operation_chords_without_redoing(qtbot):
+    """`Ctrl+Shift+Z` is no longer redo (DEC-015) and the `Alt+Backspace` pair is
+    suppressed so the keyboard is identical on both systems. All three are
+    consumed and none of them touches the buffer."""
+    console, _query = make_console(qtbot)
+    console.editor.setPlainText("select 1")
+    console.editor.insertPlainText(" -- note")
+    _deliver(console, QEvent.Type.KeyPress, Qt.Key.Key_Z, _CTRL)
+    undone = console.sql_text
+
+    for key, mods in (
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
+        (Qt.Key.Key_Backspace, _ALT),
+        (Qt.Key.Key_Backspace, _ALT | Qt.KeyboardModifier.ShiftModifier),
+    ):
+        consumed, _ = _deliver(console, QEvent.Type.KeyPress, key, mods)
+        assert consumed is True, (key, mods)
+        assert console.sql_text == undone
+
+
+def test_the_console_filter_does_not_claim_unrelated_keys(qtbot):
+    """The filter must not become a key sink -- the results table and the
+    completion popup keep their own keys, and anything else falls through."""
+    console, _query = make_console(qtbot)
+
+    for key, mods in (
+        (Qt.Key.Key_Z, Qt.KeyboardModifier.NoModifier),
+        (Qt.Key.Key_A, _CTRL),
+        (Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier),
+    ):
+        consumed, _ = _deliver(console, QEvent.Type.KeyPress, key, mods)
+        assert consumed is False, (key, mods)
 
 
 # -- §27's Ctrl+Return = Run -----------------------------------------------

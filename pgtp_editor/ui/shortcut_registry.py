@@ -210,16 +210,65 @@ RESERVED_SEQUENCES: dict[str, str] = {
               "Deployment menu click (§27)",
     "Ctrl+Shift+S": "deliberately unbound app-wide — every save is a named "
                     "Deployment menu click (§27)",
-    # §27: window-scoped QShortcuts for the project snapshot history, with the
-    # Edit-XSD / DDL-object-tab carve-out routing them to the text editor. Not
-    # menu actions, so the dialog cannot clear them.
-    "Ctrl+Z": "project history Undo — a window-scoped shortcut, not a menu "
-              "action (§27)",
-    "Ctrl+Y": "project history Redo — a window-scoped shortcut, not a menu "
-              "action (§27)",
-    "Ctrl+Shift+Z": "project history Redo, the second chord — answered inside "
-                    "every XML editor's own key handling, so a command moved "
-                    "here would only work while no editor has focus (§27)",
+    # §27: undo and redo. Two DIFFERENT operations (DEC-014), so two rows with
+    # two reasons -- never one "the undo/redo chords" statement. Each is a
+    # window-scoped QShortcut *plus* every editing surface's own key handling,
+    # so neither is a menu action the dialog could clear. The project-wide twin
+    # on the History menu is a DIFFERENT command with a different scope
+    # (BUG-064) and it IS rebindable, which each reason names so the user is
+    # not left thinking this row is the one that moves it.
+    "Ctrl+Z": "undo in the surface that has focus — a window-scoped shortcut "
+              "plus every editor's own key handling, not a menu action. The "
+              "project-wide command is History ▸ Undo Project Edit, which IS "
+              "rebindable (§27)",
+    "Ctrl+Y": "redo in the surface that has focus — bound by this app on every "
+              "platform (DEC-015), as a window-scoped shortcut plus every "
+              "editor's own key handling, not a menu action. The project-wide "
+              "command is History ▸ Redo Project Edit, which IS rebindable "
+              "(§27)",
+    # DEC-015 freed this chord from redo: redo is `Ctrl+Y` and nothing else,
+    # everywhere. The reservation SURVIVES the change of meaning, and for a
+    # sharper reason than before -- Qt's compiled binding table carries
+    # Ctrl+Shift+Z as native `StandardKey.Redo` under `KB_Win | KB_X11`, so
+    # every editing surface must actively intercept it to keep Qt's redo from
+    # firing (BUG-056 measured this on both schemes). A command moved here
+    # would therefore be swallowed by whichever editor has focus.
+    "Ctrl+Shift+Z": "claimed and answered inside every text editor's own key "
+                    "handling — no longer a redo chord (DEC-015), but still "
+                    "intercepted there so Qt's native redo cannot fire, so a "
+                    "command moved here would be swallowed by the focused "
+                    "editor (§27)",
+    # Qt's legacy Windows-scheme undo/redo pair: `Alt+Backspace` = Undo,
+    # `Alt+Shift+Backspace` = Redo, both carrying `KB_Win` **only** in the
+    # compiled binding table (BUG-056 read it out of `libQt6Gui`). So Qt answers
+    # them inside every QPlainTextEdit on Windows and not at all on X11.
+    #
+    # **DECIDED — SUPPRESSED ON BOTH PLATFORMS (the call DEC-014 left open).**
+    # Owner rule (2026-08-10): *"Keybindings must be the same on both systems"*
+    # — a chord means the same thing on Windows and Linux, or it is not bound at
+    # all. That rules out the status quo, because leaving these to Qt is exactly
+    # where the asymmetry comes from. Two legal outcomes remained: bind them
+    # explicitly everywhere, or suppress them everywhere. **Suppress.** They are
+    # legacy Windows-only spellings with no discoverability in this app — in no
+    # menu, no manual page, no shortcut table — so binding them on Linux would be
+    # *inventing* a keybinding rather than honouring a convention, and DEC-015
+    # already settled one chord per operation. Suppressing costs a chord nobody
+    # looks for; leaving it costs two different keyboards on the owner's two
+    # machines.
+    #
+    # They are therefore in `EDITOR_UNDO_REDO_CHORDS` below as `SUPPRESSED`:
+    # every editing surface intercepts them and runs nothing, which is what makes
+    # "dead" true on Windows too rather than only on Linux. They stay reserved
+    # here for the consequence of that: a menu command retargeted onto one would
+    # be swallowed by whichever editor has focus (BUG-050's defect).
+    "Alt+Backspace": "deliberately dead app-wide — Qt binds it as native Undo "
+                     "on the Windows keyboard scheme only, so every editor "
+                     "suppresses it to keep the keyboard identical on both "
+                     "platforms (§27)",
+    "Alt+Shift+Backspace": "deliberately dead app-wide — Qt binds it as native "
+                           "Redo on the Windows keyboard scheme only, so every "
+                           "editor suppresses it to keep the keyboard identical "
+                           "on both platforms (§27)",
     # §27/§15, FQ-016/FQ-017: six per-tab `WidgetWithChildrenShortcut` pairs
     # (`find_replace_bar.install_focus_shortcuts`) plus the caption panel's own
     # pair. A window-level menu action on either key would be *ambiguous*
@@ -262,6 +311,56 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # entry §7 pins as never filtered out of any launch mode.
     "F1": "Manual — pinned (§27)",
 }
+
+# -- the chords every editing surface must answer (DEC-014) -------------------
+#
+# DEC-014's invariant, verbatim: *"For every chord `RESERVED_SEQUENCES` reserves
+# because an editor answers it, every editing surface states its answer."* This
+# table IS that set, sourced from the reservations above rather than written out
+# again as a literal triple somewhere in the widget code -- so a surface, the
+# dialog's greyed row and the reason the user reads all come from one place.
+#
+# It maps chord -> **operation**, never chord -> True. `Ctrl+Z` and `Ctrl+Y` are
+# different operations, and DEC-014 forbids a bare "is this an undo/redo chord"
+# boolean for a stated reason: a caller that trusts one and re-derives the
+# operation itself is how a redo becomes an undo, silently, with the chord still
+# claimed so nothing looks broken.
+#
+# Two of the four answers run no operation, and neither is a placeholder -- in
+# both cases the interception is the behaviour, because Qt would otherwise answer
+# the chord itself and the app's keyboard would differ per platform:
+#
+#   `CLAIMED_NOT_UNDO_REDO` -- `Ctrl+Shift+Z`. Reserved, intercepted, and waiting
+#       for FQ-034's shrink-selection. Qt binds it as native Redo under
+#       `KB_Win | KB_X11`, so DEC-015's "redo is always Ctrl+Y" is true only
+#       while every surface refuses it.
+#   `SUPPRESSED` -- `Alt+Backspace` / `Alt+Shift+Backspace`. Deliberately dead
+#       app-wide (see their rows above). Qt binds them `KB_Win` only, so
+#       suppressing them is what makes the keyboard identical on both systems,
+#       per the owner's rule that a chord means the same thing on Windows and
+#       Linux or is not bound at all.
+#
+# **The rule for adding a row here:** a chord Qt answers on one platform's scheme
+# and not the other must be either bound by this app on both or suppressed on
+# both -- never left to Qt. The test suite cannot check this (the offscreen
+# platform runs Qt's *Windows* scheme, so a Linux-only dead key is invisible to
+# it); reason from the binding table.
+#
+# The Qt-side matcher that consumes this lives in `ui/code_editor.py`
+# (`classify_undo_redo_chord`) -- this module stays Qt-free.
+UNDO = "undo"
+REDO = "redo"
+CLAIMED_NOT_UNDO_REDO = "claimed"
+SUPPRESSED = "suppressed"
+
+EDITOR_UNDO_REDO_CHORDS: dict[str, str] = {
+    "Ctrl+Z": UNDO,
+    "Ctrl+Y": REDO,
+    "Ctrl+Shift+Z": CLAIMED_NOT_UNDO_REDO,
+    "Alt+Backspace": SUPPRESSED,
+    "Alt+Shift+Backspace": SUPPRESSED,
+}
+
 
 RESERVED_COMMAND_IDS: dict[str, str] = {
     "help.manual": "Manual is pinned to F1 (§27) and is the one command no "
