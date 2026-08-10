@@ -110,7 +110,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QListWidgetItem
 
 from pgtp_editor.db.ddl_project import (
@@ -130,11 +130,44 @@ from pgtp_editor.db.sandbox import (
     probe as sandbox_probe,
 )
 from pgtp_editor.ui import modals
+from pgtp_editor.ui.audit_router import SANDBOX_PREFIX
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
 from pgtp_editor.ui.ui_shell import UiShell
 
 _log = logging.getLogger(__name__)
+
+#: BUG-260810174919's provisioning narration, all three lines built off ONE
+#: stem. The prefix is imported from `audit_router` rather than re-typed: it is
+#: the token `classify` routes on, so a second spelling of it would silently
+#: mis-route (the reported wording `[sandbox]` lowercase is deliberately NOT
+#: adopted -- see the bug's own note; that would be a prefix rename touching
+#: classification, not a progress feature).
+_PROVISION_NARRATION_STEM = f"{SANDBOX_PREFIX} provision: "
+#: The row appended the moment provisioning is dispatched, so the Messages tab
+#: says something before the (slow) worker has anything to report.
+PROVISION_STARTED_LINE = f"{_PROVISION_NARRATION_STEM}started"
+#: How often the heartbeat row is rewritten, in milliseconds. The report asks
+#: for one dot per second.
+PROVISION_HEARTBEAT_MS = 1000
+#: Dots cycle rather than grow without bound: a provision that runs for three
+#: minutes would otherwise render a 180-character line. The report asks for an
+#: increasing count, which this gives -- it just restarts after ten.
+PROVISION_HEARTBEAT_DOT_CAP = 10
+#: `SandboxOperation.PROVISION`'s value, as a plain string. NOT imported: this
+#: lane may not import another collaborator (`tests/ui/test_collaborator_
+#: boundaries.py` enforces it), and cross-lane traffic here is exactly what that
+#: rule is about -- the result object arrives on a Qt signal, and reading its tag
+#: needs no type from the other lane. `SandboxOperation` is a `str` Enum, so the
+#: comparison holds against the enum member itself.
+PROVISION_OPERATION = "provision"
+
+
+def provision_heartbeat_line(ticks: int) -> str:
+    """The heartbeat row's text after `ticks` ticks (1-based), dots cycling at
+    `PROVISION_HEARTBEAT_DOT_CAP`."""
+    dots = (max(int(ticks), 1) - 1) % PROVISION_HEARTBEAT_DOT_CAP + 1
+    return _PROVISION_NARRATION_STEM + ("." * dots)
 
 
 def check_out_pgtp(folder: Path, source_path: Path) -> PgtpLink:
@@ -224,6 +257,26 @@ class DdlProjectController(QObject):
         #: states why provisioning is unavailable instead of showing dead
         #: buttons.
         self._sandbox_controller = sandbox_controller
+        #: BUG-260810174919's provisioning heartbeat: the live `QTimer` while a
+        #: New-Project provision is being narrated, None otherwise. "Non-None"
+        #: IS the "a heartbeat is running" predicate -- there is exactly one, and
+        #: the tick slot no-ops without it.
+        self._provision_timer: QTimer | None = None
+        #: The single Messages row the heartbeat rewrites in place, and how many
+        #: times it has been rewritten. Held as the item itself because
+        #: `AuditRouter` hands the very object it was given to the panel, so
+        #: `setText` on it animates one row instead of appending a new one per
+        #: second (the Messages tab is append-only and refuses removal).
+        self._provision_heartbeat_item: QListWidgetItem | None = None
+        self._provision_ticks = 0
+        # The heartbeat stops when the operation lands. The terminal
+        # `[Sandbox] provision: done.` / `... failed: ...` row stays the HOST's to
+        # author (`MainWindow._on_sandbox_operation_finished`, connected to this
+        # same signal first, so it appends after the dots row) -- one author for
+        # the terminal line, no double row.
+        finished = getattr(sandbox_controller, "operation_finished", None)
+        if finished is not None:
+            finished.connect(self._on_sandbox_operation_finished)
 
         #: Local DDL-versioning project state (spec §18.2) -- deliberately
         #: separate from the open `.pgtp`: a project here is a plain chosen
@@ -351,6 +404,23 @@ class DdlProjectController(QObject):
             self.create_project(dialog)
             if callable(on_ready):
                 on_ready()
+            elif self._folder is not None and self._settings is not None:
+                # BUG-260810174459: creation checked the attached `.pgtp` out and
+                # recorded the link (FQ-035/DEC-260810134914) but never loaded it,
+                # so the user attached a file and got an empty editor. Reuse
+                # `auto_open_linked_pgtp` -- the SAME loader Open Project uses
+                # (BUG-021) -- rather than adding a second load path, and under the
+                # same `on_ready` guard: when the caller supplied a continuation
+                # (e.g. `require_project`'s "Create..." choice) it has its own
+                # `.pgtp` to load next, and auto-opening here too would be the
+                # silent double-load BUG-021 guards against.
+                #
+                # It runs HERE rather than inside `create_project` for the journal
+                # ordering `create_project` documents: the project is already
+                # active, so the `[Project]` rows this may file (missing working
+                # copy, multiple candidates) survive the transition that would
+                # have wiped them (FQ-019/BUG-042).
+                self.auto_open_linked_pgtp(self._folder, self._settings)
 
         dialog.accepted.connect(handle)
         self._new_project_dialog = dialog
@@ -395,6 +465,17 @@ class DdlProjectController(QObject):
         # FQ-007: the sandbox step CREATES and provisions the sandbox database
         # now, rather than recording a name the user typed. Last, so a failed
         # sandbox never costs the user the project (§18's tier-2 degrade).
+        #
+        # BUG-260810174919: the narration starts BEFORE the dispatch, and on the
+        # same condition the host's provisioning step uses to decide whether it
+        # dispatches at all -- a sandbox-less project (blank sandbox group) is a
+        # perfectly good tier-2 project and must not be narrated as if a database
+        # were being built. Starting before the call also matters for the
+        # synchronous `_run_async` tests inject: with it, the whole operation
+        # completes inside `_provision_sandbox`, so a heartbeat started afterwards
+        # would have nothing left to stop it.
+        if settings.sandbox.host:
+            self.begin_provision_narration()
         self._provision_sandbox(dialog)
 
     def _check_out_attached_pgtp(self, dialog, folder: Path) -> "tuple[PgtpLink, str]":
@@ -450,6 +531,112 @@ class DdlProjectController(QObject):
         advisory = dialog.quality_advisory()
         if advisory:
             self._shell.audit.addItem(QListWidgetItem(f"[Project] {advisory}"))
+
+    # -- provisioning narration (BUG-260810174919) ---------------------------
+
+    def begin_provision_narration(self) -> None:
+        """Say that sandbox provisioning has started, and start the once-a-second
+        heartbeat that keeps saying it is still going.
+
+        **Why here, and why the Messages tab.** Provisioning creates a database,
+        snapshots a baseline, provisions, probes and installs `plpgsql_check` --
+        seconds to minutes against a real server -- and until now the run said
+        nothing at all until its single terminal line. That terminal line is a
+        `[Sandbox]` row, and `audit_router.py` routes `[Sandbox]` to the **bottom
+        Messages tab** (accumulated, and specifically NOT the journal, because
+        these rows are emitted across a project transition that replaces the
+        journal's display buffer). Progress about the same operation goes to the
+        same place, through the same prefix: no second destination, no new prefix.
+
+        **The rows are journalled only in the sense Messages is** -- accumulated
+        on the tab, not written into the Activity Log -- which is the honest
+        lifetime for a heartbeat: a burst of durable journal rows saying "." is
+        noise, while one Messages row that keeps its final state as history is
+        readable. That is achieved by rewriting **one** row in place rather than
+        appending per tick: the Messages tab is append-only and `takeItem`
+        refuses removal, so the animation has to be a `setText` on a held item.
+
+        **The rows carry NO item roles, i.e. they are unclickable** (§18.5
+        carve-out 6): narrative lines get the same treatment as `[SQL]` refusals
+        and the `[Find]` summary line. There is nothing to navigate to -- a
+        heartbeat has no source location -- and leaving roles unset by accident
+        is exactly what this sentence exists to prevent.
+
+        **Not worker progress.** `ui/async_task.py` has no progress channel and
+        `work()` runs on a thread pool that must not touch widgets, so the
+        heartbeat is a GUI-thread `QTimer` parented to this controller, started at
+        dispatch and stopped when `operation_finished` lands.
+        """
+        self.end_provision_narration()
+        self._shell.audit.addItem(QListWidgetItem(PROVISION_STARTED_LINE))
+        self._provision_heartbeat_item = None
+        self._provision_ticks = 0
+        timer = QTimer(self)
+        timer.setInterval(PROVISION_HEARTBEAT_MS)
+        # A named slot, never a lambda: under the offscreen test platform a real
+        # one-second clock is not something a test can wait on, so the tick has
+        # to be directly invokable.
+        timer.timeout.connect(self.tick_provision_narration)
+        self._provision_timer = timer
+        timer.start()
+
+    def tick_provision_narration(self) -> None:
+        """One heartbeat: rewrite the single progress row with one more dot.
+
+        No-ops when no heartbeat is running, which is what makes a late tick
+        harmless. The `setText` is wrapped for `RuntimeError` for BUG-043's
+        reason: the panel (or the item's C++ side) can be gone while a timer that
+        outlived its window is still firing, and raising out of a queued slot has
+        no caller to hand the exception to.
+        """
+        if self._provision_timer is None:
+            return
+        self._provision_ticks += 1
+        text = provision_heartbeat_line(self._provision_ticks)
+        try:
+            if self._provision_heartbeat_item is None:
+                item = QListWidgetItem(text)
+                self._shell.audit.addItem(item)
+                self._provision_heartbeat_item = item
+            else:
+                self._provision_heartbeat_item.setText(text)
+        except RuntimeError as exc:  # the panel/item went with its window
+            _log.debug("provision heartbeat: surface is gone (%s)", exc)
+            self.end_provision_narration()
+
+    def end_provision_narration(self) -> None:
+        """Stop the heartbeat and forget its row. Idempotent.
+
+        Deliberately writes **no** terminal line: `[Sandbox] provision: done.` /
+        `... failed: ...` already has exactly one author in the host's
+        `operation_finished` receiver, and adding a second here would double the
+        row. The dots row is left where it is and becomes history.
+        """
+        timer = self._provision_timer
+        self._provision_timer = None
+        self._provision_heartbeat_item = None
+        self._provision_ticks = 0
+        if timer is not None:
+            try:
+                timer.stop()
+                timer.deleteLater()
+            except RuntimeError as exc:  # already torn down with the window
+                _log.debug("provision heartbeat: timer is gone (%s)", exc)
+
+    def _on_sandbox_operation_finished(self, result) -> None:
+        """Stop the heartbeat when the provision it was narrating lands.
+
+        Gated on both "a heartbeat is running" and "this is a PROVISION": this
+        receiver sees every sandbox operation of every project, and a Check or an
+        Apply finishing mid-provision must not silence the run in progress.
+        Success and failure both arrive here -- the error path goes through the
+        same `_finish`/`operation_finished` -- so one stop point covers both.
+        """
+        if self._provision_timer is None:
+            return
+        if getattr(result, "operation", None) != PROVISION_OPERATION:
+            return
+        self.end_provision_narration()
 
     def open_project(self, on_ready=None) -> None:
         folder = modals.QFileDialog.getExistingDirectory(
@@ -588,6 +775,12 @@ class DdlProjectController(QObject):
         never forces it; closing itself always succeeds."""
         if self._folder is None:
             return
+        # BUG-260810174919: a provisioning heartbeat belongs to the project being
+        # provisioned. Nothing cancels the in-flight operation, but the ticking
+        # must not outlive the project -- a 1 s timer left rewriting a row on a
+        # panel that has been cleared (or a window that has gone) is BUG-043's
+        # defect class with a clock attached.
+        self.end_provision_narration()
         # BUG-042: everything narrated in here is emitted BEFORE
         # `project_changed` (it needs the `_folder`/`_settings` the lines below
         # clear), and FQ-019's journal replaces its display buffer on that

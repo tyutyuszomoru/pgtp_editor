@@ -35,6 +35,11 @@ from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.ui.sandbox_controller import MAINTENANCE_DATABASE
 
+from pgtp_editor.ui.ddl_project_controller import (
+    PROVISION_STARTED_LINE,
+    provision_heartbeat_line,
+)
+
 from ._sandbox_stubs import fake_session, stub_sandbox_provisioning, sync_run
 
 _NAME_RE = re.compile(r"^pgtp_sandbox_[a-z0-9_]{1,40}$")
@@ -523,3 +528,175 @@ def test_the_created_name_is_what_the_session_is_opened_on(qtbot, tmp_path):
 
     assert window.sandbox_controller.sandbox_params.database == created[0]
     assert window.sandbox_controller.session.params.database == created[0]
+
+
+# --- BUG-260810174919: the run narrates itself while it runs -----------------
+def _messages_rows(window):
+    """Just the Messages tab, which is where `[Sandbox]` rows are routed."""
+    panel = window.audit_panel
+    return [panel.item(i).text() for i in range(panel.count())]
+
+
+def _provision_rows(window):
+    return [row for row in _messages_rows(window) if row.startswith("[Sandbox] provision")]
+
+
+def _defer_provisioning(window):
+    """Hold the provisioning worker instead of running it, so the test can observe
+    the window BETWEEN dispatch and completion -- which is the whole point of a
+    progress heartbeat, and something `sync_run` collapses to nothing.
+
+    Returns a `finish(ok=True)` callable that lands the result the way
+    `run_async` would.
+    """
+    held = {}
+
+    def defer(fn, on_result, on_error=None):
+        held["fn"] = fn
+        held["on_result"] = on_result
+        held["on_error"] = on_error
+
+    window.sandbox_controller._run_async = defer
+
+    def finish(ok=True):
+        if ok:
+            held["on_result"](held["fn"]())
+        else:
+            held["on_error"](RuntimeError("server said no"))
+
+    return finish
+
+
+def test_provisioning_says_it_started_before_the_worker_lands(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    stub_sandbox_provisioning(window)
+    finish = _defer_provisioning(window)
+    dialog = _dialog(qtbot, window, tmp_path)
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert _provision_rows(window) == [PROVISION_STARTED_LINE]
+    assert window._ddl_project_ui._provision_timer is not None
+    assert window._ddl_project_ui._provision_timer.isActive()
+    finish()
+
+
+def test_each_tick_rewrites_one_row_rather_than_appending(qtbot, tmp_path):
+    """The heart of the bug: the Messages tab is append-only, so a naive dot per
+    second would spam N rows. One row animates."""
+    window = _window(qtbot, tmp_path)
+    stub_sandbox_provisioning(window)
+    finish = _defer_provisioning(window)
+    dialog = _dialog(qtbot, window, tmp_path)
+    window._ddl_project_ui.create_project(dialog)
+
+    window._ddl_project_ui.tick_provision_narration()
+    after_first = len(_messages_rows(window))
+    window._ddl_project_ui.tick_provision_narration()
+    window._ddl_project_ui.tick_provision_narration()
+
+    assert len(_messages_rows(window)) == after_first
+    assert _provision_rows(window) == [
+        PROVISION_STARTED_LINE,
+        "[Sandbox] provision: ...",
+    ]
+    finish()
+
+
+def test_the_dots_cycle_instead_of_growing_without_bound():
+    assert provision_heartbeat_line(1) == "[Sandbox] provision: ."
+    assert provision_heartbeat_line(10) == "[Sandbox] provision: " + "." * 10
+    assert provision_heartbeat_line(11) == "[Sandbox] provision: ."
+
+
+def test_completion_stops_the_heartbeat_and_leaves_one_terminal_row(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    stub_sandbox_provisioning(window)
+    finish = _defer_provisioning(window)
+    dialog = _dialog(qtbot, window, tmp_path)
+    window._ddl_project_ui.create_project(dialog)
+    window._ddl_project_ui.tick_provision_narration()
+
+    finish()
+
+    assert window._ddl_project_ui._provision_timer is None
+    # Exactly ONE terminal row, and the host is still its only author: the
+    # narration adds `started` + the animated dots row and nothing else. (The
+    # reason text varies -- a project with no quality target provisions from an
+    # empty baseline and says so -- so the assertion is on the row's identity,
+    # not its wording.)
+    rows = _provision_rows(window)
+    assert rows[:2] == [PROVISION_STARTED_LINE, provision_heartbeat_line(1)]
+    assert len(rows) == 3
+    # a late tick after the stop must change nothing
+    rows = _messages_rows(window)
+    window._ddl_project_ui.tick_provision_narration()
+    assert _messages_rows(window) == rows
+
+
+def test_a_failed_provision_stops_the_heartbeat_too(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    stub_sandbox_provisioning(window)
+    finish = _defer_provisioning(window)
+    dialog = _dialog(qtbot, window, tmp_path)
+    window._ddl_project_ui.create_project(dialog)
+    window._ddl_project_ui.tick_provision_narration()
+
+    finish(ok=False)
+
+    assert window._ddl_project_ui._provision_timer is None
+    assert any("provision failed" in row for row in _provision_rows(window))
+
+
+def test_a_project_with_no_sandbox_is_never_narrated(qtbot, tmp_path):
+    """The blank sandbox group provisions nothing, so there is nothing to report
+    progress about -- and a tier-2 project must not read as a failed one."""
+    window = _window(qtbot, tmp_path)
+    stub_sandbox_provisioning(window)
+    dialog = _dialog(qtbot, window, tmp_path, host="")
+
+    window._ddl_project_ui.create_project(dialog)
+
+    assert _provision_rows(window) == []
+    assert window._ddl_project_ui._provision_timer is None
+
+
+def test_closing_the_project_stops_a_running_heartbeat(qtbot, tmp_path):
+    """BUG-043's defect class with a clock attached: a 1 s timer must not outlive
+    the project whose panel it rewrites."""
+    window = _window(qtbot, tmp_path)
+    stub_sandbox_provisioning(window)
+    finish = _defer_provisioning(window)
+    dialog = _dialog(qtbot, window, tmp_path)
+    window._ddl_project_ui.create_project(dialog)
+    assert window._ddl_project_ui._provision_timer is not None
+
+    window._ddl_project_ui.close_project()
+
+    assert window._ddl_project_ui._provision_timer is None
+    finish()
+
+
+def test_the_progress_rows_carry_no_roles_so_they_are_unclickable(qtbot, tmp_path):
+    """§18.5 carve-out 6: narrative lines are not navigable -- a heartbeat has no
+    source location to jump to."""
+    from PySide6.QtCore import Qt
+
+    window = _window(qtbot, tmp_path)
+    stub_sandbox_provisioning(window)
+    finish = _defer_provisioning(window)
+    dialog = _dialog(qtbot, window, tmp_path)
+    window._ddl_project_ui.create_project(dialog)
+    window._ddl_project_ui.tick_provision_narration()
+
+    panel = window.audit_panel
+    rows = [
+        panel.item(i)
+        for i in range(panel.count())
+        if panel.item(i).text().startswith("[Sandbox] provision")
+    ]
+    assert rows
+    for item in rows:
+        assert item.data(Qt.ItemDataRole.UserRole) is None
+        assert item.data(Qt.ItemDataRole.UserRole + 1) is None
+    finish()
