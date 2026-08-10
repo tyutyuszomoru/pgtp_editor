@@ -127,9 +127,13 @@ def test_the_indicator_tracks_workflow_mode_through_a_change(qtbot, tmp_path):
     )
 
 
-def test_new_session_resets_the_indicator(qtbot, tmp_path, monkeypatch):
-    """`File ▸ New Session` clears the session mode (FQ-027), and the indicator
-    follows it back to the no-mode state -- never to a stale label."""
+def test_new_session_keeps_the_indicator_on_the_standing_mode(
+    qtbot, tmp_path, monkeypatch
+):
+    """BUG-059 reversed FQ-027's clear-on-New-Session: the mode STANDS while the
+    re-opened launcher is up, so the indicator keeps showing it. It is not a
+    stale label -- it is the mode a dismissed launcher lands back in, and "No
+    Mode" is no longer reachable by any gesture."""
     window = _window(qtbot, tmp_path)
     window.set_workflow_mode(MODE_PROJECT)
     assert _both(window) == ("Project", "Project")
@@ -137,8 +141,8 @@ def test_new_session_resets_the_indicator(qtbot, tmp_path, monkeypatch):
 
     assert window.new_session() is True
 
-    assert window.workflow_mode is None
-    assert _both(window) == (NO_MODE_LABEL, NO_MODE_LABEL)
+    assert window.workflow_mode == MODE_PROJECT
+    assert _both(window) == ("Project", "Project")
 
 
 def test_the_mode_is_session_only_and_never_persisted(qtbot, tmp_path):
