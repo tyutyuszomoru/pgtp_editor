@@ -41,6 +41,13 @@ APP_NAME = "PGTPEditor"
 RESOURCES_SRC = REPO_ROOT / "pgtp_editor" / "resources"
 RESOURCES_DEST = "pgtp_editor/resources"
 
+# Resource files whose absence degrades the app SILENTLY rather than crashing it,
+# so the build must refuse to produce the bundle instead of shipping it (BUG-057).
+# curated.xsd is the sole feed for attribute completion, hover and the Properties
+# panel labels (spec §11); without it `bundled_curated_xsd_text()` returns None and
+# the app quietly falls back to a stub generated from the learned model.
+REQUIRED_RESOURCE_FILES = ("curated.xsd", "manual.md")
+
 # Confirmed by grepping every worktree's pgtp_editor/ tree for
 # `from PySide6.<module>` imports: only QtCore, QtGui, QtWidgets, and QtSvg
 # are ever used (QtSvg: ui/icons.py renders the Breeze toolbar SVGs via
@@ -241,6 +248,15 @@ def build() -> None:
             "The bundled manual and toolbar icons live here; the build cannot "
             "produce a working app without it."
         )
+    for name in REQUIRED_RESOURCE_FILES:
+        if not (RESOURCES_SRC / name).is_file():
+            raise SystemExit(
+                f"Bundled resource not found: {RESOURCES_SRC / name}\n"
+                "This file must be committed to the repository for the build to "
+                "work from a clean checkout. Shipping without it degrades the app "
+                "silently (curated.xsd feeds attribute completion, hover and the "
+                "Properties labels; manual.md is the in-app manual)."
+            )
 
     # PyInstaller wants "<src><os.pathsep><dest>" for --add-data.
     resources_spec = f"{RESOURCES_SRC}{os.pathsep}{RESOURCES_DEST}"
