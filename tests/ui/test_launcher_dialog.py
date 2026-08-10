@@ -36,6 +36,7 @@ from pgtp_editor.ui.launcher_dialog import (
 from pgtp_editor.ui.main_window import (
     _MAINTENANCE_FILE_ITEMS,
     _MAINTENANCE_MENU_TITLES,
+    _MAINTENANCE_ONLY_MENU_TITLES,
     MainWindow,
 )
 from tests.ui._menu_helpers import (
@@ -74,6 +75,21 @@ def _visible_labels(menu_or_bar):
         action.text()
         for action in menu_or_bar.actions()
         if action.isVisible() and not action.isSeparator()
+    ]
+
+
+def _unfiltered_window_labels(window):
+    """What the WINDOW bar shows outside any mode.
+
+    Not simply `window_menu_titles`: since FQ-030 the bar carries `Settings`,
+    the app's first MAINTENANCE-ONLY menu, which is built like every other one
+    (so it is enumerated) but hidden until the mode is entered. The unfiltered
+    bar is therefore every built menu MINUS the maintenance-only ones.
+    """
+    return [
+        title
+        for title in window_menu_titles(window)
+        if title not in _MAINTENANCE_ONLY_MENU_TITLES
     ]
 
 
@@ -356,7 +372,7 @@ def test_standalone_and_project_leave_the_full_menu_bar_in_place(
     """"Project and standalone are OK for now" — only Maintenance filters."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    before = window_menu_titles(window)
+    before = _unfiltered_window_labels(window)
     show_launcher(
         window,
         window._settings,
@@ -375,7 +391,7 @@ def test_maintenance_hides_view_database_tools_and_generation(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window.set_workflow_mode(MODE_MAINTENANCE)
-    assert _visible_labels(window.menuBar()) == ["File", "Schema", "Help"]
+    assert _visible_labels(window.menuBar()) == ["File", "Schema", "Settings", "Help"]
     assert list(_MAINTENANCE_MENU_TITLES) == ["File", "Schema", "Help"]
     hidden = [
         title
@@ -528,7 +544,7 @@ def test_the_two_never_hidden_surfaces_are_reachable_in_maintenance(qtbot, tmp_p
 def test_leaving_maintenance_restores_every_menu(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window_before = window_menu_titles(window)
+    window_before = _unfiltered_window_labels(window)
     editor_before = editor_menu_titles(window)
     file_before = action_labels(window._file_menu)
 
@@ -612,14 +628,14 @@ def test_the_mode_does_not_survive_a_restart(qtbot, tmp_path):
     first = MainWindow(settings=settings)
     qtbot.addWidget(first)
     first.set_workflow_mode(MODE_MAINTENANCE)
-    assert _visible_labels(first.menuBar()) == ["File", "Schema", "Help"]
+    assert _visible_labels(first.menuBar()) == ["File", "Schema", "Settings", "Help"]
     settings.sync()
 
     second = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(second)
     assert second.workflow_mode is None
     assert second.in_maintenance_mode() is False
-    assert _visible_labels(second.menuBar()) == window_menu_titles(second)
+    assert _visible_labels(second.menuBar()) == _unfiltered_window_labels(second)
     assert _visible_labels(second._file_menu) == [
         a.text() for a in second._file_menu.actions() if not a.isSeparator()
     ]
@@ -638,7 +654,7 @@ def test_switching_tabs_does_not_undo_the_filter(qtbot, tmp_path):
         window.center_stage.xsd_tab_index,
     ):
         window.center_stage.setCurrentIndex(index)
-        assert _visible_labels(window.menuBar()) == ["File", "Schema", "Help"]
+        assert _visible_labels(window.menuBar()) == ["File", "Schema", "Settings", "Help"]
 
 
 # -- File ▸ New Session ------------------------------------------------------
@@ -686,7 +702,7 @@ def test_new_session_clears_the_mode_and_reopens_the_launcher(qtbot, tmp_path):
     # the next mode from.
     assert shown == [None]
     assert window.workflow_mode is None
-    assert _visible_labels(window.menuBar()) == window_menu_titles(window)
+    assert _visible_labels(window.menuBar()) == _unfiltered_window_labels(window)
 
 
 def test_new_session_closes_the_document_and_the_project(qtbot, tmp_path):

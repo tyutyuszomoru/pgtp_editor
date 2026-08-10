@@ -183,6 +183,11 @@ class CenterStage(QTabWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        #: The snippet set every SQL editor here runs on (FQ-030), or None
+        #: while `CodeEditor`'s shipped defaults are in force -- which is the
+        #: state until `SnippetController.load` pushes the store in. See
+        #: `set_snippets` below.
+        self._snippets = None
         # Dynamic per-object tabs (spec §18.5): always appended AFTER the
         # fixed set above, so the stored fixed *_tab_index constants never
         # shift and every existing index comparison in this class and in
@@ -341,6 +346,47 @@ class CenterStage(QTabWidget):
                 bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
                 bar.setTabButton(index, QTabBar.ButtonPosition.LeftSide, None)
         self.tabCloseRequested.connect(self._on_tab_close_requested)
+
+    # --- The snippet set in force (FQ-030) ---------------------------------
+    #
+    # There is exactly ONE snippet store (DEC-001), so there is exactly one set
+    # in force and every SQL editor holds the same one. The stage is where that
+    # fact is enforced, for the only reason that matters: it is the single place
+    # SQL panels are constructed, so it is the only place that can serve tabs
+    # opened *after* the store was loaded or edited as well as the ones already
+    # open. `ui/snippet_controller.py` calls this; nothing else should.
+
+    def set_snippets(self, snippets):
+        """Install `snippets` on every SQL editor, now and on future tabs.
+
+        `None` restores `CodeEditor`'s shipped defaults. PHP/JS editors are
+        skipped on purpose -- the set is plpgsql, and `CodeEditor` gates
+        Ctrl+Alt+E on the same `language` for the same reason.
+        """
+        self._snippets = None if snippets is None else tuple(snippets)
+        for editor in self._sql_editors(self):
+            editor.set_snippets(self._snippets)
+
+    def snippets(self):
+        """The set this stage installs, or None while the defaults are in force."""
+        return self._snippets
+
+    @staticmethod
+    def _sql_editors(root):
+        from pgtp_editor.ui.code_editor import CodeEditor
+
+        return [
+            editor
+            for editor in root.findChildren(CodeEditor)
+            if editor.language == "sql"
+        ]
+
+    def _install_snippets(self, panel):
+        """Give a just-created panel the set in force. No-op before any load."""
+        if self._snippets is None:
+            return
+        for editor in self._sql_editors(panel):
+            editor.set_snippets(self._snippets)
 
     def _on_tab_close_requested(self, index):
         if index == self.manual_tab_index:
@@ -614,6 +660,7 @@ class CenterStage(QTabWidget):
             return existing
 
         panel = DdlObjectEditorPanel(ref, text, resolve_save_path=resolve_save_path)
+        self._install_snippets(panel)
         self.addTab(panel, panel.tab_title())
         self._ddl_object_tabs[tab_key] = panel
         self.setCurrentWidget(panel)
@@ -743,6 +790,7 @@ class CenterStage(QTabWidget):
             return existing
 
         panel = SqlConsolePanel(session_provider=session_provider, **panel_kwargs)
+        self._install_snippets(panel)
         index = self.addTab(panel, panel.tab_title())
         self.setTabToolTip(
             index,

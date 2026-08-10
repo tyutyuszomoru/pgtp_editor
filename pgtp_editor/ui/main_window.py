@@ -183,6 +183,7 @@ from pgtp_editor.ui.generation_controller import GenerationController
 from pgtp_editor.ui.lint_controller import LintController
 from pgtp_editor.ui.pgtp_document_controller import PgtpDocumentController
 from pgtp_editor.ui.php_tab_controller import PhpTabController
+from pgtp_editor.ui.snippet_controller import SnippetController
 from pgtp_editor.ui.toolbar_controller import ToolbarController
 # The menu filter matches on the label the USER reads, so it goes through the
 # same normalizer the command ids do -- otherwise a mnemonic `&` or a trailing
@@ -315,6 +316,23 @@ _MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")
 #: instead by the filter's scope: the Editor bar is untouched, so
 #: `Deployment ▸ Save XSD` stays right where it always is.
 _MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")
+
+#: The INVERSE table: top-level menus that exist ONLY inside Maintenance mode.
+#:
+#: Everything else about the mode filter SUBTRACTS -- `_MAINTENANCE_MENU_TITLES`
+#: names what survives, `_MAINTENANCE_FILE_ITEMS` what survives inside `File`.
+#: `Settings` is the first thing that goes the other way: it is where the app is
+#: CONFIGURED (FQ-030's snippet store today), which is what someone in
+#: Maintenance mode is doing and a distraction to everyone else. Kept as a table
+#: beside the other two, and read by the same loop in
+#: `_refresh_workflow_mode_affordances`, so there is exactly ONE place that
+#: decides what the menu bar looks like in a mode.
+#:
+#: **Nothing in a maintenance-only menu may carry a keyboard shortcut** (DEC-006:
+#: hiding means "not in your way", never "prevented"). Hiding a QMenu leaves its
+#: children's shortcuts live, so a shortcut here would fire outside the mode and
+#: contradict the placement.
+_MAINTENANCE_ONLY_MENU_TITLES = ("Settings",)
 
 
 #: `Check Object in Sandbox`'s one-line answer (FQ-026), by state. The gesture
@@ -1363,7 +1381,18 @@ class MainWindow(QMainWindow):
         # itself down on a committed close (see `_doc_ui.project_closed`).
         self._doc_ui.project_closed.connect(self._db_ui.teardown_for_project_close)
 
+        # FQ-030's snippet lane. Constructed BEFORE the menu bar because
+        # `_build_edit_snippets_entry` connects to it, and `load`ed right after
+        # so the store is in force in the two DDL Explorer editors that already
+        # exist by now -- a saved snippet must work without a restart.
+        # `generator_config_dir` is the SAME per-user config override §19/§22
+        # share (a tmp_path under test), never a second one.
+        self._snippet_ui = SnippetController(
+            self._shell, parent=self, config_dir=self._generator_config_dir
+        )
+
         self._build_menu_bar()
+        self._snippet_ui.load()
         # F3 (Find Next) -- a window-level action with no menu entry, so it is
         # installed rather than built into a menu (§27; see the method).
         self._install_find_next_action()
@@ -2304,6 +2333,7 @@ class MainWindow(QMainWindow):
         # The Generation menu is owned outright by the generation lane, so it
         # builds it -- called from here so the menu keeps its position in the bar.
         self._gen_ui.build_menu(self.menuBar())
+        self._build_settings_menu()
         self._build_help_menu()
         # ...then the second bar, above the central pane.
         self._build_editor_menu_bar()
@@ -3376,6 +3406,51 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
         )
+
+    def _build_settings_menu(self):
+        """The `Settings` menu — where the app is CONFIGURED, not used.
+
+        **A maintenance-only menu, and the app's first one.** Every other
+        visibility rule in `_refresh_workflow_mode_affordances` hides things
+        *out of* Maintenance mode; `Settings` is the inverse — absent normally,
+        present in Maintenance mode — which is why
+        `_MAINTENANCE_ONLY_MENU_TITLES` exists beside `_MAINTENANCE_MENU_TITLES`
+        instead of the filter growing a special case per entry.
+
+        **This is a HOST for settings commands, not a wrapper around one.** It
+        was built as a menu rather than as an entry appended to `Schema` (where
+        FQ-030's plan put `Edit Snippets…`) precisely because more than one
+        feature wants it: a snippet is a typing shortcut and a formatter
+        ruleset is a formatting preference, and neither is schema work. Adding
+        the next entry is one `addAction` line here — nothing about this method
+        is entangled with the snippet lane.
+
+        **No shortcuts on anything in here** (DEC-006). Hiding a QMenu does not
+        disable its children, so a shortcut on a maintenance-only command would
+        still fire outside Maintenance mode and make nonsense of the placement.
+        These are rare, deliberate gestures reached through the menu; if one
+        ever genuinely needs a key, the enable-vs-hide question goes to the
+        owner rather than being settled here.
+
+        **KNOWN AND ACCEPTED: these commands are PINNABLE.**
+        `ToolbarController._walk_menu_actions` never tests `isVisible()`, so
+        `settings.edit-snippets` appears in Customize Toolbar's Available list
+        and a user who pins it can open the dialog outside Maintenance mode.
+        That is FQ-027 Q2's recorded trade (the toolbar is deliberately outside
+        the mode filter's blast radius) and it is consistent with DEC-006 --
+        hiding means "not in your way", never "prevented". It is also the very
+        reason the actions are built once and only toggled: an action that did
+        not exist while unfiltered would drop out of the enumeration and take
+        saved `toolbarIds` with it.
+        """
+        menu = self.menuBar().addMenu("Settings")
+        edit_snippets = menu.addAction("Edit Snippets…")
+        edit_snippets.triggered.connect(lambda: self._snippet_ui.open_editor())
+        self._edit_snippets_action = edit_snippets
+        # A window is always constructed unfiltered (`_workflow_mode` is None),
+        # so hidden is the correct starting state and matches what a later
+        # refresh computes for the same mode.
+        menu.menuAction().setVisible(self.in_maintenance_mode())
 
     def _build_database_menu(self):
         menu = self.menuBar().addMenu("Database")
@@ -5459,10 +5534,16 @@ class MainWindow(QMainWindow):
         # Top-level menus are hidden through their `menuAction()` -- the QMenu
         # itself is not a child widget of the bar's layout.
         for action in self.menuBar().actions():
-            action.setVisible(
-                not maintenance
-                or normalize_label(action.text()) in _MAINTENANCE_MENU_TITLES
-            )
+            title = normalize_label(action.text())
+            if title in _MAINTENANCE_ONLY_MENU_TITLES:
+                # The INVERSE rule: present only inside the mode. Handled here,
+                # in the one method that decides menu-bar visibility per mode,
+                # rather than by a second mechanism somewhere else.
+                action.setVisible(maintenance)
+            else:
+                action.setVisible(
+                    not maintenance or title in _MAINTENANCE_MENU_TITLES
+                )
         # File survives partially -- the only menu that does.
         for action in self._file_menu.actions():
             # A separator normalizes to "", so it is never in the set: the

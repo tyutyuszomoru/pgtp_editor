@@ -444,23 +444,19 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     def set_snippets(self, snippets) -> None:
         """Install the snippet set the expand gesture matches against.
 
-        The seam a later user-defined store layers over the shipped defaults
+        The seam the user-defined store layers over the shipped defaults
         through: `sql/templates.py::find_snippet` already takes a `snippets`
-        argument for exactly this, so a store never forks the engine.
+        argument for exactly this, so the store never forks the engine.
         `None` restores `DEFAULT_SNIPPETS`.
 
-        **This pass ships NO persistence, deliberately** (FQ-030 left per-user
-        vs per-project open; this is the answer). FQ-030 puts the keyword↔body
-        table in FQ-027's Maintenance mode and sequences it AFTER FQ-027, which
-        is still QUEUED -- so a persisted store would today be a file nobody
-        can edit from inside the app, and a stored format is the one decision
-        that is expensive to take back. Choosing a *file* now would also be
-        choosing a scope: `.ddlproject/settings.json` travels with a project
-        folder (it is gitignored, so it moves by copy, not by clone) while
-        `QSettings` is machine-local -- and which of those a snippet set wants
-        is exactly what the editor's design will tell us. The defaults are
-        useful on their own, this seam is the whole of what the store needs,
-        and nothing here has to change when it lands.
+        **The store now exists** and this is what installs it:
+        `sql/snippet_store.py` owns the format, `ui/snippet_controller.py`
+        resolves the one per-user file (DEC-001: the app's own folder, never
+        the `.pgtp` artifact) and `CenterStage.set_snippets` fans the loaded set
+        out over every SQL editor -- including tabs opened later. Nothing in
+        this widget had to change when it landed, which was the point of
+        putting the seam here first: this class still knows only "a set of
+        `Snippet`s", never where one came from or whether the user wrote it.
         """
         self._snippets = (
             DEFAULT_SNIPPETS if snippets is None else tuple(snippets)
@@ -469,6 +465,16 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     def snippets(self) -> tuple[Snippet, ...]:
         """The snippet set in force -- the shipped defaults unless replaced."""
         return self._snippets
+
+    @property
+    def language(self) -> str:
+        """`"sql"` / `"php"` / `"js"` -- which highlighter and which gestures.
+
+        Public because a host that fans a setting out over its editors has to
+        be able to tell them apart: the snippet set is plpgsql, so only the SQL
+        ones may be given it (the same reason `keyPressEvent` gates Ctrl+Alt+E).
+        """
+        return self._language
 
     def set_dynamic_expander(self, expander) -> None:
         """Wire the schema-dynamic expansion seam, or `None` to unwire it.

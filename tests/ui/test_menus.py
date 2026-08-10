@@ -633,7 +633,11 @@ def test_schema_menu_sits_between_view_and_tools(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     assert window_menu_titles(window) == [
-        "File", "View", "Schema", "Database", "Tools", "Generation", "Help",
+        # `Settings` (FQ-030) is a MAINTENANCE-ONLY menu: it is built like every
+        # other one and only `setVisible`-toggled, so it is enumerated here even
+        # though it is hidden outside the mode. See test_edit_snippets_menu.py.
+        "File", "View", "Schema", "Database", "Tools", "Generation",
+        "Settings", "Help",
     ]
 
 
@@ -735,7 +739,11 @@ def test_all_top_level_menus_present_in_order(qtbot):
     # Two bars since FQ-016: `Edit` is gone from the window bar and the bookmark
     # menu moved off it onto the Editor bar (retitled `Navigation` by FQ-021).
     assert window_menu_titles(window) == [
-        "File", "View", "Schema", "Database", "Tools", "Generation", "Help",
+        # `Settings` (FQ-030) is a MAINTENANCE-ONLY menu: it is built like every
+        # other one and only `setVisible`-toggled, so it is enumerated here even
+        # though it is hidden outside the mode. See test_edit_snippets_menu.py.
+        "File", "View", "Schema", "Database", "Tools", "Generation",
+        "Settings", "Help",
     ]
     assert editor_menu_titles(window) == [
         "History",
