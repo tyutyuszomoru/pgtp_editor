@@ -135,6 +135,7 @@ from ..sql.statements import (
 from .async_task import run_async
 from .code_editor import CodeEditor
 from .completion_popup import CompletionPopupHostMixin
+from .expand_select_seam import expand_select_expansion
 from .sql_results_panel import RunReport, SqlResultsPanel, StatementRun
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -457,6 +458,10 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
 
         self.editor = CodeEditor(language="sql")
         self.editor.setReadOnly(False)
+        # Expand-`SELECT` (FQ-030 slice 1): the one part of the gesture that
+        # needs a schema. Read at gesture time, so a later `set_schema_index`
+        # is picked up without re-wiring.
+        self.editor.set_dynamic_expander(self._expand_select_expansion)
         self.editor.setPlaceholderText(
             "SELECT … — runs against this project's sandbox database, never the target"
         )
@@ -802,6 +807,19 @@ class SqlConsolePanel(CompletionPopupHostMixin, QWidget):
     def schema_index(self):
         """The injected `SchemaIndex`, or None."""
         return self._schema_index
+
+    # --- Expand-`SELECT` (§18.6 / FQ-030 slice 1) --------------------------
+    def _expand_select_expansion(self, text: str, pos: int):
+        """`CodeEditor.set_dynamic_expander` seam: the buffer in, an
+        `Expansion` out (`ui/expand_select_seam.py`, shared verbatim with the
+        DDL object tab). Uses the already-injected index; queries nothing."""
+        return expand_select_expansion(self._schema_index, text, pos)
+
+    def expand_select(self) -> bool:
+        """Ctrl+Alt+C: expand the bare `SELECT` at the caret into its column
+        list (FQ-030 slice 1). The console is where a bare `SELECT FROM
+        hr.jobcard` is most often typed, so this is its home surface."""
+        return self.editor.expand_select_at_caret()
 
     def show_completions(self) -> None:
         """Ctrl+Space: schema-qualified identifier completion at the caret.

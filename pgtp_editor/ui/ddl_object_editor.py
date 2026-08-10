@@ -87,6 +87,7 @@ from pgtp_editor.sql.caret_context import (
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
+from pgtp_editor.ui.expand_select_seam import expand_select_expansion
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 if TYPE_CHECKING:  # pragma: no cover -- import-cycle/Qt-purity avoidance only
@@ -721,6 +722,13 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         self._unattached_trigger_table: str | None = None
 
         self.editor = CodeEditor(language="sql")
+        # Expand-`SELECT` (FQ-030 slice 1). The editor owns the ONE insertion
+        # path; this seam is the only part that needs a schema, which is why it
+        # is wired from here -- `CodeEditor` never learns what a `SchemaIndex`
+        # is. Reads `self._schema_index` at gesture time, so a later
+        # `set_schema_index` (a reconnect, a refresh) is picked up with no
+        # re-wiring.
+        self.editor.set_dynamic_expander(self._expand_select_expansion)
         # EDITABLE -- the behavioral difference from §18.1's EditorPanel. In
         # particular `CodeEditor.replace_current_selection` (FindReplaceBar's
         # Replace) early-returns on a read-only editor; here it applies.
@@ -1460,6 +1468,22 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         """CompletionPopupHostMixin hook: this panel wraps its editor rather
         than being one, so caret geometry comes off `self.editor`."""
         return self.editor
+
+    # --- Expand-`SELECT` (§18.6 / FQ-030 slice 1) --------------------------
+    def _expand_select_expansion(self, text: str, pos: int):
+        """`CodeEditor.set_dynamic_expander` seam: the buffer in, an
+        `Expansion` out. Three lines, in `ui/expand_select_seam.py`, shared
+        verbatim with the SQL console -- the schema is the already-injected
+        index and NOTHING here queries a database (§18.6's invariant)."""
+        return expand_select_expansion(self._schema_index, text, pos)
+
+    def expand_select(self) -> bool:
+        """Ctrl+Alt+C: expand the bare `SELECT` at the caret (FQ-030 slice 1).
+
+        Delegates to the editor, which applies the resulting `Expansion`
+        through the same single-undo path a snippet goes through and states
+        the reason when there is nothing to expand."""
+        return self.editor.expand_select_at_caret()
 
     def _show_completions(self) -> None:
         """Ctrl+Space entry point (§18.6). Resolves the caret context and
