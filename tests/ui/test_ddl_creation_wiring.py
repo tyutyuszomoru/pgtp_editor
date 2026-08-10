@@ -505,6 +505,63 @@ def test_the_alter_tab_identifies_itself_as_an_alter_not_an_object(qtbot, tmp_pa
     # Empty by design: `CheckRequest.checked_name` derives from it, and an ALTER
     # creates no function for tier 3's plpgsql_check to analyse.
     assert ref.name == ""
+    # ...and BUG-044's identity lives BESIDE it, never in it: `working_set_name`
+    # fills the `applied` key's `object_name` slot and nothing else.
+    from pgtp_editor.db.sandbox import text_sha1
+
+    assert ref.working_set_name("ALTER TABLE pr.orders ...") == text_sha1(
+        "ALTER TABLE pr.orders ..."
+    )
+    assert CheckRequest.from_ref(ref, "ALTER TABLE pr.orders ...").checked_name == ""
+
+
+def test_two_alters_on_one_table_never_share_a_bookkeeping_row(qtbot, tmp_path):
+    """BUG-044, at the real ref: two `Drop Column…` generations on DIFFERENT
+    columns of one table are two statements, and each must get its own row in
+    the sandbox's `applied` table. They used to key as `("alter", "pr", "",
+    "orders")` alike, so the second apply silently overwrote the first's row
+    and `Check Object in Sandbox` then answered about the wrong statement.
+    """
+    window = _alter_window(qtbot, tmp_path)
+    for column in ("id", "note"):
+        window._on_ddl_alter_column_requested("drop_column", _orders(window), column)
+        window.findChildren(ColumnActionDialog)[-1].accept()
+
+    panels = _alter_tabs(window)
+    keys = [
+        CheckRequest.from_ref(panel.ref, panel.editor.toPlainText()).working_set_ref
+        for panel in panels
+    ]
+
+    assert len(keys) == 2
+    assert keys[0] != keys[1]
+    # Same table, same kind -- only the identity slot differs.
+    assert keys[0][0] == keys[1][0] == "alter"
+    assert keys[0][3] == keys[1][3] == "orders"
+    # And no alter key is ever the pre-fix empty-name shape the cleanup deletes.
+    assert all(key[2] for key in keys)
+
+
+def test_the_alter_bookkeeping_identity_never_turns_plpgsql_check_on(qtbot, tmp_path):
+    """The fix's central gotcha, on the real ref: giving an ALTER an identity
+    must not give it a routine NAME, or `build_ladder` would run tier 3's
+    `plpgsql_check` on a function that does not exist."""
+    window = _alter_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_column", _orders(window), "note")
+    window.findChild(ColumnActionDialog).accept()
+
+    panel = _alter_tabs(window)[0]
+    text = panel.editor.toPlainText()
+    request = CheckRequest.from_ref(panel.ref, text)
+    # `plpgsql_check` INSTALLED, so tier 3 is off only because the request says
+    # there is nothing to check -- never because the server could not run it.
+    caps = SandboxCapabilities(installed_extensions=frozenset({"plpgsql_check"}))
+    assert caps.plpgsql_check_state == "installed"
+    plan = build_ladder(request, caps, text, record_applied=True)
+
+    assert request.working_set_name
+    assert plan.check_index is None
+    assert not any("plpgsql_check" in sql for sql in plan.statements)
 
 
 def test_two_generations_get_two_tabs_never_one_silently_reused(qtbot, tmp_path):

@@ -270,6 +270,37 @@ def test_open_succeeds_exposes_capabilities_and_the_session():
     assert layer.open_calls[0]["target_params"] is TARGET
 
 
+def test_open_sweeps_the_pre_bug_044_alter_rows_once_off_the_gui_thread():
+    """DEC-008: rows under the old empty-name alter key can only ever produce a
+    wrong answer or none, and `reset()` deliberately spares the bookkeeping
+    schema, so they are deleted once at session open -- on the worker thread,
+    never on the GUI one."""
+    layer = Layer()
+    controller, runner, _ = _controller(layer)
+
+    controller.open_session()
+
+    (statements,) = layer.session.executor.executed
+    assert statements[-1].endswith("WHERE kind = 'alter' AND object_name = ''")
+    assert runner.calls == 1  # the sweep rode the open's own worker
+
+
+def test_a_failed_orphan_sweep_never_costs_the_user_the_sandbox():
+    """Best-effort on purpose: since BUG-044 no request can key onto those rows,
+    so failing to sweep them is hygiene lost, not correctness lost."""
+    layer = Layer()
+
+    def boom(session):
+        raise RuntimeError("permission denied for schema pgtp_editor_sandbox")
+
+    controller, _, results = _controller(layer, orphan_purger=boom)
+
+    controller.open_session()
+
+    assert controller.has_session is True
+    assert results[-1].ok is True
+
+
 def test_close_releases_the_session():
     layer = Layer()
     controller, _, _ = _controller(layer)
