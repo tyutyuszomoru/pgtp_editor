@@ -176,7 +176,14 @@ that nothing in the repo could answer. These rules exist to end that.
 - **Always establish the GATE before the chord, and ask the owner rather than deciding it.**
   The gate is not a formality; it determines where the code lives and how many hosts are legal:
   - **Does the command have a command form** — a menu-bar entry *or* a context-menu action?
-    Then it has **exactly one keyboard host** (DEC-012), and that host is the `QAction`.
+    Then it has **exactly one keyboard host** (DEC-012). Usually that host is the `QAction`,
+    because a rebindable chord must reach one — but *exactly one* is the rule, not *the
+    QAction*: DEC-012's own answered case keeps `Ctrl+Alt+F` on a widget `QShortcut` while a
+    context-menu command form exists, and BUG-062's per-role reload is hosted on the widget
+    because §18.7 gives each Explorer role its own panel, so a window-level chord would have
+    two candidate actions and no way to choose. When the host is the widget, the `QAction`
+    must carry **no** `setShortcut`, and the cost is stated: the chord no longer follows a
+    rebinding, since `_apply_shortcut_bindings` only walks menu actions.
   - **No command form at all?** A widget host is legitimate (DEC-009's carve-out) — but only
     then, and the reason must be a product reason, never "the tests need it".
   - **Answered inside a widget's key handling?** It must be in `RESERVED_SEQUENCES`, and under
