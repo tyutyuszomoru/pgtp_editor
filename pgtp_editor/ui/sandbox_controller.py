@@ -23,7 +23,7 @@ gate), `create_sandbox_database`, `provision_sandbox`, `clone_data`,
 `install_plpgsql_check(session)`, `SandboxSession.apply`/`applied`/`reset`,
 `probe`/`SandboxCapabilities`, `install_gate`, `determine_project_tier`. What it
 never had is a **holder**: nothing in `ui/` called `open_sandbox`, so no session
-existed for **Apply to Sandbox** to apply to and §18.8's Sandbox1/Sandbox2
+existed for **Check and commit to sandbox** to apply to and §18.8's Sandbox1/Sandbox2
 action buttons ("run data clone", "install plpgsql_check") had nothing to fire
 at. This module is exactly that holder and nothing more -- **it duplicates none
 of `db/sandbox.py`'s logic**; every decision (ownership, tier degradation, the
@@ -229,7 +229,7 @@ class SandboxOperation(str, Enum):
     #: `SandboxOperation` as `CHECK` (non-destructive -- no
     #: `confirm_destructive` prompt)").
     CHECK = "check"
-    #: §18.5 D3's **Apply to Sandbox** -- `db/ddl_check.py::apply_and_check`:
+    #: §18.5 D3's **Check and commit to sandbox** -- `db/ddl_check.py::apply_and_check`:
     #: the ladder, committing, with the working-set row written in the same
     #: transaction.
     #:
@@ -306,7 +306,7 @@ _NO_CHECK_REQUEST_REASON = (
 #: gestures are separate sentences to the user, not because the situation
 #: differs.
 _NO_APPLY_REQUEST_REASON = (
-    "nothing to apply -- Apply to Sandbox needs the object whose tab it was "
+    "nothing to apply -- Check and commit to sandbox needs the object whose tab it was "
     "invoked from"
 )
 
@@ -453,7 +453,7 @@ class SandboxController(QObject):
     """
 
     #: True when a live session exists, False when it is gone -- the signal the
-    #: "Apply to Sandbox"/§18.7 sandbox DDL Explorer affordances gate on.
+    #: "Check and commit to sandbox"/§18.7 sandbox DDL Explorer affordances gate on.
     session_changed = Signal(bool)
     #: Emitted with one `SandboxOperationResult` as each operation finishes,
     #: successfully or not. `object`, so the dataclass rides across as-is.
@@ -1134,7 +1134,7 @@ class SandboxController(QObject):
         ddl_text: str | None = None,
         probe: bool = False,
     ) -> None:
-        """**Apply to Sandbox** (§18.5 D3): apply one object's DDL to the live
+        """**Check and commit to sandbox** (§18.5 D3): apply one object's DDL to the live
         sandbox and run the whole ladder over it, in one transaction.
 
         Mirrors `run_check` exactly -- same session precondition, same

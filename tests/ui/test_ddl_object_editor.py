@@ -533,8 +533,8 @@ def test_shortcut_override_does_not_claim_unrelated_keys(qtbot):
 
 
 # ===========================================================================
-# Apply (§18.5): Apply to Sandbox, Apply to Target's four hard preconditions,
-# and the "Deploy this edit…" destination picker.
+# Apply (§18.5): `Check and commit to sandbox`, `Apply to quality`'s four hard
+# preconditions, and FQ-026's one-vocabulary invariant over both.
 #
 # Every DB-touching step is an injected seam, so no test here reaches a real
 # database, and the confirmation gate is injected too, so no test reaches an
@@ -542,9 +542,10 @@ def test_shortcut_override_does_not_claim_unrelated_keys(qtbot):
 # ===========================================================================
 from pgtp_editor.ui.ddl_object_editor import (  # noqa: E402
     CHECK_PREFIX,
-    DEST_SANDBOX,
-    DEST_SAVE,
-    DEST_TARGET,
+    GESTURE_APPLY_TO_QUALITY,
+    GESTURE_CHECK_AND_COMMIT,
+    GESTURE_LABELS,
+    GESTURE_UNAVAILABLE_REASONS,
     parse_buffer_identity,
 )
 
@@ -721,40 +722,46 @@ def test_apply_refuses_when_the_database_cannot_be_named(qtbot):
 
 
 # --- Affordances are absent when unwired (carve-out 2) ----------------------
-def test_no_apply_buttons_when_no_seam_is_wired(qtbot):
-    """Carve-out 2 applies to the two APPLY buttons, which need a seam. The row
-    itself and its "Deploy this edit…" button survive (FQ-009): the picker's
-    Save destination needs no seam, so that button is never a dead control."""
-    panel = _panel(qtbot)
-    assert panel.has_sandbox_apply is False
-    assert panel.has_target_apply is False
-    assert panel.apply_row is not None
-    assert panel.deploy_button is not None
-    assert panel.sandbox_button is None and panel.target_button is None
-    assert panel.apply_to_sandbox() is False
-    assert panel.apply_to_target() is False
+def test_the_panel_offers_no_apply_affordance_at_all(qtbot):
+    """FQ-026: the button row is DELETED, wired or not. It held three buttons
+    that merely called gestures the `Deployment` menu already names, each with
+    its own label string free to drift from the menu's -- which is half of what
+    made eight names denote four operations. The owner accepted the
+    consequence: a DDL object tab has no in-tab apply affordance."""
+    from PySide6.QtWidgets import QPushButton
 
-
-def test_context_menu_omits_unwired_apply_entries(qtbot):
-    panel = _panel(qtbot)
-    labels = [a.text() for a in panel._build_context_menu().actions()]
-    assert "Apply to Sandbox" not in labels
-    assert "Apply to Target…" not in labels
-    # The picker itself stays -- Save is always a reachable destination.
-    assert "Deploy this edit…" in labels
-
-
-def test_wired_seams_add_their_buttons_and_menu_entries(qtbot):
     seams = _Seams()
-    panel = _wired(qtbot, seams)
-    assert panel.apply_row is not None
-    assert panel.sandbox_button.text() == "Apply to Sandbox"
-    assert panel.target_button.text() == "Apply to Target…"
-    labels = [a.text() for a in panel._build_context_menu().actions()]
-    assert "Apply to Sandbox" in labels and "Apply to Target…" in labels
+    for panel in (_panel(qtbot), _wired(qtbot, seams)):
+        labels = {b.text() for b in panel.findChildren(QPushButton)}
+        assert not {
+            label
+            for label in labels
+            if "Apply" in label or "Deploy" in label or "Check" in label
+        }
+    # And the attributes are gone, not merely None -- a dead attribute is how a
+    # deleted affordance comes back.
+    for name in ("apply_row", "deploy_button", "sandbox_button", "target_button"):
+        assert not hasattr(_wired(qtbot, seams), name)
 
 
-def test_apply_buttons_appear_and_disappear_with_the_seams(qtbot):
+def test_the_context_menu_offers_no_apply_entry_either_wired_or_not(qtbot):
+    """The third duplicate surface, deleted with the other two: the same
+    ruling ("no in-tab apply affordance") covers a right-click menu, and every
+    entry it carried was another string that could drift."""
+    seams = _Seams()
+    for panel in (_panel(qtbot), _wired(qtbot, seams)):
+        labels = [a.text() for a in panel._build_context_menu().actions()]
+        assert "Apply to Sandbox" not in labels
+        assert "Apply to Target…" not in labels
+        assert "Deploy this edit…" not in labels
+        assert GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT] not in labels
+        assert GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY] not in labels
+
+
+def test_the_seams_still_decide_whether_the_gesture_exists(qtbot):
+    """Deleting the affordances did not delete carve-out 2: the host asks
+    `has_sandbox_apply`/`has_target_apply` before offering its menu entry, and
+    the panel refuses the call outright when a seam went away."""
     seams = _Seams()
     panel = _panel(qtbot)
     panel.set_apply_seams(
@@ -762,15 +769,13 @@ def test_apply_buttons_appear_and_disappear_with_the_seams(qtbot):
         sandbox_database_label=lambda: seams.sandbox_db,
         confirm=seams.confirm,
     )
-    assert panel.sandbox_button is not None
+    assert panel.has_sandbox_apply is True
     assert panel.has_target_apply is False
 
     panel.set_apply_seams()
 
-    assert panel.sandbox_button is None and panel.target_button is None
-    # The row and the picker button outlive the seams -- see
-    # test_no_apply_buttons_when_no_seam_is_wired.
-    assert panel.apply_row is not None and panel.deploy_button is not None
+    assert panel.has_sandbox_apply is False and panel.has_target_apply is False
+    assert panel.apply_to_sandbox() is False and panel.apply_to_target() is False
 
 
 def test_apply_is_absent_without_a_confirmation_gate(qtbot):
@@ -888,7 +893,7 @@ def test_precondition_2_blocks_when_the_ladder_never_ran_and_the_override_is_dec
 
     assert seams.target_calls == []
     title, text = seams.confirms[0]
-    assert "Without Full Validation" in title
+    assert "without full validation" in title.lower()
     assert "has not been run over this buffer" in text
     assert any("override was declined" in line for line in lines)
 
@@ -929,7 +934,9 @@ def test_precondition_4_confirmation_names_the_object_and_the_database(qtbot):
     panel.apply_to_target()
 
     title, text = seams.confirms[-1]
-    assert title == "Apply to Target"
+    # FQ-026: the title is the MENU LABEL. It used to be the literal "Apply to
+    # Target" while the menu entry said "Run on quality".
+    assert title == GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]
     assert "pr.recalc()" in text and "prod on db01:5432" in text
 
 
@@ -1145,141 +1152,118 @@ def test_run_in_sandbox_console_is_a_noop_without_a_selection_or_a_console(qtbot
     assert seams.sandbox_calls == [] and seams.target_calls == []
 
 
-# --- "Deploy this edit…" -- a picker in front of the three gestures ---------
-def test_deploy_this_edit_delegates_to_apply_to_sandbox(qtbot, monkeypatch):
+# --- FQ-026: the picker is GONE, and the reasons it carried outlived it ------
+def test_the_picker_and_its_whole_api_are_deleted(qtbot):
+    """`Deploy this edit…` is withdrawn by owner ruling: it asked "where does
+    this edit go?" when the `Deployment` menu already displays the answer as
+    three named entries. It only ever DELEGATED, so nothing became unreachable
+    -- and the methods are deleted rather than left returning None, because a
+    surviving no-op API is how a withdrawn gesture gets re-wired by accident."""
     seams = _Seams()
     panel = _wired(qtbot, seams)
-    monkeypatch.setattr(panel, "_prompt_destination", lambda: DEST_SANDBOX)
-
-    assert panel.deploy_this_edit() == DEST_SANDBOX
-
-    assert seams.sandbox_calls == [(_PLAIN, _TARGET_SRC)]
-    assert seams.target_calls == []
-
-
-def test_deploy_this_edit_delegates_save_to_the_hosts_existing_save_gesture(qtbot, monkeypatch):
-    """It writes no file of its own and touches no database."""
-    seams = _Seams()
-    panel = _wired(qtbot, seams)
-    monkeypatch.setattr(panel, "_prompt_destination", lambda: DEST_SAVE)
-    saves = []
-    panel.save_requested.connect(lambda: saves.append(1))
-
-    assert panel.deploy_this_edit() == DEST_SAVE
-
-    assert saves == [1]
-    assert seams.sandbox_calls == [] and seams.target_calls == []
+    for name in (
+        "deploy_this_edit",
+        "deploy_destinations",
+        "unavailable_destinations",
+        "deploy_prompt_text",
+        "_prompt_destination",
+        # Its only emitter was the picker's Save destination.
+        "save_requested",
+    ):
+        assert not hasattr(panel, name), name
 
 
-def test_deploy_this_edit_target_still_runs_every_hard_precondition(qtbot, monkeypatch):
-    seams = _Seams(live=DdlObjectRef(kind="function", schema="pr", name="recalc",
-                                     arg_types=("integer",)))
-    panel = _wired(qtbot, seams)
-    panel.record_check_report(_green())
-    monkeypatch.setattr(panel, "_prompt_destination", lambda: DEST_TARGET)
-    lines = _audit(panel)
-
-    panel.deploy_this_edit()
-
-    # Signature mismatch: refused through the very same precondition 1.
-    assert seams.target_calls == []
-    assert any("differs from the live object" in line for line in lines)
-
-
-def test_deploy_this_edit_cancelled_does_nothing(qtbot, monkeypatch):
+def test_every_operation_the_picker_reached_is_still_reachable(qtbot):
+    """The deduplication's whole claim: the ACTIONS remain, the ENTRY POINTS
+    go. Both applies still run from the panel's own methods, which is what the
+    `Deployment` menu entries call."""
     seams = _Seams(live=_live_same())
     panel = _wired(qtbot, seams)
-    monkeypatch.setattr(panel, "_prompt_destination", lambda: None)
-    saves = []
-    panel.save_requested.connect(lambda: saves.append(1))
+    panel.record_check_report(_green())
 
-    assert panel.deploy_this_edit() is None
+    assert panel.apply_to_sandbox() is True
+    assert panel.apply_to_target() is True
 
-    assert seams.sandbox_calls == [] and seams.target_calls == [] and saves == []
-
-
-def test_deploy_destinations_omit_gestures_whose_seam_is_unwired(qtbot):
-    panel = _panel(qtbot)
-    assert panel.deploy_destinations() == [DEST_SAVE]
-    seams = _Seams()
-    wired = _wired(qtbot, seams)
-    assert wired.deploy_destinations() == [DEST_SANDBOX, DEST_SAVE, DEST_TARGET]
+    assert seams.sandbox_calls == [(_PLAIN, _TARGET_SRC)]
+    assert seams.target_calls == [(_PLAIN, _TARGET_SRC)]
 
 
-# --- FQ-009: the picker is discoverable, and says what is NOT on offer -------
-def test_deploy_button_is_always_present_and_runs_the_picker(qtbot, monkeypatch):
-    """The crux of FQ-009: the one gesture that answers "where does this edit
-    go?" is a visible button, not a right-click-only entry -- and it is there
-    with no seam wired at all, because Save always works."""
-    panel = _panel(qtbot)
-    assert panel.deploy_button is not None
-    assert panel.deploy_button.text() == "Deploy this edit…"
-    assert panel.deploy_button.isVisible() or panel.deploy_button.parent() is not None
-    picked = []
-    monkeypatch.setattr(panel, "_prompt_destination", lambda: picked.append(1) or None)
-
-    panel.deploy_button.click()
-
-    assert picked == [1]
-
-
-def test_deploy_button_carries_no_shortcut_and_is_not_a_default_button(qtbot):
-    """Discoverable is not the same as one keystroke away (§18.5)."""
-    panel = _panel(qtbot)
-    assert panel.deploy_button.shortcut().isEmpty()
-    assert panel.deploy_button.autoDefault() is False
-    assert panel.deploy_button.isDefault() is False
-
-
-def test_unavailable_destinations_name_the_sandbox_and_target_with_reasons(qtbot):
-    panel = _panel(qtbot)
-    missing = dict(panel.unavailable_destinations())
-    assert set(missing) == {DEST_SANDBOX, DEST_TARGET}
-    # BUG-040 deleted `Database ▸ Open Sandbox Session`, so this sentence -- which
-    # `_refuse_sandbox_gesture` reuses verbatim -- must not name it any more. It
-    # states the two things that are actually true now: the automatic open may
+def test_the_unavailability_reasons_survived_the_pickers_deletion(qtbot):
+    """FQ-026 lists `DESTINATION_UNAVAILABLE_REASONS` for deletion with the
+    picker, but the table has two live NON-picker consumers -- the `Deployment`
+    entries' own refusal and `MainWindow._refuse_sandbox_gesture`, which BUG-040
+    reuses verbatim. It is re-keyed onto the gesture ids, not dropped."""
+    sandbox = GESTURE_UNAVAILABLE_REASONS[GESTURE_CHECK_AND_COMMIT]
+    quality = GESTURE_UNAVAILABLE_REASONS[GESTURE_APPLY_TO_QUALITY]
+    # BUG-040 deleted `Database ▸ Open Sandbox Session`, so this sentence must
+    # not name it; it states what is actually true now -- the automatic open may
     # have failed, or there is no sandbox to open at all.
-    assert "Open Sandbox Session" not in missing[DEST_SANDBOX]
-    assert "no sandbox session is open" in missing[DEST_SANDBOX]
-    # And it names Project Settings, NOT `Sandbox Setup…`: a sandbox exists only
-    # in project mode, so this refusal fires only there, and BUG-040's third leg
-    # made that menu entry projectless-only. Naming a hidden entry is the same
-    # dead end as naming the deleted one above.
-    assert "Project Settings" in missing[DEST_SANDBOX]
-    assert "Sandbox Setup" not in missing[DEST_SANDBOX]
-    assert "Precondition 1" in missing[DEST_TARGET]
-    # FQ-020 wired the quality lane, so the reason is now a CONNECTION fact and
-    # names both places a target can come from -- the old "not wired in this
-    # build" wording would be a lie about a gesture that works projectless.
-    assert "Connection Setup" in missing[DEST_TARGET]
-    assert "not wired in this build" not in missing[DEST_TARGET]
-    # Save is never listed -- it needs no seam.
-    assert DEST_SAVE not in missing
+    assert "Open Sandbox Session" not in sandbox
+    assert "no sandbox session is open" in sandbox
+    # And it names Project Settings, NOT the deleted `Sandbox Setup…`.
+    assert "Project Settings" in sandbox
+    assert "Sandbox Setup" not in sandbox
+    assert "Precondition 1" in quality
+    # FQ-020 wired the quality lane, so the reason is a CONNECTION fact -- the
+    # old "not wired in this build" wording would be a lie about a gesture that
+    # works projectless.
+    assert "Connection Setup" in quality
+    assert "not wired in this build" not in quality
 
 
-def test_unavailable_destinations_shrinks_as_seams_are_wired(qtbot):
+# --- FQ-026: one vocabulary per operation -----------------------------------
+def test_the_four_gestures_have_exactly_one_name_each(qtbot):
+    """The invariant this feature exists to establish. Eight user-visible names
+    denoted four operations, and the confirmation titles had already drifted
+    from the menu labels because they were separate literals."""
+    assert GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT] == "Check and commit to sandbox"
+    assert GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY] == "Apply to quality"
+    # The retired spellings appear nowhere in the table.
+    assert set(GESTURE_LABELS.values()).isdisjoint(
+        {"Apply to Sandbox", "Apply to Target", "Run on sandbox", "Run on quality"}
+    )
+
+
+def test_the_sandbox_confirmation_title_is_the_menu_label(qtbot):
+    """The reported confusion in one assertion: the menu said `Run on sandbox`
+    and the modal it opened said `Apply to Sandbox`."""
     seams = _Seams()
     panel = _wired(qtbot, seams)
-    assert panel.unavailable_destinations() == []
+
+    panel.apply_to_sandbox()
+
+    title, text = seams.confirms[-1]
+    assert title == GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]
+    assert "pr.recalc()" in text and "sandbox database sbx on localhost:5432" in text
 
 
-def test_deploy_prompt_text_states_why_a_destination_is_missing(qtbot):
-    """The requester's complaint was that there was "no option to save to the
-    database"; an absent entry cannot say why. The prose does."""
-    panel = _panel(qtbot)
-    text = panel.deploy_prompt_text()
-    assert _PLAIN.qualified in text
-    assert "Not available right now:" in text
-    # FQ-020's labels: the picker and the `Deployment` menu must call the same
-    # gesture the same thing, so both read `DESTINATION_LABELS`.
-    assert "Run on sandbox" in text and "Run on quality" in text
-    assert "Connection Setup" in text
-
-
-def test_deploy_prompt_text_is_just_the_question_when_all_seams_are_wired(qtbot):
-    seams = _Seams()
+def test_a_cancelled_sandbox_apply_is_audited_under_the_same_name(qtbot):
+    """Menu label, confirmation title AND Audit line -- one string."""
+    seams = _Seams(confirm=False)
     panel = _wired(qtbot, seams)
-    assert "Not available" not in panel.deploy_prompt_text()
+    lines = _audit(panel)
+
+    assert panel.apply_to_sandbox() is False
+
+    assert any(
+        line.startswith(CHECK_PREFIX + GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT])
+        for line in lines
+    )
+
+
+def test_the_quality_override_dialog_is_titled_in_its_gestures_vocabulary(qtbot):
+    """The precondition-2 override is part of `Apply to quality`, so it must
+    not introduce a fifth name (it was `Apply to Target Without Full
+    Validation`)."""
+    seams = _Seams(live=_live_same(), confirm=False)
+    panel = _wired(qtbot, seams)
+    # No recorded check at all -> precondition 2's override dialog fires.
+    panel.apply_to_target()
+
+    titles = [title for title, _text in seams.confirms]
+    assert titles == [
+        f"{GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]} without full validation"
+    ]
 
 
 # --- FQ-009: precondition 1 cannot be cleared by an unreachable target -------
@@ -1329,9 +1313,14 @@ def test_no_shortcut_is_bound_to_any_apply_gesture(qtbot):
     # move no data anywhere). Nothing that applies, deploys or executes.
     assert sequences == {"Ctrl+Alt+F", "Ctrl+F", "Ctrl+R"}
 
-    for action in panel._build_context_menu().actions():
-        if action.text() in ("Apply to Sandbox", "Apply to Target…", "Deploy this edit…"):
-            assert action.shortcut().isEmpty(), action.text()
+    # The context menu no longer offers an apply at all (FQ-026), so the
+    # strongest statement about it is that none of its entries IS one.
+    labels = [action.text() for action in panel._build_context_menu().actions()]
+    assert not [
+        label
+        for label in labels
+        if "Apply" in label or "Deploy" in label or "commit" in label
+    ]
 
     ctrl = Qt.KeyboardModifier.ControlModifier
     ctrl_shift = ctrl | Qt.KeyboardModifier.ShiftModifier

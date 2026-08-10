@@ -501,7 +501,7 @@ def test_the_alter_tab_identifies_itself_as_an_alter_not_an_object(qtbot, tmp_pa
 
     assert ref.kind == "alter"
     assert ref.qualified == "ALTER TABLE pr.orders"
-    assert ref.short_title == "ALTER orders"
+    assert ref.short_title == "ALTER TABLE orders"
     # Empty by design: `CheckRequest.checked_name` derives from it, and an ALTER
     # creates no function for tier 3's plpgsql_check to analyse.
     assert ref.name == ""
@@ -872,6 +872,10 @@ def _index_schema():
             **schema.tables,
             "pr.orders": replace(
                 schema.tables["pr.orders"],
+                # The whole-relation `pg_description` row (`objsubid = 0`).
+                # It is what `Set Table Comment…` must open on -- see
+                # `test_a_table_comment_opens_on_the_existing_comment`.
+                comment="ordering, one row per order",
                 columns=[
                     *schema.tables["pr.orders"].columns,
                     ColumnInfo(
@@ -1030,17 +1034,73 @@ def test_the_column_comment_dialog_opens_on_the_existing_comment(qtbot, tmp_path
     assert not dialog.removes_the_comment()
 
 
-def test_a_table_comment_opens_blank_because_none_is_introspected(qtbot, tmp_path):
-    """`introspect.TableInfo` carries no `comment` -- `pg_description` is read
-    for columns only -- so there is nothing honest to seed, and a blank box
-    means `COMMENT … IS NULL`."""
+def test_a_table_comment_opens_on_the_existing_comment(qtbot, tmp_path):
+    """The table mode is seeded exactly as the column mode is, from
+    `TableInfo.comment` (`pg_description` at `objsubid = 0`) on the schema the
+    Explorer already fetched -- no extra query.
+
+    It used to open blank, which was not merely inconvenient: see the
+    data-loss regression lock below."""
     window = _index_window(qtbot, tmp_path)
 
     dialog = window._alter_column_dialog(OP_TABLE_COMMENT, _index_orders(window), "code")
     qtbot.addWidget(dialog)
 
+    assert dialog.comment() == "ordering, one row per order"
+    assert not dialog.removes_the_comment()
+
+
+def test_an_untouched_ok_on_a_table_comment_never_removes_it(qtbot, tmp_path):
+    """**Data-loss regression lock.** A blank box emits `IS NULL`, which is
+    Postgres's only spelling for "remove the comment" -- so an unseeded table
+    dialog turned "I opened it and pressed OK" into a silent deletion of the
+    table's description. The emitted DDL must PRESERVE the comment, verbatim.
+    """
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(
+        OP_TABLE_COMMENT, _index_orders(window), ""
+    )
+    dialog = window.findChildren(SetCommentDialog)[-1]
+
+    dialog.accept()  # nothing typed, nothing changed
+
+    text = _alter_tabs(window)[0].editor.toPlainText()
+    assert text == set_table_comment_skeleton(
+        table="pr.orders", comment="ordering, one row per order"
+    )
+    assert "IS NULL" not in text
+    assert "ordering, one row per order" in text
+
+
+def test_a_table_with_no_comment_still_opens_blank(qtbot, tmp_path):
+    """The seed is the *existing* comment, and `None` is a real state --
+    `TableInfo.comment` is `None` when `pg_description` has no `objsubid = 0`
+    row. A table that never had a comment must still offer an empty box (and
+    so may still be given one), not the word "None"."""
+    window = _index_window(qtbot, tmp_path)
+
+    dialog = window._alter_column_dialog(
+        OP_TABLE_COMMENT, window._ddl_schema.tables["pr.customer"], ""
+    )
+    qtbot.addWidget(dialog)
+
     assert dialog.comment() == ""
     assert dialog.removes_the_comment()
+
+
+def test_a_table_comment_is_seeded_verbatim_quotes_and_all(qtbot, tmp_path):
+    """No strip, no normalisation: the box must round-trip what is stored, or
+    an untouched OK still REWRITES the comment instead of leaving it alone."""
+    window = _index_window(qtbot, tmp_path)
+    stored = "  it's the 'orders' table  "
+    window._ddl_schema.tables["pr.orders"] = replace(
+        window._ddl_schema.tables["pr.orders"], comment=stored
+    )
+
+    dialog = window._alter_column_dialog(OP_TABLE_COMMENT, _index_orders(window), "")
+    qtbot.addWidget(dialog)
+
+    assert dialog.comment() == stored
 
 
 def test_create_table_is_its_own_gesture_with_the_clicked_schema_seeded(qtbot, tmp_path):
@@ -1217,3 +1277,137 @@ def test_each_slice_three_generation_gets_its_own_tab(qtbot, tmp_path):
 
     assert len(texts) == 2
     assert texts[0] != texts[1]
+
+
+# --- The generated tab's TITLE ----------------------------------------------
+#
+# Every generation used to be titled `ALTER <table>`, whatever it held: a
+# `CREATE TABLE pr.invoice` tab read `ALTER invoice`, and a `DROP INDEX` tab
+# named a table its statement does not mention at all. The ref now carries the
+# statement AND its subject, because the subject is the half no verb lookup can
+# supply -- `DROP INDEX` names an index and `COMMENT ON COLUMN` names a column,
+# and neither is in the `(schema, table)` pair the ref was built from.
+
+
+def _titled(window):
+    """(short_title, qualified) of the newest generated tab."""
+    ref = _alter_tabs(window)[-1].ref
+    return ref.short_title, ref.qualified
+
+
+def test_an_alter_tab_is_titled_after_the_statement_it_holds(qtbot, tmp_path):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_column", _index_orders(window), "code")
+    window.findChildren(ColumnActionDialog)[-1].accept()
+
+    # The twelve column/constraint operations really do emit `ALTER TABLE`, so
+    # for them the only change is that the title says so in full.
+    assert _titled(window) == ("ALTER TABLE orders", "ALTER TABLE pr.orders")
+
+
+def test_a_create_table_tab_is_not_titled_alter(qtbot, tmp_path):
+    """The tab is named after its BUFFER, not after the `Alter Table ▸`
+    submenu -- and `Create Table…` is not even on that submenu."""
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_create_table_requested("pr")
+    dialog = window.findChild(CreateTableDialog)
+    dialog._name_edit.setText("pr.invoice")
+    dialog.column_rows().set_row(0, name="id", datatype="integer", nullable=False,
+                                 primary_key=True)
+
+    dialog.accept()
+
+    assert _titled(window) == ("CREATE TABLE invoice", "CREATE TABLE pr.invoice")
+
+
+def test_a_drop_index_tab_names_the_index_not_the_table(qtbot, tmp_path):
+    """`DROP INDEX pr.idx_orders_code` mentions no table, so a title built from
+    the table named something the statement never touches."""
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_index", _index_orders(window), "")
+    window.findChildren(DropIndexDialog)[-1].accept()
+
+    assert _titled(window) == (
+        "DROP INDEX idx_orders_code",
+        "DROP INDEX pr.idx_orders_code",
+    )
+
+
+def test_a_create_index_tab_names_the_index_the_user_typed(qtbot, tmp_path):
+    """The bare name from the dialog, qualified with the TABLE's schema --
+    an index lives in its table's schema in Postgres."""
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("create_index", _index_orders(window), "code")
+    dialog = window.findChildren(CreateIndexDialog)[-1]
+    dialog._name_edit.setText("idx_orders_total")
+    dialog.column_picker().set_selection(["code"])
+
+    dialog.accept()
+
+    assert _titled(window) == (
+        "CREATE INDEX idx_orders_total",
+        "CREATE INDEX pr.idx_orders_total",
+    )
+
+
+def test_a_column_comment_tab_names_the_column(qtbot, tmp_path):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(OP_COLUMN_COMMENT, _index_orders(window), "code")
+    window.findChildren(SetCommentDialog)[-1].accept()
+
+    assert _titled(window) == (
+        "COMMENT ON COLUMN orders.code",
+        "COMMENT ON COLUMN pr.orders.code",
+    )
+
+
+def test_a_table_comment_tab_names_the_table(qtbot, tmp_path):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested(OP_TABLE_COMMENT, _index_orders(window), "")
+    window.findChildren(SetCommentDialog)[-1].accept()
+
+    assert _titled(window) == (
+        "COMMENT ON TABLE orders",
+        "COMMENT ON TABLE pr.orders",
+    )
+
+
+def test_a_drop_table_tab_says_drop_table(qtbot, tmp_path):
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_table", _index_orders(window), "")
+    window.findChildren(DropTableDialog)[-1].accept()
+
+    assert _titled(window) == ("DROP TABLE orders", "DROP TABLE pr.orders")
+
+
+def test_the_tab_widgets_label_is_the_refs_short_title(qtbot, tmp_path):
+    """The title is not merely computable -- it is what the tab bar shows."""
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_index", _index_orders(window), "")
+    window.findChildren(DropIndexDialog)[-1].accept()
+    panel = _alter_tabs(window)[-1]
+
+    assert panel.tab_title().startswith("DROP INDEX idx_orders_code")
+
+
+def test_the_save_as_prefill_follows_the_statement_too(qtbot, tmp_path):
+    """A saved `DROP INDEX` script called `alter_pr_orders.sql` is a file whose
+    name has to be disbelieved."""
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_index", _index_orders(window), "")
+    window.findChildren(DropIndexDialog)[-1].accept()
+
+    assert _alter_tabs(window)[-1].ref.default_file_name == (
+        "drop_index_pr_idx_orders_code.sql"
+    )
+
+
+def test_the_title_change_left_the_empty_name_alone(qtbot, tmp_path):
+    """`AlterDdlRef.name` stays empty on purpose: `CheckRequest.checked_name`
+    derives from it, and an ALTER creates no function for tier 3's
+    `plpgsql_check` to analyse. A nicer title must not put one there."""
+    window = _index_window(qtbot, tmp_path)
+    window._on_ddl_alter_column_requested("drop_index", _index_orders(window), "")
+    window.findChildren(DropIndexDialog)[-1].accept()
+
+    assert _alter_tabs(window)[-1].ref.name == ""

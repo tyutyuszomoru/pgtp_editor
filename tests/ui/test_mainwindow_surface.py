@@ -120,6 +120,11 @@ EXPECTED_HOST_SURFACE = {
     "_ALTER_CONSTRAINT_LIST_DIALOGS",
     "_ALTER_INDEX_LIST_DIALOGS",
     "_alter_column_comment_for",
+    # Its table-mode peer, added deliberately: an unseeded table-comment dialog
+    # turned an untouched OK into `COMMENT ON TABLE … IS NULL`, i.e. a silent
+    # deletion of the existing comment. Both seeds read `self._ddl_schema`, so
+    # both belong to the host that owns it.
+    "_alter_table_comment_for",
     "_alter_column_dialog",
     "_alter_column_names_for",
     "_alter_column_table_names",
@@ -143,8 +148,6 @@ EXPECTED_HOST_SURFACE = {
     "_ddl_schema_index",
     "_debug_label",
     "_debug_log_path",
-    "_deploy_active_ddl_object_edit",
-    "_deploy_this_edit_action",
     "_deployment_actions",
     "_deployment_menu",
     "_dialog_default_dir",
@@ -266,7 +269,10 @@ EXPECTED_HOST_SURFACE = {
     "_report_check_lines",
     "_report_ddl_checkout_drift",
     "_report_ddl_format_refusal",
-    "_report_destination_unavailable",
+    # FQ-026 renamed it with the vocabulary it reports in, and added the
+    # one-line sandbox-comparison modal beside the gesture that raises it.
+    "_report_gesture_unavailable",
+    "_show_sandbox_comparison",
     "_restore_editor_bookmarks",
     "_restore_theme",
     "_restore_window_state",

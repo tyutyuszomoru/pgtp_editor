@@ -95,17 +95,25 @@ from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
 from pgtp_editor.db.apply import ApplyOutcome, apply_ddl
-from pgtp_editor.db.ddl_check import CheckRequest
+from pgtp_editor.db.ddl_check import (
+    CAVEAT_STALE_BUFFER,
+    REASON_NOT_IN_WORKING_SET,
+    CheckRequest,
+)
 from pgtp_editor.ui.ddl_object_editor import (
     CHECK_PREFIX,
-    DEST_SANDBOX,
-    DEST_TARGET,
-    DESTINATION_LABELS,
-    DESTINATION_UNAVAILABLE_REASONS,
+    GESTURE_APPLY_TO_QUALITY,
+    GESTURE_CHECK_AND_COMMIT,
+    GESTURE_CHECK_AND_ROLLBACK,
+    GESTURE_CHECK_IN_SANDBOX,
+    GESTURE_LABELS,
+    GESTURE_SAVE_IN_PROJECT,
+    GESTURE_UNAVAILABLE_REASONS,
     DdlObjectRef,
     parse_buffer_identity,
     report_blockers,
     report_unverified,
+    tier_outcomes,
 )
 from pgtp_editor.ui.alter_column_dialogs import (
     COLUMN_ACTIONS,
@@ -154,6 +162,8 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     OP_RENAME_CONSTRAINT,
     OP_SET_DEFAULT,
     BrowserPanel,
+    alter_ddl_statement,
+    alter_ddl_subject,
 )
 from pgtp_editor.ui.activity_panel import ActivityPanel
 from pgtp_editor.ui.code_editor import CodeEditorDialog
@@ -307,6 +317,105 @@ _MAINTENANCE_MENU_TITLES = ("File", "Schema", "Help")
 _MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")
 
 
+#: `Check Object in Sandbox`'s one-line answer (FQ-026), by state. The gesture
+#: is clicked to ask a question one bit wide -- *am I in line with the
+#: sandbox?* -- and `recheck` answered it as a multi-tier narrative in which the
+#: YES case was not a sentence at all but the ABSENCE of a caveat. An absence
+#: cannot answer a yes/no question, so all four states get a line.
+COMPARISON_MATCHES = "matches"
+COMPARISON_DIFFERS = "differs"
+COMPARISON_ABSENT = "absent"
+COMPARISON_UNKNOWN = "unknown"
+
+#: The headline per state. `{object}` is the ref's `qualified`.
+COMPARISON_HEADLINES = {
+    COMPARISON_MATCHES: "{object} matches what the sandbox holds.",
+    COMPARISON_DIFFERS: "{object} does NOT match what the sandbox holds.",
+    COMPARISON_ABSENT: "The sandbox does not hold {object} at all.",
+    COMPARISON_UNKNOWN: (
+        "Whether the sandbox holds {object} could not be determined."
+    ),
+}
+
+
+@dataclass(frozen=True)
+class SandboxComparison:
+    """The yes/no answer `Check Object in Sandbox` now states out loud, plus
+    the sentence the ladder already produced to back it up."""
+
+    state: str
+    headline: str
+    #: The report's own wording for WHY -- tier 2's reason, or the stale-buffer
+    #: caveat, which is where the `applied <when>` timestamp lives. Never
+    #: re-derived here: two spellings of one fact is what FQ-026 exists to end.
+    detail: str = ""
+
+    @property
+    def matches(self) -> bool | None:
+        """True/False for the two decided states, None when the comparison
+        could not be made. Deliberately three-valued: "the sandbox has never
+        held this object" is not "your buffer differs"."""
+        if self.state == COMPARISON_MATCHES:
+            return True
+        if self.state == COMPARISON_DIFFERS:
+            return False
+        return None
+
+    @property
+    def text(self) -> str:
+        return f"{self.headline}\n\n{self.detail}" if self.detail else self.headline
+
+
+def sandbox_comparison(report: Any, qualified: str) -> SandboxComparison:
+    """Read `recheck`'s report for the one fact the gesture is asked for.
+
+    **Derived, never re-measured.** `db/ddl_check.py::_recheck_tier2` already
+    compares the `applied` bookkeeping row's `text_sha1` against the buffer's
+    and emits `CAVEAT_STALE_BUFFER` when they differ; this reads that outcome
+    rather than hashing anything again, so the modal and the Audit narrative
+    cannot disagree, and no new query is issued (the hash is already in the
+    row).
+
+    The four states are the four things tier 2 can end up saying, and they are
+    genuinely different answers:
+
+    * `PASSED` **with** the stale caveat -> the sandbox holds a DIFFERENT text.
+    * `PASSED` **without** it -> the sandbox holds THIS text; the caveat's
+      absence is the match, and this is the state that had no sentence.
+    * `UNAVAILABLE` naming `REASON_NOT_IN_WORKING_SET` -> nothing was ever
+      applied, so there is nothing to be in line with.
+    * anything else (`unavailable`/`errored` -- an unreadable working-set
+      table, a tier that was never built) -> UNKNOWN. Never degraded to "no",
+      for the same reason `_recheck_tier2` refuses to degrade an unreadable
+      table to "not applied".
+    """
+    tier2 = dict(tier_outcomes(report)).get("tier2")
+    status = str(getattr(tier2, "status", "") or "")
+    reason = str(getattr(tier2, "reason", "") or getattr(tier2, "detail", "") or "")
+    caveats = [str(line) for line in (getattr(report, "caveats", None) or [])]
+    # Matched on the caveat's INVARIANT prefix (its tail interpolates
+    # `applied_at`), taken from `db/ddl_check.py`'s own constant rather than
+    # re-typed here.
+    stale_prefix = CAVEAT_STALE_BUFFER.split("{", 1)[0]
+    stale = next((line for line in caveats if line.startswith(stale_prefix)), "")
+    if status == "passed":
+        state = COMPARISON_DIFFERS if stale else COMPARISON_MATCHES
+        return SandboxComparison(
+            state=state,
+            headline=COMPARISON_HEADLINES[state].format(object=qualified),
+            detail=stale or reason,
+        )
+    if reason == REASON_NOT_IN_WORKING_SET:
+        state = COMPARISON_ABSENT
+    else:
+        state = COMPARISON_UNKNOWN
+    return SandboxComparison(
+        state=state,
+        headline=COMPARISON_HEADLINES[state].format(object=qualified),
+        detail=reason,
+    )
+
+
 @dataclass(frozen=True)
 class AlterDdlRef:
     """The identity of an ALTER-generated DDL tab (FQ-025 slice 1).
@@ -350,6 +459,27 @@ class AlterDdlRef:
     #: Per-generation discriminator (see the class docstring).
     serial: int = 0
 
+    #: **The statement this buffer actually holds**, e.g. `"ALTER TABLE"`,
+    #: `"CREATE TABLE"`, `"DROP INDEX"`, `"COMMENT ON COLUMN"`. Defaults to
+    #: `"ALTER TABLE"`, which is what the majority of the submenu emits and
+    #: what a ref built without it used to claim unconditionally.
+    #:
+    #: It is a FIELD rather than something derived from `operation` at read
+    #: time on purpose: the ref is the thing every consumer already reads, and
+    #: a title that lives here cannot drift from the tab it names.
+    statement: str = "ALTER TABLE"
+    #: **The thing that statement names**, fully qualified -- `pr.invoice`,
+    #: `pr.idx_invoice_no`, `pr.invoice.note`. Empty means "the table", which
+    #: is the right default for every `ALTER TABLE` flavour.
+    #:
+    #: This is the half a verb lookup CANNOT supply, and the reason a
+    #: verb-mapping-only fix reads worse rather than better: `DROP INDEX` and
+    #: `COMMENT ON COLUMN` name an index and a column, and a title that pairs
+    #: the right verb with the table still names the wrong thing. The subject
+    #: is known only to the dialog that collected it, so it is passed in from
+    #: there (`MainWindow._alter_ddl_subject`).
+    subject: str = ""
+
     #: Read by `CheckRequest.from_ref` and `DdlObjectEditorPanel`. `"alter"` is
     #: a kind no `DdlObjectRef` ever carries, which is what lets every consumer
     #: tell an ALTER tab from an object tab with one comparison.
@@ -370,21 +500,50 @@ class AlterDdlRef:
         return f"{self.schema}.{self.table}" if self.schema else self.table
 
     @property
+    def qualified_subject(self) -> str:
+        """The fully-qualified thing `statement` names, falling back to the
+        table for every operation that names nothing else."""
+        return self.subject or self.qualified_table
+
+    @property
     def short_title(self) -> str:
-        return f"ALTER {self.table}"
+        """The TAB TITLE. Says which statement is in the buffer and what it is
+        about -- `CREATE TABLE invoice`, `DROP INDEX idx_invoice_no`,
+        `COMMENT ON COLUMN invoice.note`.
+
+        It used to read `ALTER <table>` for all sixteen operations, so a
+        `CREATE TABLE pr.invoice` tab was titled `ALTER invoice` and a
+        `DROP INDEX` tab named a table the statement does not mention at all.
+        The schema is dropped (and only the schema) because a tab bar is
+        narrow and the schema is the part a user browsing their own tabs
+        already knows; `qualified` keeps it for the surfaces that must be
+        unambiguous.
+        """
+        subject = self.qualified_subject
+        prefix = f"{self.schema}."
+        if self.schema and subject.startswith(prefix):
+            subject = subject[len(prefix):]
+        return f"{self.statement} {subject}".strip()
 
     @property
     def qualified(self) -> str:
         """What every confirmation and Audit line names this buffer. Reads as
-        the statement it is, not as an object it is not."""
-        return f"ALTER TABLE {self.qualified_table}"
+        the statement it is, not as an object it is not -- and, since FQ-025's
+        title fix, as the statement it ACTUALLY is rather than as an
+        `ALTER TABLE` every generation was assumed to be."""
+        return f"{self.statement} {self.qualified_subject}".strip()
 
     @property
     def default_file_name(self) -> str:
         """The Save As… prefill. Deliberately NOT §18.2's `schema.object.sql`
         scheme: this file is a script the user chose to keep, never a checked-out
-        object, and it must not look like one in a `ddl/` folder."""
-        stem = f"alter_{self.qualified_table}".replace(".", "_")
+        object, and it must not look like one in a `ddl/` folder.
+
+        Named after the same statement the tab is titled with, for the same
+        reason: a saved `DROP INDEX` script called `alter_pr_invoice.sql` is a
+        file whose name has to be disbelieved."""
+        verb = self.statement.lower().replace(" ", "_")
+        stem = f"{verb}_{self.qualified_subject}".replace(".", "_")
         return f"{stem}.sql"
 
 
@@ -909,9 +1068,6 @@ class MainWindow(QMainWindow):
         #: reason as the three above, and the same reason for the pair map below.
         self._sandbox_ddl_explorer_action = None
         self._ddl_explorer_actions = {}
-        #: §18.5's "Deploy this edit…" picker as a menu entry (FQ-009). Always
-        #: visible -- no session gate, because its Save destination needs none.
-        self._deploy_this_edit_action = None
         # `Database ▸ Sandbox Setup…` used to live here. It is DELETED (owner
         # ruling, 2026-08-09): Provision / Reset / "create a sandbox database
         # for me" now live in Project Settings' sandbox group, which is what
@@ -2331,7 +2487,7 @@ class MainWindow(QMainWindow):
         ever shown:
 
         * on a **DDL object editor tab** — `Check Object in Sandbox` and
-          `Check Object Without Applying`, §18.5 D3a's two gestures, MOVED here
+          `Check and rollback` (FQ-026), §18.5 D3a's two gestures, MOVED here
           off the Database menu and **removed from it**. One gesture, one home:
           keeping both doors would put two names in the user's head for one
           ladder run.
@@ -2394,7 +2550,9 @@ class MainWindow(QMainWindow):
         # there is no sandbox at all), and is deliberately NOT gated on
         # `plpgsql_check_state`: an unavailable tier 3 is a REPORTED OUTCOME, so
         # the gesture stays present and states what it could not check.
-        self._sandbox_check_action = menu.addAction("Check Object in Sandbox")
+        self._sandbox_check_action = menu.addAction(
+            GESTURE_LABELS[GESTURE_CHECK_IN_SANDBOX]
+        )
         self._sandbox_check_action.setVisible(False)
         self._sandbox_check_action.triggered.connect(
             lambda: self._check_active_ddl_object()
@@ -2405,8 +2563,14 @@ class MainWindow(QMainWindow):
         # the two answer neighbouring questions ("what does the sandbox say about
         # what is in it?" vs. "what would this buffer do if I applied it?"), and
         # it shares Check's visibility gate for the same carve-out-2 reason.
+        # RENAMED by FQ-026: `Check Object Without Applying` -> `Check and
+        # rollback`. The old name buried the one distinguishing fact in a
+        # negation ("without applying" -- as opposed to what?); the new one says
+        # both halves of what happens, and reads as the sibling of `Check and
+        # commit to sandbox` that it is. The label IS the command id's last
+        # segment, so this rename carries a `RENAMED_ID_ALIASES` row.
         self._sandbox_probe_check_action = menu.addAction(
-            "Check Object Without Applying"
+            GESTURE_LABELS[GESTURE_CHECK_AND_ROLLBACK]
         )
         self._sandbox_probe_check_action.setVisible(False)
         self._sandbox_probe_check_action.triggered.connect(
@@ -2419,7 +2583,7 @@ class MainWindow(QMainWindow):
 
         It is where every save and every outward push now lives, replacing
         `File ▸ Save`/`Save As…` (deleted with `Ctrl+S`/`Ctrl+Shift+S` and the
-        router behind them) and the buried "Deploy this edit…" picker as the
+        router behind them) and, since FQ-026 deleted it, the "Deploy this edit…" picker as the
         *discoverable* surface for the three per-edit destinations.
 
         **Every action is built ONCE, here, and only ever `setVisible`-toggled --
@@ -2471,15 +2635,28 @@ class MainWindow(QMainWindow):
         # The three §18.5 destinations, by name. Each delegates straight to the
         # gesture that already exists -- no new write path, no second
         # confirmation mechanism, no second Applier.
-        save_in_project_action = menu.addAction("Save in Project")
+        save_in_project_action = menu.addAction(
+            GESTURE_LABELS[GESTURE_SAVE_IN_PROJECT]
+        )
         save_in_project_action.triggered.connect(
             lambda: self._save_active_ddl_object()
         )
-        run_on_sandbox_action = menu.addAction("Run on sandbox")
+        # RENAMED by FQ-026: `Run on sandbox` -> `Check and commit to sandbox`.
+        # The same string is now the confirmation-dialog title and the Audit
+        # line, which is the whole point -- the menu used to say `Run on
+        # sandbox` while the modal it opened said `Apply to Sandbox`.
+        run_on_sandbox_action = menu.addAction(
+            GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]
+        )
         run_on_sandbox_action.triggered.connect(
             lambda: self._run_active_ddl_object_on_sandbox()
         )
-        run_on_quality_action = menu.addAction("Run on quality")
+        # RENAMED by FQ-026: `Run on quality` -> `Apply to quality`, which was
+        # also the name the button and the confirmation used (`Apply to
+        # Target`). Two names for one gesture become one.
+        run_on_quality_action = menu.addAction(
+            GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]
+        )
         run_on_quality_action.triggered.connect(
             lambda: self._run_active_ddl_object_on_quality()
         )
@@ -3293,18 +3470,17 @@ class MainWindow(QMainWindow):
         # visibility predicate is unchanged and still lives in
         # `_refresh_sandbox_affordances`.
         #
-        # §18.5's "Deploy this edit…" picker, which STAYS on Database (it is a
-        # deploy destination picker, not a lint) — FQ-009's discoverability
-        # half. Unlike the check gestures it is
-        # ALWAYS visible and needs no sandbox: its Save destination works with
-        # no database at all, and when a destination is missing the picker now
-        # says which and why instead of leaving a silent gap. Deliberately NO
-        # shortcut -- §18.5: "an irreversible outward effect must not be one
-        # keystroke away".
-        self._deploy_this_edit_action = menu.addAction("Deploy This Edit…")
-        self._deploy_this_edit_action.triggered.connect(
-            lambda: self._deploy_active_ddl_object_edit()
-        )
+        # `Deploy This Edit…` stood here until FQ-026 and is DELETED, by owner
+        # ruling: the picker asked "where does this edit go?" when the Editor
+        # bar's `Deployment` menu already displays the answer as three named
+        # entries (`Save in Project`, `Check and commit to sandbox`, `Apply to
+        # quality`). Deleted rather than hidden, on the same reasoning as the
+        # sandbox-session entries above: a hidden action stays pinnable, so
+        # hiding it would leave a live toolbar button for a gesture the app no
+        # longer offers. A saved `database.deploy-this-edit` id degrades the
+        # `file.save` way -- `resolve_ids` drops what no longer resolves -- and
+        # gets NO `RENAMED_ID_ALIASES` row, because this is a deletion, not a
+        # move. Nothing became unreachable: the picker only ever delegated.
         menu.addSeparator()
         # `Sandbox Setup…` stood here until 2026-08-09. §18.5 D2/D2a's three
         # provisioning gestures moved into Project Settings' sandbox group
@@ -4295,21 +4471,41 @@ class MainWindow(QMainWindow):
         (`table_dialogs.SetCommentDialog` explains why a comment may be seeded
         where a `DEFAULT` or a `USING` clause may not).
 
-        There is deliberately no table-comment equivalent: `introspect.TableInfo`
-        carries no `comment` field -- `pg_description` is read for columns only --
-        so `Set Table Comment…` opens blank, and a blank box means
-        `COMMENT … IS NULL`. Seeding it would require widening introspection,
-        which slice 3 does not.
+        Its table-mode peer is `_alter_table_comment_for`; the two are the only
+        seeds this feature injects, and both read the SAME already-fetched
+        schema.
         """
         if self._ddl_schema is None or not column:
             return ""
-        info = self._ddl_schema.tables.get(table)
+        existing = self._ddl_schema.column(table, column)
+        if existing is None:
+            return ""
+        return existing.comment or ""
+
+    def _alter_table_comment_for(self, table: str) -> str:
+        """The table's existing comment, so `Set Table Comment…` opens on "edit
+        this description" for exactly the reason the column flavour does.
+
+        **This is a data-loss guard, not a convenience.** A blank box emits
+        `COMMENT ON TABLE … IS NULL`, which is Postgres's only spelling for
+        "remove the comment" -- so an unseeded table dialog turned an untouched
+        OK into a silent deletion of whatever description the table already
+        carried. The column path never had that hole because it was seeded from
+        day one; this closes the table one.
+
+        `TableInfo.comment` is the whole-relation `pg_description` row
+        (`objsubid = 0`), populated by the same fetch the DDL Explorer already
+        ran -- so no extra round trip, exactly as
+        `_alter_column_comment_for` needs none. A non-`None` value is passed
+        through VERBATIM (no strip): the box must round-trip the stored comment
+        byte for byte, or an untouched OK still rewrites it.
+        """
+        if self._ddl_schema is None:
+            return ""
+        info = self._ddl_schema.table(table)
         if info is None:
             return ""
-        for existing in info.columns:
-            if existing.name == column:
-                return existing.comment or ""
-        return ""
+        return getattr(info, "comment", None) or ""
 
     def _alter_column_dialog(self, operation, table_info, column):
         """Build the dialog `operation` calls for, with its table/column data
@@ -4339,11 +4535,16 @@ class MainWindow(QMainWindow):
         if operation in COMMENT_TARGETS:
             # One dialog, two modes, the mode fixed by the menu item the user
             # picked -- the same call `ColumnActionDialog` makes for its four.
+            # BOTH modes are seeded. The table mode used to open blank, and a
+            # blank box emits `IS NULL` -- so an untouched OK silently deleted
+            # the table's existing comment. See `_alter_table_comment_for`.
             return SetCommentDialog(
                 target=operation,
-                comment=self._alter_column_comment_for(table, column)
-                if operation == OP_COLUMN_COMMENT
-                else "",
+                comment=(
+                    self._alter_column_comment_for(table, column)
+                    if operation == OP_COLUMN_COMMENT
+                    else self._alter_table_comment_for(table)
+                ),
                 **kwargs,
             )
         return None
@@ -4398,7 +4599,7 @@ class MainWindow(QMainWindow):
 
         **Generation executes nothing** -- the tab IS the safeguard (FQ-025):
         the DDL is text in an editor until the user takes the separate, confirmed
-        `Deployment ▸ Run on sandbox` gesture, which is the same run path FQ-002's
+        `Deployment ▸ Check and commit to sandbox` gesture, the same run path FQ-002's
         Add Trigger tab already has.
 
         Routed through `_edit_ddl_live` (never `_on_ddl_edit_requested`) for a
@@ -4424,12 +4625,18 @@ class MainWindow(QMainWindow):
             # would be worse than the silence.
             return
         schema_name, table_name = self._split_qualified(dialog.table())
+        qualified_table = f"{schema_name}.{table_name}" if schema_name else table_name
         MainWindow._alter_ddl_serial += 1
         ref = AlterDdlRef(
             schema=schema_name,
             table=table_name,
             operation=operation,
             serial=MainWindow._alter_ddl_serial,
+            # The tab must be titled after the statement it holds, not after
+            # the submenu it was reached from -- `Alter Table ▸ Create Index…`
+            # emits no ALTER at all. See `AlterDdlRef.statement`/`subject`.
+            statement=alter_ddl_statement(operation),
+            subject=alter_ddl_subject(dialog, operation, qualified_table),
         )
         self._edit_ddl_live(ref, text)
 
@@ -4934,16 +5141,12 @@ class MainWindow(QMainWindow):
         panel.check_findings.connect(
             lambda findings, ref=ref: self._report_check_findings(findings, ref)
         )
-        # "Deploy this edit…" ▸ Save delegates outward rather than saving itself
-        # (§18.5: the picker is "a picker in front of the three gestures, not a
-        # fourth thing that writes DDL or files on its own"). Without this
-        # connection that destination was a SILENT NO-OP -- the picker returned
-        # "save" and nothing was written. Found while making the picker
-        # discoverable (FQ-009), which is exactly the kind of dead path a buried
-        # affordance hides.
-        panel.save_requested.connect(
-            lambda panel=panel: self._save_ddl_object_editor(panel)
-        )
+        # `panel.save_requested` used to be connected here -- the picker's Save
+        # destination delegated outward rather than writing a file itself. The
+        # picker is deleted (FQ-026) and it was the signal's only emitter, so
+        # the signal went with it: `Deployment ▸ Save in Project` calls
+        # `_save_active_ddl_object` -> `_save_ddl_object_editor` directly, which
+        # is the same one save path, one caller shorter.
         if self._sandbox_console_available():
             panel.set_run_in_console(self._run_selection_in_sandbox_console)
         self._wire_ddl_object_apply_seams(panel)
@@ -5325,7 +5528,7 @@ class MainWindow(QMainWindow):
         carve-out 2's narrowing) -- the two Check gestures, the Sandbox SQL
         Console and §18.8's two node buttons -- so they cannot drift into three
         vocabularies for one fact. The sentence itself is the destination
-        picker's (`DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]`, FQ-009), which
+        the apply gestures' own (`GESTURE_UNAVAILABLE_REASONS`, FQ-009), which
         already names what went wrong and how to fix it (BUG-040 reworded it off
         the deleted menu entry); it is deliberately reused rather than re-typed
         here.
@@ -5350,7 +5553,7 @@ class MainWindow(QMainWindow):
                 5000,
             )
             return False
-        reason = DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]
+        reason = GESTURE_UNAVAILABLE_REASONS[GESTURE_CHECK_AND_COMMIT]
         answer = modals.QMessageBox.question(
             self,
             "No Sandbox Session",
@@ -5570,12 +5773,12 @@ class MainWindow(QMainWindow):
             text = f"{_SANDBOX_PREFIX}{name} failed" + (f": {reason}" if reason else ".")
         self.audit_panel.addItem(QListWidgetItem(text))
 
-    # --- §18.5 D3: Apply to Sandbox ------------------------------------------
+    # --- §18.5 D3: Check and commit to sandbox -------------------------------
     def _wire_ddl_object_apply_seams(self, panel) -> None:
         """Wire (or unwire) one object tab's apply lane — BOTH destinations
         (§18.5, FQ-020).
 
-        **`Run on quality` (Apply to Target) is now wired, and works PROJECTLESS
+        **`Apply to quality` is now wired, and works PROJECTLESS
         — an owner ruling and a deliberate posture change** (2026-08-08). The
         fast-bugfix mode it exists for is explicit: open a `.pgtp` with no
         project, edit an object, push it straight to quality.
@@ -5639,7 +5842,7 @@ class MainWindow(QMainWindow):
             seams["confirm"] = self._confirm_apply
         panel.set_apply_seams(**seams)
 
-    # --- The `Run on quality` target lane (§18.5, FQ-020) --------------------
+    # --- The `Apply to quality` target lane (§18.5, FQ-020) ------------------
 
     @staticmethod
     def _database_host_label(params) -> str:
@@ -5669,7 +5872,7 @@ class MainWindow(QMainWindow):
         return f"{database} on {host}:{port}" if port else f"{database} on {host}"
 
     def _target_params_for_apply(self):
-        """The quality target a `Run on quality` will actually hit, or None when
+        """The quality target an `Apply to quality` will actually hit, or None when
         none can be resolved (§18.5, FQ-020).
 
         Goes through BUG-034's one selector, `_target_params_for_fetch`, so what
@@ -5718,7 +5921,7 @@ class MainWindow(QMainWindow):
         return replace(params, password=password)
 
     def _target_apply_available(self) -> bool:
-        """Whether `Run on quality`'s seams can be wired — *without* prompting
+        """Whether `Apply to quality`'s seams can be wired — *without* prompting
         for anything.
 
         Deliberately NOT `_target_params_for_apply() is not None`: this runs on
@@ -5733,7 +5936,7 @@ class MainWindow(QMainWindow):
         return bool(self._target_is_configured(self.active_target_params(tree)))
 
     def _target_database_label(self) -> str:
-        """What a `Run on quality` confirmation NAMES: the resolved database and
+        """What an `Apply to quality` confirmation NAMES: the resolved database and
         host (§18.5 precondition 4). Empty when no target resolves, which the
         panel turns into a refusal rather than a nameless confirmation."""
         return self._database_host_label(self._target_params_for_apply())
@@ -5938,17 +6141,19 @@ class MainWindow(QMainWindow):
         return self._save_ddl_object_editor(panel)
 
     def _run_active_ddl_object_on_sandbox(self) -> bool:
-        """`Deployment ▸ Run on sandbox` — §18.5 D3's `apply_and_check`, behind
+        """`Deployment ▸ Check and commit to sandbox` — §18.5 D3's `apply_and_check`, behind
         its own confirmation naming the object and the sandbox database."""
-        panel = self._active_ddl_object_panel_for(DESTINATION_LABELS[DEST_SANDBOX])
+        panel = self._active_ddl_object_panel_for(
+            GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]
+        )
         if panel is None:
             return False
         if not panel.has_sandbox_apply:
-            return self._report_destination_unavailable(DEST_SANDBOX)
+            return self._report_gesture_unavailable(GESTURE_CHECK_AND_COMMIT)
         return panel.apply_to_sandbox()
 
     def _run_active_ddl_object_on_quality(self) -> bool:
-        """`Deployment ▸ Run on quality` — §18.5's Apply to Target, behind all
+        """`Deployment ▸ Apply to quality` — §18.5's target apply, behind all
         four hard preconditions (signature-change refusal, the green-sandbox gate
         with its named override, the no-revert-snapshot caveat and a confirmation
         naming the object, the database AND the host).
@@ -5956,22 +6161,26 @@ class MainWindow(QMainWindow):
         Works **projectless**, which is the owner's fast-bugfix mode; the
         project-mode leg is still blocked on BUG-034's unpopulated
         `ProjectSettings.target`, and says so rather than doing nothing."""
-        panel = self._active_ddl_object_panel_for(DESTINATION_LABELS[DEST_TARGET])
+        panel = self._active_ddl_object_panel_for(
+            GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]
+        )
         if panel is None:
             return False
         if not panel.has_target_apply:
-            return self._report_destination_unavailable(DEST_TARGET)
+            return self._report_gesture_unavailable(GESTURE_APPLY_TO_QUALITY)
         return panel.apply_to_target()
 
-    def _report_destination_unavailable(self, destination) -> bool:
-        """State why a destination cannot be reached, in the Audit panel and on
-        the status bar (§18.5 carve-out 2, narrowed to present-and-reporting).
+    def _report_gesture_unavailable(self, gesture) -> bool:
+        """State why a gesture cannot run, in the Audit panel and on the status
+        bar (§18.5 carve-out 2, narrowed to present-and-reporting).
 
-        The reason text is the panel's own `DESTINATION_UNAVAILABLE_REASONS`, so
-        the menu entry and the "Deploy this edit…" picker cannot explain the same
-        absence two different ways. Always returns False: nothing ran."""
-        reason = DESTINATION_UNAVAILABLE_REASONS[destination]
-        label = DESTINATION_LABELS[destination]
+        Both strings come from the panel's own tables -- the reason from
+        `GESTURE_UNAVAILABLE_REASONS` and the name from `GESTURE_LABELS` -- so
+        the menu entry, this refusal and `_refuse_sandbox_gesture` cannot
+        explain one absence three ways, and cannot call the gesture three
+        things while doing it (FQ-026). Always returns False: nothing ran."""
+        reason = GESTURE_UNAVAILABLE_REASONS[gesture]
+        label = GESTURE_LABELS[gesture]
         self._report_check_lines([CHECK_PREFIX + f"{label} is unavailable: {reason}."])
         self.statusBar().showMessage(f"{label} is unavailable: {reason}.", 8000)
         return False
@@ -6095,23 +6304,33 @@ class MainWindow(QMainWindow):
 
     # --- §18.5 D3/D3a: the two check gestures --------------------------------
     def _check_active_ddl_object(self) -> None:
-        """Database ▸ Check Object in Sandbox -- D3a's `recheck`, run over the
+        """`Parsing ▸ Check Object in Sandbox` -- D3a's `recheck`, run over the
         ACTIVE object tab's buffer.
 
         **Applies nothing**, which is what it costs: tiers 0-2 are *about*
         applying, so `recheck` reports tier 1 as unavailable and tier 2 as the
         bookkeeping fact ("the sandbox already holds this, applied <when>") plus
         the stale-buffer caveat. The gesture that actually compiles this buffer
-        is Check Object Without Applying (or Apply to Sandbox).
+        is `Check and rollback` (or `Check and commit to sandbox`).
+
+        **FQ-026 changed only how the result is SURFACED.** `recheck` is
+        untouched -- the whole ladder still runs and tier 3 still re-lints what
+        is actually in the sandbox, which is the only thing that catches what
+        changed *underneath* the object since it was applied. What is new is
+        that the run also puts up a one-line modal answering the question the
+        gesture is actually clicked to ask (*am I in line with the sandbox?*),
+        because that answer was previously spread across a multi-tier narrative
+        -- and in the matching case was not stated at all, only implied by the
+        absence of a caveat. See `_show_sandbox_comparison`.
         """
         self._run_ladder_on_active_ddl_object(probe=False)
 
     def _probe_check_active_ddl_object(self) -> None:
-        """Database ▸ Check Object Without Applying -- §18.5 D3's rolled-back
-        probe (`db/ddl_check.py::probe_check`, `apply_ddl(..., commit=False)`).
+        """`Parsing ▸ Check and rollback` -- §18.5 D3's rolled-back probe
+        (`db/ddl_check.py::probe_check`, `apply_ddl(..., commit=False)`).
 
-        The **whole** ladder runs, on this buffer, exactly as Apply to Sandbox
-        would run it -- tier 2 really compiles the DDL, tier 1 really lints it,
+        The **whole** ladder runs, on this buffer, exactly as `Check and commit
+        to sandbox` would run it -- tier 2 really compiles the DDL, tier 1 really lints it,
         tier 3 really calls `plpgsql_check` -- and then the transaction is rolled
         back, so the sandbox is unchanged and no working-set row is written.
         This is the one narrow place rollback survives in §18 (D2), and it is
@@ -6122,24 +6341,6 @@ class MainWindow(QMainWindow):
         touch is `applied_sha1`, since nothing was applied.
         """
         self._run_ladder_on_active_ddl_object(probe=True)
-
-    def _deploy_active_ddl_object_edit(self) -> str | None:
-        """Database ▸ Deploy This Edit… -- §18.5's destination picker run over
-        the ACTIVE object tab (FQ-009's discoverability half).
-
-        Adds no gesture and no write path of its own: it calls the panel's
-        `deploy_this_edit()`, which delegates to Apply to Sandbox / the host's
-        Save / Apply to Target and runs each one's full gate. Returns the chosen
-        destination (or None) so a test can assert the delegation without
-        reading the panel back."""
-        panel = self.center_stage.active_ddl_object_panel()
-        if panel is None:
-            self.statusBar().showMessage(
-                "Deploy This Edit runs on an open DDL object tab — open one first.",
-                5000,
-            )
-            return None
-        return panel.deploy_this_edit()
 
     def _run_ladder_on_active_ddl_object(self, *, probe: bool) -> None:
         """The shared body of the two Database-menu check gestures. Exactly one
@@ -6158,9 +6359,9 @@ class MainWindow(QMainWindow):
         answering with "open a DDL object tab" would send a user who has one
         prerequisite missing off to fix a different one.
         """
-        gesture = (
-            "Check Object Without Applying" if probe else "Check Object in Sandbox"
-        )
+        gesture = GESTURE_LABELS[
+            GESTURE_CHECK_AND_ROLLBACK if probe else GESTURE_CHECK_IN_SANDBOX
+        ]
         if not self.sandbox_controller.can_check:
             self._refuse_sandbox_gesture(gesture)
             return
@@ -6199,6 +6400,13 @@ class MainWindow(QMainWindow):
             # acts separate, so both are asked for explicitly.
             panel.record_check_report(report, text)
             panel.report_check_result(report)
+            if not probe:
+                # FQ-026: the modal is IN ADDITION to the Audit output, never
+                # instead of it. The owner asked for a one-line answer, not for
+                # the tier detail and the clickable findings to stop being
+                # reported -- so the Audit panel keeps the whole ladder and the
+                # modal answers the yes/no the gesture was clicked to ask.
+                self._show_sandbox_comparison(ref, report)
 
         if probe:
             self.sandbox_controller.run_apply(
@@ -6206,6 +6414,24 @@ class MainWindow(QMainWindow):
             )
         else:
             self.sandbox_controller.run_check(request, on_done)
+
+    def _show_sandbox_comparison(self, ref, report) -> SandboxComparison:
+        """Put `Check Object in Sandbox`'s one-line answer on screen (FQ-026).
+
+        Through the `ui/modals.py` seam, as §30 requires of every modal, and as
+        an `information` box rather than a question: it asks nothing and offers
+        no choice -- the ladder has already run and this states its verdict.
+
+        The comparison is returned as well as shown, so a test can assert BOTH
+        states of the answer without driving the dialog.
+        """
+        comparison = sandbox_comparison(report, getattr(ref, "qualified", ""))
+        modals.QMessageBox.information(
+            self,
+            GESTURE_LABELS[GESTURE_CHECK_IN_SANDBOX],
+            comparison.text,
+        )
+        return comparison
 
     def _trigger_function_for(self, ref, text) -> dict:
         """`CheckRequest.from_ref` kwargs naming the function a TRIGGER calls.
@@ -6335,7 +6561,7 @@ class MainWindow(QMainWindow):
         #   deliberately NOT `Deployment`: it is meaningful only while a
         #   comparison is loaded, and it REPLACES the app's open document
         #   (`_reload` -> `open_project_file`), so hosting it beside
-        #   `Run on quality` would put two very differently shaped irreversible
+        #   `Apply to quality` would put two very differently shaped irreversible
         #   actions under one menu. FQ-020 removed it here expecting FQ-021 to
         #   rehome it; between the two it had no menu home at all, which left
         #   `_diff_ui.apply_changes_to_target` implemented, tested and

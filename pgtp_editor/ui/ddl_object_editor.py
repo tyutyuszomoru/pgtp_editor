@@ -40,10 +40,17 @@ supplies (the sandbox controller's operations) -- see "the apply seams" on
 affordance whose seam is unwired is **absent**, never shown disabled: with no
 sandbox seam there is no sandbox button and no sandbox row at all.
 
-**Apply is never bound to a keyboard shortcut** -- neither Apply to Sandbox,
-nor Apply to Target, nor "Deploy this edit…": *an irreversible outward effect
-must not be one keystroke away* (§18.5). Every apply is confirm-gated behind a
-confirmation naming **both the object and the database** it will hit.
+**Apply is never bound to a keyboard shortcut** -- neither `Check and commit
+to sandbox` nor `Apply to quality`: *an irreversible outward effect must not be
+one keystroke away* (§18.5). Every apply is confirm-gated behind a confirmation
+naming **both the object and the database** it will hit.
+
+**One name per operation** (FQ-026). `GESTURE_LABELS` below is the single source
+for every user-visible string naming a gesture -- menu label, confirmation title,
+Audit `[Check]` line, status bar. The panel offers no apply affordance of its
+own: the button row and the context-menu apply entries are deleted, and the
+gestures live on the Editor bar's `Deployment` / `Parsing` menus, which call
+these methods.
 
 **Findings no longer travel on `check_reported`** -- §18.5 D3a splits the Audit
 report into two channels and explicitly overrides §28's shipped behavior (which
@@ -64,9 +71,7 @@ from typing import TYPE_CHECKING, Any, Callable
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QColor, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QInputDialog,
-    QPushButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -91,32 +96,72 @@ if TYPE_CHECKING:  # pragma: no cover -- import-cycle/Qt-purity avoidance only
 #: re-prefix them.
 CHECK_PREFIX = "[Check] "
 
-#: The three per-edit destinations (§18.5, §18.2). Surfaced by name on the Editor
-#: bar's `Deployment` menu since FQ-020, and still reachable through the
-#: "Deploy this edit…" picker, which is a chooser in FRONT of the three existing
-#: gestures -- neither surface is a fourth thing that writes DDL or files on its
-#: own.
-DEST_SANDBOX = "sandbox"
-DEST_SAVE = "save"
-DEST_TARGET = "target"
+#: **The four gestures, and the ONE name each of them has** (FQ-026).
+#:
+#: Eight user-visible names denoted four operations until FQ-026: `Apply to
+#: Sandbox` (button), `Run on sandbox` (menu), `Deploy this edit… → sandbox`
+#: (picker) and the confirmation titled `Apply to Sandbox` were all one path,
+#: and the menu label had already DRIFTED from the confirmation title because
+#: they were separate string literals. That drift is what produced the reported
+#: confusion, so the invariant this table exists to hold is:
+#:
+#:   **one name per operation, used identically across the menu label, the
+#:   confirmation-dialog title, the Audit `[Check]` line, the status bar and
+#:   the manual.**
+#:
+#: Every one of those surfaces reads THIS mapping. Re-typing a label at a call
+#: site is the bug; if a name changes it changes here, once. (This is the role
+#: the deleted `DESTINATION_LABELS` argued for in its own docstring -- *"they
+#: must come from one place or the UI and the manual disagree"* -- re-homed
+#: rather than dropped when its picker went away, and widened from the three
+#: destinations to all five gestures a DDL object tab offers.)
+#:
+#: The ids are the SLUGS of the labels, i.e. the last segment of the menu-path
+#: command id `toolbar_registry.command_id_for` derives -- so a renamed label is
+#: visibly a renamed id, which is what `RENAMED_ID_ALIASES` has to carry a row
+#: for.
+GESTURE_CHECK_AND_COMMIT = "check-and-commit-to-sandbox"
+GESTURE_CHECK_AND_ROLLBACK = "check-and-rollback"
+GESTURE_APPLY_TO_QUALITY = "apply-to-quality"
+GESTURE_CHECK_IN_SANDBOX = "check-object-in-sandbox"
+GESTURE_SAVE_IN_PROJECT = "save-in-project"
 
-#: FQ-020 renamed all three to the words the `Deployment` menu uses. The labels
-#: appear in two surfaces (this picker's prose and the menu entries), so they must
-#: come from one place or the UI and the manual disagree about what the same
-#: gesture is called.
-DESTINATION_LABELS = {
-    DEST_SANDBOX: "Run on sandbox",
-    DEST_SAVE: "Save in Project",
-    DEST_TARGET: "Run on quality",
+GESTURE_LABELS = {
+    # `apply_and_check` -- the whole ladder, `commit=True`, a bookkeeping row.
+    # The name says both halves: it CHECKS, and unlike its neighbour it KEEPS
+    # the result. Was `Apply to Sandbox` / `Run on sandbox` / a picker entry.
+    GESTURE_CHECK_AND_COMMIT: "Check and commit to sandbox",
+    # `probe_check` -- the identical ladder with `commit=False`. Named for the
+    # single thing that distinguishes it from the entry above, which its old
+    # name (`Check Object Without Applying`) buried in a negation.
+    GESTURE_CHECK_AND_ROLLBACK: "Check and rollback",
+    # `apply_to_target` and its four hard preconditions. Was `Apply to Target`
+    # (button + confirmation title) AND `Run on quality` (menu) -- two names,
+    # one gesture, which is the drift in its purest form.
+    GESTURE_APPLY_TO_QUALITY: "Apply to quality",
+    # `recheck`. KEEPS its name and its home on `Parsing`: FQ-026 changes only
+    # how its result is surfaced, not what it runs, so it is still a genuine
+    # check and still the odd one out that applies nothing.
+    GESTURE_CHECK_IN_SANDBOX: "Check Object in Sandbox",
+    # The plain Save. Touches no database; named by FQ-020 and unchanged.
+    GESTURE_SAVE_IN_PROJECT: "Save in Project",
 }
 
-#: Why a destination is NOT on offer, stated to the user in the picker rather
-#: than left as a silent absence (FQ-009: the requester's complaint was "there
-#: is no option to save to the database" -- which was true of the *reachable*
+#: Why a DB-touching gesture is NOT on offer, stated to the user rather than
+#: left as a silent absence (FQ-009: the requester's complaint was "there is no
+#: option to save to the database" -- which was true of the *reachable*
 #: destinations and invisible as a reason). Carve-out 2 still holds: an
-#: unavailable destination is not a selectable-but-dead entry; it is named in
-#: the picker's prose, with what would make it available, and cannot be chosen.
-DESTINATION_UNAVAILABLE_REASONS = {
+#: unavailable gesture is not a selectable-but-dead entry.
+#:
+#: **This table OUTLIVED the picker it was written for.** FQ-026 lists it for
+#: deletion alongside `DESTINATION_LABELS`, but it has two live non-picker
+#: consumers -- `MainWindow._report_destination_unavailable` (the `Deployment`
+#: entries' own refusal) and `MainWindow._refuse_sandbox_gesture`, which BUG-040
+#: deliberately reuses verbatim so the check gestures and the apply gestures
+#: cannot explain one absence two ways. Deleting it would have deleted those
+#: sentences, not just the picker's; it is re-keyed onto the gesture ids above
+#: instead.
+GESTURE_UNAVAILABLE_REASONS = {
     # BUG-040 deleted `Database ▸ Open Sandbox Session`, which this sentence
     # used to name — the session now opens with the project. So the remedy is
     # the `Open` button on the refusal itself (this string is reused verbatim
@@ -133,7 +178,7 @@ DESTINATION_UNAVAILABLE_REASONS = {
     # in-project remedy — true while the provisioning gestures lived in the
     # deleted dialog, and the reason the owner moved them. Both halves of this
     # sentence now have a remedy on one tab.
-    DEST_SANDBOX: (
+    GESTURE_CHECK_AND_COMMIT: (
         "no sandbox session is open — the project's sandbox could not be "
         "reached, or none is set up yet (check its connection in Project "
         "Settings)"
@@ -144,7 +189,7 @@ DESTINATION_UNAVAILABLE_REASONS = {
     # The project-mode leg is still blocked (BUG-034 never populates
     # `ProjectSettings.target` from the `.pgtp`), which is why the remedy names
     # both places a target can come from.
-    DEST_TARGET: (
+    GESTURE_APPLY_TO_QUALITY: (
         "no quality target could be resolved with a password — configure it in "
         "Database ▸ Connection Setup… (projectless) or Project Settings ▸ "
         "Connections (with a project open). Precondition 1 re-checks the "
@@ -503,11 +548,11 @@ def report_unverified(report: Any) -> list[str]:
 class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
     """One editable DDL object, one tab (§18.5).
 
-    Layout mirrors `EditorPanel`: the editor above, its own `FindReplaceBar`
-    below, zero margins and zero spacing, plus the apply button row between
-    them -- which exists **only** when an apply seam is wired: with no sandbox
-    lane there is no row and no button, rather than dead controls (carve-out
-    2).
+    Layout mirrors `EditorPanel` exactly: the editor above, its own
+    `FindReplaceBar` below, zero margins and zero spacing. **Nothing between
+    them** -- the apply button row that used to sit there is deleted (FQ-026),
+    so a DDL object tab is an editor and a find bar, and every gesture that
+    reaches a database is named on the Editor menu bar.
     """
 
     #: Emitted only on a clean→dirty / dirty→clean TRANSITION, never per
@@ -540,12 +585,13 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
     #: which keeps the signature literally `check_findings(list)`.
     check_findings = Signal(list)
 
-    #: Emitted when "Deploy this edit…" picks the SAVE destination. The panel
-    #: does not save: it delegates to the host's existing Save gesture
-    #: (`MainWindow._save_ddl_object_editor`) so there is exactly one save path
-    #: (§18.5: "a picker in front of the three gestures, not a fourth thing
-    #: that writes DDL or files on its own").
-    save_requested = Signal()
+    #: `save_requested` stood here until FQ-026. It existed so the deleted
+    #: "Deploy this edit…" picker's SAVE destination could delegate outward
+    #: instead of writing a file itself; the picker was its only emitter, so
+    #: with the picker gone the signal was emitted by nothing and connected by
+    #: the host to a slot that could never fire. `Deployment ▸ Save in Project`
+    #: reaches `MainWindow._save_ddl_object_editor` directly -- still exactly
+    #: one save path.
 
     def __init__(
         self,
@@ -594,7 +640,7 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             Re-introspects the live catalog and returns the object's CURRENT
             identity, or None when the target does not have the object yet.
             Precondition 1 compares it against the identity the buffer
-            declares; **Apply to Target is absent unless this seam is wired**,
+            declares; **`Apply to quality` is absent unless this seam is wired**,
             because an unverifiable signature change is the one failure mode
             no confirmation can catch.
 
@@ -675,26 +721,24 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         self.editor.setReadOnly(False)
         self.find_replace_bar = FindReplaceBar(self.editor)
 
-        # The deploy/apply row (§18.5). The two APPLY buttons are built from the
-        # seams that are actually wired and are absent when none is -- carve-out
-        # 2's "no dead controls" posture, the same convention
-        # `project_status_panel.py` uses.
+        # **There is no apply/deploy button row** (FQ-026). It held three
+        # buttons -- `Deploy this edit…`, `Apply to Sandbox`, `Apply to Target…`
+        # -- that merely CALLED the gestures the Editor bar's `Deployment` menu
+        # already names, so it was three more label strings free to drift from
+        # the menu's, which is half of what made eight names denote four
+        # operations. Deleting it removed callers, not capability: every gesture
+        # is on `Deployment` / `Parsing` by its one canonical name
+        # (`GESTURE_LABELS`), and the owner explicitly accepted the consequence
+        # that a DDL object tab carries NO in-tab apply affordance -- the same
+        # call FQ-020 made for saving.
         #
-        # The row itself, and the "Deploy this edit…" button in it, are
-        # ALWAYS present (FQ-009): the picker's Save destination needs no seam
-        # and always works, so the button is never a dead control -- and burying
-        # the one gesture that answers "where does this edit go?" in a
-        # right-click menu was precisely the discoverability gap FQ-009 reports.
-        self.apply_row: QWidget | None = None
-        self.deploy_button: QPushButton | None = None
-        self.sandbox_button: QPushButton | None = None
-        self.target_button: QPushButton | None = None
-
+        # It is DELETED, not disabled: §18.5 carve-out 2 is explicit that an
+        # affordance whose seam is unwired is ABSENT, and a permanently-dead
+        # row would violate the very section this feature edits.
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.editor)
-        self._build_apply_row(layout)
         layout.addWidget(self.find_replace_bar)
 
         # FQ-016: the bar is permanently visible; Ctrl+F / Ctrl+R focus it,
@@ -852,15 +896,15 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         if self.has_run_in_console:
             console_action = menu.addAction("Run in Sandbox Console", self.run_in_sandbox_console)
             console_action.setEnabled(self.editor.textCursor().hasSelection())
-        # The apply gestures (§18.5). Present only when their seam is wired
-        # (carve-out 2) and NONE of them carries a shortcut -- an irreversible
-        # outward effect must not be one keystroke away.
-        menu.addSeparator()
-        if self.has_sandbox_apply:
-            menu.addAction("Apply to Sandbox", self.apply_to_sandbox)
-        if self.has_target_apply:
-            menu.addAction("Apply to Target…", self.apply_to_target)
-        menu.addAction("Deploy this edit…", self.deploy_this_edit)
+        # **The apply gestures are NOT here** (FQ-026). This menu carried
+        # `Apply to Sandbox`, `Apply to Target…` and `Deploy this edit…`, each
+        # with its own label string and each merely calling a gesture the
+        # `Deployment` menu already names. They went with the button row for
+        # the same reason and under the same owner ruling -- a DDL object tab
+        # gets no in-tab apply affordance -- so the right-click menu keeps only
+        # what is genuinely tab-local: Format Selection and the console bridge,
+        # neither of which is an apply and neither of which exists anywhere
+        # else.
         return menu
 
     # --- Format Selection (§18.4's consumer, §18.5) ------------------------
@@ -906,14 +950,16 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
 
     # --- Apply (§18.5) -----------------------------------------------------
     #
-    # Three gestures, none of them bound to a key: Apply to Sandbox, Apply to
-    # Target, and the "Deploy this edit…" picker in front of them. The panel
-    # executes no SQL and owns no session -- every DB-touching step is one of
-    # the injected seams above.
+    # TWO gestures, neither bound to a key: `Check and commit to sandbox` and
+    # `Apply to quality` (FQ-026 -- the picker that used to sit in front of
+    # them is deleted). The panel executes no SQL and owns no session -- every
+    # DB-touching step is one of the injected seams above -- and it offers no
+    # affordance of its own either: the gestures are reached from the Editor
+    # bar's `Deployment` menu, which calls these methods.
 
     @property
     def has_sandbox_apply(self) -> bool:
-        """Whether Apply to Sandbox is offered: the write seam AND the
+        """Whether `Check and commit to sandbox` is offered: the write seam AND the
         confirmation gate must both be wired. Its affordance is absent when
         they are not -- there is no unconfirmed apply path."""
         return self._apply_to_sandbox is not None and self._confirm_seam is not None
@@ -930,10 +976,9 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         """Wire (or unwire) §18.5 D4's console bridge.
 
         Deliberately NOT folded into `set_apply_seams`: that call replaces the
-        whole apply SET and rebuilds the button row, while this affordance is
-        context-menu-only, has no button, and is not an apply -- putting it
-        there would make wiring the apply lane silently drop it, or wiring the
-        console rebuild a button row it has nothing to do with."""
+        whole apply SET, while this affordance is context-menu-only and is not
+        an apply -- putting it there would make wiring the apply lane silently
+        drop it."""
         self._run_in_console = seam
 
     def run_in_sandbox_console(self) -> bool:
@@ -954,7 +999,7 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
 
     @property
     def has_target_apply(self) -> bool:
-        """Whether Apply to Target is offered at all: the write seam, the
+        """Whether `Apply to quality` is offered at all: the write seam, the
         live-identity seam (precondition 1 cannot be enforced without it, and
         an unenforceable precondition must remove the gesture rather than
         weaken it) and the confirmation gate must ALL be wired."""
@@ -976,15 +1021,19 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
     ) -> None:
         """Wire (or re-wire) the apply seams after construction -- what the
         host calls when the sandbox lane comes up, or when the connection
-        profiles change. Replaces the whole set and rebuilds the button row, so
-        a seam that goes away takes its affordance with it."""
+        profiles change. Replaces the whole SET, so a seam that goes away takes
+        its gesture with it: `has_sandbox_apply`/`has_target_apply` go False and
+        the host's `Deployment` entries refuse with the reason (carve-out 2, as
+        narrowed to present-and-reporting by FQ-023).
+
+        It no longer rebuilds anything -- there is no button row to rebuild
+        (FQ-026)."""
         self._apply_to_sandbox = apply_to_sandbox
         self._apply_to_target = apply_to_target
         self._live_identity = live_identity
         self._sandbox_database_label = sandbox_database_label
         self._target_database_label = target_database_label
         self._confirm_seam = confirm
-        self._build_apply_row(self.layout())
 
     def last_check_report(self) -> Any | None:
         """The validation report recorded for the CURRENT buffer, or None when
@@ -1007,10 +1056,15 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         return _sha1(self.text())
 
     def apply_to_sandbox(self) -> bool:
-        """§18.5 D3's `apply_and_check` gesture: commit this buffer to the
-        sandbox and run the ladder over it. Confirm-gated behind a
-        confirmation naming the object and the sandbox database. Returns True
-        when the seam was actually invoked."""
+        """§18.5 D3's `apply_and_check` gesture -- **`Check and commit to
+        sandbox`** (FQ-026): run the whole ladder over this buffer and COMMIT
+        it to the sandbox. Confirm-gated behind a confirmation naming the
+        object and the sandbox database. Returns True when the seam was
+        actually invoked.
+
+        The method keeps its `apply_to_sandbox` name -- it is the seam's name
+        and `db/ddl_check.py::apply_and_check`'s caller -- while every
+        user-visible string comes from `GESTURE_LABELS`."""
         if not self.has_sandbox_apply:
             return False
         text = self.text()
@@ -1026,13 +1080,21 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
                 ]
             )
             return False
+        # The confirmation title is the MENU LABEL, from the one table -- it
+        # used to be the literal "Apply to Sandbox" while the menu said "Run on
+        # sandbox", so a user picking a menu entry answered a modal that named
+        # the operation something else (FQ-026's headline symptom).
+        gesture = GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]
         if not self._confirm(
-            "Apply to Sandbox",
-            f"Apply {self._ref.qualified} to sandbox database {database}?\n\n"
+            gesture,
+            f"Check {self._ref.qualified} against sandbox database {database} "
+            "and COMMIT it there?\n\n"
             "The sandbox is stateful: this edit is committed there and stays "
             "in its working set.",
         ):
-            self._report([f"apply to sandbox of {self._ref.qualified} cancelled; nothing was applied."])
+            self._report(
+                [f"{gesture} of {self._ref.qualified} cancelled; nothing was applied."]
+            )
             return False
         report = self._apply_to_sandbox(self._ref, text)
         if report is None:
@@ -1097,7 +1159,7 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             return False
         text = self.text()
         if not text.strip():
-            self._report(["refused: the buffer is empty; nothing to apply to the target."])
+            self._report(["refused: the buffer is empty; nothing to apply to quality."])
             return False
         if not self._precondition_signature(text):
             return False
@@ -1112,15 +1174,24 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             return False
         if not self._precondition_validation(database):
             return False
+        # As above: title == menu label == Audit vocabulary, from one table.
+        # This one carried the sharpest drift -- the button and the
+        # confirmation said "Apply to Target" while the menu said "Run on
+        # quality" (FQ-026).
         if not self._confirm(
-            "Apply to Target",
-            f"Apply {self._ref.qualified} to database {database}?\n\n"
+            GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY],
+            f"Apply {self._ref.qualified} to quality database {database}?\n\n"
             "This executes DDL against the real database. It runs inside a "
             "transaction and rolls back if a statement is rejected, but there "
             "is no revert snapshot: a successful-but-wrong apply cannot be "
             "undone from within the app.",
         ):
-            self._report([f"apply to target of {self._ref.qualified} cancelled; nothing was applied."])
+            self._report(
+                [
+                    f"{GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]} of "
+                    f"{self._ref.qualified} cancelled; nothing was applied."
+                ]
+            )
             return False
         outcome = self._apply_to_target(self._ref, text)
         if outcome is None:
@@ -1230,7 +1301,9 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
             return True
         enumerated = "\n".join(f"  - {line}" for line in unverified)
         if not self._confirm(
-            "Apply to Target Without Full Validation",
+            # The override dialog is part of `Apply to quality`, so it is
+            # titled in that gesture's vocabulary rather than in a fifth one.
+            f"{GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]} without full validation",
             f"Apply {self._ref.qualified} to database {database} even though the "
             "following could NOT be checked?\n\n"
             f"{enumerated}\n\n"
@@ -1238,7 +1311,8 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         ):
             self._report(
                 [
-                    f"refused: apply to target of {self._ref.qualified} needs a green "
+                    f"refused: {GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]} of "
+                    f"{self._ref.qualified} needs a green "
                     "sandbox validation, and the override was declined."
                 ]
                 + [f"  not checked: {line}" for line in unverified]
@@ -1250,135 +1324,31 @@ class DdlObjectEditorPanel(CompletionPopupHostMixin, QWidget):
         )
         return True
 
-    # --- "Deploy this edit…" -- the destination picker (§18.5, 2026-08-05) --
-    def deploy_this_edit(self) -> str | None:
-        """Ask which of the three coexisting per-edit destinations this edit
-        goes to, then DELEGATE to that destination's existing gesture. This
-        command writes no DDL and no file of its own, adds no confirmation
-        mechanism of its own, and carries **no keyboard shortcut** -- picking
-        "Apply to Target" here still runs every one of that gesture's four hard
-        preconditions. Returns the chosen destination key, or None when the
-        user cancelled."""
-        choice = self._prompt_destination()
-        if choice is None:
-            return None
-        if choice == DEST_SANDBOX:
-            self.apply_to_sandbox()
-        elif choice == DEST_TARGET:
-            self.apply_to_target()
-        elif choice == DEST_SAVE:
-            # The host's existing plain Save -- writes a file, touches no
-            # database, exactly as Save always has.
-            self.save_requested.emit()
-        return choice
-
-    def deploy_destinations(self) -> list[str]:
-        """The destinations actually reachable right now. Save is always
-        available; the two applies appear only when their seams are wired (no
-        dead entries -- carve-out 2)."""
-        destinations = []
-        if self.has_sandbox_apply:
-            destinations.append(DEST_SANDBOX)
-        destinations.append(DEST_SAVE)
-        if self.has_target_apply:
-            destinations.append(DEST_TARGET)
-        return destinations
-
-    def unavailable_destinations(self) -> list[tuple[str, str]]:
-        """The destinations NOT reachable right now, each with the reason --
-        `[(destination, reason), …]` (FQ-009).
-
-        Carve-out 2 says an unwired affordance is absent, not a dead control,
-        and that stays true: nothing here is selectable. But "absent" was being
-        read by users as "this app cannot deploy to a database at all", so the
-        picker states which destinations are missing and what would bring them
-        back. Save is never listed -- it needs no seam."""
-        missing: list[tuple[str, str]] = []
-        if not self.has_sandbox_apply:
-            missing.append((DEST_SANDBOX, DESTINATION_UNAVAILABLE_REASONS[DEST_SANDBOX]))
-        if not self.has_target_apply:
-            missing.append((DEST_TARGET, DESTINATION_UNAVAILABLE_REASONS[DEST_TARGET]))
-        return missing
-
-    def deploy_prompt_text(self) -> str:
-        """The picker's prose: the question, plus any destination that is not on
-        offer and why (FQ-009). Split out so a test can read the explanation
-        without driving the modal."""
-        text = f"Where should this edit to {self._ref.qualified} go?"
-        missing = self.unavailable_destinations()
-        if missing:
-            text += "\n\nNot available right now:"
-            for destination, reason in missing:
-                text += f"\n  • {DESTINATION_LABELS[destination]}: {reason}."
-        return text
-
-    def _prompt_destination(self) -> str | None:
-        """The picker itself -- `QInputDialog.getItem`, the app's existing
-        simple-selection idiom (§18.6's unattached-trigger picker). Split out
-        so tests drive the delegation without a modal."""
-        destinations = self.deploy_destinations()
-        labels = [DESTINATION_LABELS[d] for d in destinations]
-        choice, ok = QInputDialog.getItem(
-            self,
-            "Deploy This Edit",
-            self.deploy_prompt_text(),
-            labels,
-            0,
-            False,
-        )
-        if not ok:
-            return None
-        for destination, label in zip(destinations, labels):
-            if label == choice:
-                return destination
-        return None
+    # --- The "Deploy this edit…" picker: DELETED (FQ-026) ------------------
+    #
+    # `deploy_this_edit`, `deploy_destinations`, `unavailable_destinations`,
+    # `deploy_prompt_text` and `_prompt_destination` stood here. The picker was
+    # a chooser in FRONT of three gestures -- it wrote no DDL and no file, added
+    # no confirmation of its own, and delegated to Save / apply-to-sandbox /
+    # apply-to-quality.
+    #
+    # It is deleted by owner ruling (2026-08-10): *"the picker is not needed if
+    # the other menus are explicit of the target"*, and they are -- `Deployment`
+    # carries `Save in Project`, `Check and commit to sandbox` and `Apply to
+    # quality`, each naming its own destination. FQ-009's discoverability
+    # complaint ("there is no option to save to the database") is answered by
+    # those three named entries rather than by a fourth gesture asking a
+    # question the menu already displays the answer to.
+    #
+    # **This is a deliberate withdrawal of a live, shipped feature**, not the
+    # closing of a spec-vs-code gap: it shipped on three always-present surfaces
+    # (the panel button, the tab context menu and `Database ▸ Deploy This
+    # Edit…`). All three go, and nothing it could reach became unreachable. A
+    # pinned `database.deploy-this-edit` degrades away through `resolve_ids` --
+    # a deletion gets NO `RENAMED_ID_ALIASES` row, because a row would point at
+    # a command that does not exist.
 
     # --- Apply plumbing ----------------------------------------------------
-    def _build_apply_row(self, layout) -> None:
-        """(Re)build the deploy/apply button row.
-
-        The row and its "Deploy this edit…" button always exist (FQ-009 -- the
-        picker's Save destination needs no seam, so the button is not a dead
-        control). The two APPLY buttons appear only with their seam wired: an
-        affordance whose seam is unwired is ABSENT, not disabled (§18.5
-        carve-out 2)."""
-        if self.apply_row is not None:
-            layout.removeWidget(self.apply_row)
-            self.apply_row.setParent(None)
-            self.apply_row.deleteLater()
-            self.apply_row = None
-        self.deploy_button = None
-        self.sandbox_button = None
-        self.target_button = None
-        row = QWidget(self)
-        box = QHBoxLayout(row)
-        box.setContentsMargins(6, 3, 6, 3)
-        box.setSpacing(6)
-        box.addStretch(1)
-        # Leftmost: the umbrella gesture. No shortcut and no default-button
-        # role -- picking a destination stays a deliberate act, and Apply to
-        # Target behind it still runs all four hard preconditions.
-        self.deploy_button = QPushButton("Deploy this edit…", row)
-        self.deploy_button.setToolTip(
-            "Choose where this edit goes: apply it to the sandbox, save it for "
-            "a future batch deploy, or apply it to the target database."
-        )
-        self.deploy_button.setAutoDefault(False)
-        self.deploy_button.clicked.connect(lambda: self.deploy_this_edit())
-        box.addWidget(self.deploy_button)
-        if self.has_sandbox_apply:
-            self.sandbox_button = QPushButton("Apply to Sandbox", row)
-            self.sandbox_button.clicked.connect(lambda: self.apply_to_sandbox())
-            box.addWidget(self.sandbox_button)
-        if self.has_target_apply:
-            self.target_button = QPushButton("Apply to Target…", row)
-            self.target_button.clicked.connect(lambda: self.apply_to_target())
-            box.addWidget(self.target_button)
-        self.apply_row = row
-        # Always directly under the editor and above the find bar, whichever
-        # order the row was (re)built in.
-        layout.insertWidget(1, row)
-
     def _database_label(self, seam: Callable[[], str] | None) -> str | None:
         """The database name the confirmation must carry, or None when the
         host cannot name one -- in which case the apply is refused rather than

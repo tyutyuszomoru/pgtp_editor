@@ -233,6 +233,81 @@ ALTER_TABLE_ALL_ACTIONS: tuple[tuple[str, str], ...] = (
     *ALTER_TABLE_COLUMN_COMMENT_ACTIONS,
 )
 
+#: operation id -> the SQL statement that operation's emitter actually writes.
+#: Only the operations whose statement is NOT `ALTER TABLE` appear; everything
+#: absent gets `AlterDdlRef.statement`'s default, which is the honest answer for
+#: the twelve column/constraint operations that really do emit one.
+#:
+#: It lives here, beside the ids themselves, because it is a statement of FACT
+#: about each emitter in `db/ddl_skeleton.py` -- the same kind of fact as the
+#: labels above, and belonging to the same vocabulary. The tab titles read off
+#: it (see `AlterDdlRef.statement`), which is how a `Create Index…` generation
+#: stopped being titled `ALTER <table>`: the submenu it was reached from is
+#: `Alter Table ▸`, but the statement it produces is not an ALTER at all, and
+#: the tab must be named after the buffer, not after the route to it.
+ALTER_DDL_STATEMENTS: dict[str, str] = {
+    OP_CREATE_TABLE: "CREATE TABLE",
+    OP_DROP_TABLE: "DROP TABLE",
+    OP_CREATE_INDEX: "CREATE INDEX",
+    OP_DROP_INDEX: "DROP INDEX",
+    OP_SET_TABLE_COMMENT: "COMMENT ON TABLE",
+    OP_SET_COLUMN_COMMENT: "COMMENT ON COLUMN",
+}
+
+#: The statement every other operation emits, and the default the ref carries.
+DEFAULT_ALTER_DDL_STATEMENT = "ALTER TABLE"
+
+
+def alter_ddl_statement(operation: str) -> str:
+    """The SQL statement `operation` generates."""
+    return ALTER_DDL_STATEMENTS.get(operation, DEFAULT_ALTER_DDL_STATEMENT)
+
+
+def _qualified_in_schema_of(name: str, qualified_table: str) -> str:
+    """`name` in `qualified_table`'s schema, or `""` for an empty name. An
+    index lives in its table's schema in Postgres, so this is not a guess."""
+    if not name:
+        return ""
+    if "." in name:
+        return name
+    schema = qualified_table.rsplit(".", 1)[0] if "." in qualified_table else ""
+    return f"{schema}.{name}" if schema else name
+
+
+def alter_ddl_subject(dialog, operation: str, qualified_table: str) -> str:
+    """What the generated statement NAMES, fully qualified -- the half of a tab
+    title that no operation→label lookup can supply.
+
+    Read off the DIALOG, because the dialog is the only place the answer
+    exists: `DROP INDEX` names an index the user picked from a combo,
+    `COMMENT ON COLUMN` names a column, and neither is anywhere in the
+    `(schema, table)` pair `AlterDdlRef` is otherwise built from. That is
+    exactly why a verb-mapping-only fix read *worse* than the old wrong title:
+    the right verb over the wrong noun names a thing the statement never
+    mentions.
+
+    `""` means "the table", which `AlterDdlRef.qualified_subject` resolves --
+    the correct answer for every `ALTER TABLE`, `CREATE TABLE`, `DROP TABLE`
+    and `COMMENT ON TABLE`.
+
+    Duck-typed via `getattr` throughout: this module already knows the ids, and
+    making it import the dialog classes to isinstance-check them would invert
+    the dependency `table_dialogs` has on it.
+    """
+    if operation in (OP_CREATE_INDEX, OP_DROP_INDEX):
+        # `DropIndexDialog` hands back `schema.name` directly; `CreateIndexDialog`
+        # has only the bare name the user typed.
+        identity = (getattr(dialog, "index_identity", lambda: "")() or "").strip()
+        if identity:
+            return identity
+        name = (getattr(dialog, "index_name", lambda: "")() or "").strip()
+        return _qualified_in_schema_of(name, qualified_table)
+    if operation == OP_SET_COLUMN_COMMENT:
+        column = (getattr(dialog, "column", lambda: "")() or "").strip()
+        return f"{qualified_table}.{column}" if column else ""
+    return ""
+
+
 #: The submenu these sit in, on both the table node and a column leaf.
 ALTER_TABLE_MENU_TITLE = "Alter Table"
 

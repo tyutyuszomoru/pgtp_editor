@@ -197,13 +197,13 @@ def test_parsing_menu_contents(qtbot):
         "Validate Project",
         "―",
         "Check Object in Sandbox",
-        "Check Object Without Applying",
+        "Check and rollback",
     ]
     assert find_action(menu, "Auto Parse XML") is window._auto_parse_action
     assert find_action(menu, "Validate Project") is window._validate_project_action
     assert find_action(menu, "Check Object in Sandbox") is window._sandbox_check_action
     assert (
-        find_action(menu, "Check Object Without Applying")
+        find_action(menu, "Check and rollback")
         is window._sandbox_probe_check_action
     )
 

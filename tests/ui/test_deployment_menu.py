@@ -50,7 +50,10 @@ _SOURCE = "CREATE OR REPLACE FUNCTION pr.recalc() RETURNS void AS $$ BEGIN END $
 
 #: The §26 per-tab table, verbatim.
 RAW_XML = ["Compare/Merge pgtp", "Save pgtp", "Save as new pgtp", "Deploy .pgtp"]
-DDL_OBJECT = ["Save in Project", "Run on sandbox", "Run on quality"]
+# FQ-026 renamed two of the three: `Run on sandbox` -> `Check and commit to
+# sandbox`, `Run on quality` -> `Apply to quality`. Each label is now the ONE
+# name its operation has, shared with the confirmation title and the Audit line.
+DDL_OBJECT = ["Save in Project", "Check and commit to sandbox", "Apply to quality"]
 XSD = ["Save XSD"]
 PHP = ["Save PHP File"]
 ALL_ENTRIES = RAW_XML + DDL_OBJECT + XSD + PHP
@@ -195,8 +198,10 @@ def test_hidden_entries_stay_pinnable_with_stable_ids(qtbot, tmp_path):
         "deployment.save-as-new-pgtp",
         "deployment.deploy-pgtp",
         "deployment.save-in-project",
-        "deployment.run-on-sandbox",
-        "deployment.run-on-quality",
+        # FQ-026 renamed both; the id is the whole menu path, so the ids moved
+        # with the labels and `RENAMED_ID_ALIASES` carries a row for each.
+        "deployment.check-and-commit-to-sandbox",
+        "deployment.apply-to-quality",
         "deployment.save-xsd",
         "deployment.save-php-file",
     }
@@ -219,7 +224,7 @@ def test_closing_the_object_tab_hands_the_menu_back_to_the_raw_xml_group(
 ):
     """The refresh must run on every `currentChanged`, not only when a tab is
     opened: a stale `ddl-object` group left behind by a closed tab would offer
-    `Run on quality` with no object to send."""
+    `Apply to quality` with no object to send."""
     window = _window(qtbot, tmp_path)
     stage = window.center_stage
     window._on_ddl_edit_requested(_REF, _SOURCE)
@@ -373,8 +378,8 @@ def test_no_entry_other_than_the_two_pgtp_saves_can_write_the_pgtp(qtbot, tmp_pa
         "Compare/Merge pgtp",
         "Deploy .pgtp",
         "Save in Project",
-        "Run on sandbox",
-        "Run on quality",
+        "Check and commit to sandbox",
+        "Apply to quality",
         "Save XSD",
         "Save PHP File",
     ]
@@ -419,8 +424,8 @@ def test_save_php_file_off_a_php_tab_writes_nothing(qtbot, tmp_path):
 
 def test_run_on_sandbox_off_a_ddl_tab_reports_instead_of_no_opping(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    find_action(_menu(window), "Run on sandbox").trigger()
-    assert "Run on sandbox runs on an open DDL object tab" in (
+    find_action(_menu(window), "Check and commit to sandbox").trigger()
+    assert "Check and commit to sandbox runs on an open DDL object tab" in (
         window.statusBar().currentMessage()
     )
 
@@ -437,8 +442,8 @@ def test_run_on_quality_off_a_ddl_tab_reports_before_touching_a_database(
         "getText",
         staticmethod(lambda *a, **k: (_ for _ in ()).throw(AssertionError("prompted"))),
     )
-    find_action(_menu(window), "Run on quality").trigger()
-    assert "Run on quality runs on an open DDL object tab" in (
+    find_action(_menu(window), "Apply to quality").trigger()
+    assert "Apply to quality runs on an open DDL object tab" in (
         window.statusBar().currentMessage()
     )
 
@@ -446,11 +451,11 @@ def test_run_on_quality_off_a_ddl_tab_reports_before_touching_a_database(
 def test_run_on_sandbox_with_no_session_states_the_reason(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
     window._on_ddl_edit_requested(_REF, _SOURCE)
-    find_action(_menu(window), "Run on sandbox").trigger()
+    find_action(_menu(window), "Check and commit to sandbox").trigger()
     lines = [
         window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
     ]
-    assert any("Run on sandbox is unavailable" in line for line in lines)
+    assert any("Check and commit to sandbox is unavailable" in line for line in lines)
     # The reason is the destination picker's sentence, which names neither the
     # deleted `Open Sandbox Session` entry nor the deleted `Sandbox Setup…` one.
     assert any("no sandbox session is open" in line for line in lines)
@@ -459,7 +464,7 @@ def test_run_on_sandbox_with_no_session_states_the_reason(qtbot, tmp_path):
     assert all(line.startswith("[Check] ") for line in lines)
 
 
-# -- `Run on quality`, projectless (§18.5, owner ruling) ---------------------
+# -- `Apply to quality`, projectless (§18.5, owner ruling) ---------------------
 
 
 def _projectless_quality_window(qtbot, tmp_path, monkeypatch, password="secret"):
@@ -493,7 +498,7 @@ def test_run_on_quality_is_offered_projectless(qtbot, tmp_path, monkeypatch):
     connection with the `.pgtp`'s `<ConnectionOptions>`)."""
     window, panel = _projectless_quality_window(qtbot, tmp_path, monkeypatch)
     assert panel.has_target_apply is True
-    action = find_action(_menu(window), "Run on quality")
+    action = find_action(_menu(window), "Apply to quality")
     assert action.isVisible() is True
 
 
@@ -579,7 +584,7 @@ def test_a_projectless_quality_apply_runs_and_reports_under_check(
     )
 
     window.center_stage.setCurrentWidget(panel)
-    find_action(_menu(window), "Run on quality").trigger()
+    find_action(_menu(window), "Apply to quality").trigger()
 
     assert len(applied) == 1
     params, statements = applied[0]
@@ -667,7 +672,7 @@ def test_a_cancelled_password_prompt_refuses_BEFORE_the_confirmation(
     )
 
     window.center_stage.setCurrentWidget(panel)
-    find_action(_menu(window), "Run on quality").trigger()
+    find_action(_menu(window), "Apply to quality").trigger()
 
     assert applied == []
     assert confirmations == []

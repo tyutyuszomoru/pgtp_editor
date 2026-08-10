@@ -9,6 +9,7 @@ native-undo regression (carve-out 1) proving the Raw XML buffer is untouched,
 and carve-out 5 (re-running DDL Explorer leaves open object tabs untouched).
 """
 from lxml import etree
+import pytest
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
@@ -22,6 +23,27 @@ from pgtp_editor.ui import modals
 
 def _empty_settings(tmp_path):
     return QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+
+
+
+@pytest.fixture(autouse=True)
+def comparison_modals(monkeypatch):
+    """§30 guard for FQ-026's new modal.
+
+    `Check Object in Sandbox` now ends in a one-line `QMessageBox.information`
+    stating whether the buffer matches what the sandbox holds, so every test
+    that runs the gesture would otherwise reach an un-patched modal. Patched
+    through the `ui/modals.py` seam (never through `main_window`'s namespace),
+    and RECORDING rather than silencing: the tests that are about the answer
+    read `(title, text)` straight out of this list.
+    """
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "information",
+        staticmethod(lambda *args, **kwargs: seen.append(tuple(args[1:3]))),
+    )
+    return seen
 
 
 def _window(qtbot, tmp_path):

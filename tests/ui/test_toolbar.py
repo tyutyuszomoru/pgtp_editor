@@ -830,14 +830,20 @@ def test_a_toolbar_saved_before_bug039_follows_the_check_gestures_to_parsing(
     window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
     qtbot.addWidget(window)
 
+    # FQ-026 then RENAMED the second one to `Check and rollback`, so the
+    # BUG-039 row was re-pointed at the final id rather than left as a chain:
+    # `resolve_ids` applies `RENAMED_ID_ALIASES` exactly ONCE, so a chained row
+    # would resolve to an id that no longer exists and `valid_ids` would
+    # silently drop this button -- the exact failure the table exists to
+    # prevent.
     assert window._toolbar_ui.command_ids == [
         "parsing.check-object-in-sandbox",
-        "parsing.check-object-without-applying",
+        "parsing.check-and-rollback",
     ]
     parsing = find_top_menu(window, "Parsing")
     assert window._toolbar_ui.command_actions[:2] == [
         find_action(parsing, "Check Object in Sandbox"),
-        find_action(parsing, "Check Object Without Applying"),
+        find_action(parsing, "Check and rollback"),
     ]
 
 
@@ -874,7 +880,7 @@ def test_a_pinned_session_lifecycle_button_is_dropped_not_left_dead(qtbot, tmp_p
     ):
         assert gone not in live
     assert "parsing.check-object-in-sandbox" in live
-    assert "parsing.check-object-without-applying" in live
+    assert "parsing.check-and-rollback" in live  # renamed again by FQ-026
 
 
 def test_a_pinned_sandbox_setup_button_is_dropped_not_left_dead(qtbot, tmp_path):

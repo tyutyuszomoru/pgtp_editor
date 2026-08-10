@@ -162,9 +162,28 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     "file.revert": "file.discard-changes",
     "file.show-launcher": "file.new-session",
     "database.check-object-in-sandbox": "parsing.check-object-in-sandbox",
-    "database.check-object-without-applying": (
-        "parsing.check-object-without-applying"
-    ),
+    # FQ-026's three renames. The label IS the id's last segment, so renaming
+    # the menu entry renames the command.
+    #
+    # **`resolve_ids` applies this table EXACTLY ONCE, not transitively** (see
+    # its body: one `RENAMED_ID_ALIASES.get` pass over the already-legacy-mapped
+    # ids). So a command renamed twice needs its OLD rows re-pointed at the
+    # final id, not a chain -- which is why BUG-039's
+    # `database.check-object-without-applying` row below now names
+    # `parsing.check-and-rollback` rather than the intermediate
+    # `parsing.check-object-without-applying` it was written with. Left as a
+    # chain, a toolbar saved before BUG-039 would resolve to an id that no
+    # longer exists and `valid_ids` would silently drop the button -- the exact
+    # failure this table exists to prevent.
+    "database.check-object-without-applying": "parsing.check-and-rollback",
+    "parsing.check-object-without-applying": "parsing.check-and-rollback",
+    "deployment.run-on-sandbox": "deployment.check-and-commit-to-sandbox",
+    "deployment.run-on-quality": "deployment.apply-to-quality",
+    # `database.deploy-this-edit` gets NO row: FQ-026 DELETES the picker, and a
+    # deletion degrades through `resolve_ids` dropping the unresolvable id (the
+    # `file.save` precedent). A row here would point a saved button at a
+    # command that does not exist, which `valid_ids` would drop anyway -- while
+    # making the table claim the command merely moved.
 }
 
 # Menu-path id -> icon id (the `icons.ACTION_ICON_FILES` key). Only the legacy

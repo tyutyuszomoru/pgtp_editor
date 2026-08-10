@@ -15,6 +15,7 @@ of carve-out 2, pinned in the last section of this module); the bridge copies
 text and executes nothing; and there is no "run against target" affordance
 anywhere in the Database menu.
 """
+import pytest
 from PySide6.QtCore import QSettings, Qt
 
 from pgtp_editor.db.ddl_check import CheckRequest
@@ -28,6 +29,27 @@ from tests.ui._menu_helpers import find_action, find_top_menu
 
 def _empty_settings(tmp_path):
     return QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+
+
+
+@pytest.fixture(autouse=True)
+def comparison_modals(monkeypatch):
+    """§30 guard for FQ-026's new modal.
+
+    `Check Object in Sandbox` now ends in a one-line `QMessageBox.information`
+    stating whether the buffer matches what the sandbox holds, so every test
+    that runs the gesture would otherwise reach an un-patched modal. Patched
+    through the `ui/modals.py` seam (never through `main_window`'s namespace),
+    and RECORDING rather than silencing: the tests that are about the answer
+    read `(title, text)` straight out of this list.
+    """
+    seen: list[tuple] = []
+    monkeypatch.setattr(
+        modals.QMessageBox,
+        "information",
+        staticmethod(lambda *args, **kwargs: seen.append(tuple(args[1:3]))),
+    )
+    return seen
 
 
 def _window(qtbot, tmp_path):
@@ -920,7 +942,7 @@ def test_the_parsing_actions_are_the_check_handlers_themselves(
 
     parsing = find_top_menu(window, "Parsing")
     find_action(parsing, "Check Object in Sandbox").trigger()
-    find_action(parsing, "Check Object Without Applying").trigger()
+    find_action(parsing, "Check and rollback").trigger()
 
     assert len(checked) == 1 and checked[0].name == "recalc"
     assert len(probe_calls) == 1
@@ -1223,57 +1245,63 @@ def test_a_CREATE_TRIGGER_tab_keeps_using_the_trigger_path(qtbot, tmp_path):
     assert window._trigger_relation_for(ref, "CREATE TRIGGER ... RETURNS trigger") == {}
 
 
-# --- FQ-009: the "Deploy this edit…" picker, host side ----------------------
-def test_deploy_this_edit_is_a_database_menu_entry_that_needs_no_sandbox(
-    qtbot, tmp_path
-):
-    """FQ-009's discoverability half. Unlike the two check gestures the entry is
-    always visible: its Save destination works with no database at all."""
+# --- FQ-026: the picker's host surface is deleted ---------------------------
+def test_no_menu_anywhere_offers_deploy_this_edit(qtbot, tmp_path):
+    """FQ-009 put the picker on `Database` to make the destinations
+    discoverable; FQ-020 made all three discoverable BY NAME on `Deployment`,
+    and FQ-026 withdrew the picker on the owner's ruling that *"the picker is
+    not needed if the other menus are explicit of the target"*.
+
+    Asserted across BOTH menu bars, because the picker shipped on three
+    always-present surfaces and a deduplication that leaves one behind has
+    deduplicated nothing."""
     window = _window(qtbot, tmp_path)
 
-    action = window._deploy_this_edit_action
-    assert action is not None
-    assert action.text() == "Deploy This Edit…"
-    assert action.isVisible()
-    # §18.5: no shortcut on anything that can write outward.
-    assert action.shortcut().isEmpty()
+    labels = {
+        label for _command_id, label in window._toolbar_ui.all_menu_commands()
+    }
+    assert not [label for label in labels if "Deploy This Edit" in label]
+    assert not [label for label in labels if "Deploy this edit" in label]
+    # The host handler and its cached action go with it -- a surviving handler
+    # is how a withdrawn gesture gets re-wired by accident.
+    assert not hasattr(window, "_deploy_this_edit_action")
+    assert not hasattr(window, "_deploy_active_ddl_object_edit")
 
 
-def test_deploy_this_edit_menu_entry_runs_the_active_tabs_picker(
+def test_a_pinned_deploy_this_edit_button_is_dropped_not_left_dead(qtbot, tmp_path):
+    """A deletion is not a move, so there is deliberately NO
+    `RENAMED_ID_ALIASES` row: `resolve_ids` drops the id that no longer
+    resolves, which is the `file.save` / `database.open-sandbox-session`
+    precedent. The action was deleted rather than hidden for the usual reason
+    -- a toolbar button bypasses menu visibility entirely."""
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue("toolbarIds", ["database.deploy-this-edit", "file.open"])
+    seed.sync()
+
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+
+    assert window._toolbar_ui.command_ids == ["file.open"]
+    live = {command_id for command_id, _label in window._toolbar_ui.all_menu_commands()}
+    assert "database.deploy-this-edit" not in live
+
+
+def test_save_in_project_still_writes_the_file_the_picker_used_to(
     qtbot, tmp_path, monkeypatch
 ):
-    window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
-    window._on_ddl_edit_requested(_REF, _SOURCE)
-    panel = window.center_stage.ddl_object_tab(_REF.key)
-    window.center_stage.setCurrentWidget(panel)
-    monkeypatch.setattr(panel, "_prompt_destination", lambda: None)
-
-    assert window._deploy_active_ddl_object_edit() is None
-
-
-def test_deploy_this_edit_with_no_object_tab_states_it_instead_of_crashing(
-    qtbot, tmp_path
-):
-    window = _window(qtbot, tmp_path)
-
-    assert window._deploy_active_ddl_object_edit() is None
-    assert "open one first" in window.statusBar().currentMessage()
-
-
-def test_the_pickers_save_destination_actually_writes_the_file(
-    qtbot, tmp_path, monkeypatch
-):
-    """`save_requested` had no host connection, so choosing Save in the picker
-    was a silent no-op. It now runs the host's one existing save gesture."""
+    """The surviving path for the picker's Save destination. It is the SAME
+    host gesture the picker delegated to (`_save_ddl_object_editor`), reached
+    one caller shorter -- so deleting the picker removed an entry point, not a
+    capability."""
     window, _controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
     window._on_ddl_edit_requested(_REF, _SOURCE)
     panel = window.center_stage.ddl_object_tab(_REF.key)
     window.center_stage.setCurrentWidget(panel)
     destination = tmp_path / "recalc.sql"
     monkeypatch.setattr(panel, "_resolve_save_path", lambda: destination)
-    monkeypatch.setattr(panel, "_prompt_destination", lambda: "save")
 
-    window._deploy_active_ddl_object_edit()
+    assert window._save_active_ddl_object() is True
 
     assert destination.read_text(encoding="utf-8") == _SOURCE
 
@@ -1299,24 +1327,22 @@ def test_run_on_quality_in_project_mode_stays_blocked_and_says_why(
 
     assert panel.has_sandbox_apply is True
     assert panel.has_target_apply is False
-    assert panel.target_button is None
+    # FQ-026 deleted the in-tab affordances entirely (button row and the
+    # context-menu apply entries), so "the gesture is unavailable" is now a
+    # property of the SEAM plus the menu entry's own refusal below.
     labels = [a.text() for a in panel._build_context_menu().actions()]
-    assert "Apply to Target…" not in labels
-
-    prompt = panel.deploy_prompt_text()
-    assert "Run on quality" in prompt
-    assert "Connection Setup" in prompt
+    assert not [label for label in labels if "Apply" in label]
 
     # The menu entry is still THERE -- and clicking it states the reason rather
     # than no-opping.
     window.center_stage.setCurrentWidget(panel)
-    action = find_action(find_top_menu(window, "Deployment"), "Run on quality")
+    action = find_action(find_top_menu(window, "Deployment"), "Apply to quality")
     assert action is not None and action.isVisible()
     action.trigger()
     lines = [
         window.audit_panel.item(i).text() for i in range(window.audit_panel.count())
     ]
-    assert any("Run on quality is unavailable" in line for line in lines)
+    assert any("Apply to quality is unavailable" in line for line in lines)
     assert any(line.startswith("[Check] ") for line in lines)
 
 
@@ -1419,7 +1445,7 @@ def test_the_probe_gesture_refuses_under_its_own_name(qtbot, tmp_path, monkeypat
 
     window._probe_check_active_ddl_object()
 
-    assert "Check Object Without Applying" in seen[0]
+    assert "Check and rollback" in seen[0]  # FQ-026: its ONE name
 
 
 def test_the_missing_session_is_reported_before_the_missing_tab(
@@ -1552,3 +1578,152 @@ def test_an_unconfigured_sandbox_refuses_without_a_modal(qtbot, tmp_path, monkey
 
     assert window._open_sandbox_sql_console() is None
     assert "none is configured" in window.statusBar().currentMessage()
+
+
+# --- FQ-026: the one-line answer for `Check Object in Sandbox` --------------
+#
+# The gesture is clicked to ask a question one bit wide -- *am I in line with
+# the sandbox?* -- and `recheck` answered it as a multi-tier narrative in which
+# the YES case was not a sentence at all, only the ABSENCE of the stale-buffer
+# caveat. An absence cannot answer a yes/no question, so both states speak.
+#
+# `recheck` itself is UNCHANGED: the whole ladder still runs and tier 3 still
+# re-lints what is actually in the sandbox, which is the only thing that catches
+# what changed *underneath* the object since it was applied.
+
+
+from pgtp_editor.db.ddl_check import TIER_NOT_BUILT as _NOT_BUILT  # noqa: E402
+
+def _recheck_report(*, applied_at="2026-08-10 09:00", stale=False):
+    """A `recheck`-shaped report: tier 2 PASSED off the bookkeeping row, plus
+    the stale caveat exactly when the recorded hash differs from the buffer --
+    which is the comparison `db/ddl_check.py::_recheck_tier2` performs."""
+    from pgtp_editor.db.ddl_check import (
+        CAVEAT_STALE_BUFFER,
+        REASON_ALREADY_APPLIED,
+        CheckReport,
+        TierOutcome,
+    )
+
+    return CheckReport(
+        tier3=_NOT_BUILT,
+        tier2=TierOutcome(
+            status="passed", reason=REASON_ALREADY_APPLIED.format(applied_at=applied_at)
+        ),
+        caveats=(
+            (CAVEAT_STALE_BUFFER.format(applied_at=applied_at),) if stale else ()
+        ),
+    )
+
+
+def _run_recheck(qtbot, tmp_path, monkeypatch, report):
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    controller._checker = lambda session, request, caps: report
+    window._check_active_ddl_object()
+    return window
+
+
+def test_a_matching_buffer_gets_an_affirmative_line(
+    qtbot, tmp_path, monkeypatch, comparison_modals
+):
+    """The state that had NO sentence: a match used to be readable only as the
+    absence of the stale-buffer caveat."""
+    _run_recheck(qtbot, tmp_path, monkeypatch, _recheck_report())
+
+    assert len(comparison_modals) == 1
+    title, text = comparison_modals[0]
+    assert title == "Check Object in Sandbox"
+    assert text.startswith("pr.recalc() matches what the sandbox holds.")
+    # And it still carries the ladder's own "applied when" fact, unrephrased.
+    assert "2026-08-10 09:00" in text
+
+
+def test_a_changed_buffer_gets_the_negative_line(
+    qtbot, tmp_path, monkeypatch, comparison_modals
+):
+    _run_recheck(qtbot, tmp_path, monkeypatch, _recheck_report(stale=True))
+
+    _title, text = comparison_modals[0]
+    assert text.startswith("pr.recalc() does NOT match what the sandbox holds.")
+    # The caveat rides along -- it is where the `applied at` timestamp lives.
+    assert "has changed since it was last applied" in text
+
+
+def test_an_object_the_sandbox_never_held_is_not_reported_as_a_mismatch(
+    qtbot, tmp_path, monkeypatch, comparison_modals
+):
+    """Three-valued on purpose: "the sandbox has never held this" is a
+    different answer from "your buffer differs", and collapsing it into the
+    negative would tell the user to re-apply something that was never there."""
+    from pgtp_editor.db.ddl_check import (
+        REASON_NOT_IN_WORKING_SET,
+        CheckReport,
+        TierOutcome,
+    )
+
+    _run_recheck(
+        qtbot,
+        tmp_path,
+        monkeypatch,
+        CheckReport(
+            tier3=_NOT_BUILT,
+            tier2=TierOutcome(status="unavailable", reason=REASON_NOT_IN_WORKING_SET),
+        ),
+    )
+
+    _title, text = comparison_modals[0]
+    assert text.startswith("The sandbox does not hold pr.recalc() at all.")
+
+
+def test_an_unreadable_working_set_is_unknown_never_a_no(
+    qtbot, tmp_path, monkeypatch, comparison_modals
+):
+    """`_recheck_tier2` refuses to degrade an unreadable bookkeeping table to
+    "not applied"; the modal must not undo that by answering "no"."""
+    from pgtp_editor.db.ddl_check import CheckReport, TierOutcome
+
+    _run_recheck(
+        qtbot,
+        tmp_path,
+        monkeypatch,
+        CheckReport(
+            tier3=_NOT_BUILT,
+            tier2=TierOutcome(
+                status="unavailable", reason="the table could not be read"
+            ),
+        ),
+    )
+
+    _title, text = comparison_modals[0]
+    assert text.startswith("Whether the sandbox holds pr.recalc() could not be determined.")
+    assert "does NOT match" not in text
+
+
+def test_the_modal_is_in_addition_to_the_audit_output_never_instead(
+    qtbot, tmp_path, monkeypatch, comparison_modals
+):
+    """The owner asked for a one-line answer; they did not ask for the tier
+    detail and the clickable findings to stop being reported."""
+    window = _run_recheck(qtbot, tmp_path, monkeypatch, _recheck_report())
+
+    assert len(comparison_modals) == 1
+    texts = _audit_texts(window)
+    assert any(t.startswith(f"{CHECK_PREFIX}  tier2:") for t in texts)
+
+
+def test_the_probe_gesture_puts_up_no_comparison_modal(
+    qtbot, tmp_path, monkeypatch, comparison_modals
+):
+    """`Check and rollback` answers a different question ("would this
+    compile?"), and it applies nothing -- so there is no "are we in line?"
+    verdict for it to state."""
+    window, controller, _session = _project_window(qtbot, tmp_path, monkeypatch)
+    window._open_sandbox_session()
+    window._on_ddl_edit_requested(_REF, _SOURCE)
+    controller._applier = lambda *a, **k: _recheck_report()
+
+    window._probe_check_active_ddl_object()
+
+    assert comparison_modals == []
