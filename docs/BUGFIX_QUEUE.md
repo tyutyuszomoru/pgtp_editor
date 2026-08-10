@@ -4349,3 +4349,185 @@ being reversed by owner ruling on 2026-08-10, on the grounds that its measuremen
 `bug-triager` does not edit the spec.
 
 ---
+
+## BUG-047: the Activity Log still journals `Apply to Sandbox` / `Apply to Target` — two dead names FQ-026 renamed everywhere else, so the user's own history uses a vocabulary the app no longer speaks
+**Status:** OPEN
+**Reported:** 2026-08-10
+**Report (verbatim):** "`pgtp_editor/db/activity_log.py:140-142` still emits the verbs `"Apply to Sandbox"` and `"Apply to Target"` into the Activity Log, and they are live — reportedly reached from `pgtp_editor/ui/main_window.py:6139`, `:6151`, `:6171` and `:6359`. FQ-026 was a deduplication of vocabulary, and it states its own invariant in code at `pgtp_editor/ui/ddl_object_editor.py:116-118`: *"one name per operation, used identically across the menu label, the confirmation-dialog title, the Audit `[Check]` line, the status bar and the manual"*. If the Activity Log prints a name that no menu, dialog or manual page uses, the feature has not achieved the thing it exists to achieve — a user reading their own history sees a verb they cannot find anywhere in the app."
+
+**Verdict: CONFIRMED — this is a real defect, not a cosmetic leftover.** Verified independently
+against the working tree (line numbers below are current; the reporter's were a few lines off because
+`main_window.py` has moved under concurrent edits — locate by *function name*, not by line).
+
+**Root cause**
+
+`pgtp_editor/db/activity_log.py:140-144` defines the two verb constants as **its own string literals**:
+
+```python
+VERB_APPLY_SANDBOX = "Apply to Sandbox"
+VERB_APPLY_TARGET = "Apply to Target"
+DB_VERBS = (VERB_RAN, VERB_LINTED, VERB_APPLY_SANDBOX, VERB_APPLY_TARGET)
+```
+
+These are exactly two of the eight pre-FQ-026 names the spec's §28 FQ-026 section lists under
+*"Was, before FQ-026"*. FQ-026 renamed every other surface and **missed this one**, because the
+Activity Log is a surface `GESTURE_LABELS`' own docstring does not enumerate (it names menu label,
+confirmation title, `[Check]` line, status bar, manual — not the journal). So this is a genuine gap in
+FQ-026's sweep, not a decision.
+
+**They are live, and reachable through ordinary use.** All four emitters are in `ui/main_window.py`
+and all four are on the success/failure legs of *real* user gestures:
+
+| Emitter | Enclosing method | Gesture that reaches it | Correct current name |
+|---|---|---|---|
+| `main_window.py:6159-6161` (`on_result`, committed leg) | `_apply_ddl_object_to_target` | `Deployment ▸ Apply to quality` → `_run_active_ddl_object_on_quality` (`:6261-6277`) → `panel.apply_to_target()` → the injected `apply_to_target` seam wired at `:5940` | **`Apply to quality`** (`GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]`) |
+| `main_window.py:6171-6173` (`on_result`, did-not-commit leg) | same | same | same |
+| `main_window.py:6190-6195` (`on_error`, seam blew up) | same | same | same |
+| `main_window.py:6378-6383` (`on_done`) | `_apply_ddl_object_to_sandbox` | `Deployment ▸ Check and commit to sandbox` → `_run_active_ddl_object_on_sandbox` (`:6249-6259`) → `panel.apply_to_sandbox()` → the injected `apply_to_sandbox` seam wired at `:5935` | **`Check and commit to sandbox`** (`GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]`) |
+
+Traced through the seam wiring rather than pattern-matched on the string: `_wire_ddl_object_apply_seams`
+(`:5925-5949`) is the only place these two callables are installed, and after FQ-026 deleted the button
+row and the context-menu apply entries, `panel.apply_to_sandbox()` / `panel.apply_to_target()` have
+**exactly one caller each** (grep confirms: `main_window.py:6259` and `:6277`), both the `Deployment`
+menu handlers. So the mapping above is one-to-one and unambiguous.
+
+The rendered result the user sees is `render_row` (`activity_log.py:335-357`) joining the verb verbatim:
+`2026-08-10 14:32 - Sandbox DB Apply to Sandbox CREATE OR REPLACE FU… success` — literally the example
+at `pgtp_editor/resources/manual.md:498`.
+
+**Why the fix cannot be a one-line constant edit (the important gotcha).** `db/activity_log.py` is
+**deliberately Qt-free** (its module docstring: *"Qt-free on purpose … all of it is unit-testable
+without a widget"*), and `GESTURE_LABELS` lives in `ui/ddl_object_editor.py`, which imports PySide6 at
+module level. **`db/` must not import `ui/`.** Re-pointing the constants at the new strings *in
+`activity_log.py`* would therefore re-create the exact defect FQ-026 exists to end: a second literal
+copy of a gesture name, free to drift again. The names must be read from `GESTURE_LABELS` at the
+**call site**, which is in `ui/`.
+
+**Proposed fix**
+
+1. **`pgtp_editor/ui/main_window.py` — pass the label, not the constant.** At the four emit sites in
+   the table above, replace `VERB_APPLY_TARGET` with `GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]` and
+   `VERB_APPLY_SANDBOX` with `GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]`. **No new imports are needed** —
+   `main_window.py` already imports `GESTURE_LABELS`, `GESTURE_APPLY_TO_QUALITY` and
+   `GESTURE_CHECK_AND_COMMIT` (lines 105-109). Drop the now-unused
+   `VERB_APPLY_SANDBOX`/`VERB_APPLY_TARGET` from the `db.activity_log` import block (lines 70-71).
+2. **`pgtp_editor/db/activity_log.py` — delete the two constants and leave a tombstone.** Remove
+   `VERB_APPLY_SANDBOX` / `VERB_APPLY_TARGET` (`:139-142`) and reduce `DB_VERBS` to
+   `(VERB_RAN, VERB_LINTED)` — `DB_VERBS` has **zero consumers anywhere in `pgtp_editor/` or `tests/`**
+   (verified by grep; it is documentation, not a validation gate), so nothing gates on the shrunk tuple.
+   Add a tombstone comment in the FQ-026 house style stating *why* the apply verbs are not defined here:
+   they are gesture NAMES, owned by `ui/ddl_object_editor.py::GESTURE_LABELS`, and a copy in the
+   Qt-free `db/` layer is precisely the drift FQ-026 forbids. Without that comment the next reader
+   "helpfully" restores them.
+   - Keep `VERB_RAN` / `VERB_LINTED` where they are. They are **not** gesture names — they are lowercase
+     descriptions of what happened (`"ran"` for the Sandbox SQL Console at `:5194`, `"linted"` for both
+     check gestures at `:6499-6503`) — so the invariant does not reach them and `db/` may own them.
+3. **Do not touch `_activity_error_for_report`, `record_activity`, the entry shape, the JSONL store or
+   `ui/activity_panel.py`.** The panel has no verb-value-specific logic — it only tests `entry.verb`
+   for truthiness to pick the viewer language (`activity_panel.py:320`) and concatenates it at `:325`.
+   Nothing switches on which verb it is.
+
+**Secondary finding, deliberately OUT of scope — do not widen the fix without an owner ruling.** Both
+check gestures journal the single verb `"linted"` (`main_window.py:6499-6503`, one call site shared by
+`Check and rollback` and `Check Object in Sandbox`), so the journal cannot tell those two gestures
+apart, and `"linted"`/`"ran"` are likewise names no menu uses. That is arguably the same complaint one
+level down, but fixing it would *change what the journal records* (one verb becomes two), not merely
+what it calls things. Recorded here so it is not mistaken for an oversight in this fix.
+
+**Consequence for existing journals — analysed, with one owner call**
+
+Facts established by reading the store, not assumed:
+
+- **Nothing breaks.** `ActivityEntry.from_json_dict` (`activity_log.py:281-309`) validates `source`
+  against `SOURCES` and `status` against `STATUSES`, but passes `verb` through `_text_or_none`, which
+  accepts **any** non-empty string. A row holding `"Apply to Sandbox"` loads, renders and is previewed
+  exactly as before after the rename. No migration is *required*.
+- **Nothing filters on the verb set** — `DB_VERBS` is unreferenced, so shrinking it cannot orphan a row.
+- Therefore the rename is **write-time by default**: rows written after the fix carry the new names,
+  rows already in `.ddlproject/activity.jsonl` keep the old ones, and a long-lived project's journal
+  holds **two vocabularies** with a visible changeover date.
+
+Three ways to land it:
+
+1. **Write-time rename, no migration (RECOMMENDED default).** The old rows keep saying what the app
+   said at the time the user clicked. A journal is a record of the past; re-labelling a 2026-08-08 apply
+   with a name that did not exist until 2026-08-10 is a small lie about history, and the changeover is
+   self-explaining next to a timestamp.
+2. **Display-time aliasing** — a `LEGACY_VERB_ALIASES` map applied in `render_row` (and in the panel's
+   full-text viewer) so old rows *read* in today's vocabulary while the file is untouched. Costs a
+   second mapping and a rule about which layer owns it; gains a history with one vocabulary.
+3. **Rewrite the file** via the existing `save_activity` full-rewrite path. **Recommended against,
+   explicitly.** The module's own contract is *"reads never raise, and loading never rewrites"* and
+   *"writes are append-only on the happy path"*; `VERB_APPLY_TARGET` is described at its definition as
+   *"the irreversible production write — the single most audit-worthy action"*. Rewriting the audit
+   record of production writes to fix a label is the worst available trade, and a crash mid-rewrite
+   costs the whole journal where an append costs one line.
+
+**Option 1 vs option 2 is a judgement call about what a journal is for, not a technical one — that is
+the owner's call, not mine.** The caller said they would file it; `bug-triager` does not write to
+`docs/DECISION_QUEUE.md`. **If no ruling arrives, implement option 1** — it is the smaller change, it
+is reversible (option 2 can be layered on later; the reverse is not true of option 3), and it needs no
+new mapping to maintain.
+
+**Test impact**
+
+Existing coverage to EXTEND, never duplicate:
+
+- **`tests/ui/test_ddl_object_editor_wiring.py`** — the two assertions that pin the defect and must
+  flip: `:620` `assert entry.verb == "Apply to Sandbox"` → `"Check and commit to sandbox"`, and `:710`
+  `assert entry.verb == "Apply to Target"` → `"Apply to quality"`. `:679`'s `assert entry.verb ==
+  "linted"` is unaffected and should stay untouched (see the out-of-scope note).
+- **`tests/ui/test_activity_log_wiring.py`** (`:46`) and **`tests/db/test_activity_log.py`** (`:26`,
+  `:152`, `:345`, `:386`) and **`tests/ui/test_activity_panel.py`** (`:25-26`, `:52`, `:69`) import
+  `VERB_APPLY_SANDBOX`/`VERB_APPLY_TARGET` **purely as fixture payloads** — none asserts on their
+  values. If step 2 deletes the constants, these five files need their imports repointed (to a local
+  literal or to `GESTURE_LABELS`); the assertions themselves do not change.
+
+New case(s) the fix needs:
+
+- **A regression guard for the invariant itself**, in `tests/ui/test_ddl_object_editor_wiring.py`
+  beside the two flipped assertions: assert the journalled verb **equals
+  `GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]` / `[GESTURE_APPLY_TO_QUALITY]`** rather than a re-typed
+  literal, so a future rename of the label moves the test with it instead of leaving a stale string.
+  This is the assertion shape that would have caught the bug.
+- **A cheap structural guard in `tests/db/test_activity_log.py`**: no verb constant in
+  `db/activity_log.py` names a DDL-object gesture (equivalently: `db/activity_log.py` defines no string
+  appearing in `GESTURE_LABELS.values()`), mirroring
+  `tests/ui/test_ddl_object_editor.py::test_the_picker_and_its_whole_api_are_deleted`, FQ-026's existing
+  deletion guard.
+- **A backward-compat read test** (option 1's honest consequence, stated as a test rather than left
+  implicit): a seeded `activity.jsonl` line carrying the historical `"Apply to Target"` still loads via
+  `load_activity` and still renders through `render_row`. This is what makes "no migration" a *decision*
+  rather than an untested assumption.
+
+**Spec impact**
+
+**No spec change needed for the fix's substance — but one status correction is owed, so flag it for
+`spec-maintainer` after the fix lands.**
+
+- The current behaviour is **not** an intentional recorded decision. `CONSOLIDATED_SPEC.md` never
+  specifies the Activity Log's verb vocabulary at all: FQ-019's fold-in pins the entry shape, source
+  taxonomy, JSONL store and session-only rule (see the 2026-08-10 ledger row on the Activity Log's
+  repositioning, ~line 9763) and the verb strings are a code-only detail. Nothing to override.
+- The §28 **FQ-026 section (~lines 6471-6540)** claims every one of the eight old names is retired, and
+  lists `Apply to Sandbox` / `Apply to Target` under *"Was, before FQ-026"*. That claim was **false at
+  the time it was written** — the Activity Log kept both — and becomes true only when this lands. It
+  should say so, and `GESTURE_LABELS`' surface enumeration (the invariant sentence at
+  `ui/ddl_object_editor.py:116-118`, quoted verbatim into the spec as *"menu label, confirmation-dialog
+  title, `[Check]` Audit line and status message*) should gain the **Activity Log verb** as a sixth
+  surface, so the next gesture rename knows to sweep it.
+- Echo sites carrying the retired names that a spec sweep should catch: ~line 386 (the §18.5 TOC
+  blurb), ~line 3976-3977 (the project-tier table's *"Apply to Target"* / *"Apply to Sandbox"*), and
+  ~line 5433 (*"(A) = §18.5's Apply to Sandbox; (C) = §18.5's Apply to Target"*). `bug-triager` does
+  not edit the spec.
+
+**Manual impact**
+
+`pgtp_editor/resources/manual.md:498` deliberately still shows
+`2026-08-10 14:32 - Sandbox DB Apply to Sandbox CREATE OR REPLACE FU… success`, because that is what
+the app prints **today** — correct as written, wrong the moment this fix lands. **Dispatch
+`manual-maintainer` with the fix** to update that sample row to `Check and commit to sandbox`, and (if
+option 1 is chosen) to say in one sentence that rows written before this build carry the older names.
+`bug-triager` does not edit the manual.
+
+---
