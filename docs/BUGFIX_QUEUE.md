@@ -6547,7 +6547,7 @@ The rule (`CLAUDE.md`, owner 2026-08-10: a chord means the same thing on every s
 ---
 
 ## BUG-260810174126: Mode indicator labels bare mode name, should read "<Mode> mode"
-**Status:** OPEN
+**Status:** RESOLVED (195449c)
 **Reported:** 2026-08-10
 **Report (verbatim):** "Mode panel should explicitely say \"Mode\" eg. \"Project mode\" instead of Project."
 
@@ -6639,7 +6639,7 @@ Verified in tree at `9c65a4c`; `tests/ui/test_new_project_sandbox_provisioning.p
 ---
 
 ## BUG-260810193333: Apply to quality silently no-ops on a renamed (signature-changed) buffer; sandbox runs it — owner rules "run the SQL", plus a new "Discard local change" checkout-drop action
-**Status:** OPEN
+**Status:** RESOLVED (1b6bf98)
 **Reported:** 2026-08-10
 **Report (verbatim):** "I checked out kb.jc_template_to_jobcard() for DDL editing
 then changed it to:
