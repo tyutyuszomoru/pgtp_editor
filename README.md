@@ -75,7 +75,7 @@ Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/t
 
     QT_QPA_PLATFORM=offscreen python -m pytest -q -n 10
 
-6674 passing / 51 skipped at the last full-suite run recorded in [`docs/TEST_LOG.md`](docs/TEST_LOG.md), spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. That log is the committed record of verified runs, and this line cites it rather than a number of its own — a count nothing verifies is stale by the next commit.
+7305 passing / 51 skipped at the last full-suite run recorded in [`docs/TEST_LOG.md`](docs/TEST_LOG.md), spanning the model, diff, schema-learning, validation, SQL analysis, database, generation and UI layers. That log is the committed record of verified runs, and this line cites it rather than a number of its own — a count nothing verifies is stale by the next commit.
 
 **Windows release:** `python optimized_build.py` produces a size-optimized onedir PyInstaller bundle at `dist/PGTPEditor/`; package it with `docs/installer.iss` (Inno Setup).
 

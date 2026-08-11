@@ -1,7 +1,59 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-10 (FQ-032 status pass + `FQ-260810183812`
-> fold) — **FQ-032 SHIPPED (`b0c42da`, 7247 passed / 51 skipped, +307 tests), so §8's *"nothing in this block
+> **Status:** living document · **Last synthesized:** 2026-08-11 (the last two DDL Explorer folds) —
+> **`FQ-260810180336` (tree name filter) is folded into §18.1 and `FQ-260810165518` (quality-Explorer danger
+> colour) into §18.7, completing the three-entry DDL Explorer batch. Each fold turned on an OVERLAP THE QUEUE
+> ENTRY DID NOT HAVE, and in the second case the overlap invalidated the entry's mechanism outright.** Details
+> in **(K0)** below, which supersedes nothing in (J0).
+>
+> **(K0) THIS PASS — TWO FOLDS, AND BOTH ENTRIES WERE WRONG ABOUT WHAT THE APP ALREADY DOES.**
+>
+> **Two implementation agents held `pgtp_editor/db/`, `ui/ddl_buffer.py`-adjacent modules
+> (`ui/ddl_buffer_panel.py`, `ui/ddl_editor_panel.py`) and `pgtp_editor/resources/manual.md` while this pass
+> ran** — the first building `FQ-260810183812`. Nothing here was written against their in-flight work: both
+> folded features are ⏳ NOT YET BUILT, and every ⏳ says so.
+>
+> 1. **`FQ-260810180336` → §18.1. The overlap: the DDL Explorer ALREADY HAS A FIND BAR.**
+>    `ui/ddl_editor_panel.py` constructs a `FindReplaceBar` and installs `Ctrl+F`/`Ctrl+R` via
+>    `install_focus_shortcuts`, making it one of §15/§27's six hosts — so this feature is a **second** find
+>    affordance in one tab. Defensible (different subject, different verb) but only if stated, so the fold
+>    carries a table saying **which input searches what**. The design ruling that follows is a **refusal to
+>    reuse**: `FindReplaceBar` searches a document, this hides `QTreeWidgetItem`s, and a widget doing both is
+>    two disjoint halves under one name. **Two rules the entry did not have:** match the **marker-free base
+>    label** on `_LABEL_ROLE`, never `item.text(0)` (which would match `*`/`!` drift markers and `[B][D]`
+>    event letters, so `d` would match every `DELETE` trigger); and `browse_only` does **not** gate a search
+>    aid.
+> 2. **`FQ-260810165518` → §18.7. The overlap CHANGED THE MECHANISM, and that is the pass's real finding.**
+>    The entry proposed a per-widget `QPalette` `Highlight` override *"since the highlight is purely
+>    global-palette-driven"*. **It is not:** §7 requires an app-level QDarkStyle stylesheet in **both** themes,
+>    and the generated sheet paints `QTreeView::item:selected:active` / `:!active` / `::item:!selected:hover`
+>    plus a universal `QWidget { selection-background-color }`. QSS beats QPalette, so **the proposed override
+>    is inert** — it must be a widget-level `setStyleSheet`. Corollary worth its own line: **`theme.py`'s
+>    `Highlight` `#3874f2` is not the colour a tree row actually paints** (`#9FCBFF` / `#346792` are), so the
+>    entry's luminance-matching target did not exist on screen either. **The general invariant is folded into
+>    §7's theme block**, where the next person meets it before repeating it.
+> 3. **Three duplication traps folded as requirements**, the third being a boundary the document did not have:
+>    no second red beside `mode_indicator.py::mode_colors` (whose docstring already records the exact defect a
+>    hardcoded red repeats), no edit to `theme.py`'s app-wide `Highlight`, and — extending the twelve-colour
+>    rule `mode_indicator.py` states — **where the app's colour vocabulary STOPS**: colour answers one question
+>    per surface, *how dangerous is this?*; everything else is text, a glyph or a label. **This feature adds ONE
+>    colour, not a palette.**
+> 4. **The build order is stated with its reason, in §18.1:** `FQ-260810183812` → `FQ-260810180336` →
+>    `FQ-260810165518`, *not* because they share files. The first two are **the same act at two depths** — one
+>    decides which rows the tree has, the other which are shown — and the third **changes what those rows look
+>    like**, so it needs the final node set.
+> 5. **One defect routed to `bug-triager` rather than written away:** `ui/sql_results_panel.py::_set_status`
+>    colours error/warning status text by setting the label's **palette** foreground (`#d02020` / `#d08a1a`),
+>    and the same app-level QSS sets `color` on its universal `QWidget` rule — so the red is very likely never
+>    painted and a failed query reads in ordinary text. Found by the same measurement, in the very module the
+>    queue entry cited as its precedent.
+> 6. **`README.md` revisited (standing obligation) and CHANGED once:** the test count read **6674 / 51** while
+>    `docs/TEST_LOG.md`'s newest row records **7 305 / 51** — and the README's own sentence promises it cites
+>    the last *recorded* run, so the number was falsifying its own claim. Identity sentence, feature map and
+>    direction all checked and needed nothing: both folded features are unbuilt, and the DDL-Explorer bullet
+>    under *Where it is going* already covers the batch's one user-visible promise.
+>
+> *(Previous pass:)* **FQ-032 SHIPPED (`b0c42da`, 7247 passed / 51 skipped, +307 tests), so §8's *"nothing in this block
 > ships"* banner and every ⏳ under it were the largest dead assertion in the document; all of them are
 > retired and the four implementation deviations are folded as stated design. A fresh owner ruling — TWO-PRESS
 > ESCAPE IN `CodeEditorDialog` ONLY — is folded, written as ⏳ landing and then found **already built** by the
@@ -937,7 +989,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database) — includes [the Database/XML Coherence view](#the-databasexml-coherence-view) — *implemented (FQ-003, 2026-08-06): `db/coherence.py`, `ui/coherence_panel.py`, the Database-menu toggle*
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *partly implemented — see each subsection*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap. **`FQ-260810183812`, target design NOT YET BUILT (2026-08-10):** the read-only buffer widens from routines-and-triggers to **ALL object kinds** — synthesized **`CREATE TABLE`**, views and matviews — and **every tree item that has DDL navigates to it**, including new constraint / FK / index nodes. `DdlObjectSpan` **grows kinds** rather than gaining a sibling type; the synthesizer is a **new pure Qt-free `db/` module** beside `ddl_buffer.py`; and because a synthesized `CREATE TABLE` is a **reconstruction** (no identity, `GENERATED`, inheritance or partitioning), **the omission must be VISIBLE IN THE BUFFER** — presenting it as *"the table's DDL"* would be a silent wrong result. Six open questions are flagged, §29*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap. **`FQ-260810183812`, target design NOT YET BUILT (2026-08-10):** the read-only buffer widens from routines-and-triggers to **ALL object kinds** — synthesized **`CREATE TABLE`**, views and matviews — and **every tree item that has DDL navigates to it**, including new constraint / FK / index nodes. `DdlObjectSpan` **grows kinds** rather than gaining a sibling type; the synthesizer is a **new pure Qt-free `db/` module** beside `ddl_buffer.py`; and because a synthesized `CREATE TABLE` is a **reconstruction** (no identity, `GENERATED`, inheritance or partitioning), **the omission must be VISIBLE IN THE BUFFER** — presenting it as *"the table's DDL"* would be a silent wrong result. Six open questions are flagged, §29. **`FQ-260810180336`, target design NOT YET BUILT (2026-08-11):** a **name-filter bar** above the tree (input · match-mode dropdown · `Filter` · `Clear Filter`) hiding non-matching object rows in **both** Explorer instances, `browse_only` not gating it. The fold's load-bearing finding: the DDL Explorer **already has a `FindReplaceBar`**, so §18.1 now states **which input searches what** — the existing bar searches the DDL **text** and moves the caret; this matches object **names** and hides rows. The Find machinery is deliberately **not** reused (documents vs. tree items); `item.setHidden` and `MODE_LABELS`' shape are, with a **new predicate enum**. No chord in v1. Five open questions flagged*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder); **checkout is no longer a separate gesture** and the tab key is **`ref.key` always** (FQ-024, 2026-08-08). **FQ-035 SHIPPED (`82f2be6`, ambiguities ruled and shipped `caed134`):** the New Project dialog has an optional **`.pgtp` attach field** and a **quality/target connection section revealed and auto-populated by it** via `connection_from_tree` — the creation flow is five steps, and `create_project` writes `target` and `pgtp` instead of leaving both at their empty defaults until first open. Both flagged ambiguities are **answered**: checkout happens **at accept through ONE copier** (`check_out_pgtp`, which raises `OSError` rather than deciding), and there is **no quality gate but one advisory**. **BUG-260810173246 is RESOLVED (`73f55c9`):** one `_linked_working_copy` predicate makes *"a recorded path with no file behind it is not a link"* true for all three readers and the writer's guard, and a half-link **self-heals** on the next open of the same source. *(Superseded: "target design NOT YET BUILT" and "two ambiguities are flagged for the owner rather than decided".)**
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *SQL engine implemented, core + **two** consumers: `Ctrl+Alt+F` Format Selection in the DDL object editor (with a context-menu item) and the Sandbox SQL Console (chord only), `[SQL]` Audit refusals wired. **FQ-033 SHIPPED 2026-08-10 (`061e973`), and its four "NOT YET BUILT" banners are retired:** configurable keyword casing (keywords only) + a bounded break/indent rule set (`sql/format_config.py`, which also now OWNS `CLAUSE_STARTERS`/`DEFAULT_INDENT_UNIT`), a separate Qt-free `xmlfmt/` XML engine behind the same gesture on the three `XmlEditor` surfaces, and the `Autoformatter settings…` dialog + `autoformatter` QSettings group (hosts read the config **at gesture time**, so a save reaches an open tab with no notification plumbing). the `Settings ▸ Autoformatter settings…` menu line landed in **`81bf658`**, so the configurable surface is live in the product. **ONE SEAM REMAINS UNWIRED and is stated as pending: the `[XML]` refusal handler** (so an XML refusal underlines its span and files no Audit row), held on `audit_router.py` while BUG-060/062 are in flight*
@@ -945,7 +997,7 @@
       `relid` binding is extended from the `CREATE TRIGGER` tab to the **trigger FUNCTION tab** — a gap
       closed, not a decision reversed; the **unattached** trigger function remains an open question (§29).*
     - [18.6 Schema-aware Ctrl+Space completion in the DDL object editor](#186-schema-aware-ctrlspace-completion-in-the-ddl-object-editor) — *implemented; **BUG-041 is FIXED** (2026-08-10) — `resolve_caret_context` now descends into a `$$ … $$` body before the opacity test, so `NEW.`/`OLD.`, `ALIAS_REF` and `LOCAL_REF` all fire **inside** a routine body; `CaretContext.kind` has **four** values and both new kinds have live UI consumers*
-    - [18.7 Two live DDL Explorer instances — target vs. sandbox](#187-two-live-ddl-explorer-instances--target-vs-sandbox) — ***SHIPPED** (FQ-022, `aa7a0e1`; designed 2026-08-05): two `BrowserPanel`s, two `EditorPanel`s, two dock tabs and `Database ▸ DDL Explorer (Quality)` / `DDL Explorer (Sandbox)`, driven by one role-parameterized path and **session-free** (`bool(sandbox_params.host)`, never `has_session`). The sandbox instance is **`browse_only=True`** — no `Edit DDL`, no creation entries, no `Alter Table ▸` — its one context-menu entry being `Reload DDL`. Four things §18.7 asked for were deliberately not built, and two deviations are recorded. **The two instances are still visually identical, which is what `FQ-260810165518` is queued to change** (not folded — placement-gated only). *(Superseded: "settled design, now being implemented".)**
+    - [18.7 Two live DDL Explorer instances — target vs. sandbox](#187-two-live-ddl-explorer-instances--target-vs-sandbox) — ***SHIPPED** (FQ-022, `aa7a0e1`; designed 2026-08-05): two `BrowserPanel`s, two `EditorPanel`s, two dock tabs and `Database ▸ DDL Explorer (Quality)` / `DDL Explorer (Sandbox)`, driven by one role-parameterized path and **session-free** (`bool(sandbox_params.host)`, never `has_session`). The sandbox instance is **`browse_only=True`** — no `Edit DDL`, no creation entries, no `Alter Table ▸` — its one context-menu entry being `Reload DDL`. Four things §18.7 asked for were deliberately not built, and two deviations are recorded. **`FQ-260810165518` is FOLDED (2026-08-11), target design NOT YET BUILT: the QUALITY tree's selection highlight becomes the danger colour and the sandbox tree stays ordinary** — and the fold **changed the mechanism**, because the queue entry's per-widget `QPalette` override was **measured inert**: the app-level QDarkStyle QSS paints `QTreeView::item:selected:*` itself, so it must be a widget-level `setStyleSheet`, and `theme.py`'s `Highlight` `#3874f2` is not what a tree row actually paints. The red lives in `mode_indicator.py`'s per-theme table, never as a literal and never as an edit to `theme.py`; §18.7 now also states **where the app's colour vocabulary stops**. Four open questions flagged. *(Superseded: "settled design, now being implemented"; and "the two instances are still visually identical, which is what `FQ-260810165518` is queued to change (not folded)".)**
     - [18.8 The Project Status window](#188-the-project-status-window) — *implemented (5-node diagram, per-node click-through windows, Database ▸ Project Status…); Sandbox1's data-clone and Sandbox2's install buttons are **now wired** (`_refresh_project_status_sandbox_actions`, sandbox-configured predicate), and the App node's action window is still the flagged placeholder (§29). **FQ-028/FQ-018 (2026-08-10):** it gains a **30 s window-active-gated poller** — the app's first repeating-interval `QTimer` — shared with §7's status-bar connectivity dots, which makes this window **auto-refreshing while open** instead of static*
     - [18.9 SQL authoring aids — snippets, expand-SELECT, JOIN-on-FK, signature help](#189-sql-authoring-aids--snippets-expand-select-join-on-fk-signature-help-fq-030) — *FQ-030 — **SHIPPED IN FULL** 2026-08-10 (pure layers; editor halves `d6e5aa2`; the schema gestures `f5d2601`). One `Expansion` and one `CodeEditor.apply_expansion` for every producer; a **deliberately non-TextMate** `{{1}}`/`{{1:placeholder}}`/`{{0}}` syntax because `$1` and `$$` are PostgreSQL syntax; **refusals over guesses**; **explicit-trigger only**, with the memoized `tokenize` identified and deliberately unbuilt (an owner call); **exactly two hosts** for the schema gestures, **inert not refusing** in the other three. **The final slice shipped too (`229dc11`): the snippet store (`snippets.json`, per-user, whole-set-not-a-diff, corrupt ⇒ read-only and never overwritten), the editor, explicit export/import, and the app's FIRST maintenance-only menu — `Settings ▸ Edit Snippets…`, shortcut-free by rule (DEC-006).** DEC-001's principle — portable project, personal state in the app's folder, sharing only by an explicit gesture — is recorded here. **Its one recorded debt is PAID (BUG-045, `d3d7d15`): `SchemaIndex` gained `column_infos()`/`routines()` and the seam's private-`_schema` reach was deleted outright.** The key-hosting reason these panels used to give — *"`QShortcut` is unreliable offscreen"* — was **measured false** and is gone from the code (BUG-046/BUG-052); the real reason is DEC-009's widget-only family, §8*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
@@ -2393,6 +2445,21 @@ spy on `QApplication.setStyle` (monkeypatched on the class, not the singleton) a
 `"Fusion"` was requested. Fusion is still genuinely requested and still governs everything the QSS does
 not override. `qdarkstyle>=3.2` is a runtime dependency (pyproject + requirements.txt); the About box
 credits QDarkStyleSheet (Colin Duquesnoy, MIT).
+
+> **⚠ Consequence for per-widget colouring, stated here because it is the trap this rule sets (measured
+> 2026-08-11, `FQ-260810165518`): for anything the app-level QSS declares, a per-widget `setPalette` is
+> INERT.** QSS wins over QPalette on every property it sets, so a widget palette override only works for
+> properties the sheet leaves alone. Two concrete instances worth knowing before designing against them:
+> the generated sheet paints item selection itself
+> (`QTreeView::item:selected:active` / `:!active` / `::item:!selected:hover` on
+> `QTreeView`/`QListView`/`QTableView`/`QColumnView`, plus a universal `QWidget` rule carrying
+> `selection-background-color` and `selection-color`), and it sets `color` on the universal `QWidget` rule.
+> **So a per-widget selection colour must be a widget-level `setStyleSheet` declaring those same selectors**
+> — a widget-level sheet merges with, and outranks, the application one. The palettes are still applied
+> beneath and are still what palette-reading custom painting keys off (`XmlEditor.apply_theme_colors`, §8);
+> what changed is that *"the palette says blue"* stopped being the same statement as *"the user sees blue."*
+> A widget-level stylesheet is **not** wiped by `app.setPalette` or by a new app stylesheet — but any colour
+> chosen per theme must still be **re-applied on a theme flip**, because the value itself differs.
 Persisted as QSettings bool `"lightTheme"` in
 `QSettings("MDS","PGTP Editor")`; `MainWindow._restore_theme` applies the persisted theme
 **unconditionally at startup for both states** (no startup capture of a default palette/style key
@@ -6512,11 +6579,146 @@ Six, carried from the queue entry and deliberately left for the owner rather tha
 
 ##### Sequencing — this one goes FIRST of the three queued DDL Explorer entries
 
-`FQ-260810180336` (Explorer name filter) and `FQ-260810165518` (quality-Explorer danger highlight) are
-**placed, not folded**. This entry is folded first for a substantive reason, not a scheduling one: **it changes
-the CONTENT the other two operate on.** A name filter over a tree whose membership is about to gain tables,
-views, constraints and indexes has a different specification than one over a routines-and-triggers tree, and a
-highlight rule has more node kinds to have an answer for. Building either first means revisiting it.
+`FQ-260810180336` (Explorer name filter) and `FQ-260810165518` (quality-Explorer danger highlight) are now
+**folded too** (2026-08-11, below and in §18.7), but this entry is still **built first**, for a substantive
+reason rather than a scheduling one: **it changes the CONTENT the other two operate on.** A name filter over a
+tree whose membership is about to gain tables, views, constraints and indexes has a different specification
+than one over a routines-and-triggers tree, and a highlight rule has more node kinds to have an answer for.
+Building either first means revisiting it. **The full order is `FQ-260810183812` → `FQ-260810180336` →
+`FQ-260810165518`**, and it is *not* merely "they share files": the first two are **the same act at two
+depths** — one decides which rows the tree HAS, the other decides which of those rows are SHOWN, and a
+hide-predicate written against the narrow node set has to be reopened for every kind the first adds — while
+the third **changes what those rows look like** and therefore has to know the final node set it is painting.
+
+#### The tree NAME FILTER — hiding non-matching objects, in BOTH Explorer trees (`FQ-260810180336`, settled 2026-08-11, ⏳ NOT YET BUILT)
+
+> **Status: nothing in this block ships.** Verified in the tree 2026-08-11: `ui/ddl_buffer_panel.py` contains
+> **no** occurrence of `setHidden`, `filter`, `Filter` or `hidden` anywhere, and `BrowserPanel.__init__`'s
+> layout is exactly `QVBoxLayout(self)` + `setContentsMargins(0, 0, 0, 0)` + `layout.addWidget(self.tree)` —
+> the tree is the panel's only child. Read every ⏳ as *"to build"*. **This block supersedes
+> `docs/FEATURE_QUEUE.md`'s `FQ-260810180336` wherever the two differ.**
+
+**What it is.** A filter row above the `BrowserPanel` tree: a text input, a match-mode `QComboBox`, a
+**`Filter`** button and a **`Clear Filter`** button. Pressing `Filter` hides every tree row whose object name
+does not match; `Clear Filter` restores them all. It changes **nothing** about navigation, selection, the
+context menus or the read-only DDL pane — a hidden row is only hidden.
+
+##### ⚠ This is the SECOND find affordance in this tab, and the spec must say which input does what
+
+> **The DDL Explorer already has a Find bar, and the queue entry did not know it.** `ui/ddl_editor_panel.py`
+> constructs `self.find_replace_bar = FindReplaceBar(self.editor)` and calls
+> `install_focus_shortcuts(self, self.find_replace_bar)`, which makes `EditorPanel` one of §15/§27's **six
+> `FindReplaceBar` hosts** with the standard `Ctrl+F` / `Ctrl+R` focus pair. §15 already records it (*"the DDL
+> Explorer buffer is read-only so its Replace path no-ops"*).
+>
+> So after this feature the DDL Explorer surfaces **two search inputs at once**, and they are defensible only
+> because their **subjects and verbs differ** — which is exactly what has to be written down, or they read as
+> duplicates to everyone who meets them:
+>
+> | Affordance | Where it lives | What it searches | What it does with a match |
+> |---|---|---|---|
+> | **Find/Replace bar** (`FindReplaceBar`, existing) | inside the **center** `EditorPanel` tab, below the editor | the **DDL text** of the synthesized buffer | moves the **caret** to it; non-matches are untouched |
+> | **Name filter** (this feature) | above the **left-dock** `BrowserPanel` tree | the **object names** in the tree | **hides** every non-match; the caret does not move |
+>
+> **The two are never wired to each other**: filtering the tree does not re-run a text search, and a text
+> search does not unhide a filtered row. A user who cannot find an object in the tree after a text hit has an
+> active filter, which is what open question 2 below is about.
+
+##### The mechanism — and the three reuse decisions, one of which is a REFUSAL to reuse
+
+- ⏳ **Do NOT reuse the Find machinery, and this is a design ruling rather than an implementation note.**
+  `FindReplaceBar` searches a `QPlainTextEdit` **document** through `ui/search.py`'s `find_next` /
+  `iter_matches` over a text string; this feature hides **`QTreeWidgetItem`s**. There is no shared core to
+  lift — a bar that could do both would be a `QWidget` with two disjoint halves and one shared line edit,
+  which is a near-twin wearing one name. **The subject differs, so the widget differs.**
+- ⏳ **Reuse `item.setHidden(not matched)`** — the shipped precedent is
+  `ui/caption_management_panel.py`'s value-list filter (`item.setHidden(not matched)` over
+  `self._list.count()`). A `QSortFilterProxyModel` is **rejected**: `BrowserPanel.tree` is an item-based
+  `QTreeWidget`, so a proxy means converting the whole panel to model/view for no user-visible gain, and
+  ancestor-visibility is harder to express through a proxy than through a walk.
+- ⏳ **Reuse the SHAPE of `caption_management_panel.MODE_LABELS` — a module-level
+  `tuple[tuple[label, value], ...]` fed into a `QComboBox` with `addItem(label, mode)` — but define a NEW
+  predicate enum, and never the caption one.**
+  > **The trap, stated because the two dropdowns will look identical on screen.** Caption's live modes are
+  > verbatim `("Normal (plain string)", "normal")`, `("Extended (\\n \\t \\0 \\xNN)", "extended")`,
+  > `("Regular expression", "regular")` — they answer ***how the search STRING is interpreted***. This
+  > feature's modes — **Contains · Starts with · Doesn't contain · Doesn't start with · Ends with** — answer
+  > ***WHERE in the name the match must sit***. Those are **orthogonal questions**, and conflating them into
+  > one enum produces a dropdown that can express neither: a user wanting a regex that must *start* the name
+  > has no entry, and every future addition to either list silently grows the other. Two enums, in two
+  > modules, is the correct amount of duplication here.
+- ⏳ **Apply on the `Filter` button, not live-as-you-type.** Owner's explicit shape (an input, a mode
+  dropdown, `Filter`, `Clear Filter`). `Return` in the input should do what the button does — a text input
+  beside a button that ignores `Return` is its own small defect — but nothing filters on a keystroke.
+
+##### What matches, and what stays visible
+
+- ⏳ **Match target = OBJECT-ROW LABELS ONLY.** The rows that name a DDL object: table nodes
+  (`schema.table`, or `schema.table  (N)` when the table carries triggers), routine nodes
+  (`schema.name [F|P|T]` / `schema.name() [F|P|T]`), and trigger leaves
+  (`schema.table.trigname [timing][events]`) — **in both** of the trigger's two occurrences (§18.1's
+  dual-grouped tree), so one object is never half-hidden. **Column leaves and routine-argument leaves are
+  NOT match targets**, and neither is the DDL source text (owner-clarified: *"DDL objects"* means names).
+  > **Match against the marker-free BASE label, not the rendered text.** `_remember_label` already stashes
+  > `(base, drift_marker_text)` on `_LABEL_ROLE` and `_apply_dirty_markers` composes the visible string from
+  > it — so a filter reading `item.text(0)` would match against `*`/`!` drift markers and the `[B][D]` event
+  > letters, making `d` match every `DELETE` trigger. **The stored base label is the one the filter reads**,
+  > and where a row has no stored base (the two branch roots, the `Columns  (N)` group) it is not an object
+  > row and is not a match target.
+- ⏳ **Ancestors of a match stay visible** (owner-confirmed), so a hit is shown in context: a branch root
+  (`Tables` / `Functions & Procedures`), a table node or a routine node is visible **iff it matches itself or
+  has a visible descendant**. Children of a shown parent ride along visible — a matched table still shows its
+  `Columns  (N)` group and its triggers, because hiding them would answer a different question than the one
+  asked.
+- ⏳ **Nothing about behaviour changes for a visible row.** Same span, same `navigate_requested`, same
+  `table_selected`, same context menu, same `Edit DDL` branch. The filter is a **visibility** operation and
+  the invariant is worth a test of its own.
+
+##### Both instances get it, and `browse_only` does not gate it
+
+⏳ The bar lands on `BrowserPanel`, which §18.7 instantiates **twice** — the quality tree and the
+`browse_only=True` sandbox tree — so both get it from one implementation, exactly as `FQ-260810183812`'s
+widening does. **`browse_only` must NOT suppress it:** that flag exists to withhold **edits, creations and
+mutations** (`Edit DDL`, FQ-002's two creation entries, FQ-025's twelve `Alter Table ▸` operations), and it
+suppresses them at menu-**build** time. A search aid is none of those — it is the same category as
+`Reload DDL`, the one entry a browse-only tree *does* offer. A sandbox tree with the objects but no way to
+find them among them would be a worse browse, not a safer one.
+
+##### ⏳ No keyboard chord in v1 — stated so nobody adds one by reflex
+
+The gesture is the two buttons. **`Ctrl+F` in the DDL Explorer already means "focus the DDL text Find bar"**
+and must keep meaning it. A chord for this filter is **not forbidden but is not v1**, and if one is ever
+wanted it must follow `install_focus_shortcuts`' shape — a `QShortcut` with
+`Qt.ShortcutContext.WidgetWithChildrenShortcut` **parented to `BrowserPanel`**, never a window-level one:
+`install_focus_shortcuts`' own docstring records why (*"Qt does not prefer a narrower context over a wider
+one: two enabled shortcuts matching the same key press are ambiguous, and neither fires"*). Adding one is a
+DEC-012 question (a chord with no menu command form) and therefore a new decision, not an implementation
+detail.
+
+##### ⚠ Open questions — FLAGGED, not decided here
+
+Five, carried from the queue entry. **A settled placement is not a settled design, and neither is a
+recommendation.**
+
+1. **Case sensitivity** — default insensitive (recommended, it is a search aid), and is a `Match case`
+   toggle exposed at all? *(The caption bar has one; this bar's four controls are the owner's stated set.)*
+2. **Does an active filter announce itself** — the `ui/coherence_panel.py` precedent is a
+   `filter_banner_label` + `clear_filters_button` row plus an all-hidden message, whose verbatim string is
+   `"No rows match the active filters — use “Clear filters” to see everything."` **The argument for shipping
+   both is stronger here than it was there**, because this tree can be left filtered while the user works
+   elsewhere and a tree that is silently missing objects is the shape of a silent wrong result. Not decided.
+3. **Default dropdown mode** — recommended `Contains`.
+4. **What happens to a live filter when `set_schema` rebuilds the tree wholesale** (a re-fetch, a
+   `Reload DDL`, a project switch): **re-apply**, **clear**, or the `_dirty_keys` treatment — that set is
+   held on the **panel**, not on tree items, precisely *"because the tree is rebuilt wholesale by every
+   `set_schema`, so anything keyed on an item/index would go stale"*, and is re-applied after the rebuild.
+   **The filter has the identical problem and the identical precedent available**, so the recommendation is
+   the `_dirty_keys` shape (hold `(mode, term)` on the panel, re-apply after `_apply_dirty_markers`) — but
+   whether a refresh should *silently* keep hiding rows is the owner's call, and it is the same question as
+   open question 2 wearing a different hat.
+5. **The owner called this *"function 1"***, which implies a function 2 (most plausibly a non-filtering
+   find/jump). **Nothing here is designed for it** — what this block commits to is only that a second
+   function, if it comes, extends **this** bar rather than adding a third search input to the tab.
 
 #### The object-row context menu holds ONE editing entry: `Edit DDL` (FQ-024, settled 2026-08-08)
 
@@ -11528,6 +11730,118 @@ attempt to align the two trees' node sets or render a placeholder for "exists on
 here." An object present in the sandbox but not the target (or vice versa) simply does not appear in the
 other instance's tree at all, exactly as if it were the only connection open.
 
+#### Telling the two instances apart AT A GLANCE — the quality tree's DANGER selection colour (`FQ-260810165518`, settled 2026-08-11, ⏳ NOT YET BUILT)
+
+> **Status: nothing in this block ships.** Verified in the tree 2026-08-11: neither `ui/ddl_buffer_panel.py`
+> nor `ui/ddl_editor_panel.py` sets a palette or a stylesheet on anything, the two instances differ **only**
+> by `browse_only` and by their menu-entry wording, and `ui/theme.py` sets one `Highlight` for the whole app.
+> Read every ⏳ as *"to build"*. **This block supersedes `docs/FEATURE_QUEUE.md`'s `FQ-260810165518` wherever
+> the two differ.**
+
+**Why this is EXTEND §18.7 and not a theming feature.** Everything above defines **two instances** and gives
+them two names; **nothing above gives them two appearances**, and *"how do I tell which Explorer I am acting
+in"* is the question a reader brings to this subsection. Owner's framing: *"in order to visually separate
+sandbox and quality DDL Explorer, the line highlighting should be a rose/red colour in the quality DDL
+Explorer, so it's clear that's the dangerous one."* The asymmetry it marks is the one §18.7 opens with: the
+quality instance is the lane whose `Edit DDL` leads to a checkout and, eventually, to `Apply to quality`;
+the sandbox instance is disposable and browse-only. **The menu rename gave that distinction words
+(`DDL Explorer (Quality)` / `DDL Explorer (Sandbox)`); this gives it a colour.**
+
+- ⏳ **Scope: the quality/target `BrowserPanel` ONLY.** The `browse_only=True` sandbox instance keeps the
+  ordinary selection colour, unchanged. The difference **is** the feature — colouring both would say nothing.
+- ⏳ **The sandbox instance is the one that stays normal, not the one that gets a "safe" colour.** A second
+  colour for safety is the twelve-colour pressure below arriving by the other door: *default* already means
+  *not the dangerous one*.
+
+##### ⚠ THE MECHANISM THE QUEUE ENTRY PROPOSED CANNOT WORK — a per-widget `QPalette` override is INERT here
+
+> **Measured 2026-08-11 against the generated stylesheet, not reasoned about.** The queue entry proposed
+> *"apply a per-widget palette override on the quality tree setting only the `Highlight` role, reusing the
+> shipped precedent at `ui/sql_results_panel.py`"*, on the stated premise that *"the highlight is purely
+> global-palette-driven (no per-widget stylesheet/delegate/paintEvent today)"*. **That premise omits the
+> app-level stylesheet**, and §7's theme block is explicit that one exists in **both** themes:
+> `apply_theme` ends with `app.setStyleSheet(_qdarkstyle_stylesheet(light))`.
+>
+> That generated sheet paints item selection itself. Verbatim, from `qdarkstyle.load_stylesheet(...)`:
+>
+> | Selector | Light (`LightPalette`) | Dark (`DarkPalette`) |
+> |---|---|---|
+> | `QTreeView::item:selected:active` (with `QListView`/`QTableView`/`QColumnView`) | `background-color: #9FCBFF` | `background-color: #346792` |
+> | `QTreeView::item:selected:!active` | `color: #19232D; background-color: #D2D5D8` | `color: #DFE1E2; background-color: #37414F` |
+> | `QTreeView::item:!selected:hover` | `color: #19232D; background-color: #D2D5D8` | `color: #DFE1E2; background-color: #37414F` |
+> | the universal `QWidget` rule, which every view inherits | `selection-background-color: #9FCBFF; selection-color: #19232D` | `selection-background-color: #346792; selection-color: #DFE1E2` |
+>
+> **QSS wins over QPalette for any property it declares**, so a `setPalette` on the tree changes nothing a
+> user can see. **Two consequences, and the second is the more useful one:**
+>
+> 1. ⏳ **The mechanism is a WIDGET-LEVEL `setStyleSheet` on the quality tree**, declaring the same three
+>    `::item` selectors with the danger colours (a widget-level sheet merges with, and outranks, the
+>    app-level one). Not a palette override, not a delegate, not a `paintEvent`.
+> 2. **`ui/theme.py`'s `Highlight` role — `#3874f2` in BOTH palettes — is NOT what a tree row's selection
+>    actually paints.** What the user sees today is qdarkstyle's `#9FCBFF` / `#346792`. So the queue entry's
+>    derivation target (*"a red at the same relative luminance as `#3874f2` against each theme's `Base`"*)
+>    was measuring against a colour that is not on screen: **the contrast to match is the one the QSS
+>    produces**, which is also exactly what §7's theme block already requires — *"contrast must be checked
+>    against the live QDarkStyle chrome, not the bare palette."*
+>
+> **The theme-toggle re-apply requirement survives, for a different reason than the entry gave.** The entry
+> said `app.setPalette` wipes per-widget palette overrides; a widget-level **stylesheet** is not wiped by
+> either `setPalette` or a new app stylesheet. But the two themes' base colours differ, so the danger colour
+> is a **per-theme pair** and must be **re-applied on every theme flip** — the same
+> re-consult-`mode_colors`-when-`apply_theme`-flips contract §7 already states for the mode chip. Hook it the
+> way toolbar icons are re-tinted on theme change (`_refresh_toolbar_icons`), or via
+> `changeEvent(QEvent.PaletteChange)` on `BrowserPanel`; **the requirement is that a red survives a
+> light↔dark round trip**, and it is a test, not a note.
+
+##### The three duplication traps
+
+- ⏳ **Trap 1 — do NOT derive a second red beside `mode_colors`.** `ui/mode_indicator.py::mode_colors(light)`
+  is already the app's **theme-aware danger-colour vocabulary**, and `MODE_MAINTENANCE` is already a red pair
+  tuned per theme (`#FDECEA` / `#8B1E1E` light, `#3A2320` / `#F2B8AE` dark). A per-widget hardcoded red would
+  repeat, verbatim, the mistake `mode_indicator.py`'s own docstring records as the reason `mode_colors`
+  exists: *"the chip is never the DEBUG chip's hardcoded red that reads wrong in one theme."*
+  > **The honest complication, which is why the exact answer is an open question below rather than a ruling
+  > here: `mode_colors`' maintenance pair is a CHIP pair, not a selection pair.** Its light background
+  > `#FDECEA` is near-white — legible behind `#8B1E1E` text on a small label, and useless as a selection
+  > background under white `HighlightedText`. So the two candidate answers are *reuse that pair* and *add a
+  > sibling entry to the same table*, and only the second is likely to be legible. **What is NOT open is the
+  > requirement: whichever it is, the value lives in `mode_indicator.py`'s per-theme table, reached through
+  > `mode_colors(light)`, and never as a literal in `ddl_buffer_panel.py`.**
+- ⏳ **Trap 2 — do NOT edit `ui/theme.py`'s `Highlight`/`HighlightedText` roles.** They are app-wide: every
+  tree, list, table, combo popup and text selection in the app would turn red. §7's palettes are *"two
+  explicit, symmetric, platform-independent themes"* with a complete role set, and one widget's danger
+  marking is not a theme change. *(This trap survives the measurement above intact — it was always the right
+  refusal, even though the mechanism it recommended instead was the wrong one.)*
+- ⏳ **Trap 3 — this is where the app's colour vocabulary STOPS, and the spec says so here so the next
+  request has an answer.** `mode_indicator.py` already states the governing rule for its own dimension:
+  *"minor mode is TEXT, not a second colour … three majors times four sub-states would be a twelve-colour
+  vocabulary, which defeats easy recognition"*, and FQ-032 restated it when it declined a colour for the
+  editing mode (*"twelve doubles to twenty-four"*). **A colour per Explorer role is the same pressure through
+  a different feature**, so the boundary is stated once, here:
+  > **The app spends colour on exactly one question per surface, and that question is *"how dangerous is
+  > this?"* — the major workflow mode on the chip, and the target-vs-sandbox lane on the DDL Explorer tree.
+  > Every other distinction is TEXT: a label, a tab title, a marker glyph, a menu wording.** Concretely, and
+  > as a rule a reviewer can apply: **this feature adds ONE colour to the app, not a palette.** The Explorer
+  > does not additionally colour drift, dirty state, object kind or checkout state — those are `*`, `!`,
+  > `[F]`/`[P]`/`[T]`, `[B][D]` and the menu entries, and they stay that way. *(The same reasoning is why
+  > `docs/FEATURE_QUEUE.md`'s `FQ-260811020328` proposal to carry this marking onto a future Quality SQL
+  > Console is a **coherent extension of the one question** rather than a second colour — but it is that
+  > entry's decision to make, not this one's.)*
+
+##### ⚠ Open questions — FLAGGED, not decided here
+
+1. **Is the danger red literally `mode_colors`' `MODE_MAINTENANCE` pair, or a NEW sibling entry in the same
+   per-theme table?** *(Recommendation, on the legibility ground above: a sibling entry — a selection
+   background needs a different weight from a chip background. What is settled is that it is in that table.)*
+2. **Do the inactive-selection (`::item:selected:!active`) and hover states go red too**, or only the active
+   selection? A quality tree that loses its red the moment focus moves to the editor is the state a user is
+   most often looking at.
+3. **Does `HighlightedText` (the selected row's text colour) stay white**, or move with the background?
+   Answering (1) largely answers this.
+4. **Is the tree the only surface that reddens**, or does the center `EditorPanel` DDL Explorer (Quality) tab
+   want a cue too? *(Not asked for; recorded because the two halves of one Explorer instance are a tree and a
+   tab, and marking only one is a defensible choice that should be a choice.)*
+
 **Reuse map — what this feature builds on rather than duplicates.**
 
 | Need | Existing thing to reuse |
@@ -11539,6 +11853,9 @@ other instance's tree at all, exactly as if it were the only connection open.
 | Dynamic, key-addressed tabs (not index-addressed) | §18.5's per-object `DdlObjectEditorPanel` tabs and their append-only/tail-only invariant + regression test (§18.5 carve-out 9) — the same pattern, keyed on connection role instead of object identity |
 | Drift markers | §18.2's `*`/`!` computation (`compute_drift_markers`) — invoked per connection, not shared |
 | "No dead controls" posture | §18.5 carve-out 2 (no sandbox button row until the sandbox lane exists) — mirrored here as "no second DDL Explorer entry until a sandbox exists" |
+| ⏳ The danger colour itself (`FQ-260810165518`) | `ui/mode_indicator.py::mode_colors(light)` — the app's existing theme-aware danger vocabulary, whose `MODE_MAINTENANCE` entry is already a per-theme red pair. Never a literal in `ddl_buffer_panel.py`, never an edit to `theme.py`'s `Highlight` |
+| ⏳ Re-applying it on a theme flip | §7's *"re-consulted when `apply_theme(app, light)` flips"* contract, and the `_refresh_toolbar_icons` theme-change hook — not a new theme mechanism |
+| ⏳ The tree name filter (`FQ-260810180336`, §18.1) | Lands on `BrowserPanel`, so **both** instances get it from one implementation — and `browse_only` does **not** gate it, because a search aid is neither an edit nor a creation (the `Reload DDL` category) |
 
 **Explicitly not designed here:** any merged/diffed view showing both trees side-by-side or overlaid
 (rejected by the "tolerate genuine divergence, no cross-referencing" rule above — that would be a different,
@@ -13457,6 +13774,8 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-10 *(decision fold)* | **§8's flagged consequence of `DEC-260810193639`: *"A two-press escape (`Esc` in Command mode with nothing pending falling through to the dialog's reject) would restore it and is the obvious candidate — but it is vim-inauthentic and is NOT specified here"***, and §27's `Return`/`Escape` row recording the dialog's keyboard cancel as **withdrawn** | **OWNER RULING (2026-08-10) — THE TWO-PRESS ESCAPE IS SPECIFIED *AND BUILT* — IN `CodeEditorDialog` ONLY.** *(⚠ This row was written **"⏳ LANDING"**, and the pass additionally reported `ui/code_editor.py`'s comment as a survivor still saying the feature was *"deliberately NOT implemented here"*. **Both were false by the time the closing report was written**, caught only by re-verifying immediately before it — the **seventh** consecutive time. The mechanism, folded from the tree: a single opt-in hook `VimModeMixin.set_command_mode_escape_fallback(callback)` with **one caller**, defaulting to nothing, so the asymmetry lives at the diverging call site rather than as a *"am I a dialog?"* branch inside the shared layer; `is_pending` is tested **first and unconditionally at every surface**, because clearing a `42d` must never also close anything; and the callback is held **weakly**, the editing-mode-observer idiom.)* `Esc` in Command mode **with nothing pending** rejects that dialog; at the other five surfaces it clears pending state and stays, unchanged. **Recorded as a deliberate PER-SURFACE DIVERGENCE with its reason, because that is what separates it from inconsistency:** *a modal whose only cancel is the mouse is a real regression, and **vim has no dialogs to be authentic about***. Vim-authenticity is this feature's tie-breaker everywhere else **because vim has an answer**; here it has none, so authenticity is not an argument but the absence of one. The competing costs were **a keyboard-only user losing the cancel gesture** (a capability withdrawal) against **a vim user's second `Esc` closing a dialog** (bounded — `Return` accepts, and the work is recoverable by reopening), and the owner weighed the first higher. **The `nothing pending` gate is the whole of the safety:** a half-typed `42d` is consumed by that press instead, so **a user cannot lose a pending command and the dialog in one keystroke.** **It must NOT be generalised** — the other five surfaces are tabs, not modals, and have no reject for a second press to reach; any proposal to give a non-modal surface a second-press meaning is a **new decision**, the same containment §27's first mode-conditional chord carries. **⚠ One code-side survivor is named rather than assumed fixed:** `ui/code_editor.py`'s construction-site comment still reads *"A two-press escape would restore it … and is deliberately NOT implemented here"* — **a tombstone arguing against the shipped behaviour is worse than no comment**, because it reads as a rejected alternative and is exactly what the next sweep would restore. |
 | 2026-08-10 *(status pass)* | **§8's paragraph stating that the `Ctrl+D`/`Ctrl+K`/`Ctrl+U` collision *"is FLAGGED (§29), not decided here"*, with *"The recommendation put to the owner is to leave them as the app's line-editing gestures in BOTH editing modes … Recorded as a recommendation, not a ruling"***; and §27's `Escape` row asserting *"Row 6 versus row 4 is the one real collision and is FLAGGED (§29) … recommended answer, the vim layer is **inactive** in that dialog"* | **BOTH STRUCK — TWO DEAD RECOMMENDATIONS SITTING BELOW THE RULINGS THAT OVERRODE THEM, AND THAT IS THE MOST DANGEROUS SHAPE A DEAD ASSERTION TAKES.** The first sat **fifty lines below** the subsection stating `DEC-260810193637` (Command mode **frees** all three) and below §29's own struck item, making it the **third** register and the only one still presenting the overridden recommendation as open; it was flagged by `owner-decision`. The second **contradicted the row two rows below it in the same table**, which states `DEC-260810193639`. **Struck rather than deleted in both cases**, because the collisions they identified were real and the queue entry could not have known about the first — what is retired is their **status** (*flagged*, *not decided*, *a recommendation*), every word of which became false. **The durable rule: a rejected recommendation must read as REJECTED in every register that carries it, because one that still reads as pending is indistinguishable from a live alternative — and a live-looking alternative is how an implementer un-implements a decision.** *Second consecutive pass to find one table contradicting itself within a screenful.* |
 | 2026-08-10 *(feature fold)* | **Nothing in this document described DDL for any object kind other than routines and triggers.** §18.1's buffer block described `build_ddl_text` as *"concatenating every routine and trigger definition"* with `DdlObjectSpan.kind` as `function \| procedure \| trigger`, and no section stated where a table's, view's or matview's DDL would live — because there was none anywhere in the app | **`FQ-260810183812` FOLDED INTO §18.1 AS ⏳ TARGET DESIGN (NOT YET BUILT): the read-only pane holds ALL object kinds, and every tree item that has DDL navigates to it.** Verified as **genuinely net-new capability** rather than a half-built gap: `build_ddl_text` assembles only `schema.routines` then `schema.triggers`, and clicking a table node routes to `table_selected` → Properties. **EXTEND, not CREATE:** §18.1 already owns *"one synthesized buffer, a span index over it, and a tree that navigates into it by line number"*, and this widens **what goes into that buffer** and **which items carry a span** — the owner chose the concatenated-buffer + click-jumps model over load-on-click, which is what keeps it inside the architecture rather than beside it. **The one requirement folded as a REQUIREMENT and not a caveat: a synthesized `CREATE TABLE` is a RECONSTRUCTION** — Postgres has no `pg_get_tabledef`, so v1 reads columns, constraints, indexes and comments and therefore omits **identity/`SERIAL`, `GENERATED`, inheritance and partitioning** — **so the omission MUST BE VISIBLE IN THE BUFFER.** Presenting it as *"the table's DDL"* is a **silent wrong result** with a concrete failure mode (a user sees no `GENERATED ALWAYS AS IDENTITY` and concludes the column has none), and the stated limit doubles as **self-documenting v1 scope**: *a stated limit is also a to-do list that cannot rot silently.* **Three duplication traps carried into the block as rules:** `DdlObjectSpan` **grows kinds, never gains a sibling span type** (both `_fold_regions_for_spans` and `_span_at_line` walk `self._spans`, so two span types means two type tests and the second one written misses a case); **no second fetch path** — view definitions join `fetch_routines_and_triggers`, which §18.1 already rules is *"one fetch path serving two consumers"*; and the synthesizer **reuses FQ-025's `ConstraintInfo`/`IndexInfo` and `pg_get_constraintdef` verbatim** rather than re-deriving introspection, the same drift `_banner` avoids by embedding `RoutineInfo.signature` unrendered (BUG-018). **The synthesizer is a NEW pure Qt-free module in `db/`, beside `ddl_buffer.py`** — the one genuinely new module — because being pure is what makes every reconstruction branch testable without a server. **Read-only boundary unmoved:** tables, views, constraints and indexes are **not** in the checkout/versioning model; only routines and triggers get `ddl/*.sql` (§18.2). **Six open questions are FLAGGED, not decided** (constraint-node jump target, table-click additivity, column-node jump target, buffer ordering, the lazy-synthesis/caching strategy, and the notice's granularity — *that* the omission is visible is settled, only its granularity is open). **Folded FIRST of the three queued DDL Explorer entries for a substantive reason: it changes the CONTENT the other two operate on** — `FQ-260810180336`'s name filter and `FQ-260810165518`'s danger highlight both act over a tree whose membership this widens, so building either first means revisiting it. `FQ-260810180336` and `FQ-260810165518` remain **placed, not folded**. |
+| 2026-08-11 *(feature fold)* | **§18.1 described no find or filter of any kind over the DDL Explorer tree**, and §18.1's sequencing block said `FQ-260810180336` was *"placed, not folded"* | **`FQ-260810180336` FOLDED INTO §18.1 AS ⏳ TARGET DESIGN (NOT YET BUILT): a name-filter bar above the `BrowserPanel` tree, in BOTH Explorer instances.** Verified absent: `ui/ddl_buffer_panel.py` contains no `setHidden`/`filter`/`hidden` at all and its layout is `addWidget(self.tree)` alone. **The overlap the queue entry missed is the load-bearing part of the fold: the DDL Explorer ALREADY HAS A FIND BAR.** `ui/ddl_editor_panel.py` constructs a `FindReplaceBar` and installs `Ctrl+F`/`Ctrl+R` through `install_focus_shortcuts`, making `EditorPanel` one of §15/§27's six hosts — so this ships a **second** find affordance into one tab, and the fold therefore states, as a table, **which input searches what**: the existing bar searches the **DDL text** and moves the **caret**; the new one matches **object names** and **hides** rows. *Defensible only because the subject and the verb differ, which is exactly why it has to be written down — two search boxes with no stated division of labour read as duplicates to every user who meets them.* **The reuse ruling is a REFUSAL to reuse:** `FindReplaceBar` searches a `QPlainTextEdit` document through `ui/search.py`, this hides `QTreeWidgetItem`s, and there is no shared core to lift — a bar doing both would be two disjoint halves under one name. Reused instead: **`item.setHidden(not matched)`** (the `caption_management_panel.py` precedent) and the **shape** of `MODE_LABELS` with a **new predicate enum** — caption's `normal`/`extended`/`regular` answers *how the search STRING is interpreted*, these modes answer *WHERE in the name the match sits*, and **conflating two orthogonal questions into one dropdown produces one that can express neither.** Two further rules the entry did not state: the filter matches the **marker-free base label** stashed on `_LABEL_ROLE`, never `item.text(0)` — reading the rendered text would match `*`/`!` drift markers and the `[B][D]` event letters, so `d` would match every `DELETE` trigger — and **`browse_only` does NOT gate it**, because that flag withholds edits, creations and mutations, and a search aid is the `Reload DDL` category. **v1 claims NO keyboard chord**, since `Ctrl+F` in that tab already means the text Find bar; any future chord must be `install_focus_shortcuts`-shaped and panel-scoped, and is a DEC-012 decision. **Five open questions FLAGGED** (case sensitivity, whether an active-filter banner and no-matches message ship, default mode, what a wholesale `set_schema` rebuild does to a live filter — the `_dirty_keys` precedent recommended — and the room the owner's *"function 1"* wording leaves for a function 2). **Build order stated in §18.1 and it is not file-sharing:** `FQ-260810183812` decides which rows the tree HAS and this decides which are SHOWN — the same act at two depths, so a hide-predicate written against the narrow node set must be reopened for every kind the first adds. |
+| 2026-08-11 *(feature fold)* | **§18.7 defined two DDL Explorer instances and gave them two NAMES but no visual difference whatsoever** — its *"What it is"* and *"Reuse map"* blocks specify identical rendering, and the subsection said the wording was the whole of the distinction | **`FQ-260810165518` FOLDED INTO §18.7 AS ⏳ TARGET DESIGN (NOT YET BUILT): the QUALITY tree's selection highlight becomes the danger colour; the sandbox tree stays ordinary.** *"How do I tell which Explorer I am acting in"* is the question a reader brings to §18.7, and the absence of an answer there was the gap. **⚠ THE QUEUE ENTRY'S MECHANISM WAS MEASURED AND DOES NOT WORK, AND THAT CHANGED THE DESIGN.** It proposed a per-widget `QPalette` `Highlight` override on the premise that *"the highlight is purely global-palette-driven"* — which omits the app-level stylesheet §7 requires in **both** themes (`app.setStyleSheet(_qdarkstyle_stylesheet(light))`). The generated sheet was read: it declares `QTreeView::item:selected:active` (`#9FCBFF` light / `#346792` dark), `::item:selected:!active`, `::item:!selected:hover`, and a universal `QWidget { selection-background-color; selection-color }`. **QSS wins over QPalette, so the proposed override is INERT** — the mechanism is a **widget-level `setStyleSheet`** on the quality tree. **A second entry-falsifying finding rides with it: `theme.py`'s `Highlight` `#3874f2` is NOT what a tree row paints**, so the entry's *"match `#3874f2`'s relative luminance"* derivation targeted a colour that is not on screen; the contrast to match is the QSS's, which is what §7 already demanded (*"against the live QDarkStyle chrome, not the bare palette"*). **The theme-toggle re-apply requirement survives with a corrected reason:** a widget-level sheet is *not* wiped by `app.setPalette`, but the value is per-theme and must be re-applied on the flip — a test, not a note. **The general invariant is folded into §7's theme block**, where a reader will meet it before repeating the mistake. **Three duplication traps folded as requirements:** no second red beside `ui/mode_indicator.py::mode_colors`, whose `MODE_MAINTENANCE` is already a per-theme red pair and whose docstring records the exact defect a hardcoded red repeats (*"never the DEBUG chip's hardcoded red that reads wrong in one theme"*); no edit to `theme.py`'s `Highlight` (it recolours selection app-wide); and the **twelve-colour rule** — *"minor mode is TEXT, not a second colour … three majors times four sub-states would be a twelve-colour vocabulary, which defeats easy recognition"* — which a colour per Explorer role pressures from a new direction, **so §18.7 now states where the app's colour vocabulary STOPS: colour answers one question per surface, *how dangerous is this?*, and every other distinction stays TEXT. This feature adds ONE colour, not a palette.** **Four open questions FLAGGED**, with the honest complication recorded rather than smoothed: `mode_colors`' maintenance pair is a **chip** pair whose light background `#FDECEA` is near-white and would be useless as a selection background under white text — so *reuse the pair* versus *add a sibling entry to the same table* is a real choice, while **that the value lives in that table is NOT open**. |
 
 ---
 

@@ -606,20 +606,31 @@ Toolbar**, and again in the status bar. Both are written from one answer, so the
 can never disagree.
 
 - **The colour is the major mode** — the one you picked in the launcher:
-  **Standalone**, **Project** or **Maintenance** (see *Getting Started ▸ The
-  startup launcher*). The chip has a **No Mode** reading in a neutral colour
-  rather than going blank, for the window behind the launcher before you have
-  picked — in practice you will not see it, because the startup launcher cannot be
-  dismissed without a choice and dismissing a later one keeps the mode you are in.
-- **A minor mode is appended as text**, after a middle dot — `Project · Caption`.
-  The minor modes are the editor sub-states: **Caption** (Caption Management),
-  **Compare/Merge**, and **Edit XSD**. Plain editing is the *absence* of a minor
-  mode, not a fourth one, so most of the time the chip shows the major mode
-  alone. Only one minor mode is ever named; Caption wins over Compare/Merge,
-  which wins over Edit XSD.
-- **The major mode owns the colour** and the minor mode never gets one of its
-  own. Three majors times four sub-states would be a twelve-colour vocabulary,
-  which is exactly what a glance-recognizable chip cannot be.
+  **Standalone mode**, **Project mode** or **Maintenance mode** (see *Getting
+  Started ▸ The startup launcher*). **Every label says the word "mode" out
+  loud**, because a chip reading a bare *Project* reads like the name of a thing
+  rather than a state you are in. The chip has a **No Mode** reading in a neutral
+  colour rather than going blank, for the window behind the launcher before you
+  have picked — in practice you will not see it, because the startup launcher
+  cannot be dismissed without a choice and dismissing a later one keeps the mode
+  you are in.
+- **A minor mode is appended as text**, after a middle dot — `Project mode ·
+  Caption`. The minor modes are the editor sub-states: **Caption** (Caption
+  Management), **Compare/Merge**, and **Edit XSD**. Plain editing is the
+  *absence* of a minor mode, not a fourth one, so most of the time the chip shows
+  the major mode alone. Only one minor mode is ever named; Caption wins over
+  Compare/Merge, which wins over Edit XSD.
+- **The editing mode of the editor you are typing in is appended last**, after
+  another middle dot — `Project mode · Edit mode`, or `Project mode · Command
+  mode — press i to type`. That third segment is the keyboard vocabulary the
+  **focused** editor is listening in (see *Editing Modes: Edit mode and Command
+  mode*), and it is **absent** whenever the focused editor is read-only or is not
+  an editor at all. It is per-editor and independent of the other two — a tab
+  switch can change it without changing anything else on the chip.
+- **The major mode owns the colour** and neither the minor nor the editing mode
+  gets one of its own. Three majors times four sub-states would already be a
+  twelve-colour vocabulary, which is exactly what a glance-recognizable chip
+  cannot be.
 - **The colours follow the Light/Dark theme** (see *Appearance & Layout*), so the
   chip stays legible in both.
 - **It is passive.** There is no click, no context menu, and no way to change
@@ -1032,15 +1043,21 @@ The Code Editor is a modal window with:
   for the same reason it is the one place the key **cannot** be changed by
   rebinding **Select ▸ Select Enclosing Block** (see *Keyboard Shortcuts ▸
   Changing a shortcut*).
-- Standard **Ctrl+C / Ctrl+V / Ctrl+X**.
-- **OK and Cancel are the buttons, plus Return and Escape.** This dialog used to
-  accept on **Ctrl+S** and cancel on **Ctrl+W** — the last two places either
-  chord meant anything. Both are gone: **Ctrl+S** is unbound app-wide because
-  saving is a named **Deployment** entry (see *Getting Started ▸ Saving,
+- Standard **Ctrl+C / Ctrl+V / Ctrl+X**, and the three line-editing keys
+  **Ctrl+D** / **Ctrl+K** / **Ctrl+U** (see *Keyboard Shortcuts*).
+- **A mode indicator under the editor**, and **Command mode** — this dialog has
+  the same **Escape**-entered command vocabulary every other editable editor has
+  (see *Editing Modes: Edit mode and Command mode*). It is the one surface where
+  **Escape** also leaves that mode, and the chip is how you can tell which mode
+  you are in.
+- **OK and Cancel are the buttons, plus Return and a double Escape.** This dialog
+  used to accept on **Ctrl+S** and cancel on **Ctrl+W** — the last two places
+  either chord meant anything. Both are gone: **Ctrl+S** is unbound app-wide
+  because saving is a named **Deployment** entry (see *Getting Started ▸ Saving,
   closing, discarding*), and **Ctrl+W** went with it on the same day it stopped
   closing files from the File menu. Nothing became unreachable — press **OK**
-  or **Return** to hand the code back, **Cancel**, **Escape** or the window's
-  close button to drop it.
+  or **Return** to hand the code back, and **Cancel**, the window's close button
+  or **Escape twice** (once into Command mode, once to cancel) to drop it.
 
 On save, the code is written back into the handler's XML body (properly escaped),
 preserving the rest of the file byte-for-byte.
@@ -2030,6 +2047,26 @@ ever.
 > focuses it — it is not promoted to a checked-out file. To get that object under
 > versioning, close its tab and open it again.
 
+**Undoing a checkout: right-click ▸ Discard local change.** Beside **Edit DDL**
+in the **DDL Objects (Quality)** tree, an object that is currently checked out
+also offers **Discard local change**. It appears **only** for an object that
+actually has a local working copy — on anything else it is simply not there,
+rather than present and dead.
+
+It throws the checkout away, all of it at once: the object's `ddl/*.sql` file is
+deleted, its last-deployed reference is dropped (so the `*` / `!` drift markers
+stop tracking it), its editable tab is closed, and the object goes back to
+not-checked-out. **Any unsaved edits in that tab are thrown away** — you are not
+offered a Save first, because throwing those edits away is the whole point of the
+gesture. A Yes/No confirmation names the file before anything happens, so nothing
+is destroyed by one click.
+
+**It never touches the database.** Unlike **Apply to quality**, this is purely
+local: the live object stays exactly as it is, and the confirmation says so in as
+many words. It also touches only the object you right-clicked — two overloads of
+one name share a folder, and only the one you picked is discarded. Every outcome,
+including a cancel, is recorded as a `[Project]` line in the **Activity Log**.
+
 The tab that opens is titled with the object's short name — `recalc`, or
 `fmt(integer)` when it's one of several overloads, or `orders.trg_audit` for a
 trigger — plus the same `" *"` dirty marker the **Edit XSD** tab uses once you
@@ -2081,7 +2118,16 @@ selection can't be safely reformatted (for example, an unbalanced
 `BEGIN`/`END` split by the selection boundary), nothing changes: the problem
 is reported as a `[SQL]`-prefixed line in the **Activity Log**, and the exact
 offending text is underlined in red in the editor until your next edit or
-your next format attempt. **What it does to your SQL — keyword casing, which
+your next format attempt.
+
+> **A `BEGIN TRANSACTION` / `BEGIN WORK` block is not an unbalanced block, and is
+> no longer treated as one.** Those `BEGIN`s are transaction control, not a
+> plpgsql block, so they need no `END` to close them and a selection containing
+> one formats normally — as do `BEGIN ISOLATION LEVEL …`, `BEGIN READ ONLY` and
+> `BEGIN DEFERRABLE`, where PostgreSQL lets the noise word be left out. The
+> formatter used to count them as unclosed blocks and refuse perfectly valid SQL.
+
+**What it does to your SQL — keyword casing, which
 clauses start a new line, the indent unit — is configurable**; see *The
 Autoformatter*.
 
@@ -2116,11 +2162,25 @@ places they are offered. None of the three has a keyboard shortcut.
 **Apply to quality is guarded, in this order, and refuses out loud rather than
 silently:**
 
-1. **A changed signature is refused outright, with no override.** PostgreSQL
+1. **A changed signature warns and asks — it no longer refuses.** PostgreSQL
    identifies a routine by schema, name and argument types, so `CREATE OR
-   REPLACE` with different arguments would create a *second* object and leave the
-   old one live — something no confirmation could catch. The refusal names both
-   signatures and points you at the reviewable deployment-script path.
+   REPLACE` on a buffer you have renamed or whose arguments you have changed does
+   **not** replace the object you checked out: it **creates a second object and
+   leaves the old one live**. The dialog names both identities — *"You checked out
+   `x`, but the buffer creates `y`"* — says that consequence in as many words, and
+   then offers to run your SQL anyway. If you say yes, **both objects exist
+   afterwards, and dropping the old one is your job** — the app will not do it for
+   you and does not offer to. Saying no cancels and applies nothing, naming both
+   signatures in the `[Check]` line.
+
+   This used to be a hard refusal with no way through, which was worse than it
+   sounds: **Check and commit to sandbox** has no such guard and happily ran the
+   renamed buffer, so the same edit worked in the sandbox and looked like it had
+   succeeded against quality while doing nothing but printing one line you had no
+   reason to read. The other branches of the check *are* still hard refusals — a
+   buffer whose signature cannot be parsed at all, and a live identity that could
+   not be read because the database did not answer. An unreachable database never
+   counts as a cleared check.
 2. **The buffer must have a green sandbox validation.** Actual findings block.
    What could not be *checked* — no sandbox result for this exact text, a missing
    extension — can be overridden, but only through a dialog that **enumerates
@@ -2969,6 +3029,22 @@ CREATE EXTENSION IF NOT EXISTS plpgsql_check;
 - **Name** and **Description** — optional, free text.
 - **Project folder** — pick a folder with **Browse…**; that folder *is* the
   project. There's no separate bootstrap step.
+- **Project .pgtp (optional)** — pick the `.pgtp` this project is a checkout of,
+  with its own **Browse…**. Attaching one copies it into the project as its
+  working copy and links it, exactly as opening a `.pgtp` while the project is
+  active would; **and the file is opened into the editor as soon as the project
+  is created**, so you land on your project rather than on an empty window.
+  Leave it empty for a project with no `.pgtp` — you can still attach one later
+  by opening it. If the copy fails, the project is still created, with **no**
+  `.pgtp` link at all and a `[Project]` line saying why: a recorded link pointing
+  at nothing is worse than no link.
+- **Quality (target) server** — **hidden until you attach a `.pgtp`**, because
+  with no `.pgtp` there is nothing to fill it from. Attaching one reveals it and
+  fills **Host**, **Port**, **Database** and **User** from the file's own
+  connection settings. **The Password is the one field you supply**: it is never
+  read out of the XML. **Test** checks the connection. This is the quality /
+  staging database the DDL Explorer and the database checks read while the
+  project is open.
 - **Local sandbox (optional)** — the Postgres **server** the sandbox should live
   on: **Host**, **Port**, **User**, and **Password**. **There is deliberately no
   "Database:" field.** You never name the sandbox database, because PGTP Editor
@@ -3034,6 +3110,18 @@ The run does five things:
 
 The **Activity Log** confirms with `Created and provisioned sandbox database:
 <name>`.
+
+**The run narrates itself while it runs.** Provisioning creates a database, takes
+a baseline, installs an extension and probes the server, which against a real
+server is seconds to minutes — so the **Messages** tab says
+`[Sandbox] provision: started` the moment the work is dispatched and then keeps
+one line ticking — `[Sandbox] provision: .`, then `..`, then `...` — once a
+second until the run finishes, restarting the count after ten so a long run does
+not draw a hundred-character line. It is a single line rewritten in place,
+it is not clickable (a heartbeat has nowhere to navigate to), and the final
+`[Sandbox]` outcome line lands under it as usual. A project created with the
+**Local sandbox** group left blank builds no database, so it is not narrated
+either.
 
 **Creating a project never reports a connection error of its own.** The
 automatic session (see *The Sandbox ▸ The sandbox session opens itself*) waits
@@ -4022,6 +4110,256 @@ exists is quietly discarded rather than breaking the toolbar.
 
 ---
 
+## Editing Modes: Edit mode and Command mode
+
+Every editable editor in this app listens in one of **two keyboard
+vocabularies**, and the one it is listening in right now is called its **editing
+mode**:
+
+- **Edit mode** — ordinary Windows-style typing. Letters type letters, the mouse
+  selects, **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut and paste. This is
+  where every editor starts, always.
+- **Command mode** — a vim command vocabulary, entered with **Escape**. Letters
+  are commands rather than text: `w` moves a word, `dd` deletes a line, `42j`
+  goes forty-two lines down.
+
+**This is not a vim fan feature.** The editors need advanced editing *operations*
+whatever they are spelled as — go to an absolute line, move a **relative** number
+of lines, delete or change or yank by word, by line, by motion — and none of them
+exists anywhere else in the app, nor has a menu equivalent. The real choice was
+never *"vim or no vim"*: it was **adopt a vocabulary that already exists, or
+invent a keymap of our own**. Windows editors offer nothing to copy here, so
+there was nothing to be consistent with, and the case that settles it is `42j` —
+**a count applied to a motion is a grammar, not a command**, and no menu entry
+and no invented Ctrl-chord can express it.
+
+**There is no setting, no toggle and nothing stored.** Command mode is always
+available and never turned on; it is a passing runtime state of one editor, so
+there is nothing to configure, nothing in your preferences, and nothing that
+survives a restart or even a tab switch. **The Edit-mode editor gains nothing
+from any of this** — every advanced operation lives in Command mode only, and no
+parallel keymap ever appears in ordinary typing.
+
+### Entering and leaving Command mode
+
+**Escape enters Command mode**, in the editor that has focus and only when that
+editor is editable. Any of the **insert-entry** keys — `i` `a` `I` `A` `o` `O`
+`s` `S` `cc` `C`, and also `v` and `V` — puts you back into Edit mode, as does a
+`c{motion}` change, which by definition lands you typing.
+
+**It belongs to one editor and it is transient.** Each tab is independent, and
+**losing focus drops that editor straight back to Edit mode** — switching tabs,
+clicking into another widget, opening the completion popup, running a `:`
+command that opens a dialog. Coming back **never resurrects it**: there is no
+memory anywhere of which tab was in Command mode. A half-typed command (`42d`)
+is discarded at the same moment, and so is any command left pending when the
+document is replaced under you.
+
+**On a read-only editor, Escape does nothing and the whole layer is inactive.**
+The read-only **DDL Explorer** buffers, the Raw XML editor while **Caption Mode**
+or **Compare/Merge** holds it, the Activity Log's payload viewer: none of them
+has an editing mode at all, so there is no *"motions work but deletes refuse"*
+half-state to learn. If a mode turns the buffer read-only while you are in
+Command mode, you are dropped back to Edit mode there and then.
+
+**The mouse stays fully live in both modes, and never changes the mode.** Click,
+drag-select, scroll and the context menu all behave identically; a click that
+silently moved you out of a mode would make the indicator lie about a state you
+never asked to leave. The **arrow keys**, **Home**, **End**, **Page Up** and
+**Page Down** likewise move the caret in Command mode exactly as they do in Edit
+mode.
+
+**Escape in Command mode stays in Command mode.** If a count or an operator is
+half-typed it is thrown away and you stay; if nothing is pending, nothing at all
+happens. (The one exception is the **Edit code…** dialog — see the last section
+of this chapter.)
+
+### The mode indicator is your way back
+
+If you press **Escape** by reflex and find that letters have stopped typing, the
+thing that tells you so is the **mode indicator** (see *The Status Bar ▸ The mode
+indicator*). It reads:
+
+> **Command mode — press i to type**
+
+**That indicator and its exit hint are the entire safety net, deliberately.**
+There is no first-time dialog, no timeout, no opt-out and no warning beep —
+just a chip that always says which vocabulary the editor is listening in, and
+which says the way out inside its own label. It is shown twice for a main-window
+editor (the Main Toolbar and the status bar) and once, on its own, inside the
+**Edit code…** dialog.
+
+**A command that cannot run says why, at the caret.** Every refusal below appears
+as a small tooltip beside the caret, and — in the surfaces that report to it — as
+a `[SQL]` line in the **Activity Log**. Nothing in Command mode fails silently
+except **Tab**, and *Counts, and the three refusals that are not bugs* below says
+why that one is the exception.
+
+### The command set
+
+This is the whole v1 vocabulary. Anything not on this list resets whatever was
+half-typed and does nothing.
+
+**Motions** — with an optional count before them (`5w`, `42j`):
+
+| Keys | Move to |
+|---|---|
+| `h` `j` `k` `l` | left, down, up, right |
+| `w` `b` `e` | next word start, previous word start, next word end |
+| `0` `^` `$` | start of line, first non-blank of the line, end of line |
+| `gg` `G` | first line, last line |
+| `42G` | line 42 — an **absolute** line number |
+| `f` `t` `F` `T` + a character | forward to / just before, backward to / just after that character, **on this line only** |
+| `%` | the bracket matching the next one on this line |
+| `{` `}` | the previous / next blank line |
+
+**Operators** — `d` delete, `c` change (delete, then drop into Edit mode), `y`
+yank (copy). Each takes a motion (`dw`, `c$`, `y}`), or is **doubled** to act on
+whole lines (`dd`, `cc`, `yy`).
+
+**Shorthands**, which are just operator-plus-motion pairs spelled shorter:
+
+| Key | Same as |
+|---|---|
+| `x` / `X` | delete the character after / before the caret |
+| `D` / `C` | delete / change to the end of the line |
+| `Y` | yank the whole line |
+| `s` / `S` | change the character / the whole line |
+
+**Other commands:**
+
+| Key | What it does |
+|---|---|
+| `i` `a` `I` `A` `o` `O` | back to Edit mode — at the caret, after it, at the first non-blank, at the end of the line, on a new line below, on a new line above |
+| `v` `V` | also back to Edit mode — **there is no visual mode**, see below |
+| `p` / `P` | paste after / at the caret |
+| `r` + a character | replace the character under the caret with it |
+| `u` | undo — the same undo the tab's own **Ctrl+Z** does |
+| **Ctrl+R** | redo, **in Command mode only** |
+| `/` | open this tab's **Find** field |
+| `n` | find next |
+| `:` | open the command line (see below) |
+
+**Counts multiply, and they may sit on either side of an operator.** `3w` moves
+three words, `2d3w` is the same as `d6w`, and `42G` and `G` are genuinely
+different commands (`G` alone is the last line; `42G` is line 42).
+
+**Three keys that would otherwise edit the buffer are given their vim meanings**
+rather than being swallowed: **Backspace** acts as `h`, **Return** as `j` and
+**Delete** as `x`.
+
+### Counts, and the three refusals that are not bugs
+
+Three deliberate behaviours look wrong the first time and are not:
+
+- **`N` — search backwards — refuses, and says why.** `n` and `/` drive the app's
+  own **Find** bar rather than a second search engine of their own, and that bar
+  searches **forwards only**. Rather than invent a backwards search that exists
+  nowhere else in the app, `N` states *"the Find bar searches forwards only —
+  there is no backwards search to run"*. On a tab with no Find bar at all (the
+  **Sandbox SQL Console**, the **Edit code…** dialog) `/` and `n` say that
+  instead.
+- **A count that overshoots refuses rather than clamping.** `42j` in a ten-line
+  buffer does **not** quietly land you on the last line; it answers *"there are
+  only 9 lines below the caret"* and leaves the caret where it was. Silently
+  doing something near what you asked for is how you stop trusting the count at
+  all. The same holds for `42G` in a shorter document, for `w` at the end of the
+  buffer, for `f` with no such character on the line, and for `%` with no bracket
+  to match.
+- **Tab is swallowed and answers nothing.** In Command mode, **Tab** and
+  **Shift+Tab** do nothing at all — inserting a tab character would be an edit
+  from a mode whose whole point is that letters are not text, and vim has no Tab
+  command to borrow. This is the one key that is consumed without an explanation;
+  the indicator is what tells you why nothing happened.
+
+### Selecting, deleting and pasting — and what is deliberately absent
+
+**There is no visual mode.** `v` and `V` drop you into **Edit mode** so you can
+select the Windows way — with the mouse, or **Shift** plus a motion key.
+
+**The consequence is worth stating plainly: the select-then-`d` reflex does not
+exist here.** You have exactly two ways to operate on a range:
+
+1. **In Command mode**, operator plus motion — `d}`, `y2w`, `cc`. A `d` pressed
+   after a Windows-style selection is a Command-mode `d` waiting for its motion;
+   it is not *"delete the selection"*.
+2. **In Edit mode**, select however you like and use **Ctrl+C**, **Ctrl+X** or
+   **Delete**.
+
+**There is one clipboard — the system one — and no registers.** `y` and `Y` write
+it, and so does **every delete**, which is what makes `dd` then `p` move a line.
+It is the same clipboard **Ctrl+C** uses, so text moves freely between Command
+mode, Edit mode and other applications. Two consequences follow directly and are
+accepted rather than worked around:
+
+- **`dd` clobbers your clipboard.** If you had something on it, it is gone. (What
+  the delete took is recoverable with `u`.)
+- **There is no linewise paste.** `p` and `P` paste **plain text, inline**,
+  exactly as **Ctrl+V** does — so `yy` followed by `p` inserts the line's text at
+  the caret rather than opening a new line for it. The two differ only in where
+  the caret is: `p` pastes after it, `P` at it.
+
+### Searching, and the colon command line
+
+`/` focuses this tab's **Find** field and `n` runs its **Find next** — the same
+bar, the same highlighting and the same results you get from **Ctrl+F**. There is
+no second search anywhere in this app.
+
+`:` opens a small command line **over the editor**, and **its vocabulary is the
+app's own menu tree**. Typing matches against the full menu path, so `:deployqual`
+finds **Deployment › Apply to quality** and **Enter** triggers exactly the menu
+entry it names — the same command, with the same confirmations and the same
+refusals. Nothing here is a separate command language, so it stays in step with
+the menus by construction. **Escape** closes the line and returns you to Command
+mode with the buffer untouched.
+
+The one non-menu verb is **`:set`**, and it has exactly two options: **`:set
+wrap`** and **`:set nowrap`**, which are the command form of the editors' own
+*Wrap Lines* toggle. Anything else is refused by name. `:set` may only reach a
+setting the app already has — the command line is not a place to invent one.
+
+### Chords that change meaning in Command mode
+
+Four keys behave differently depending on which mode the focused editor is in.
+Apart from these — and **Escape** and **Tab**, above — everything in *Keyboard
+Shortcuts* means the same thing in both modes.
+
+| Chord | In Edit mode | In Command mode |
+|---|---|---|
+| **Ctrl+R** | focus this tab's **Replace with** field | **redo** |
+| **Ctrl+D** | delete the character after the caret | **nothing** — consumed, reserved for a later scrolling command |
+| **Ctrl+K** | delete from the caret to the end of the line | **nothing**, as above |
+| **Ctrl+U** | delete the whole line | **nothing**, as above |
+
+**Ctrl+Y is redo everywhere, in both modes, on both platforms** — it did not
+move and it is not mode-dependent. `Ctrl+R` is redo *in addition*, and only while
+Command mode holds, which is also why **Replace-focus is unavailable on that
+editor** until you leave Command mode. If **Ctrl+R** ever seems dead, the mode
+indicator is telling you why.
+
+### The Edit code… dialog is the one surface that differs
+
+The **Edit code…** dialog (see *The Code Editor*) has Command mode too, and
+carries **its own mode indicator** under the editor — the same chip, showing the
+editing mode and nothing else, because a dialog has no workflow mode to report.
+
+Two things are different there, both on purpose:
+
+- **Escape is a two-press cancel.** The first **Escape** enters Command mode; a
+  second **Escape**, with nothing half-typed, **cancels the dialog**. That is how
+  you close it from the keyboard: Command mode had taken away this dialog's only
+  keyboard cancel, since **Ctrl+S** and **Ctrl+W** do nothing anywhere in the
+  app. **Return** still accepts, and **Cancel** is still one click away. At the
+  other five editing surfaces **Escape** in Command mode simply stays put; this
+  dialog is the single exception, and it is a modal, which is why.
+- **`:` is unavailable, and says so.** The command line's vocabulary *is* the
+  menu tree, and this dialog is deliberately menu-less — so pressing `:` answers
+  *"the ':' command line lists this window's menu commands, and this dialog has
+  no menus"* rather than opening an empty command line you could type nothing
+  useful into.
+
+---
+
 ## Keyboard Shortcuts
 
 **The keys below are the defaults, not fixed bindings.** Every shortcut that
@@ -4048,12 +4386,20 @@ follow from which one you are in:
 - **Code editors** — a **DDL object** tab, either **DDL Explorer**, a **PHP file**
   tab, the **Sandbox SQL Console**, and the **Edit code…** dialog.
 
+**Everything in this chapter describes an editor in Edit mode** — ordinary typing,
+which is where every editor starts. Press **Escape** in an editable editor and it
+switches to **Command mode**, where letters are commands and three of the chords
+below change meaning; that vocabulary has its own chapter, *Editing Modes: Edit
+mode and Command mode*.
+
 **Everywhere in the app**
 
 | Shortcut | Action |
 |---|---|
 | **F1** | Open the Manual (**Help ▸ Manual**). Reachable in every mode, including Maintenance mode |
-| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy / cut / paste. The editors' own built-ins; no menu command claims them. **Ctrl+Insert**, **Shift+Insert** and **Shift+Delete** are the older spelling of the same three and work everywhere too |
+| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy / cut / paste. The editors' own built-ins; no menu command claims them. **Ctrl+Insert**, **Shift+Insert** and **Shift+Delete** are the older spelling of the same three and work everywhere too, and **Ctrl+Shift+Insert** is a second paste the app binds itself in every editor |
+| **Ctrl+D** / **Ctrl+K** / **Ctrl+U** | Delete the character after the caret / to the end of the line / the whole line. See *Three line-editing keys*, below |
+| **Escape** | Enter **Command mode** in the editor you are typing in — after three narrower meanings have had their turn. See *Editing Modes* and *What Escape means where*, below |
 | **Ctrl+S** / **Ctrl+Shift+S** | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
 | **Ctrl+O** / **Ctrl+W** | **Nothing.** Both were unbound rather than moved, and both are free for you to assign (see below) |
 | **Ctrl+Shift+Z** | **Select ▸ Shrink Selection.** It is **not** a redo chord — every editing surface catches it, and in the SQL editors it steps the selection inward (see *Expanding and shrinking the selection*, below) |
@@ -4073,9 +4419,9 @@ and act on it — never on the Raw XML document behind it.
 | **Ctrl+F2** | **Navigation ▸ Toggle Bookmark** | Disabled for as long as **Caption Mode** lasts |
 | **F2** / **Shift+F2** | **Navigation ▸ Next / Previous Bookmark** | Disabled for as long as **Caption Mode** lasts |
 | **Ctrl+F** | *(no menu entry)* | Focus this tab's **Find** field |
-| **Ctrl+R** | *(no menu entry)* | Focus this tab's **Replace with** field |
+| **Ctrl+R** | *(no menu entry)* | Focus this tab's **Replace with** field — **in Edit mode**. In Command mode this chord is redo instead (see *Editing Modes*) |
 | **F3** | *(no menu entry)* | Find next in this tab's bar — and it works with the caret still in the **editor**, which is the whole point of it |
-| **Escape** | *(no menu entry)* | In a Find/Replace bar: return focus to the document. The bar is never hidden |
+| **Escape** | *(no menu entry)* | In a Find/Replace bar: return focus to the document. The bar is never hidden. With the caret in the editor: enter **Command mode** |
 
 **Ctrl+F / Ctrl+R belong to the tab, not to the window.** Six surfaces own their
 own pair — Raw XML, Edit XSD, a draft fragment tab, a PHP tab, a DDL object tab
@@ -4084,6 +4430,22 @@ pair is live only while its own surface has focus, which is why Find in the
 caption grid can never search the Raw XML by accident. **Three surfaces have no
 Find/Replace bar at all** — the **Manual** tab, the **Diff / Merge** tab and the
 **Sandbox SQL Console** — so **Ctrl+F**, **Ctrl+R** and **F3** do nothing there.
+
+**Three line-editing keys, in every editor**
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl+D** | Delete the character **after** the caret — or the selection, when there is one |
+| **Ctrl+K** | Delete from the caret to the end of the line. Pressed with the caret already at the end of a line it takes the newline instead, joining the next line up, which is what makes repeated presses useful. At the very end of the document it does nothing |
+| **Ctrl+U** | Delete the whole line, as **one** undo step — one **Ctrl+Z** brings it back. With a selection it deletes exactly the selection |
+
+**The app implements these three itself, identically on Windows and on Linux.**
+They are not the system's: the KDE desktop binds them inside every text box and
+Windows binds nothing at all, which would have made the same key do two different
+things on two machines. All three are live in every editing surface — the XML
+editors and the code editors alike — and on the read-only **DDL Explorer** they
+state *"this buffer is read-only"* rather than doing nothing. In **Command mode**
+all three are inert (see *Editing Modes ▸ Chords that change meaning*).
 
 **In an XML editor** (Raw XML, Edit XSD / Edit AutoXSD, a draft fragment tab)
 
@@ -4138,8 +4500,22 @@ placeholders)
 
 Nothing else changes while the walk is on, and the walk also ends when you click
 anywhere or the editor loses focus. Outside a walk these three keys are exactly
-what they always were — in particular **Escape** keeps its ordinary meaning of
-*return focus to the document* everywhere else in the app.
+what they always were.
+
+**What Escape means where.** One key, several answers, and the first one that
+applies wins:
+
+1. the **completion popup** is open → close it, inserting nothing;
+2. the caret is in a **Find/Replace bar** field, or the caption bar → return
+   focus to the document (or to the caption grid). The bar is never hidden;
+3. a **template walk** is in progress → leave the walk;
+4. the caret is in an **editable editor** → enter **Command mode**; or, already
+   in Command mode, discard a half-typed command and stay there (see *Editing
+   Modes*);
+5. the caret is in a **read-only** editor → nothing at all;
+6. the **Edit code… dialog** with nothing pending → cancel the dialog. That is
+   the second of its two Escape presses, and the only surface where Escape leaves
+   Command mode.
 
 **In a DDL object tab or the Sandbox SQL Console — and only there**
 
@@ -4187,8 +4563,17 @@ own dialog defaults:
 |---|---|
 | **Ctrl+Shift+B** | Bracket-select. The dialog carries this one chord itself, which is the only reason it works here — and the only reason it does not follow a rebinding (see *The Code Editor ▸ Editing*) |
 | **Return** | OK (Qt's default for the dialog's button box) |
-| **Escape** | Cancel |
+| **Escape** | **Press once** to enter **Command mode**; **press again**, with nothing half-typed, to **Cancel**. See *Editing Modes ▸ The Edit code… dialog is the one surface that differs* |
 | **Ctrl+S** / **Ctrl+W** | **Nothing.** This dialog was the last carve-out for either chord and no longer answers them |
+
+The dialog also carries **its own mode indicator**, under the editor, showing
+which editing mode that editor is in and nothing else. **The `:` command line
+does not work here** — its vocabulary is the menu tree and this dialog has none,
+so it says so.
+
+**The Activity Log's payload viewer is the read-only twin of this dialog**, so
+the editing-mode layer is inactive in it and **one Escape closes it**, as it
+always did.
 
 **Undo and Redo depend on which tab you are in**
 
@@ -4277,7 +4662,7 @@ means. In an **XML editor** the answer is the innermost XML element; in a **code
 editor** it is the innermost balanced bracket pair, because SQL and PHP have no
 tags to enclose. It is one command with one key, not two competing ones.
 
-#### Expanding and shrinking the selection
+### Expanding and shrinking the selection
 
 **Ctrl+Shift+A grows the selection outward one structural unit per press, and
 Ctrl+Shift+Z steps it back inward.** Press **Ctrl+Shift+A** with the caret in a
@@ -4531,12 +4916,13 @@ hunting for a row that was never there. None of these is arbitrary:
 | **Ctrl+Z** / **Ctrl+Y** | Undo and Redo in whichever surface has focus: a window-scoped shortcut *plus* every editor's own key handling, and not a menu command, so there is no row to move them from. **Ctrl+Y** is bound by this app on every platform rather than inherited from the system, because Qt binds it only on Windows. The project-scoped twins — **History ▸ Undo Project Edit** and **History ▸ Redo Project Edit** — are ordinary menu commands and **are** rebindable. |
 | **Ctrl+Shift+Z** | **Not redo** (see *Undo and Redo*, above) and not free either: every editing surface catches it so Qt's own native redo cannot fire, so a command moved onto it would be swallowed by whichever editor has focus. It answers **Select ▸ Shrink Selection**, which is therefore the one **Select** command you cannot rebind — see *Expanding and shrinking the selection*. |
 | **Alt+Backspace** / **Alt+Shift+Backspace** | Qt binds them as undo and redo on the **Windows** scheme only, so every editing surface consumes them and runs nothing — that suppression is what makes the keyboard identical on both platforms. A command retargeted here would be swallowed the same way. |
-| **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. |
-| **Escape** | Returns focus from a Find/Replace bar to the document — and leaves a template walk, where one is in progress. |
+| **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. **Ctrl+R** is additionally redo while an editor is in **Command mode** (see *Editing Modes*), which is one more thing no menu command could share it with. |
+| **Ctrl+D** / **Ctrl+K** / **Ctrl+U** | The three line-editing gestures, implemented by the app inside every editing surface so that they mean the same thing on Windows and on Linux. A menu command retargeted onto one of them would be swallowed by whichever editor has focus — and would break the gesture app-wide. |
+| **Escape** | Returns focus from a Find/Replace bar to the document, leaves a template walk where one is in progress, closes the completion popup — and enters **Command mode** in an editable editor. Six meanings answered by six different widgets; a menu command pointed here would be swallowed by whichever one has focus. |
 | **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level, per-panel or context-menu commands with no menu-bar entry at all — the same reason they cannot be put on the toolbar. |
 | **Ctrl+Shift+R** | **Reload DDL**. The command *does* have a menu entry — **Database ▸ Reload DDL** — but the chord's one host is a shortcut on the DDL Explorer's viewing pane, because the caret is what says which of the two explorers to re-introspect. There is no menu row holding this key for the dialog to move, and a command pointed here would be swallowed by whichever explorer buffer has focus. |
 | **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J**, **Ctrl+Shift+Space** | The four SQL editor gestures. Each is answered by the editor or its panel rather than by a menu command, so the dialog has no row it could move — and a menu command retargeted onto one of them would fight for the key and neither would fire. **Ctrl+Alt+J** and **Ctrl+Space** are answered by the *panel* specifically, because they need the database schema and no editor widget is allowed to hold one — that is the same rule that keeps an editor from ever talking to a database. |
-| **Ctrl+C** / **Ctrl+X** / **Ctrl+V**, and **Ctrl+Insert** / **Shift+Insert** / **Shift+Delete** | Copy, cut and paste are the editors' **own** built-ins, and the Insert/Delete trio is the older spelling of the same three — every text field and table in the app answers both spellings. A window-level shortcut on any of them would outrank the editor and break copy, cut or paste everywhere in the app. **Ctrl+C** and **Ctrl+V** are additionally the caption grid's own copy and paste. |
+| **Ctrl+C** / **Ctrl+X** / **Ctrl+V**, and **Ctrl+Insert** / **Shift+Insert** / **Ctrl+Shift+Insert** / **Shift+Delete** | Copy, cut and paste are the editors' **own** built-ins, and the Insert/Delete group is the older spelling of the same three — every text field and table in the app answers both spellings, and **Ctrl+Shift+Insert** is a paste the app binds itself in every editor so that it exists on both platforms. A window-level shortcut on any of them would outrank the editor and break copy, cut or paste everywhere in the app. **Ctrl+C** and **Ctrl+V** are additionally the caption grid's own copy and paste. |
 | **F1**, and **Help ▸ Manual** itself | The universal convention, and **Help ▸ Manual** is the one entry no mode may put out of reach — including Maintenance mode (see *Getting Started ▸ Maintenance mode*). It is the only case locked from both ends: nothing else may take **F1**, and Manual may not leave it, so its row is present but read-only. |
 
 **Customize Shortcuts… is itself an ordinary menu command**, so it appears in its
@@ -4553,6 +4939,28 @@ You're reading it. Open it any time with **F1** or **Help ▸ Manual**.
   scroll the manual straight to it.
 
 ---
+
+## About, and which version is which
+
+**Help ▸ About** shows the box with the app's identity, its licence, its authors
+and its credits. Beside it sit **Help ▸ Manual** and **Help ▸ Open Log Folder**
+(see *Troubleshooting: debug mode*).
+
+**Two version numbers appear in that box, and each one says what it versions** —
+because two unlabelled numbers a few lines apart is exactly how they get read as
+one:
+
+- **"PGTP Editor version …"** — this application's own release. It is read from
+  the app's package metadata rather than typed anywhere, so it cannot go stale;
+  where it genuinely cannot be determined it reads **`unknown`**, which is a word
+  and not a number, so it can never be mistaken for a release.
+- **".pgtp project format version 22.8 — SQL Maestro's format version, not this
+  application's"** — the **vendor's** file format this editor targets, i.e. which
+  PHP Generator for PostgreSQL projects it understands. It moves when SQL Maestro
+  changes the format, and has nothing to do with the line above it.
+
+Nothing else in the app reports either number, and the two never track each
+other.
 
 ## The MCP Server
 

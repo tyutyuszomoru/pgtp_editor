@@ -250,6 +250,34 @@ that nothing in the repo could answer. These rules exist to end that.
   `QShortcut` *does* fire offscreen — the requirement is that the widget's top level has been
   `show()`n, which is what every "offscreen is unreliable" comment in this repo got wrong.
 
+## Versioning (mandatory)
+
+**To release a new version, edit `version` in `pyproject.toml` and nothing else.** Every
+other consumer derives from it: `pgtp_editor/version.py` reads it (falling back to
+`importlib.metadata`, in that order — see below), the About box reads `version.py`, and
+`docs/installer.iss` scans `pyproject.toml` at compile time and `#pragma error`s if it
+cannot find the literal. **Never write a version number anywhere else** — a second literal
+is the drift this arrangement exists to kill, and a test greps for one.
+
+- **The resolution order is `pyproject.toml` first, `importlib.metadata` second**, which
+  inverts the obvious choice on purpose. An editable install goes stale: this checkout's
+  metadata reported `0.3.0` while `pyproject.toml` said `0.4.0`, so metadata-first ships a
+  *wrong* version in the one environment where anyone can check it. A test pins the order
+  directly, and counts calls, so an implementation that resolves both and prefers metadata
+  cannot pass.
+- **`UNKNOWN_VERSION = "unknown"`** is the honest sentinel for the genuinely unanswerable
+  case. It must never be replaced by a literal default, which looks right while being wrong.
+- **The frozen (PyInstaller) path is UNVERIFIED.** `optimized_build.py` passes
+  `--copy-metadata pgtp-editor` behind an availability probe, but no build environment has
+  ever exercised it. Verify it on the first Windows build rather than assuming.
+- **Five different version numbers exist in this app and they are not the same thing**: the
+  app release (`pyproject.toml`), the MCP tool surface (`mcp/server.py::SERVER_VERSION`,
+  **intentionally decoupled by owner ruling**), the curated schema's content
+  (`CURATED_BUNDLED_VERSION` — §11: *the marker is the schema's identity, not the app's
+  release counter*), the vendor `.pgtp` format (`about.py`), and the snapshot payload format
+  (`SNAPSHOT_VERSION`). Three are visible together in the About box. Conflating the app
+  release with the curated schema has already happened once — label them.
+
 ## Test environment
 
 Development happens on **both Windows and Linux**, and the two differ in which
