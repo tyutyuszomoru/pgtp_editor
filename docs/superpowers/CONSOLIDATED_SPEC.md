@@ -1,6 +1,70 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-11 (the Quality SQL Console fold) —
+> **Status:** living document · **Last synthesized:** 2026-08-11 (four owner rulings folded) —
+> **`DEC-260811023646`, `DEC-260811025132`, `DEC-260811025733` and `DEC-260811022536` are folded, and the
+> first two SHIP AND STAND TOGETHER as a dependency rather than two independent answers.** Details in
+> **(M0)** below, which supersedes the status halves of (L0)'s items 1, 4 and 6.
+>
+> **(M0) THIS PASS — THE QUALITY CONSOLE GETS BACK THE ONE GUARD THAT WAS LEFT, AND THREE MORE "NOT YET
+> BUILT" BANNERS TURNED OUT TO BE OVER SHIPPED CODE.**
+>
+> 1. **`DEC-260811023646` → §18.5 D4/D4b: ONE PANEL CLASS, TWO COMMIT POLICIES.** The quality console runs
+>    through **`apply_ddl(..., commit=False)`**, the user inspects an **uncommitted** result, and an
+>    **explicit commit gesture** makes it durable; the sandbox keeps per-statement commit. **The divergence is
+>    a CONTRACT FACT before it is a judgement, and is folded as a table:** the `fetch` seam opens one
+>    connection per call and *cannot* span statements, while `apply_ddl` can, takes any `ConnectionParams` and
+>    already carries `commit=False`. **Owner's reason: every other guard on this console had been ruled away,
+>    so the remaining one is taken in its STRONG form** — per-statement commit against production would have
+>    imported the exact DBeaver behaviour this app exists to replace. *Consistency with the sandbox is not an
+>    argument on a target that has no `reset()`.* Folded as **requirements**, not direction: a
+>    commit/rollback affordance, an **uncommitted-state representation** in the grid, a **held-open
+>    connection**, and its **three edges (tab close, window close, connection loss) defined and tested by the
+>    implementer** — not a further decision to file.
+> 2. **`DEC-260811025132` → §27 + D4b: `Ctrl+Return` STAYS on both consoles, and its reason is REPLACED.**
+>    (L0) item 6 flagged this; it is answered. The old justification — *"the sandbox is disposable and
+>    `reset()`-able"*, plus the code comment's *"there is no target-database Run to reach with or without a
+>    key"* — is gone. **The commit gesture, not the Run key, is the point of no return**, so §27's rule is
+>    *preserved in substance rather than waived*. **Wider principle: a shortcut's admissibility is a property
+>    of what the gesture makes DURABLE, not of what it is called.** **⛓ Written as a DEPENDENCY in two
+>    places: change the commit model to auto-commit and this chord's justification collapses.** Two of the
+>    three falsified sites are **code** and are handed back (see the report); `docs/KEYBINDINGS.md`'s Notes
+>    are corrected here, its **Surfaces** widening lands with the console.
+> 3. **`DEC-260811025733` → §18: the trigger either/or is SETTLED — the DIALOG'S.** `Add Trigger…` for
+>    `kind in ("table","view")`, **excluded for matview** (Postgres supports no triggers there), and
+>    `NewTriggerDialog` becomes **kind-gated**: `INSTEAD OF` only on a view, `BEFORE`/`AFTER` only on a table,
+>    filtering the one `TRIGGER_TIMINGS` tuple. **It closed a live defect, not a tidiness item** — a view node
+>    could produce an authoritative-looking statement the server rejects. *And the emitter's disclaimer named a
+>    caller that did not exist, which is a defect rather than a division of labour.*
+> 4. **`DEC-260811022536` → §18.1 + *Generate Deployment SQL*: TWO STRUCTURAL GAPS, PENDING A CONSUMER —
+>    not four, not permanent.** The per-column two close (they extend column rendering); inheritance and
+>    partitioning stay open (they restructure the statement). **The two-gap notice is a decided boundary, not
+>    an unfinished job**, and the **dependency is stated in BOTH places by direction of the answer**, because
+>    relying on two SQL-comment lines in a multi-megabyte buffer being noticed is a hope, not a dependency.
+>    Trigger condition filed as `DEC-260811094437`.
+> 5. **⚠ THREE MORE BANNERS OVER SHIPPED WORK — the EIGHTH consecutive pass, and all three were written by
+>    the pass immediately before this one.** `FQ-260810183812`, `FQ-260810180336` and `FQ-260810165518` have
+>    **all shipped**; **fourteen of their fifteen open questions were answered by the implementations**, and
+>    three of those answers are **better than either option the spec offered** — detail span kinds on the one
+>    dataclass, `MODE_MAINTENANCE`'s pair used **swapped** (so the app gains no new colour), and a third QSS
+>    selector found **by counting pixels** (653 blue survivors in a 5 594-pixel band).
+> 6. **⚠ AND THE CLOSING RE-VERIFICATION CAUGHT FOUR OF THIS PASS'S OWN CLAIMS — the NINTH time that rule has
+>    saved this document, and the largest catch yet.** Written mid-pass and false by its end: *"the per-column
+>    half is ⏳ IN FLIGHT"* (**shipped**, notice reworded to *"does not cover"*); *"`db/` contains no
+>    `quality_query.py`"* (**it exists**, with `QualitySession`, the `QualityConnection` protocol and all three
+>    lifecycle edges); *"the mandatory statement timeout does not exist"* (**`BUG-260811024600` is fixed**); and
+>    the folded seam signature `run_quality_query(params: ConnectionParams, …)` (**shipped as
+>    `(session: QualitySession, …)`**, which is **better** — it gives the quality lane the same
+>    one-object-answers-*which-database* guarantee the sandbox lane's signature is). All four are corrected in
+>    place with the stale claim left visible. *Re-verify the specific claim immediately before writing the
+>    closing report; a pass does not end at a point in time, and merges land inside the minutes it takes.*
+> 7. **`README.md` revisited (standing obligation) and CHANGED three times:** the Quality SQL Console direction
+>    bullet said *"nothing about it pretends to be safe"* — which the commit ruling makes wrong in the one
+>    direction that matters, so it now states the explicit-commit model as the **strength** it is without
+>    softening the read/write hazard; the **DDL Explorer** bullet was a *today* claim describing routines and
+>    triggers only, three shipped features behind; and *Where it is going*'s *"Table, view and constraint DDL"*
+>    bullet described **built** work and is replaced by the two structural gaps that are genuinely still open.
+>
+> *(Previous pass:)*
 > **`FQ-260811020328` is folded into §18.5 as D4b, and doing so REVERSED THIS DOCUMENT'S HARDEST SAFETY
 > CLAUSE by owner ruling.** Details in **(L0)** below, which supersedes nothing in (K0).
 >
@@ -6567,14 +6631,25 @@ file-per-object model. `EditorPanel` is read-only **permanently**. The editable 
 separate single-object tab, which reaches this panel only through the right-click ▸ `Edit DDL` entry point
 (and therefore needs the retained span list noted above).
 
-#### ALL object kinds in the read-only buffer — synthesized `CREATE TABLE`, views and matviews, and click-to-DDL for every tree item (`FQ-260810183812`, settled 2026-08-10, ⏳ NOT YET BUILT)
+#### ALL object kinds in the read-only buffer — synthesized `CREATE TABLE`, views and matviews, and click-to-DDL for every tree item (`FQ-260810183812`, settled 2026-08-10, **SHIPPED** `9d93fd8`)
 
-> **Status: nothing in this block ships.** Verified in the tree 2026-08-10: `build_ddl_text` assembles
-> **only** `schema.routines` then `schema.triggers`, and `DdlObjectSpan.kind` is
-> `"function" | "procedure" | "trigger"` **only** — so **tables, views and matviews have NO synthesized DDL
-> anywhere in the app**, and clicking a table node routes to `table_selected` → Properties, never to the DDL
-> pane. This is **genuinely net-new capability**, not a gap in something half-built. Read every ⏳ as *"to
-> build"*. **This block supersedes `docs/FEATURE_QUEUE.md`'s `FQ-260810183812` wherever the two differ.**
+> **Status: SHIPPED — read every ⏳ in this block as *"built"*.** *(This banner read *"nothing in this block
+> ships"* until 2026-08-11; it was written the day before the feature merged. **Eighth consecutive pass to find
+> a "not yet built" claim over shipped work** — an absence remains the least durable claim a spec can make.)*
+> Verified by name 2026-08-11: **`db/table_ddl.py` exists** (pure, Qt-free, beside `ddl_buffer.py`, formatting
+> `TableInfo`/`ColumnInfo`/`ConstraintInfo`/`IndexInfo` and quoting through its own `quote_ident`);
+> `db/ddl_buffer.py`'s kind set is `{"function", "procedure", "trigger", "table", "view", "matview"}` **plus
+> the detail kinds `"column" | "constraint" | "index"`**; and the per-table `RECONSTRUCTION_NOTICE` /
+> `RECONSTRUCTION_NOTICE_DETAIL` pair is emitted in the buffer. **This block supersedes
+> `docs/FEATURE_QUEUE.md`'s `FQ-260810183812` wherever the two differ.**
+>
+> **One shipped shape the fold did not specify and it is better than the letter: `DdlObjectSpan.kind` grew
+> DETAIL kinds as well as object kinds.** The fold said the new kinds were `table`/`view`/`matview` and left
+> constraint/index navigation as an open question; the implementation answered that question by adding
+> `"column"`, `"constraint"` and `"index"` **as further kinds on the one dataclass** — which is trap 1's rule
+> applied rather than excepted (one dataclass, one `kind` field, never a sibling span type). Detail spans are
+> **navigable but not editable**, and a line that is both a column's line and inside the table's span resolves
+> to the **table** for `Edit DDL` purposes.
 
 **Why this is EXTEND §18.1 and not a new subsection of its own.** §18.1 already owns *"one synthesized buffer,
 a span index over it, and a tree that navigates into it by line number"*. This feature widens **what goes into
@@ -6592,8 +6667,50 @@ triggers**, plus **navigable constraint / FK / index nodes**. Sequences, types a
 
 > **This is the one thing an implementer may not treat as optional.** PostgreSQL has no `pg_get_tabledef`, so
 > the table DDL is **built by this app from `pg_catalog`** and is a faithful reconstruction of *the parts it
-> reads* — **not** the original creation statement. v1 reads columns, constraints, indexes and comments, and
-> therefore **omits: identity/`SERIAL` sequences, `GENERATED` columns, table inheritance, and partitioning.**
+> reads* — **not** the original creation statement. It reads columns, constraints, indexes and comments.
+>
+> **⚖ THE BOUNDARY IS NOW TWO STRUCTURAL GAPS, DELIBERATELY PENDING A CONSUMER — NOT FOUR, AND NOT PERMANENT
+> (`DEC-260811022536`, owner, 2026-08-11; ledger §28).** What is omitted, and why the two halves are recorded
+> differently, is the substance of the ruling and must not be flattened back into one list:
+>
+> | Gap | Status | Why |
+> |---|---|---|
+> | identity / `SERIAL` sequences | **CLOSED** (the per-column half; rendered) | It **extends the existing column rendering** rather than restructuring the statement — the column data is already in hand — and nearly every ordinary table has a surrogate key, so it is what a real schema hits |
+> | `GENERATED` columns | **CLOSED** (same half, same reason) | ditto |
+> | table inheritance | **GENUINELY OPEN, pending a consumer** | Closing it **restructures the statement** (`INHERITS` with the inherited columns suppressed) and needs further catalog queries |
+> | partitioning | **GENUINELY OPEN, pending a consumer** | Same: a partition key, partition-of clauses and per-partition rendering — *paying for partitioning support before any feature consumes it* |
+>
+> **The banner therefore STAYS, naming two gaps rather than four — and it is NOT to be read as an unfinished
+> job.** A future reader meeting a two-gap notice must read *"decided boundary, pending a consumer"*, never
+> *"someone stopped halfway"*. **Wider principle the ruling establishes:** a completeness question may be
+> answered **per gap** rather than wholesale — where closing a gap restructures the artifact, the gap waits for
+> a feature that consumes the artifact; where it merely extends what is already rendered, it is closed on the
+> spot. Cost-to-close and frequency-in-practice are both legitimate inputs, and **a disclosed boundary is not
+> the same as an unfinished one.**
+>
+> **⛓ THE DEPENDENCY, and it is a dependency rather than a note.** The two open gaps mean this buffer
+> **round-trips an ordinary table and still does NOT round-trip an inherited or partitioned one**. So
+> **nothing may treat it as a deployment source, a migration input or a schema-of-record** until that half is
+> ruled on — *the first feature that consumes this buffer as anything other than a read-only view is the
+> trigger for the ruling*, which is filed as **`DEC-260811094437`**. The same statement is repeated in
+> §18.5's *Generate Deployment SQL* block, deliberately: a designer reading either place must meet it there
+> rather than depend on noticing two SQL-comment lines inside a multi-megabyte buffer.
+>
+> **Implementation state: SHIPPED, and re-verified at the close of this pass rather than at its start — which
+> is the only reason this paragraph is right.** *(It read *"⏳ IN FLIGHT, not landed"* thirty minutes earlier,
+> quoting the four-gap notice verbatim; both had changed by the closing check.)* `db/table_ddl.py` renders the
+> identity clause from `ColumnInfo.identity` and `GENERATED ALWAYS AS (<expr>) STORED`, and
+> `RECONSTRUCTION_NOTICE_DETAIL` now reads, verbatim:
+> `"--       this is NOT the original CREATE statement, and it does not cover table inheritance or
+> partitioning."`
+>
+> **One wording choice in that notice is load-bearing and is folded as the design: it says *"does not cover"*,
+> never *"not reconstructed yet"*.** That is the ruling's *decided boundary, not an unfinished job* expressed in
+> the one place a user actually reads — while still being honest that a partitioned or inherited table's shape is
+> missing from the text in front of them. **A boundary phrased as a to-do invites the next reader to close it;
+> phrased as a boundary, it invites them to ask first.** *(One rendering rule shipped with it and belongs here:
+> an identity column renders its identity clause and **no `DEFAULT`** — the `nextval` belongs to the implicit
+> sequence, so rendering both would be wrong and misleading at once.)*
 >
 > **Presenting that text as *"the table's DDL"* is a silent wrong result** — the README's and §1's master
 > invariant — and the failure mode is concrete: a user reads the pane, sees no `GENERATED ALWAYS AS IDENTITY`,
@@ -6667,25 +6784,36 @@ triggers**, plus **navigable constraint / FK / index nodes**. Sequences, types a
   *(The mitigation's exact strategy and its invalidation rule are open, below — but a fold that hides the bulk
   is not a substitute for not building it repeatedly.)*
 
-##### ⚠ Open questions — FLAGGED, not decided here
+##### ~~⚠ Open questions — FLAGGED, not decided here~~ — ALL SIX ARE NOW SETTLED, five by the implementation and one by the owner
 
-Six, carried from the queue entry and deliberately left for the owner rather than answered by this document.
-**A brainstormed idea is not an approved decision, and the same goes for a placement.**
+Struck as questions and kept as answers, because each answer carries a reason worth not re-deriving. **Five
+were settled by the shipping implementation and are folded here as the design; the sixth was an owner ruling.**
 
-1. **Constraint / FK / index node click — jump to the *inline constraint line* inside the `CREATE TABLE`
-   (recommended, since it honours *"no ALTERs"*), or give each constraint its own dedicated span?** The first
-   needs no new span kind; the second makes `_span_at_line` answer *"a constraint"* for a line inside a table.
-2. **Does clicking a TABLE node still populate the Properties panel, or only navigate the DDL pane?**
-   Recommended **additive** — both — since `_on_item_clicked` already emits `table_selected` and removing that
-   would withdraw a working behaviour to buy a new one.
-3. **Column-node click — jump to that column's line inside the `CREATE TABLE`, or to the table's banner?**
-4. **Object ordering in the buffer** — dual-grouped like the tree (tables/views, then routines/triggers), or
-   alphabetical across kinds? *(Whatever is chosen must stay **deterministic across fetches**, which is
-   BUG-018's rule and is not itself open.)*
-5. **The lazy-synthesis / caching strategy and its invalidation on reparse.**
-6. **Are the reconstruction gaps acceptable for v1** — and, if so, is the visible notice per table or once for
-   the buffer? *(That the omission is **visible** is settled above and is NOT part of this question; only its
-   granularity is.)*
+1. ~~Constraint / FK / index node click — inline line or a dedicated span?~~ **Settled: the INLINE line, via a
+   detail span.** `DdlObjectSpan.kind` gained `"column"`/`"constraint"`/`"index"` on the **one** dataclass, so
+   *"clicking an item with DDL navigates to it"* is true for constraint, index and column nodes without a
+   sibling span type — and `"no ALTERs"` is honoured, since a constraint has no statement of its own, only a
+   line.
+2. ~~Does clicking a TABLE node still populate Properties, or only navigate?~~ **Settled: BOTH, not either** —
+   `table_selected` is still emitted **and** the DDL pane navigates. Withdrawing a working behaviour to buy a
+   new one was the option declined.
+3. ~~Column-node click target?~~ **Settled: that column's own line** (one detail span per column). A line that
+   is both a column's line and inside the table's object span resolves to **the table** for `Edit DDL`, so the
+   detail spans add navigation without adding an edit target.
+4. ~~Buffer ordering?~~ **Settled: DUAL-GROUPED like the tree** — tables, views and matviews first, then
+   routines and triggers — *because a buffer whose order matches the tree's is the one a reader can scroll as
+   well as jump into*. Determinism within a group is BUG-018's rule and was never open: stable sort, falling
+   back to catalog row order.
+5. ~~The lazy-synthesis / caching strategy and its invalidation?~~ **Settled: NO CACHE.** The panel holds none,
+   matching the app's *recompute-fresh* posture, so there is no invalidation rule to get wrong — the mitigation
+   the owner attached to the concatenated model is the existing per-object folding plus the fact that a rebuild
+   is a re-introspection, not a re-render of stale state. *(If a real 300-table schema measures badly, adding a
+   cache is a new decision with an invalidation rule attached, not a tidy-up.)*
+6. ~~Are the reconstruction gaps acceptable, and what is the notice's granularity?~~ **Both settled, and
+   separately.** Granularity: **per table**, by the implementation, for the reason the gesture itself creates —
+   *a tree click jumps into the MIDDLE of a multi-megabyte buffer, so a single notice at the top is invisible to
+   exactly the gesture this feature adds*. Acceptability: the owner's ruling **`DEC-260811022536`**, above — two
+   structural gaps, deliberately pending a consumer.
 
 ##### Sequencing — this one goes FIRST of the three queued DDL Explorer entries
 
@@ -6700,13 +6828,16 @@ depths** — one decides which rows the tree HAS, the other decides which of tho
 hide-predicate written against the narrow node set has to be reopened for every kind the first adds — while
 the third **changes what those rows look like** and therefore has to know the final node set it is painting.
 
-#### The tree NAME FILTER — hiding non-matching objects, in BOTH Explorer trees (`FQ-260810180336`, settled 2026-08-11, ⏳ NOT YET BUILT)
+#### The tree NAME FILTER — hiding non-matching objects, in BOTH Explorer trees (`FQ-260810180336`, settled 2026-08-11, **SHIPPED**)
 
-> **Status: nothing in this block ships.** Verified in the tree 2026-08-11: `ui/ddl_buffer_panel.py` contains
-> **no** occurrence of `setHidden`, `filter`, `Filter` or `hidden` anywhere, and `BrowserPanel.__init__`'s
-> layout is exactly `QVBoxLayout(self)` + `setContentsMargins(0, 0, 0, 0)` + `layout.addWidget(self.tree)` —
-> the tree is the panel's only child. Read every ⏳ as *"to build"*. **This block supersedes
-> `docs/FEATURE_QUEUE.md`'s `FQ-260810180336` wherever the two differ.**
+> **Status: SHIPPED — read every ⏳ in this block as *"built"*.** *(This banner read *"nothing in this block
+> ships"*, verified hours before the feature landed.)* Verified by name 2026-08-11 in
+> `ui/ddl_buffer_panel.py`: `filter_input` / `filter_mode_combo` / `filter_button` / `clear_filter_button`,
+> the pure `filter_matches(name, term, mode)` over **five** modes (`FILTER_MODE_LABELS`:
+> `Contains` · `Starts with` · `Doesn't contain` · `Doesn't start with` · `Ends with`), the
+> `_FILTER_NAME_ROLE` the predicate reads, `item.setHidden(...)` walked recursively, and
+> `NO_FILTER_MATCHES_TEXT`. **This block supersedes `docs/FEATURE_QUEUE.md`'s `FQ-260810180336` wherever the
+> two differ.**
 
 **What it is.** A filter row above the `BrowserPanel` tree: a text input, a match-mode `QComboBox`, a
 **`Filter`** button and a **`Clear Filter`** button. Pressing `Filter` hides every tree row whose object name
@@ -6805,30 +6936,26 @@ one: two enabled shortcuts matching the same key press are ambiguous, and neithe
 DEC-012 question (a chord with no menu command form) and therefore a new decision, not an implementation
 detail.
 
-##### ⚠ Open questions — FLAGGED, not decided here
+##### ~~⚠ Open questions — FLAGGED, not decided here~~ — FOUR OF THE FIVE ARE SETTLED BY THE SHIPPED IMPLEMENTATION
 
-Five, carried from the queue entry. **A settled placement is not a settled design, and neither is a
-recommendation.**
-
-1. **Case sensitivity** — default insensitive (recommended, it is a search aid), and is a `Match case`
-   toggle exposed at all? *(The caption bar has one; this bar's four controls are the owner's stated set.)*
-2. **Does an active filter announce itself** — the `ui/coherence_panel.py` precedent is a
-   `filter_banner_label` + `clear_filters_button` row plus an all-hidden message, whose verbatim string is
-   `"No rows match the active filters — use “Clear filters” to see everything."` **The argument for shipping
-   both is stronger here than it was there**, because this tree can be left filtered while the user works
-   elsewhere and a tree that is silently missing objects is the shape of a silent wrong result. Not decided.
-3. **Default dropdown mode** — recommended `Contains`.
-4. **What happens to a live filter when `set_schema` rebuilds the tree wholesale** (a re-fetch, a
-   `Reload DDL`, a project switch): **re-apply**, **clear**, or the `_dirty_keys` treatment — that set is
-   held on the **panel**, not on tree items, precisely *"because the tree is rebuilt wholesale by every
-   `set_schema`, so anything keyed on an item/index would go stale"*, and is re-applied after the rebuild.
-   **The filter has the identical problem and the identical precedent available**, so the recommendation is
-   the `_dirty_keys` shape (hold `(mode, term)` on the panel, re-apply after `_apply_dirty_markers`) — but
-   whether a refresh should *silently* keep hiding rows is the owner's call, and it is the same question as
-   open question 2 wearing a different hat.
-5. **The owner called this *"function 1"***, which implies a function 2 (most plausibly a non-filtering
-   find/jump). **Nothing here is designed for it** — what this block commits to is only that a second
-   function, if it comes, extends **this** bar rather than adding a third search input to the tab.
+1. ~~Case sensitivity, and is a `Match case` toggle exposed?~~ **Settled: CASE-INSENSITIVE, with NO toggle**
+   (`FILTER_CASE_SENSITIVE = False`). Insensitive because it is a search aid over lower-case-by-convention
+   Postgres identifiers; no toggle because the owner's stated control set is exactly four, and *a fifth control
+   that is right 99% of the time when left alone is cost without a question it answers*.
+2. ~~Does an active filter announce itself?~~ **Settled: YES, both halves** — an active filter is announced and
+   an all-hidden tree says why, verbatim `"No objects match the active filter — use “Clear Filter” to see
+   everything."` (the `coherence_panel.py` precedent, applied for the reason this block already gave for it
+   being stronger here). **Divergence from that precedent, deliberate:** the banner does **not** repeat a Clear
+   button — coherence has one because it has no other, and this bar's own `Clear Filter` is always on screen.
+3. ~~Default dropdown mode?~~ **Settled: `Contains`** (`FILTER_MODE_DEFAULT`).
+4. ~~What happens to a live filter when `set_schema` rebuilds the tree wholesale?~~ **Settled: RE-APPLY**, on
+   the `_dirty_keys` shape — `(mode, term)` held on the **panel**, never on tree items, re-applied after the
+   rebuild. Questions 2 and 4 had **one** answer for one reason: silently keeping rows hidden across a rebuild
+   is only acceptable *because* the filter announces itself.
+5. **STILL OPEN — the owner called this *"function 1"***, which implies a function 2 (most plausibly a
+   non-filtering find/jump). **Nothing here is designed for it.** What this block commits to is only that a
+   second function, if it comes, extends **this** bar rather than adding a third search input to the tab.
+   **Also still true and still v1's answer: no keyboard chord**, per the subsection above.
 
 #### The object-row context menu holds ONE editing entry: `Edit DDL` (FQ-024, settled 2026-08-08)
 
@@ -6999,7 +7126,7 @@ new editor, a new tab type or a second deploy path**: the creation gesture ends 
 
 | Entry point | Gesture | Opens |
 |---|---|---|
-| `BrowserPanel.tree`, **Tables branch, a table node** | right-click ▸ **Add Trigger…** | the Add Trigger dialog, with that node's `schema.table` pre-bound (the table is *not* an editable field — it comes from the clicked node) |
+| `BrowserPanel.tree`, **Tables branch, a TABLE or VIEW node** (never a **matview** — `DEC-260811025733`) | right-click ▸ **Add Trigger…** | the Add Trigger dialog, with that node's `schema.table` **and its relation kind** pre-bound (neither is an editable field — both come from the clicked node) |
 | `BrowserPanel.tree`, the **"Functions & Procedures"** branch root (`_build_routines_branch`) | right-click ▸ **New Function/Procedure…** | the Add Function/Procedure dialog |
 | **Database menu ▸ New Function/Procedure…** (§26) | click | the same dialog, same code path |
 
@@ -7021,7 +7148,7 @@ new editor, a new tab type or a second deploy path**: the creation gesture ends 
 | Field | Widget shape | Values |
 |---|---|---|
 | Name | line edit | the trigger's own name; validated by the skeleton emitter, not sanitized (below) |
-| Timing | single choice | `BEFORE` / `AFTER` / `INSTEAD OF` — `db/ddl_skeleton.py::TRIGGER_TIMINGS` verbatim, never a second literal list |
+| Timing | single choice | **`db/ddl_skeleton.py::TRIGGER_TIMINGS` FILTERED BY RELATION KIND** (`DEC-260811025733`): `BEFORE` / `AFTER` for a **table**, `INSTEAD OF` alone for a **view**. Still that one tuple, never a second literal list — what is per-kind is which members are offered |
 | Events | **multi-select** | `INSERT` / `UPDATE` / `DELETE` — `TRIGGER_EVENTS`; Postgres combines them with `OR`, so any non-empty subset is legal and at least one is mandatory |
 | Level | single choice | `FOR EACH ROW` / `FOR EACH STATEMENT` — `TRIGGER_LEVELS`. **There is no transaction-level trigger in Postgres**; the original request's "for each transaction" was corrected at triage and must not reappear as a third option |
 | Trigger function | chooser over existing objects | **only routines whose `RoutineInfo.return_type == "trigger"`** in the already-fetched `DatabaseSchema` (§18.1's single connect-time `fetch_routines_and_triggers` result — no extra query, no lazy fetch). These are exactly the tree's `[T]`-marked routines (§18.1 marker table) |
@@ -7034,8 +7161,31 @@ new editor, a new tab type or a second deploy path**: the creation gesture ends 
   reverse case — `_prompt_unattached_trigger_table` (§18.6, a thin, directly-testable `QInputDialog.getItem`
   wrapper over the schema's known tables) — rather than a new widget: same simple-selection-dialog
   convention, same testability seam.
-- `INSTEAD OF` is view-only in Postgres. That constraint is the **dialog's** to enforce or to leave to the
-  database; `ddl_skeleton.py` deliberately does not police it (see its `TRIGGER_TIMINGS` docstring).
+- **⚖ `INSTEAD OF` is view-only in Postgres, and enforcing it is THE DIALOG'S — settled (`DEC-260811025733`,
+  owner, 2026-08-11; ledger §28).** *(This bullet used to read *"the **dialog's** to enforce **or to leave to
+  the database**"* — an explicit unresolved either/or. It is resolved to the first half, and the second half is
+  withdrawn.)*
+  - **The gesture is offered for `kind in ("table", "view")` and EXCLUDED for `matview`.** PostgreSQL supports
+    **no** triggers at all on a materialized view, and `TableInfo.kind ∈ {"table","view","matview"}` makes the
+    per-kind answer expressible, so the branch states it.
+  - ⏳ **`NewTriggerDialog` becomes KIND-AWARE**: a **view** target offers `INSTEAD OF` only; a **table** target
+    offers `BEFORE`/`AFTER` only. The timing list is still `db/ddl_skeleton.py::TRIGGER_TIMINGS` **filtered per
+    kind**, never a second literal list.
+  - ⏳ **`ddl_skeleton.py` stops disclaiming a check that now has a caller.** Its docstring said *"`INSTEAD OF`
+    is view-only in Postgres; that is the caller's constraint to enforce, not this emitter's"* — **and no such
+    caller existed.** *An emitter's disclaimer is only honest if the caller it names exists: a docstring
+    delegating a constraint to "the caller" with no caller is a defect, not a division of labour.*
+  - **This closed a LIVE DEFECT, not a tidiness item.** From a view node a user could pick `BEFORE INSERT` and
+    get a rendered, authoritative-looking statement the server rejects — *offered and broken*, which is the one
+    state `_add_alter_table_submenu`'s own docstring principle rejects in favour of *not offered*. Documenting
+    today's behaviour was the rejected option.
+  - **Wider principle, and it is why this branch was the one at fault:** where a shared tree role spans several
+    relation kinds, **each gesture on that role must state its own per-kind answer.** Its two neighbours in the
+    same context-menu builder already do — `Create Table…` includes a view's node with an explicit comment
+    (*"what you create is a table regardless of what you clicked"*), and `Alter Table ▸` excludes views and
+    matviews with an explicit early return. **`Add Trigger…` was the one branch expressing no intent**, and a
+    branch expressing no intent is the shape by which a narrow rule gets widened by analogy — which has already
+    cost this project twice in the shortcut area (BUG-052, BUG-063).
 
 **Add Function/Procedure dialog — fields:**
 
@@ -7059,7 +7209,7 @@ emitted*.
 
 | Symbol | Contract |
 |---|---|
-| `TRIGGER_TIMINGS` | `("BEFORE", "AFTER", "INSTEAD OF")` |
+| `TRIGGER_TIMINGS` | `("BEFORE", "AFTER", "INSTEAD OF")` — the full Postgres set. **The emitter still validates only against this tuple; the view-vs-table restriction is the DIALOG'S** (`DEC-260811025733`), and ⏳ the docstring's *"that is the caller's constraint to enforce"* disclaimer becomes true rather than aspirational once that caller exists |
 | `TRIGGER_EVENTS` | `("INSERT", "UPDATE", "DELETE")` — also the **canonical emission order**: output follows this order regardless of the order the caller passes, so a dialog backed by an unordered set of checkbox states still produces stable, diffable text; the set is de-duplicated (`INSERT OR INSERT` is a syntax error) |
 | `TRIGGER_LEVELS` | `("FOR EACH ROW", "FOR EACH STATEMENT")` |
 | `SkeletonError(ValueError)` | **Refuse, don't degrade** — matching `migration_gen.UnsupportedDifference`: the caller renders the refusal and no half-formed SQL reaches the editor, where it would look authoritative and get run |
@@ -11166,15 +11316,17 @@ executor and never touch a server.
   its **buffer line** (`Statement.line_offset` + `db/apply.py::line_of_position`, the one implementation of
   that rule). **The invariant that survives intact is the one that mattered: partial application of a
   multi-statement Run is never left behind SILENTLY.**
-  > **This correction is load-bearing for D4b and for `DEC-260811023646`.** That decision asks whether the
-  > quality console keeps *"the sandbox's one-committing-transaction semantics"* or needs per-statement
-  > commit. **The sandbox has never had one-committing-transaction semantics** — it has had per-statement
-  > commit since it shipped — so the decision's *"mirror exactly"* baseline is the **weaker** of the two
-  > options, not the stronger one, and against production the difference is a half-applied migration.
-  > Whoever answers it must answer it against this paragraph, not against the queue entry's premise.
-- **Yes, it commits — and that is the point.** *"Run my procedure and see what it did to the rows"* is
-  unanswerable under a forced rollback, and the sandbox is the accumulating desired state (D2), not a
-  scratch pad. The counterweight is the reversibility argument above, not a rollback.
+  > **This correction was load-bearing for `DEC-260811023646`, WHICH IS NOW ANSWERED — and the answer splits
+  > the two consoles.** The decision asked whether quality keeps *"the sandbox's one-committing-transaction
+  > semantics"*; **the sandbox never had them** — it has had per-statement commit since it shipped — so
+  > *"mirror exactly"* was the **weaker** option, not the stronger one. **The owner ruled for the strong form
+  > on quality (option C), so this paragraph is now true of the SANDBOX ONLY.** See the subsection immediately
+  > below (*One panel class, two commit policies*).
+- **Yes, the SANDBOX console commits — and that is the point.** *"Run my procedure and see what it did to the
+  rows"* is unanswerable under a forced rollback, and the sandbox is the accumulating desired state (D2), not a
+  scratch pad. The counterweight is the reversibility argument above, not a rollback. **This bullet is the
+  sandbox's, and the quality console answers it differently** — there, the inspect-then-commit gesture is how
+  *"see what it did"* is served without the durability.
 - **Object-changing statements are surfaced, because they can desync the working set.** The pure
   `classify_statement(sql) -> "read" | "write" | "ddl" | "unknown"` (leading-keyword based, deliberately
   conservative) gates one confirmation: when any statement in the Run classifies as `ddl` **or**
@@ -11188,27 +11340,74 @@ executor and never touch a server.
   what **Apply to Sandbox** put there; an ad-hoc `CREATE OR REPLACE` is not an apply and must not
   masquerade as one. The divergence it can cause is surfaced (above), never papered over.
 
+##### ONE PANEL CLASS, TWO COMMIT POLICIES — and the divergence is a CONTRACT FACT, not a preference (`DEC-260811023646`, owner, 2026-08-11; ledger §28)
+
+**The two consoles are one widget class (D4b) with two commit policies, deliberately.** State it as a table,
+because *"the SQL console commits per statement"* is now an incomplete sentence anywhere it appears:
+
+| Console | Execution seam | Commit policy | Failure leaves behind |
+|---|---|---|---|
+| **Sandbox SQL** (D4) | `db/sandbox_query.py::run_sandbox_query` → `SandboxExecutor.fetch` | **Per statement, committing as it goes** | The statements that already ran — *stated in the panel*, never silently |
+| **Quality SQL** (D4b) | `db/quality_query.py::run_quality_query(session: QualitySession, …)` → `QualitySession.run` over a **held-open `QualityConnection`** | **Nothing commits until an explicit commit gesture.** The Run executes inside one open transaction, the user inspects the result, and only then commits — or rolls back | **Nothing**, unless the user committed |
+
+**Why they legitimately differ — the reason is mechanical before it is a judgement, and both halves matter:**
+
+1. **The `fetch` seam CANNOT span statements.** It opens one connection per call and commits it, so a
+   submission cannot share a transaction through it; and the seam that *does* span statements atomically
+   (`execute`) returns **no rows and no status message**, so it cannot answer D4's own requirements. That is
+   why the sandbox commits per statement, and it is a **contract** fact rather than an oversight.
+2. **`apply_ddl` CAN span statements and already carries a `commit=False` mode**, which is why the ruling names
+   it and why the strong policy was *cheaper than it looked*. **But it is the closest existing shape, not the
+   implementation** — it commits or rolls back **before returning**, so it cannot hold a transaction open
+   *between* a Run and a later commit gesture, which is the whole of what the ruling asks for. See D4b's commit
+   subsection for the shipped shape. Either way the weak policy on quality would have been **inherited rather
+   than chosen**, which is the point.
+3. **The owner's reason for choosing it, which is the durable half:** every *other* guard on the quality
+   console had already been ruled away — no Maintenance-mode gate, no per-run confirmation beyond the
+   object-change dialog, full read/write — so **the one remaining safety property is taken in its strong form,
+   not its inherited one.** And *"show me what it did before it is permanent"* is the precise claim this project
+   makes over DBeaver: shipping per-statement commit against production would have imported the very behaviour
+   the app exists to replace, onto the surface where it does the most damage. **The owner deliberately took the
+   option that ADDS surface over the one that inherits behaviour.**
+4. **Wider principle:** where a feature's other guards have been deliberately removed, the guard that remains is
+   chosen **on its own merits and never by analogy** to a surface with a different blast radius. **Consistency
+   with the sandbox is not an argument on a target that has no `reset()`.**
+
+**⛓ Two things depend on this policy and must be revisited with it, not after it.** If the quality console's
+commit model is ever changed to per-statement or to whole-run auto-commit: **(a)** `Ctrl+Return`'s presence on
+that console loses its justification entirely (§27, and D4b's keyboard block — *the commit gesture, not the Run
+key, is the point of no return*); and **(b)** the README's claim that this app closes DBeaver's
+*"the only option is to break the DB"* gap stops being true of its own newest surface. Neither is a note; both
+are conditions.
+
 ##### Long-running statements, and the honest gap
 
 - **Everything runs off the GUI thread**, through `SandboxController` (`self._run_async` +
   `ui/busy.py::busy_status`) — the console opens nothing itself and blocks the event loop never. Run is
   disabled while a Run is in flight.
-- **⛔ THE MANDATORY STATEMENT TIMEOUT IS SPECIFIED AND NOT BUILT — SPEC-RIGHT, CODE-MISSING (verified
-  2026-08-11, filed to `bug-triager`).** The requirement stands as written: *a statement timeout is
-  mandatory, and it is the primary control* — `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000`, adjustable in the
-  console with a **minimum of 1 000 ms and no "unlimited" setting**, a timeout coming back as a named
-  `QueryError` (sqlstate `57014`) reading *"statement cancelled: exceeded the console's statement timeout
-  of N s — raise the timeout or narrow the query"*, never a hang and never a bare stack trace.
-  **None of it exists.** `SandboxExecutor.fetch(params, sql, *, max_rows)` has **no timeout parameter**
-  (`db/sandbox.py:901`, `:965`), `_RealSandboxExecutor.fetch` issues **no `SET LOCAL statement_timeout`**,
-  no `DEFAULT_STATEMENT_TIMEOUT_MS` constant exists anywhere in the tree, and `sql_console_panel.py`'s own
-  docstring says so under *"Still missing from D4, deliberately, and reported rather than faked"*.
-  **It is recorded as a gap rather than rewritten away, because the design is right and what is missing is
-  one parameter and one `SET LOCAL`** — and D4b makes it materially worse: today the unbounded statement
-  ties up a disposable sandbox, and after D4b it ties up **production**, with no Cancel button either.
-  *(The signature below is likewise the DESIGN, not the shipped one — see the correction under the
-  execution seam.)* **Filed as `BUG-260811024600`**, whose triage returned four corrections to this
-  paragraph's own letter, folded here so the fix is not designed against them a second time:
+- **✅ THE MANDATORY STATEMENT TIMEOUT IS NOW BUILT — `BUG-260811024600` IS FIXED, and this bullet is kept as
+  the record of a gap that was held as a REQUIREMENT rather than written away.** *(It read *"⛔ SPECIFIED AND
+  NOT BUILT — none of it exists"* until this pass's closing re-verification.)* Shipped, verified by name:
+  `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000` and `MIN_STATEMENT_TIMEOUT_MS = 1_000` in **`db/sandbox.py`**
+  (re-exported by `db/sandbox_query.py`, per the import-direction correction below), `statement_timeout_ms` on
+  the seam, `SELECT set_config('statement_timeout', %s, true)` at both real executors, and the one named
+  `sandbox_query.py::timeout_error(error, statement_timeout_ms)` helper — which `db/quality_query.py` **imports
+  rather than copies**, exactly as specified. **There is still no "unlimited" setting**, which is the half that
+  carries the safety.
+  > **One shipped divergence, folded as the design: the ceiling is `ui/sql_console_panel.py::MAX_TIMEOUT_MS =
+  > 600_000`, not a `db/`-side `MAX_STATEMENT_TIMEOUT_MS`.** The value is the one this document picked, and its
+  > **placement is better than the letter**: a maximum exists because *a `QSpinBox` must have one*, so it is a
+  > property of the control, not of the execution contract — `db/` fixes the floor (and clamps to it) and
+  > forbids unlimited, while the console chooses how far its own spin box goes. *A constant justified by a widget
+  > belongs beside the widget.* The rationale for ten minutes is unchanged and is stated at the constant.
+  **The requirement, restated because it is still the design and the timeout is still the PRIMARY control:** a
+  statement timeout is **mandatory**, defaulting to 30 s, adjustable in the console with a **floor of 1 000 ms
+  and no "unlimited" setting**, and a timeout comes back as a **named `QueryError` (sqlstate `57014`)** reading
+  *"statement cancelled: exceeded the console's statement timeout of N s — raise the timeout or narrow the
+  query"* — **never a hang and never a bare stack trace**. Holding this as *spec-right / code-missing* for one
+  day is what produced a correct fix rather than a rewritten requirement, and D4b had raised its cost from
+  *ties up a disposable sandbox* to *ties up production*. **`BUG-260811024600`'s triage returned four
+  corrections to this paragraph's own letter, all of them now in the shipped code:**
   > - ⚠ **`SET LOCAL statement_timeout = '<ms>ms'` CANNOT BE PARAMETERISED, so the spec's literal form is
   >   replaced: `SELECT set_config('statement_timeout', %s, true)`.** PostgreSQL's `SET` is a *utility*
   >   statement and takes no bind parameters, so the specified form forces string interpolation of a value
@@ -11264,13 +11463,20 @@ three-way prefix reservation forbids a fourth SQL-ish prefix — **do not add `[
 
 #### D4b — Ad-hoc SQL execution against QUALITY: the Quality SQL Console (`FQ-260811020328`, settled 2026-08-11, ⏳ NOT YET BUILT)
 
-> **Status: nothing in this block ships.** Verified in the tree 2026-08-11: `db/` contains **no**
-> `quality_query.py` and no function that runs arbitrary SQL against a bare `ConnectionParams`
-> (`run_sandbox_query`'s first parameter is a `SandboxSession`, and `apply_ddl` takes a DDL statement, not
-> ad-hoc text); `ui/sql_console_panel.py` has **one** tab key, `CONSOLE_TAB_KEY = ("sandbox-sql",)`, and one
-> tab title, `TAB_TITLE = "Sandbox SQL"`; `_build_database_menu` adds exactly one console entry,
-> `"Sandbox SQL Console…"`. Read every ⏳ as *"to build"*. **This block supersedes
-> `docs/FEATURE_QUEUE.md`'s `FQ-260811020328` wherever the two differ.**
+> **Status: THE `db/` HALF HAS LANDED; the UI half is in flight.** *(This banner read *"nothing in this block
+> ships"* and cited the absence of `db/quality_query.py` — **the module existed by the time this pass's closing
+> re-verification ran**, which is the ninth time that rule has caught this document. Left visible rather than
+> quietly overwritten.)* Verified by name 2026-08-11: **`db/quality_query.py` exists**, with
+> `QualityConnection` (Protocol) · `_PsycopgQualityConnection` · `QualityConnectionLost` · `QualitySession` ·
+> `run_quality_query` · `TransactionOutcome` / `transaction_message` · `COMMITTED` / `DISCARDED` and the five
+> named discard reasons. **`ui/sql_console_panel.py` has since gained the second flavour too** —
+> `QUALITY_FLAVOUR`, `QUALITY_TAB_KEY = ("quality-sql",)`, `QUALITY_TAB_TITLE = "Quality SQL"`,
+> `NO_QUALITY_TARGET_TEXT`, `QUALITY_RUNNING_TEXT` (*"Running against the quality database (uncommitted)…"*) and
+> its own object-change titles, so **the *"one class, two flavours"* requirement below is honoured in the shipped
+> code rather than merely specified.** What is **not** yet in the tree is the **`Database ▸ Quality SQL
+> Console…` menu entry and its presence predicate** — `main_window.py` was mid-edit while this pass ran, so read
+> the ⏳ marks on the **menu-wiring** bullets as *"to build or landing"* and everything else as built. **This block supersedes `docs/FEATURE_QUEUE.md`'s
+> `FQ-260811020328` wherever the two differ.**
 
 **Why it is here and not in a section of its own.** It is D4's feature pointed at a different database, and
 the clause it reverses is D4's. A new section would leave *"may never target production"* standing beside a
@@ -11278,12 +11484,18 @@ console that targets production — which is how a reader concludes the two are 
 of them is a bug. **Owner's framing:** *"there's a sandbox sql console. I need the same for quality"* — a
 one-off quality query or fix should not require dropping to DBeaver.
 
-##### The two owner rulings, recorded so they are not re-litigated
+##### The FOUR owner rulings, recorded so they are not re-litigated
 
 | Question | Ruling | Rejected alternative |
 |---|---|---|
 | Capability | **Full read/write.** Arbitrary DML **and** DDL against quality, mirroring the sandbox console | A SELECT-only quality console — refused *with the hazard spelled out* |
 | Gate | **Always available whenever a quality connection with a password exists.** No Maintenance-mode gate, and **no per-run confirm beyond D4's existing object-change dialog** | A Maintenance-only gate; and an always-available-but-confirm-every-write middle option |
+| **Commit semantics** (`DEC-260811023646`) | **Run uncommitted through `apply_ddl(..., commit=False)`, inspect, then an EXPLICIT COMMIT GESTURE** | Per-statement commit (what *"mirror the sandbox exactly"* literally means); and one auto-committing transaction |
+| **`Ctrl+Return`** (`DEC-260811025132`) | **Live here too, identical to the sandbox** — unconditional `_run_shortcut` | A first-run-must-use-the-button gate; and button-only on this console |
+
+> **The last two are ONE ruling in two parts and must not be read apart.** The chord is admissible **because**
+> the commit gesture is the point of no return; **the three ruled-away guards plus the commit ruling are what
+> leaves the feature defensible at all.** Read the two subsections below together.
 
 ##### ⏳ What is net-new, and it is exactly one thing: an execution path that does not exist
 
@@ -11292,9 +11504,22 @@ app at all** — the three connection-opening seams are `introspect.run_queries`
 statement, gated), and the sandbox lane. There is no "run arbitrary SQL against these `ConnectionParams`"
 function, **not even a disabled one**, by deliberate construction.
 
-- ⏳ **`db/quality_query.py::run_quality_query(params: ConnectionParams, sql, *, max_rows, runner) ->
-  QueryResult`** — Qt-free, never-raises, returning the **same `QueryResult`** (the shipped shape corrected
-  above), so every rendering surface stays one implementation. It is a **fourth connection-opening seam**,
+- ✅ **`db/quality_query.py::run_quality_query(session: QualitySession, sql, *, max_rows,
+  statement_timeout_ms, clock) -> QueryResult`** — Qt-free, never-raises, returning the **same `QueryResult`**
+  (the shipped shape corrected above), so every rendering surface stays one implementation.
+  > **⚠ THE SHIPPED FIRST PARAMETER IS A `QualitySession`, NOT the `params: ConnectionParams` this block
+  > sketched — and the divergence is BETTER, so it is folded as the design.** Two reasons, both structural:
+  > **(1)** `DEC-260811023646` requires the connection to be held open *between* the Run and the commit gesture,
+  > and a function taking bare `ConnectionParams` can only open and close one **within** the call — the exact
+  > limitation the ruling names in `apply_ddl`. **(2)** It gives the quality lane the *same* shape as the
+  > sandbox lane's one mechanical guarantee: `run_sandbox_query(session: SandboxSession, …)` /
+  > `run_quality_query(session: QualitySession, …)`, each refusing the other's session type by an explicit
+  > `isinstance` check with a message naming why. **So "which database can this reach?" stays answerable from
+  > one object on BOTH lanes**, and the call shapes are identical
+  > (`(session, sql, *, max_rows, statement_timeout_ms)`) — which is what lets one `SqlConsolePanel` serve two
+  > tabs with an injected executor and **no `if quality:` anywhere in the UI**. *A parameter type is the cheapest
+  > guarantee in this subsection, and it is now spent on both lanes rather than one.*
+  It is a **fourth connection-opening seam**,
   and §18.5's invariant 1 (*"exactly three seams"*) is amended here to **four** rather than quietly broken.
   It **must not** be a widened `run_sandbox_query`: a single function accepting either a `SandboxSession` or
   a `ConnectionParams` is how a sandbox gesture ends up pointed at production, and the sandbox function's
@@ -11321,6 +11546,46 @@ function, **not even a disabled one**, by deliberate construction.
   **present** once one does — the same shape as the sandbox entry's presence rule (FQ-023), driven off the
   same predicate the §18.8 Quality node and the `Apply to quality` leg already use. It carries **no
   shortcut**, exactly like the sandbox open action.
+
+##### ⏳ COMMIT SEMANTICS — run uncommitted, inspect, then commit deliberately (`DEC-260811023646`, owner, 2026-08-11)
+
+**The ruling, and it is the quality console's one safety property.** A Run goes through
+`db/apply.py::apply_ddl(..., commit=False)`; the user sees what happened **while it is still uncommitted**; and
+**only an explicit commit gesture makes it durable.** Rejected: per-statement commit (what *"mirror the sandbox
+exactly"* literally means today) and one auto-committing transaction. The reasoning is in D4's
+*One panel class, two commit policies* and is not restated here.
+
+**What this requires, all of it inside the one panel class rather than a fork:**
+
+- ✅ **A HELD-OPEN CONNECTION between the Run and the commit gesture — accepted as genuinely new surface, and
+  the shipped shape is `db/quality_query.py`'s `QualityConnection` protocol.** Neither existing seam holds a
+  connection between calls (`SandboxExecutor.fetch` is *one call, one connection, one statement, committed*;
+  `apply_ddl` commits or rolls back before returning), so this one is **one connection, one transaction, N
+  statements, committed only when asked** — psycopg 3 out of autocommit, so the first `execute` opens a
+  transaction that stays open across calls. `QualitySession` owns it; `_PsycopgQualityConnection` implements it;
+  `QualityConnectionLost` distinguishes *lost* from *refused*, because **the user must be told which of the two
+  happened**.
+- ✅ **Its three edges are DEFINED, and were a requirement of the implementation rather than a further decision
+  to file.** With an uncommitted run outstanding: **tab close** asks first; **window close** asks the same
+  question at the window level; **connection loss** (and a commit that itself fails) resolves to *nothing was
+  committed* — **said out loud rather than inferred from an empty grid**. Every discard names its reason, from a
+  closed set — `DISCARD_ROLLBACK_GESTURE` · `DISCARD_TAB_CLOSED` · `DISCARD_WINDOW_CLOSED` ·
+  `DISCARD_CONNECTION_LOST` · `DISCARD_TARGET_GONE` — rendered through one `transaction_message(outcome)`.
+  > **`TransactionOutcome` is a named record over `COMMITTED` / `DISCARDED` plus a reason, not a bool pair, for
+  > the reason this document keeps re-deriving: *"committed"*, *"discarded"* and *"refused, and here is why"* are
+  > **three** answers, and a boolean can carry two. It is `outcome: QueryOutcome`'s discipline applied one level
+  > up.**
+- ⏳ **A commit affordance and a rollback affordance on the quality console**, and on that console only. The
+  sandbox console gains nothing — its commit policy is the seam's and there is nothing to defer.
+- ⏳ **An uncommitted-state representation in the results grid.** A result the user is looking at is either
+  *uncommitted* or *committed*, and the two must never render identically — `truncated`'s and `outcome`'s
+  discipline a third time: **a state the app knows and does not show is the silent wrong-result shape**, and here
+  the state is *"nothing you are looking at is real yet"*.
+- **The statement timeout now covers the whole held transaction, which is stronger than it sounds.**
+  `set_config('statement_timeout', …, true)` is transaction-local and is issued on the session, so it governs
+  **every** statement of the held run rather than one call. **The missing Cancel is still missing** (open
+  question 2) and a held-open transaction makes its absence worse, not better: an uncommitted transaction
+  holding locks on production is a longer-lived object than a single statement was.
 
 ##### ⏳ Danger marking — required, and it is the SAME question §18.7 answers, not a new colour
 
@@ -11384,32 +11649,57 @@ inherits every one of them.
   subtree, so the two never contend and Qt's fire-neither ambiguity cannot arise. **This is a property of the
   scope, not of the tab widget** — an implementer who "simplifies" either console's Run to `WindowShortcut`
   creates exactly that ambiguity, and the failure mode is **both consoles going dead**, not one winning.
-- ⚠ **What DOES change is the recorded reason, and it must be rewritten in three places rather than
-  extended.** `docs/KEYBINDINGS.md`'s `Ctrl+Return` row justifies the app's one shortcut-carrying execution
-  gesture with *"The sandbox is disposable and `reset()`-able, so this does not reopen 'an irreversible
-  outward effect must not be one keystroke away'"* — and §27's row and `shortcut_registry.py:326`
-  (*"Run, on the Sandbox SQL Console tab (§27)"*) say the same. **That reason does not survive D4b**: on the
-  quality console the chord puts an irreversible production write one keystroke away, which is the precise
-  thing every `Deployment` entry is shortcut-less to prevent (§27). The surfaces column widens to **both
-  consoles**, and the justification must be restated as *the owner's ruling that this console is
-  unguarded*, never as the disposability argument, which is now false for one of its two hosts.
-- 🔶 **FLAGGED, and deliberately not decided here: whether `Ctrl+Return` should be live on the QUALITY
-  console at all.** The entry's *"mirror exactly"* implies yes; the paragraph above is a genuine reason to
-  ask. This belongs with `DEC-260811023646` (below) — it is the same *how much friction does a production
-  write carry?* question at the keyboard instead of at the transaction — but it is a **separate** question
-  and neither is answered by the other.
+- ~~🔶 FLAGGED: whether `Ctrl+Return` should be live on the QUALITY console at all~~ — **ANSWERED
+  (`DEC-260811025132`, owner, 2026-08-11): IT STAYS, identical to the sandbox console.** The shared panel's
+  `_run_shortcut` stays **unconditional** — no construction-time flag, no per-instance divergence row in
+  `docs/KEYBINDINGS.md`, and the two rejected alternatives (a first-run-must-use-the-button gate; button-only on
+  quality) are not to be re-proposed as improvements.
+- ⚠ **What DOES change is the recorded REASON, and it must be REPLACED in three places rather than extended.**
+  Every place recording the carve-out justifies it with *"the sandbox is disposable and `reset()`-able, so this
+  does not reopen 'an irreversible outward effect must not be one keystroke away' — and there is no
+  target-database Run to reach with or without a key"*. **The second half becomes false the moment D4b ships**,
+  and the first was never the durable reason. The replacement, verbatim in substance:
+  > **The commit gesture, not the Run key, is the point of no return.** Under `DEC-260811023646` a
+  > `Ctrl+Return` on the quality console executes into an **uncommitted** transaction the user then inspects, so
+  > it does not put an irreversible outward effect one keystroke away. The app's rule (§27's shortcut-less
+  > `Deployment` entries) is **preserved in substance rather than waived** — which is exactly why keeping the
+  > chord is not a reversal of it.
+  >
+  > **Wider principle:** a shortcut's admissibility is a property of **what the gesture makes durable**, not of
+  > what it is called. The same chord can be legitimate on one host and not on another, and **when a host's
+  > durability model changes, every chord justified by that model is reopened.**
+  The four sites, and their ownership, stated so none falls between owners:
+  | Site | Owner | State |
+  |---|---|---|
+  | §27's `Ctrl+Return` row (this document) | `spec-maintainer` | **done, 2026-08-11** |
+  | `docs/KEYBINDINGS.md`'s `Ctrl+Return` row — the reason **and** the widened description (*"Run, on either SQL Console tab"*) | `spec-maintainer` | **done, 2026-08-11** |
+  | `pgtp_editor/ui/shortcut_registry.py`'s `RESERVED_SEQUENCES` value `"Run, on the Sandbox SQL Console tab (§27)"` | the main session | ⏳ outstanding |
+  | `pgtp_editor/ui/sql_console_panel.py`'s comment above `self._run_shortcut = QShortcut(...)`, still containing *"there is no target-database Run to reach with or without a key"* | the main session | ⏳ outstanding |
+  **The two code sites land with the console's menu wiring**, and the manual's `Ctrl+Return` mentions are
+  `manual-maintainer`'s.
+- **⛓ THE CHORD'S JUSTIFICATION IS A DEPENDENCY ON THE COMMIT MODEL, NOT A NOTE — read this before changing
+  the commit path.** If the quality console's commit model is ever changed to **per-statement commit** or to a
+  **whole-run auto-commit**, this ruling's justification **collapses**: `Ctrl+Return` would then be one
+  keystroke from a durable production change, and the chord **must be revisited** — the two alternatives above
+  are what is on the table. **A future session optimising the commit path must treat that as blocking, and no
+  session may read *"`Ctrl+Return` is live on the quality console"* as settled independently of
+  `DEC-260811023646`. The two rulings ship and stand together.** *(This is written as a condition because a
+  carve-out has already been widened by analogy twice in this project's shortcut area — BUG-052, BUG-063 — each
+  time by a comment citing a defensible rule for the wrong gesture.)*
 
 ##### ⚠ Open questions — FLAGGED, not decided here
 
-1. **⛔ Transaction semantics against quality — FILED AS `DEC-260811023646`, the one genuine safety fork.**
-   Per-statement commit, an explicit confirm-before-commit, or the sandbox's behaviour unchanged.
-   **Do not answer it here**, and answer it against the corrected baseline above: the sandbox commits
-   **per statement**, so *"mirror exactly"* means a failed third statement leaves the first two committed
-   **in production**, with a message. That is the option on the table, not an all-or-nothing transaction.
-2. **The inherited 30-second timeout and the missing Cancel.** D4's timeout is **specified and unbuilt**
-   (above) and there is no Cancel button. Both carry into D4b, where they bite production rather than a
-   disposable database. Not settled; recorded together because a timeout without a Cancel is a different
-   product than either alone.
+1. ~~⛔ Transaction semantics against quality — FILED AS `DEC-260811023646`~~ — **ANSWERED (owner,
+   2026-08-11): run uncommitted through `apply_ddl(..., commit=False)`, inspect, then an EXPLICIT COMMIT
+   GESTURE.** Not per-statement, not one auto-committing transaction. It is no longer an open question and it
+   is **not optional surface**; it is specified as a requirement in the subsection below and in D4's
+   *One panel class, two commit policies*.
+2. **~~The inherited 30-second timeout~~ is BUILT (`BUG-260811024600` fixed) — WHAT REMAINS OPEN IS THE MISSING
+   CANCEL.** The timeout ships on both lanes and, on quality, is transaction-local and so governs the whole held
+   run. **There is still no Cancel button**, and the held-open transaction makes that worse rather than better:
+   an uncommitted transaction holding locks on production outlives any single statement. Recorded as one item
+   because *a timeout without a Cancel is a different product than either alone* — and it is now the only half
+   of that pair still missing.
 3. **Should the object-change confirmation be sterner for quality** — naming the quality database
    explicitly — or use the identical text? *(Recommendation: at minimum name the target. A confirmation
    whose wording is identical on both consoles is the one a user learns to dismiss on the wrong one.)*
@@ -11432,7 +11722,7 @@ inherits every one of them.
 | Off-thread execution, busy state | the injected `run_async` seam + `ui/busy.py::busy_status` | no |
 | Dynamic tab hosting | `CenterStage`'s key→widget map, keyed `("quality-sql",)` | no |
 | Danger colour | `ui/mode_indicator.py::mode_colors(light)` + `sql_results_panel.py`'s **post-`8b980f3`** widget-level-stylesheet technique | no |
-| **Execution against quality** | — | ⏳ **`db/quality_query.py::run_quality_query`** |
+| **Execution against quality** | `db/apply.py::apply_ddl(..., commit=False)` — already spans statements, already takes any `ConnectionParams`, already rolls back | ⏳ **`db/quality_query.py::run_quality_query`** wrapping it, **plus the held-open connection and the commit/rollback gesture** (`DEC-260811023646`) |
 | **Connection source** | `MainWindow.active_target_params()` (BUG-034's single selector) | ⏳ provider only |
 | **Menu entry + presence predicate** | §26's absent-not-disabled rule; the quality-reachability predicate §18.8 already uses | ⏳ one action |
 
@@ -11546,6 +11836,19 @@ cycle. The same introspection pass has both signatures in hand, so it is also wh
 **`CREATE OR REPLACE` hard-failure cases are caught** — a changed *return type* or a renamed *input
 parameter* is refused with a named blocker (*"pr.calc_total: return type changed; a deployment script
 cannot replace this in place"*) rather than emitting a script that errors halfway through on production.
+
+**⛓ THE SYNTHESIZED `CREATE TABLE` IS NOT AN INPUT TO THIS FEATURE, AND THAT IS A DEPENDENCY (`DEC-260811022536`).**
+§18.1's read-only pane can synthesize a `CREATE TABLE` for every table, and it is the obvious thing for a
+future table/column migration path to reach for. **It may not be, yet.** Its reconstruction has **two remaining
+structural gaps — table inheritance and partitioning — which are deliberately open, pending a consumer**, so the
+buffer round-trips an ordinary table and **does not** round-trip an inherited or partitioned one. Feeding it into
+a deployment script would produce a script that silently drops a `PARTITION BY` or an `INHERITS` clause: the
+**silent wrong result** class this whole feature is built to refuse, and worse here than in the pane, because in
+the pane it is only read. **The trigger condition for closing those gaps is precisely the first feature that
+consumes that buffer as anything other than a read-only view** — filed as **`DEC-260811094437`** — so a designer
+who wants table DDL here must get that ruling first, not work around it. *(This is stated in both places on
+purpose: relying on two SQL-comment lines inside a multi-megabyte buffer being noticed is not a dependency, it is
+a hope.)*
 
 **Honest caveats the script must carry, because they are real:**
 
@@ -12132,13 +12435,19 @@ attempt to align the two trees' node sets or render a placeholder for "exists on
 here." An object present in the sandbox but not the target (or vice versa) simply does not appear in the
 other instance's tree at all, exactly as if it were the only connection open.
 
-#### Telling the two instances apart AT A GLANCE — the quality tree's DANGER selection colour (`FQ-260810165518`, settled 2026-08-11, ⏳ NOT YET BUILT)
+#### Telling the two instances apart AT A GLANCE — the quality tree's DANGER selection colour (`FQ-260810165518`, settled 2026-08-11, **SHIPPED**)
 
-> **Status: nothing in this block ships.** Verified in the tree 2026-08-11: neither `ui/ddl_buffer_panel.py`
-> nor `ui/ddl_editor_panel.py` sets a palette or a stylesheet on anything, the two instances differ **only**
-> by `browse_only` and by their menu-entry wording, and `ui/theme.py` sets one `Highlight` for the whole app.
-> Read every ⏳ as *"to build"*. **This block supersedes `docs/FEATURE_QUEUE.md`'s `FQ-260810165518` wherever
-> the two differ.**
+> **Status: SHIPPED — read every ⏳ in this block as *"built"*.** *(This banner read *"nothing in this block
+> ships"* on the morning of the day it landed.)* Verified by name 2026-08-11 in `ui/ddl_buffer_panel.py`:
+> `danger_selection_colors(light)` (importing `mode_colors` / `MODE_MAINTENANCE` and deriving nothing),
+> `danger_selection_stylesheet(light)`, `_danger_highlight` defaulting to `not browse_only`,
+> `_apply_danger_highlight()` and the public `set_danger_highlight(enabled)`. **This block supersedes
+> `docs/FEATURE_QUEUE.md`'s `FQ-260810165518` wherever the two differ.**
+>
+> **One shipped design point worth stating in the body rather than leaving in a docstring:
+> `_danger_highlight` defaults to `not browse_only` but is settable independently.** "Is browse-only" and "is
+> the dangerous lane" merely coincide today; `set_danger_highlight` exists so the day they stop coinciding is a
+> one-line change at the call site rather than a re-reading of what `browse_only` means.
 
 **Why this is EXTEND §18.7 and not a theming feature.** Everything above defines **two instances** and gives
 them two names; **nothing above gives them two appearances**, and *"how do I tell which Explorer I am acting
@@ -12243,19 +12552,32 @@ the sandbox instance is disposable and browse-only. **The menu rename gave that 
   > test was passed by a second surface asking the same question and getting the same colour, which is the
   > outcome the boundary exists to produce.)*
 
-##### ⚠ Open questions — FLAGGED, not decided here
+##### ~~⚠ Open questions — FLAGGED, not decided here~~ — ALL FOUR SETTLED BY THE SHIPPED IMPLEMENTATION, AND THE FIRST ANSWER IS BETTER THAN EITHER OPTION OFFERED
 
-1. **Is the danger red literally `mode_colors`' `MODE_MAINTENANCE` pair, or a NEW sibling entry in the same
-   per-theme table?** *(Recommendation, on the legibility ground above: a sibling entry — a selection
-   background needs a different weight from a chip background. What is settled is that it is in that table.)*
-2. **Do the inactive-selection (`::item:selected:!active`) and hover states go red too**, or only the active
-   selection? A quality tree that loses its red the moment focus moves to the editor is the state a user is
-   most often looking at.
-3. **Does `HighlightedText` (the selected row's text colour) stay white**, or move with the background?
-   Answering (1) largely answers this.
-4. **Is the tree the only surface that reddens**, or does the center `EditorPanel` DDL Explorer (Quality) tab
-   want a cue too? *(Not asked for; recorded because the two halves of one Explorer instance are a tree and a
-   tab, and marking only one is a defensible choice that should be a choice.)*
+1. ~~`MODE_MAINTENANCE`'s pair, or a new sibling entry?~~ **Settled as neither-as-posed: the existing pair,
+   used SWAPPED.** `MODE_MAINTENANCE` is a **chip** pair — a pale wash behind strong text — and its light
+   background `#FDECEA` measures **1.10:1** against the tree's light chrome, so it would be invisible *as a
+   selection*. Read the other way round — **the strong colour as the BAND, the pale one as the TEXT on it** —
+   both halves of a pair already tuned to be legible against each other are kept (**7.98:1** light / **8.50:1**
+   dark, against qdarkstyle's own **9.44:1** / **4.57:1**), and the band reads **8.74:1** / **9.28:1** against
+   the chrome. **So no new colour enters the app at all**, which is trap 3's *"ONE colour, not a palette"*
+   honoured rather than merely respected. *(This is the answer the options list did not contain, and it is the
+   one worth remembering: a pair tuned for contrast is tuned in both directions.)*
+2. ~~Inactive selection and hover too?~~ **Settled: inactive selection YES, hover NO.** The tree loses focus the
+   instant the user clicks into the DDL pane, which is the state a quality Explorer is looked at from most of
+   the time — *a danger marking that vanishes exactly then marks nothing*. Hover is where the **pointer** is,
+   not where the user is **acting**, and reddening it would make moving the mouse look dangerous.
+3. ~~Does the selected row's text colour stay white?~~ **Settled by (1): it becomes the chip pair's pale
+   colour**, since the pair is used swapped.
+4. ~~Is the tree the only surface that reddens?~~ **Settled: the tree only.** *(And the boundary held its
+   first real test outward as well as inward — §18.5 D4b requires the **Quality SQL Console** to reuse this
+   same marking, which is the one question colour answers asked on a second surface, not a second colour.)*
+5. **A THIRD selector was found by looking at pixels, and it is a requirement rather than a detail.** Overriding
+   only the two `::item` rules left the selected row's **indent/branch column** still painting the app-wide blue
+   — a measured **653 blue pixels inside a 5 594-pixel red band** — because that strip is drawn from the
+   universal `QWidget` rule's `selection-background-color`, not from `::item`. The widget sheet therefore
+   restates that pair too, scoped to the one tree. *Reading the app stylesheet was not enough; the band had to
+   be photographed.*
 
 **Reuse map — what this feature builds on rather than duplicates.**
 
@@ -13828,7 +14150,7 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | Ctrl+L | Go To XSD (jump to the attribute's definition in curated.xsd; always forces curated mode) | Window-level QAction (also in the Raw XML editor context menu). **The shape `F3` copies** (above): a window-level command with **no menu entry**, therefore outside `_walk_menu_actions` and un-pinnable — the category also holding `Ctrl+Alt+F` Format Selection and `Ctrl+Return` Run |
 | Ctrl+Space | Completion popup (`_CompletionPopup`, frameless, non-modal) | Three shipped contexts: the **Raw XML editor**'s schema-driven attribute/value completion (§11), the **DDL object editor tab**'s schema-aware SQL completion (§18.6), and the **Sandbox SQL Console tab** (per the manual's Keyboard Shortcuts chapter, which lists all three; §18.5 D4) |
 | Ctrl+Alt+F | **Format Selection** — *"reformat what I selected"*, on **two engines chosen by host surface, never by sniffing the text** (§18.4). Single undo step on success; `[SQL]` (SQL) or `[XML]` (XML, FQ-033) Audit lines + transient underline on refusal | **SQL engine, shipped:** the DDL object editor tab **and** the Sandbox SQL Console tab (§18.5/D4), in each case a `QShortcut` at `WidgetWithChildrenShortcut` scope, `setEnabled(False)` until a selection exists. **The context-menu item exists on BOTH — BUG-063 is RESOLVED (`a9efb67`)**: `SqlConsolePanel` builds a context menu over `createStandardContextMenu()` and adds the verbatim `Format Selection` item, carrying **no `setShortcut`** (asserted, not assumed), so the panel's `QShortcut` stays the sole keyboard host. *(This row read "on the DDL object tab ONLY" for one day, while the gap was filed rather than written away — DEC-012's ruling that a context-menu entry **is** a command is the basis on which this chord sits inside the one-host rule, so a missing command form was a code defect, not a spec over-claim. §18.4's status banner, ledger §28.)* **That context-menu item is a COMMAND, so §8's one-keyboard-host rule applies and DEC-009's widget-only carve-out does NOT** (DEC-012): the `QShortcut` is the single host, and the DDL object tab's second `eventFilter` `Key_F` branch **is deleted — BUG-054 is DONE**, the tombstone comment standing where it was. It stays **reserved** in `RESERVED_SEQUENCES` — a context-menu command is still not a menu-bar action `Customize Shortcuts…` could move — so the chord is un-pinnable and un-rebindable. Without a selection it is a **silent no-op**, not §18.5 carve-out 4's refusal path. **XML engine — SHIPPED 2026-08-10 (`061e973`):** the same chord **plus a context-menu `Format Selection` entry** on the **three `XmlEditor` surfaces** (Raw XML, Edit XSD, the FQ-006 draft fragment tab), answered by `xmlfmt/` and never by the SQL tokenizer. The chord is a **panel-local `QShortcut` at `WidgetWithChildrenShortcut` scope, enabled only with a selection** (`ui/xml_editor.py:588-593`), and the context-menu `QAction` deliberately carries **no `setShortcut`** — the same single-keyboard-host discipline BUG-063 must observe on the console. On a read-only XML buffer it emits the existing `read_only_edit_attempted` hint and files **no** audit row; with no selection it is a silent no-op. ⏳ **The `[XML]` half of this row is still pending:** `format_refused` is emitted but unconnected and `audit_router.py` has no `XML_PREFIX`, so a refusal underlines its span and reports nowhere (§7's prefix table, §18.4 part C). *(The old note that "`Ctrl+Shift+F` stays Find All" no longer applies — that chord is deleted, see above.)* |
-| Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against **that console's own database** (§18.5 D4 / ⏳ D4b) | **The Sandbox SQL Console tab today; ⏳ the Quality SQL Console tab too** (`FQ-260811020328`, not yet built). One `QShortcut` per panel at **`WidgetWithChildrenShortcut`** scope, so with both consoles open each fires only for the panel holding focus and Qt's fire-neither ambiguity cannot arise — **a property of the scope, not of the tab widget**; `WindowShortcut` here would kill Run on **both**. Same panel class, same gate (**DEC-009** — a Run button is not a command form), same reserved entry: **the second host adds no `RESERVED_SEQUENCES` row and no ledger row.** ⚠ **The RATIONALE, however, is reversed and must not be restated the old way.** This row read: *"it does not reopen the 'an irreversible outward effect must not be one keystroke away' rule — the sandbox is disposable and `reset()`-able."* **On the quality console that is false** — the chord puts an irreversible production write one keystroke away, exactly what every shortcut-less `Deployment` entry exists to prevent. The gesture is authorized **by the owner's ruling that this console is deliberately unguarded**, never by disposability. `docs/KEYBINDINGS.md`'s row and `shortcut_registry.py`'s reason string carry the same stale sentence and must be rewritten in the same commit. 🔶 **Whether the chord should be live on the quality console at all is FLAGGED, not settled** (§18.5 D4b), and is the keyboard sibling of `DEC-260811023646` |
+| Ctrl+Return | **Run** — execute the selection, or the whole buffer when there is no selection, against **that console's own database** (§18.5 D4 / ⏳ D4b) | **The Sandbox SQL Console tab today; ⏳ the Quality SQL Console tab too** (`FQ-260811020328`, not yet built). One `QShortcut` per panel at **`WidgetWithChildrenShortcut`** scope, so with both consoles open each fires only for the panel holding focus and Qt's fire-neither ambiguity cannot arise — **a property of the scope, not of the tab widget**; `WindowShortcut` here would kill Run on **both**. Same panel class, same gate (**DEC-009** — a Run button is not a command form), same reserved entry: **the second host adds no `RESERVED_SEQUENCES` row and no ledger row.** **The chord IS live on the quality console — `DEC-260811025132` (owner, 2026-08-11) — and the `_run_shortcut` stays unconditional; a construction-time flag withholding it on that instance is a rejected alternative, not a pending improvement.** ⚠ **The RATIONALE is REPLACED and must not be restated the old way.** This row read: *"it does not reopen the 'an irreversible outward effect must not be one keystroke away' rule — the sandbox is disposable and `reset()`-able"*, and the code comment adds *"and there is no target-database Run to reach with or without a key"* — **which D4b falsifies outright.** The live reason: **the commit gesture, not the Run key, is the point of no return.** Under `DEC-260811023646` a Run on the quality console executes into an **uncommitted** transaction the user then inspects, so nothing irreversible is one keystroke away and the rule is **preserved in substance rather than waived**. **Wider principle: a shortcut's admissibility is a property of what the gesture makes DURABLE, not of what it is called** — so when a host's durability model changes, every chord justified by that model is reopened. ⛓ **DEPENDENCY, not a note: if the quality console ever moves to per-statement or whole-run auto-commit, this row's justification collapses and the chord must be revisited.** `docs/KEYBINDINGS.md`'s row carries the corrected reason; its **Surfaces** widening and `shortcut_registry.py`'s `"Run, on the Sandbox SQL Console tab (§27)"` string land **with** the console |
 | *(no shortcut, deliberately)* | **`Check Object in Sandbox`** / **`Check and rollback`** / **Generate Deployment SQL…** | The Editor bar's **`Parsing`** menu since BUG-039, relabelled by FQ-026 (`310cf92`); `Generate Deployment SQL…` still does not exist anywhere (§18.5). **Since FQ-023, 2026-08-08:** the two Check gestures are **absent** only when no sandbox is *configured*, and **present-and-reporting** when one is configured with no session open. Apply is an **irreversible outward effect** and must not be one keystroke away. *(Superseded, 2026-08-10: this row used to place them on **Database**, mention the tab's **button row**, and record `Deploy this edit…` as shipping keyless on three surfaces. BUG-039 moved them; **FQ-026 deleted the button row, the context-menu apply entries and the picker outright**.)* |
 | *(no shortcut, deliberately)* | **Every `Deployment` entry** — `Compare/Merge pgtp` · `Save pgtp` · `Save as new pgtp` · `Deploy .pgtp` · `Save in Project` · `Check and commit to sandbox` · `Apply to quality` · `Save XSD` · `Save PHP File` | Editor menu bar ▸ **Deployment**, per active tab kind (FQ-020, 2026-08-08, §26; the two DDL labels relabelled by FQ-026, `310cf92`). Deliberately keyless on two different grounds: the four **saves** because a keystroke save is exactly the wrong-target hazard the deleted router created (see the `Ctrl+S` row), and `Check and commit to sandbox` / `Apply to quality` / `Deploy .pgtp` because *"an irreversible outward effect must not be one keystroke away"* (§18.5) |
 | **Ctrl+Alt+E** | **Expand Snippet** — expand the word before the caret into its snippet (§18.9, FQ-030) | The SQL editors only, gated on `language="sql"`: the **DDL object tab** and the **Sandbox SQL Console**. Registered as a **reserved sequence** in `ui/shortcut_registry.py` (*"Expand Snippet, in the SQL editors (FQ-030)"*), so `Customize Shortcuts…` cannot hand the chord away. Like `Ctrl+Alt+F`, it has **no menu entry** and is therefore un-pinnable and un-rebindable |
@@ -14201,6 +14523,12 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-11 *(later pass — feature fold; ⚠ A SAFETY PRINCIPLE IS REVERSED. Chronologically this row and the one below it follow the `FQ-260810165518` row at the end of this table; they sit here because they were written in the same insert.)* | **§18.5 D4's founding rule, settled 2026-08-06 and stated as the subsection's "read this first": *"Ad-hoc SQL execution is sandbox-only. It may never target the production/target database — not behind a confirmation, not behind a preference, not behind a typed database name, not 'read-only queries only'."* Plus its two corollaries — *"there is no 'run against target' affordance anywhere, not even a disabled one"* and *"a read-only production query surface is a different feature and is not authorized"* — and §18.5's invariant 1, *"three connection-opening seams … and never a fourth"* | **`FQ-260811020328` FOLDED INTO §18.5 AS D4b, THE QUALITY SQL CONSOLE (⏳ NOT YET BUILT): FULL READ/WRITE AD-HOC SQL AGAINST THE QUALITY/PRODUCTION DATABASE, ALWAYS AVAILABLE WHENEVER A QUALITY CONNECTION WITH A PASSWORD EXISTS.** Two owner rulings, recorded as not-to-be-re-litigated: **capability = full read/write** (chosen over a SELECT-only variant *with the hazard spelled out*), and **gate = always available**, with **no per-run confirm beyond D4's existing object-change dialog** (chosen over a Maintenance-mode gate and over an always-available-but-confirm-writes middle option). **THIS REINTRODUCES AN UNGUARDED PRODUCTION-WRITE CHANNEL INTO AN APP WHOSE STATED IDENTITY IS THAT IT CLOSES EXACTLY THAT GAP** — DBeaver's *"the only possibility is to break the database"*. It is recorded in those words, at the top of D4 and here, **because the entire value of a ledger row is that a future reader sees a CHOICE and not a drift.** The reversibility argument that authorized ad-hoc execution in the first place (*a wrong statement against the sandbox is undone by Reset Sandbox; against production it cannot be undone from inside the app*) is **unchanged and still true** — the owner weighed it and chose the capability anyway. **There is no safety argument for this feature and none may be invented; the justification is the ruling.** **What survives, and is written as structure rather than as a promise:** the sandbox path keeps its structural gate verbatim (`run_sandbox_query` still takes a `SandboxSession` and nothing else) and the quality path is a **separate ⏳ `db/quality_query.py::run_quality_query`** — never a `target=` parameter, a toggle or a widened signature, *because one execution function accepting either kind of connection is precisely how a sandbox gesture ends up pointed at production*; **two consoles, two tab keys, two titles, two markings**, never one console with a target selector; and the fourth seam is **named at the invariant it amends** so the count stays checkable and a fifth still needs a ruling. **The danger marking is REQUIRED, not proposed** — §18.7's rule that the app spends colour on exactly one question (*how dangerous is this?*) makes the console the same question on a second surface, so it reuses `mode_colors`' per-theme value. **Two collisions the queue entry could not have known about, both from work that landed hours before the fold:** its cited danger-marking precedent (*"the palette-override precedent at `sql_results_panel.py:545-550`"*) **was `BUG-260811021804`, RESOLVED `8b980f3`** — a palette override that never painted a pixel — so the fold cites the **current** mechanism (a widget-level stylesheet storing a *kind*, not a colour), and §7's invariant and §18.7's citation are both updated to say the module is now a precedent **for** the working technique; and **`BUG-260811021816` (RESOLVED `d162607`) shipped a confirmation telling the user verbatim that *"the Sandbox SQL Console can never reach the target database"* while handing them a `DROP` to run externally** — **both halves become false the moment D4b ships**, so the text change is folded as a **required reconciliation that must land WITH the console**, naming `_drop_statement` and its `ast`-based test guard as the artifacts. **Keyboard: no new chord, no reserved-set change, no ledger row for the binding** — `Ctrl+Return` is the same panel class under the same DEC-009 gate, and `WidgetWithChildrenShortcut` keeps two open consoles from contending — **but its RECORDED REASON is reversed**: *"the sandbox is disposable and `reset()`-able"* is false for one of its two hosts, and §27, `docs/KEYBINDINGS.md` and `shortcut_registry.py:326` must all restate it. **Five open questions FLAGGED, one of them filed: `DEC-260811023646`** (quality transaction semantics), plus the inherited-and-unbuilt timeout with no Cancel, sterner confirm wording, one-instance-per-target, and the marking's placement — **and the fold CORRECTED THE DECISION'S OWN PREMISE:** it asks whether quality keeps *"the sandbox's one-committing-transaction semantics"*, and **the sandbox has never had them** (see the row below), so the *"mirror exactly"* baseline is the weaker option, not the stronger one. |
 | 2026-08-11 *(later pass — harmonization)* | §18.5 D4: ***"All statements of one Run execute in order inside one transaction, which commits … a failure aborts the run at that statement, rolls the whole transaction back"***; and D4's mandatory-timeout block asserting `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000` with a 1 000 ms floor, a `57014` `QueryError` and a `fetch(params, sql, *, row_limit, statement_timeout_ms) -> FetchResult` seam signature; and D4's `QueryResult` field list | **TWO SHIPPED DIVERGENCES, RECORDED AS OPPOSITE KINDS — one is the design, one is a gap. (1) THE CONSOLE COMMITS PER STATEMENT, AND ALWAYS HAS: the spec's letter is corrected to what shipped.** `ui/sql_console_panel.py` states the divergence in its own docstring **with a contract reason**: the sanctioned seam `SandboxExecutor.fetch` is *"run **one** statement … commits on success"* and opens one connection per call, while the seam that spans statements atomically (`execute`) returns **no rows and no status message** and so cannot answer D4's own requirements (a grid, plus each statement's command status). The alternative was the UI reaching into `db/` for a connection, so **the built answer is the better one and is folded as the design**; the surviving invariant is the one that mattered — *partial application is never left behind **silently***, the panel says what already committed. **This correction is load-bearing for `DEC-260811023646`, which was filed against the false premise.** **(2) THE MANDATORY STATEMENT TIMEOUT IS SPECIFIED AND DOES NOT EXIST — SPEC-RIGHT, CODE-MISSING, filed to `bug-triager`.** `SandboxExecutor.fetch(params, sql, *, max_rows)` has no timeout parameter, `_RealSandboxExecutor.fetch` issues no `SET LOCAL statement_timeout`, and no `DEFAULT_STATEMENT_TIMEOUT_MS` exists in the tree; the panel's docstring says so under *"Still missing from D4, deliberately, and reported rather than faked"*. **It is kept as a requirement rather than rewritten away** — what is missing is one parameter and one `SET LOCAL` — and D4b raises its cost from *"ties up a disposable sandbox"* to *"ties up production, with no Cancel either"*. **Filed as `BUG-260811024600`, whose triage then falsified FOUR details of the requirement's own letter, all folded back into D4 in the same pass:** the specified **`SET LOCAL statement_timeout = '<ms>ms'` CANNOT BE PARAMETERISED** (`SET` is a utility statement taking no bind parameters), so the spec's form forced string-interpolating a spin-box value into SQL and is **replaced by `SELECT set_config('statement_timeout', %s, true)`**, which is exactly `SET LOCAL` scope — *a spec sentence implementable only by interpolating a number into SQL is a spec defect, not an implementation detail*; there are **THREE** declarations of the seam to widen, not two (`db/sandbox_query.py::QueryRunner` independently re-declares it as the `runner=` injection point, and missing it fails **at call time, not at import**); the constant must live in **`db/sandbox.py`** and be re-exported, because `sandbox_query` imports `sandbox` and not the reverse; and the `57014` sentence comes from **one named helper replacing only `message`** — preserving `sqlstate`/`position`/`line`, since a timeout error that loses its position stops being clickable — so D4b reuses it rather than copying the wording. **One bound the spec never stated is now PICKED AND STATED**, following D4's own row-cap precedent (*"pick one and state it"*) rather than leaving a `QSpinBox` maximum to the implementer: **`MAX_STATEMENT_TIMEOUT_MS = 600_000`**, floor unchanged at 1 000 ms, and **still no "unlimited" setting** — which is the half that carries the safety. **(3) `QueryResult`'s shipped field names are folded in** so D4b's *"the identical shape"* is checkable: `row_limit`→`max_rows`, `command_status`→`status`, `duration_ms`→`elapsed_ms`, `statement`→`sql`, plus a new **`outcome: QueryOutcome`** and `affected`. `outcome` is not bookkeeping — it is `truncated`'s discipline applied again: *a `SELECT` returning zero rows and an `UPDATE` returning no result set are different answers and must never render the same way.* |
 | 2026-08-11 *(feature fold)* | **§18.7 defined two DDL Explorer instances and gave them two NAMES but no visual difference whatsoever** — its *"What it is"* and *"Reuse map"* blocks specify identical rendering, and the subsection said the wording was the whole of the distinction | **`FQ-260810165518` FOLDED INTO §18.7 AS ⏳ TARGET DESIGN (NOT YET BUILT): the QUALITY tree's selection highlight becomes the danger colour; the sandbox tree stays ordinary.** *"How do I tell which Explorer I am acting in"* is the question a reader brings to §18.7, and the absence of an answer there was the gap. **⚠ THE QUEUE ENTRY'S MECHANISM WAS MEASURED AND DOES NOT WORK, AND THAT CHANGED THE DESIGN.** It proposed a per-widget `QPalette` `Highlight` override on the premise that *"the highlight is purely global-palette-driven"* — which omits the app-level stylesheet §7 requires in **both** themes (`app.setStyleSheet(_qdarkstyle_stylesheet(light))`). The generated sheet was read: it declares `QTreeView::item:selected:active` (`#9FCBFF` light / `#346792` dark), `::item:selected:!active`, `::item:!selected:hover`, and a universal `QWidget { selection-background-color; selection-color }`. **QSS wins over QPalette, so the proposed override is INERT** — the mechanism is a **widget-level `setStyleSheet`** on the quality tree. **A second entry-falsifying finding rides with it: `theme.py`'s `Highlight` `#3874f2` is NOT what a tree row paints**, so the entry's *"match `#3874f2`'s relative luminance"* derivation targeted a colour that is not on screen; the contrast to match is the QSS's, which is what §7 already demanded (*"against the live QDarkStyle chrome, not the bare palette"*). **The theme-toggle re-apply requirement survives with a corrected reason:** a widget-level sheet is *not* wiped by `app.setPalette`, but the value is per-theme and must be re-applied on the flip — a test, not a note. **The general invariant is folded into §7's theme block**, where a reader will meet it before repeating the mistake — **with its boundary measured rather than assumed: it governs WIDGET palettes, while ITEM brushes (`QTreeWidgetItem.setForeground`) are honoured normally**, so `activity_panel.py` and `coherence_panel.py` are unaffected and only two sites in the app are. **And the entry's cited *"shipped precedent"* turned out to BE one of them — `BUG-260811021804`, filed and CONFIRMED by rendered pixels within this same pass: `sql_results_panel.py::_set_status` paints ZERO red pixels in either theme while its palette faithfully reports the red, so the precedent was evidence AGAINST the technique, not for it.** *A citation to a working example is worth exactly as much as the example works — and nobody had ever looked at that one with a colour picker.* **Three duplication traps folded as requirements:** no second red beside `ui/mode_indicator.py::mode_colors`, whose `MODE_MAINTENANCE` is already a per-theme red pair and whose docstring records the exact defect a hardcoded red repeats (*"never the DEBUG chip's hardcoded red that reads wrong in one theme"*); no edit to `theme.py`'s `Highlight` (it recolours selection app-wide); and the **twelve-colour rule** — *"minor mode is TEXT, not a second colour … three majors times four sub-states would be a twelve-colour vocabulary, which defeats easy recognition"* — which a colour per Explorer role pressures from a new direction, **so §18.7 now states where the app's colour vocabulary STOPS: colour answers one question per surface, *how dangerous is this?*, and every other distinction stays TEXT. This feature adds ONE colour, not a palette.** **Four open questions FLAGGED**, with the honest complication recorded rather than smoothed: `mode_colors`' maintenance pair is a **chip** pair whose light background `#FDECEA` is near-white and would be useless as a selection background under white text — so *reuse the pair* versus *add a sibling entry to the same table* is a real choice, while **that the value lives in that table is NOT open**. |
+| 2026-08-11 *(decision fold)* | §18.5 D4's *"Multiple statements, transactions, and what commits"* — including its own ⚠ CORRECTED-TO-WHAT-SHIPPED block — as a statement about **the** SQL console: *"each statement of a Run is its own committing transaction"*, with *"Yes, it commits — and that is the point"* written unqualified; and D4b's open question 1 leaving quality's transaction semantics filed and unanswered | **`DEC-260811023646` ANSWERED (owner): the QUALITY console runs through `apply_ddl(..., commit=False)`, the user inspects, and an EXPLICIT COMMIT GESTURE makes it durable. So there is now ONE PANEL CLASS WITH TWO COMMIT POLICIES, and the corrected paragraph is true of the SANDBOX ONLY.** Chosen over **per-statement commit** (which is what *"mirror the sandbox exactly"* literally means, since the sandbox has always committed per statement) and over **one auto-committing transaction**. **The divergence is a CONTRACT FACT before it is a judgement, which is why it is folded as a table rather than as an exception:** the `fetch` seam opens one connection per call and **cannot span statements**, while the seam that can (`execute`) returns no rows and no status and therefore cannot answer D4's requirements — whereas **`apply_ddl` spans statements, takes any `ConnectionParams`, and already carries `commit=False`**, so the strong policy is *cheaper than it looks* on quality and the weak one would have been inherited rather than chosen. **Owner's reasoning:** every *other* guard on this console had already been ruled away (no mode gate, no extra confirm, full read/write), so **the one remaining safety property is taken in its strong form**; and *"show me what it did before it is permanent"* is the precise claim `README.md` makes over DBeaver — **per-statement commit against production would have imported the very behaviour this app exists to replace, onto the surface where it does the most damage.** The owner deliberately took the option that **adds surface**. **Wider principle: where a feature's other guards have been deliberately removed, the guard that remains is chosen on its own merits and NEVER by analogy to a surface with a different blast radius — consistency with the sandbox is not an argument on a target that has no `reset()`.** **Folded as REQUIREMENTS rather than as a direction:** a commit and a rollback affordance on the quality console only; an **uncommitted-state representation** in the results grid (`truncated`/`outcome`'s discipline a third time — *a state the app knows and does not show is the silent-wrong-result shape*); a **held-open connection**, accepted as genuinely new surface since neither existing seam holds one between calls; and its **three edges — tab close, window close, connection loss — defined and TESTED by whoever implements it, not filed as a further decision.** |
+| 2026-08-11 *(decision fold)* | §18.5 D4b's 🔶 flag *"whether `Ctrl+Return` should be live on the QUALITY console at all"*; and the chord's recorded justification in **three** places — §27's row, `docs/KEYBINDINGS.md`'s row and `shortcut_registry.py`'s `RESERVED_SEQUENCES` value — resting on *"the sandbox is disposable and `reset()`-able"* plus the code comment's *"and there is no target-database Run to reach with or without a key"* | **`DEC-260811025132` ANSWERED (owner): `Ctrl+Return` STAYS, identical on both consoles — `_run_shortcut` unconditional, no construction-time flag, no per-instance divergence row — AND ITS JUSTIFICATION IS REPLACED, NOT EXTENDED: *the commit gesture, not the Run key, is the point of no return.*** Under `DEC-260811023646` the chord executes into an **uncommitted** transaction the user then inspects, so it does not put an irreversible outward effect one keystroke away and the app's rule (§27's shortcut-less `Deployment` entries) is **preserved in substance rather than waived** — which is precisely why keeping the chord is not a reversal of it. **Wider principle: a shortcut's admissibility is a property of what the gesture makes DURABLE, not of what it is called; the same chord can be legitimate on one host and not on another, and when a host's durability model changes, every chord justified by that model is reopened.** **⛓ RECORDED AS A DEPENDENCY AND NOT A PREFERENCE, in §27 and in D4b: if the quality console's commit model ever becomes per-statement or whole-run auto-commit, this justification COLLAPSES and the chord must be revisited.** No session may read *"`Ctrl+Return` is live on the quality console"* as settled independently of `DEC-260811023646`; **the two rulings ship and stand together.** Written as a condition because this project's shortcut carve-outs have already been **widened by analogy twice** (BUG-052, BUG-063), each time by a comment citing a defensible rule for the wrong gesture. **Site split, stated so nothing falls between owners:** §27's row is corrected here and `docs/KEYBINDINGS.md`'s Notes carry the new reason as of this pass; the ledger's **Surfaces widening**, `shortcut_registry.py`'s `"Run, on the Sandbox SQL Console tab (§27)"` and `sql_console_panel.py`'s comment block are **code-side and land WITH the console**. |
+| 2026-08-11 *(decision fold)* | §18.1/FQ-002: *"`INSTEAD OF` is view-only in Postgres. That constraint is the **dialog's** to enforce **or to leave to the database**"* — an explicit unresolved either/or — and the entry-point table's *"a table node"* wording, with `NewTriggerDialog` taking `table: str` and never learning the relation kind | **`DEC-260811025733` ANSWERED (owner): ENFORCEMENT IS THE DIALOG'S. `Add Trigger…` is offered for `kind in ("table", "view")` and EXCLUDED for `matview`, and the dialog is GATED BY RELATION KIND** — a view target offers `INSTEAD OF` only, a table target `BEFORE`/`AFTER` only, still filtering the one `TRIGGER_TIMINGS` tuple rather than introducing a second list. The *"or to leave to the database"* half is **withdrawn**. **The split is PostgreSQL's, not a preference:** `INSTEAD OF` on a view is the standard way to make a view updatable and is squarely in scope for this app, while materialized views support **no** triggers at all. **This closed a LIVE DEFECT rather than a tidiness item:** from a view node a user could pick `BEFORE INSERT` and receive a rendered, authoritative-looking statement the server rejects — *offered and broken*, the one state `_add_alter_table_submenu`'s own docstring principle rejects in favour of *not offered*, which is why "document today's behaviour" was refused. **And the emitter's disclaimer was dishonest, which is the durable finding:** `ddl_skeleton.py` said *"`INSTEAD OF` is view-only in Postgres; that is the caller's constraint to enforce, not this emitter's"* — **and no such caller existed.** *A docstring delegating a constraint to "the caller" with no caller is a defect, not a division of labour.* **Wider principle: where a shared tree role spans several relation kinds, each gesture on that role must state its own per-kind answer** — the two neighbouring gestures in the same context-menu builder already did (`Create Table…` includes a view's node with a comment saying why; `Alter Table ▸` excludes views and matviews with an early return), and **`Add Trigger…` was the one branch expressing NO intent**, which is the shape by which a narrow rule gets widened by analogy (BUG-052, BUG-063). |
+| 2026-08-11 *(decision fold)* | §18.1's reconstruction-requirement block: *"v1 reads columns, constraints, indexes and comments, and therefore **omits: identity/`SERIAL` sequences, `GENERATED` columns, table inheritance, and partitioning**"* — four gaps in one undifferentiated list — and its open question 6 asking whether they are *"acceptable for v1"* | **`DEC-260811022536` ANSWERED (owner): THE BOUNDARY IS NOW TWO STRUCTURAL GAPS, DELIBERATELY PENDING A CONSUMER — NOT FOUR, AND NOT PERMANENT.** The **per-column two close now** (identity/`SERIAL`, `GENERATED`), because they **extend the existing column rendering rather than restructure the statement** — the column data is already in hand — and they are what an ordinary schema actually hits, since nearly every table has a surrogate key. **Inheritance and partitioning stay genuinely open**, because closing them restructures the statement (partition key, partition-of clauses, per-partition rendering, `INHERITS` with inherited columns suppressed) and would mean **paying for partitioning support before any feature consumes it**. Neither *"accept all four permanently"* nor *"close all four"* was taken. **The banner therefore STAYS, naming two gaps, and MUST NOT be read as an unfinished job:** a future reader meeting it reads *"decided boundary, pending a consumer"*. **Wider principle: a completeness question may be answered PER GAP rather than wholesale** — where closing a gap restructures the artifact the gap waits for a feature that consumes it; where it merely extends what is already rendered it is closed on the spot; cost-to-close and frequency-in-practice are both legitimate inputs; and **a disclosed boundary is not the same as an unfinished one.** **⛓ The dependency is recorded in TWO places by direction of the answer — §18.1 and §18.5's *Generate Deployment SQL*** — because a designer reaching for table DDL as a migration input must meet it where they are reading, not by noticing two SQL-comment lines inside a multi-megabyte buffer: **nothing may treat that buffer as a deployment source until the open half is ruled on**, and the trigger condition (*the first feature that consumes it as anything other than a read-only view*) is filed as **`DEC-260811094437`**. ⏳ Implementation note: as of this pass `table_ddl.py`'s notice and docstring still name four; the spec above is the design and they shorten as the per-column work lands. |
+| 2026-08-11 *(status pass)* | **THREE "NOT YET BUILT" BANNERS OVER SHIPPED FEATURES**, each written within hours of its feature merging: §18.1's `FQ-260810183812` block (*"nothing in this block ships … tables, views and matviews have NO synthesized DDL anywhere in the app"*), §18.1's `FQ-260810180336` name-filter block (*"contains no occurrence of `setHidden`, `filter`, `Filter` or `hidden` anywhere"*), and §18.7's `FQ-260810165518` danger-colour block (*"neither panel sets a palette or a stylesheet on anything"*) — plus **fifteen open questions** carried under them | **ALL THREE RETIRED, AND FOURTEEN OF THE FIFTEEN OPEN QUESTIONS WERE ANSWERED BY THE IMPLEMENTATIONS THEMSELVES.** Verified by name: `db/table_ddl.py` with its per-table `RECONSTRUCTION_NOTICE`; `filter_matches` / `FILTER_MODE_LABELS` (five modes) / `_FILTER_NAME_ROLE` / `NO_FILTER_MATCHES_TEXT`; `danger_selection_colors` / `danger_selection_stylesheet` / `set_danger_highlight`. **Three of those answers are better than the options the spec offered, and are folded as the design:** *(a)* `DdlObjectSpan.kind` grew **detail** kinds (`column`/`constraint`/`index`) as well as object kinds, answering the constraint-jump question **inside** trap 1's one-dataclass rule; *(b)* the danger colour **reuses `MODE_MAINTENANCE`'s pair SWAPPED** — strong colour as the band, pale as the text — which was **neither** offered option and adds **no new colour to the app**, satisfying trap 3 exactly (measured 7.98:1 / 8.50:1 text-on-band and 8.74:1 / 9.28:1 band-on-chrome, against a chip background measuring **1.10:1** that would have been invisible *as a selection*); *(c)* a **third QSS selector** was needed and was found **by counting pixels, not by reading the app sheet** — 653 blue pixels of indent/branch column survived inside a 5 594-pixel red band, because that strip paints from the universal `QWidget` rule rather than `::item`. **The caching question was answered by NOT caching**, so there is no invalidation rule to get wrong. **The one item still open is `FQ-260810180336`'s *"function 1"* implication** — a possible non-filtering find/jump — which commits only to extending **that** bar rather than adding a third search input. **Recorded as a row because the interval is the point yet again: this is the EIGHTH consecutive pass to find a "not yet built" claim over shipped work, and all three banners were written by the pass immediately before this one.** *An absence is the least durable claim a spec can make, and the work that ends it is usually already in flight when the claim is written.* |
+| 2026-08-11 *(same pass, corrected at its closing verification)* | **FOUR of this pass's own statements, written while folding the four rulings:** *"the per-column half is ⏳ IN FLIGHT, not landed"*, quoting `RECONSTRUCTION_NOTICE_DETAIL`'s four-gap wording verbatim; D4b's *"nothing in this block ships — `db/` contains no `quality_query.py`"*; D4's *"⛔ THE MANDATORY STATEMENT TIMEOUT IS SPECIFIED AND NOT BUILT — none of it exists"*; and the folded seam signature `run_quality_query(params: ConnectionParams, sql, *, max_rows, runner)` | **ALL FOUR FALSIFIED WITHIN THE PASS, AND ONE OF THEM BY A BETTER DESIGN THAN THE SPEC'S.** *(1)* `db/table_ddl.py` renders identity and `GENERATED` and its notice now reads *"…does not cover table inheritance or partitioning"* — **phrased as a boundary rather than a to-do, deliberately**, which is `DEC-260811022536`'s ruling expressed where a user reads it. *(2)* **`db/quality_query.py` exists**: `QualityConnection` (Protocol) · `_PsycopgQualityConnection` · `QualityConnectionLost` · `QualitySession` · `TransactionOutcome`/`transaction_message` · `COMMITTED`/`DISCARDED` with five named discard reasons, and **all three lifecycle edges defined** (tab close asks · window close asks · loss resolves to *nothing was committed*, said out loud). *(3)* **`BUG-260811024600` is FIXED** — `DEFAULT_STATEMENT_TIMEOUT_MS`/`MIN_STATEMENT_TIMEOUT_MS` in `db/sandbox.py`, `set_config('statement_timeout', %s, true)`, one shared `timeout_error` helper imported by the quality lane rather than copied; the ceiling shipped as **`ui/sql_console_panel.py::MAX_TIMEOUT_MS = 600_000`** rather than a `db/` constant, which is the better placement — *a constant justified by a widget belongs beside the widget.* *(4)* **The seam takes a `QualitySession`, not bare `ConnectionParams`, and that is folded as the design:** `apply_ddl(..., commit=False)` — the shape the ruling names — commits or rolls back **before returning** and therefore cannot hold a transaction between a Run and a commit gesture, so the session owns the connection; the side effect is that **both lanes now have the same mechanical guarantee**, `run_sandbox_query(session: SandboxSession, …)` beside `run_quality_query(session: QualitySession, …)`, each refusing the other's type with a message saying why. *A parameter type is the cheapest guarantee in this subsection, and it is now spent on both lanes rather than one.* **Recorded as a row because the count is the argument: this is the NINTH consecutive pass whose closing re-verification caught its own claims, and the largest catch yet — four in one pass, three of them absences.** |
 
 ---
 
@@ -14228,21 +14556,23 @@ recommendations lost — is worth keeping:
   pending** rejects the dialog. So the flag stood for hours, not months, and *"flagged rather than decided"*
   worked exactly as intended. §8's *The TWO-PRESS ESCAPE* subsection; ledger §28.
 
-**From `FQ-260810183812` (2026-08-10) — SIX items flagged rather than decided.** Folded into §18.1 as target
-design with its open questions **left open on purpose**: a placement is not an approval, and none of these is
-answerable from the code. Listed here so they are findable from the register rather than only from the block:
+**~~From `FQ-260810183812` (2026-08-10) — SIX items flagged rather than decided~~ — ALL SIX SETTLED
+2026-08-11: FIVE BY THE SHIPPING IMPLEMENTATION (`9d93fd8`), ONE BY THE OWNER (`DEC-260811022536`). Nothing
+about `FQ-260810183812` is open.** The answers, with their reasons, are in §18.1's block; struck here rather
+than deleted because *which* questions the spec refused to answer for itself is worth keeping — and because
+five of them turned out to be **answerable from the code the moment the code existed**, which is the honest
+shape of *"flagged, not decided"* working:
 
-- **Constraint / FK / index node click — jump to the inline constraint line inside the `CREATE TABLE`, or a
-  dedicated per-constraint span?** (Recommended: the inline line, which honours *"no ALTERs"* and needs no new
-  span kind.)
-- **Does clicking a TABLE node still populate the Properties panel, or only navigate the DDL pane?**
-  (Recommended: **additive** — removing `table_selected` would withdraw a working behaviour to buy a new one.)
-- **Column-node click — that column's line inside the `CREATE TABLE`, or the table's banner?**
-- **Object ordering in the buffer** — dual-grouped like the tree, or alphabetical across kinds? *(Determinism
-  across fetches is NOT open; that is BUG-018's rule.)*
-- **The lazy-synthesis / caching strategy and its invalidation on reparse.**
-- **The reconstruction notice's GRANULARITY** — per table, or once for the buffer? *(That the omission is
-  **visible** is settled in §18.1 and is deliberately not part of this question.)*
+- ~~Constraint / FK / index node click?~~ **the inline line, via a detail span on the one dataclass.**
+- ~~Table-node click: Properties or navigate?~~ **both.**
+- ~~Column-node click target?~~ **that column's own line.**
+- ~~Buffer ordering?~~ **dual-grouped like the tree**, deterministic within a group.
+- ~~Lazy-synthesis / caching strategy?~~ **no cache at all**, so there is no invalidation rule to get wrong.
+- ~~Are the gaps acceptable, and the notice's granularity?~~ **`DEC-260811022536`: the per-column two
+  (identity/`SERIAL`, `GENERATED`) close now; inheritance and partitioning stay open, PENDING A CONSUMER**, with
+  the trigger condition filed as `DEC-260811094437`. Granularity: **per table**, because the gesture jumps into
+  the middle of the buffer and a notice at the top is invisible to it. **The two-gap notice is a decided
+  boundary, not an unfinished job** — §18.1 and §18.5's *Generate Deployment SQL* both say so.
 
 > **The pattern is worth recording once: three recommendations, three overrides.** Two of them (`Ctrl-R` and
 > the dialog) were argued here from *"do not withdraw an existing capability"*, and the owner weighed the
