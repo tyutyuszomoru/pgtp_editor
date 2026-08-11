@@ -33,8 +33,22 @@ NORMAL and would make every sentence ambiguous about which vocabulary it speaks.
 **No registers.** There is one shared SYSTEM clipboard, so a resolved command
 carries no register field and there is nothing here to hold one.
 
-**No visual mode.** `v` / `V` are insert-entry aliases (the user selects the
-Windows-native way), so there is no selection state in this machine either.
+**Still no visual MODE -- but there IS a selection notion (FQ-260812000331).**
+`v` / `V` remain insert-entry aliases: they drop to Edit mode, where the user
+selects the Windows-native way, and this machine never becomes a second mode
+machine. What they gained is a *side effect* on the widget (they switch on
+sticky / line selection), and what this machine gained is one **boolean**: fed in
+through :meth:`VimGrammar.set_selection_active`, it says whether the editor
+currently holds a selection. With one present, ``d`` / ``c`` / ``y`` resolve
+**immediately** against :data:`SELECTION` instead of waiting for a motion (and
+``x`` resolves to ``d`` over the selection). That is one bit of ambient fact, not
+a mode: no selection is stored here, no anchor, no granularity.
+
+**Text objects (BUG-260811234853).** In operator-pending state ``a`` / ``i``
+introduce a text object: ``daw`` / ``ciw`` / ``y2aw``. Only ``w`` is an object
+key in this scope -- ``a"``/``ib``/``ap`` and the SQL-structural objects are
+deliberately out. Outside operator-pending state ``a`` and ``i`` keep their
+insert-entry meanings, which is why the interception is gated on the operator.
 
 The v1 vocabulary, exactly:
 
@@ -42,7 +56,8 @@ The v1 vocabulary, exactly:
   ``f t F T`` · ``%`` · ``{ }``
 * **counts** -- ``N{motion}``, and ``N`` before or after an operator (they
   multiply, as in vim: ``2d3w`` is ``d6w``)
-* **operators** -- ``d`` ``c`` ``y`` + motion, the doubled ``dd yy cc``, and the
+* **operators** -- ``d`` ``c`` ``y`` + motion **or text object** (``aw`` /
+  ``iw``) **or the current selection**, the doubled ``dd yy cc``, and the
   shorthands ``x X D C Y s S`` which resolve to operator+motion pairs here
   rather than as separate actions in the widget
 * **actions** -- the insert-entry keys ``i a I A o O v V``, ``p`` ``P``,
@@ -66,6 +81,12 @@ REDO_KEY = "<C-r>"
 #: `linewise: bool` flag keeps the resolved command one shape.
 LINEWISE = "_"
 
+#: The "motion" an operator resolves to when the editor already holds a
+#: SELECTION (FQ-260812000331). Spelled as a motion for the same reason
+#: :data:`LINEWISE` is: the resolved command keeps ONE shape, so the widget gains
+#: a branch in `_vim_run_operator` rather than a second command kind.
+SELECTION = "@"
+
 #: The three operators. `x X D C Y s S` are shorthands for pairs of these and a
 #: motion, resolved here so the widget has one code path per operator.
 OPERATORS = frozenset("dcy")
@@ -82,10 +103,21 @@ CHAR_MOTIONS = frozenset("ftFT")
 INCLUSIVE_MOTIONS = frozenset({"e", "f", "t", "%"})
 
 #: The keys that leave Command mode for Edit mode without touching the buffer.
-#: `v` / `V` are in here because **there is no visual mode**: they drop to Edit
-#: mode so the user selects the Windows-native way (owner: selection is a
-#: Windows method).
+#: `v` / `V` are in here because **there is still no visual mode**: they drop to
+#: Edit mode so the user selects the Windows-native way (owner: selection is a
+#: Windows method). Since FQ-260812000331 they ALSO switch on the widget's
+#: sticky / line selection on their way out -- a side effect on the editor, not a
+#: mode in this machine.
 INSERT_ENTRY_ACTIONS = frozenset({"i", "a", "I", "A", "o", "O", "v", "V"})
+
+#: The two text-object SCOPES: `a` ("a word", with its whitespace) and `i`
+#: ("inner word", without). Read only in operator-pending state.
+TEXT_OBJECT_SCOPES = frozenset("ai")
+
+#: The object keys a scope may be completed with. `w` is the whole set on
+#: purpose (BUG-260811234853, owner-settled scope): quoted-string, bracket,
+#: paragraph and SQL-structural objects stay deferred.
+TEXT_OBJECTS = frozenset("w")
 
 #: Operator shorthands: key -> (operator, motion).
 _SHORTHANDS = {
@@ -123,7 +155,8 @@ class Command:
 
     * ``action`` set -- a standalone gesture (`i`, `p`, `u`, `r`, `/`, `:` ...).
       `r` carries the replacement character in :attr:`target`.
-    * ``operator`` set -- `d` / `c` / `y` over the range :attr:`motion` names.
+    * ``operator`` set -- `d` / `c` / `y` over the range :attr:`text_object`
+      names, else over the range :attr:`motion` names.
     * ``motion`` only -- move the caret.
     """
 
@@ -132,6 +165,11 @@ class Command:
     motion: str | None = None
     target: str | None = None
     action: str | None = None
+    #: The text object an operator consumes -- `"aw"` or `"iw"`. Set only
+    #: alongside :attr:`operator`, and mutually exclusive with :attr:`motion`,
+    #: because a text object is NOT a motion: `iw` reaches BACKWARD to the start
+    #: of the caret's own word, which no caret-relative min/max range can say.
+    text_object: str | None = None
     #: Whether the user actually TYPED a count. `G` and `42G` are different
     #: commands (last line vs line 42) and `count == 1` cannot tell them apart,
     #: so the fact that a count was given is carried rather than inferred.
@@ -141,6 +179,11 @@ class Command:
     def is_linewise(self) -> bool:
         """Whether the operator's range is whole lines (`dd`, `yy`, `cc`, `Y`, `S`)."""
         return self.motion == LINEWISE
+
+    @property
+    def is_selection(self) -> bool:
+        """Whether the operator's range is the editor's CURRENT SELECTION."""
+        return self.motion == SELECTION
 
     @property
     def is_inclusive(self) -> bool:
@@ -163,6 +206,11 @@ class VimGrammar:
     """
 
     def __init__(self) -> None:
+        #: Ambient FACT, not pending state: whether the editor holds a selection
+        #: right now. Deliberately NOT cleared by `reset()` -- `Esc` discards a
+        #: half-typed command, it does not un-select the buffer, and the widget
+        #: re-states this before every keystroke anyway.
+        self._selection_active = False
         self.reset()
 
     # -- state --------------------------------------------------------------
@@ -173,16 +221,28 @@ class VimGrammar:
         self._operator: str | None = None
         self._pending_g = False
         self._pending_char: str | None = None
+        self._pending_textobject: str | None = None
+
+    def set_selection_active(self, active: bool) -> None:
+        """Tell the machine whether the editor currently holds a selection.
+
+        This is the WHOLE of the selection notion here (FQ-260812000331): one
+        boolean, fed by the widget before each keystroke. There is no anchor, no
+        granularity and no visual mode in this machine -- the selection itself
+        lives in the `QTextCursor`, where it always did.
+        """
+        self._selection_active = bool(active)
 
     @property
     def is_pending(self) -> bool:
-        """Whether a command is half-typed (`42`, `d`, `d2`, `g`, `f`)."""
+        """Whether a command is half-typed (`42`, `d`, `d2`, `g`, `f`, `da`)."""
         return bool(
             self._pre_count
             or self._post_count
             or self._operator is not None
             or self._pending_g
             or self._pending_char is not None
+            or self._pending_textobject is not None
         )
 
     @property
@@ -196,6 +256,8 @@ class VimGrammar:
             parts.append("g")
         if self._pending_char:
             parts.append(self._pending_char)
+        if self._pending_textobject:
+            parts.append(self._pending_textobject)
         return "".join(parts)
 
     # -- parsing ------------------------------------------------------------
@@ -203,6 +265,8 @@ class VimGrammar:
         """Consume one keystroke; return a resolved command or None."""
         if self._pending_char is not None:
             return self._resolve_char_target(key)
+        if self._pending_textobject is not None:
+            return self._resolve_text_object(key)
         if self._pending_g:
             self._pending_g = False
             if key == "g":
@@ -228,6 +292,12 @@ class VimGrammar:
                 self.reset()  # `dr` is not a command; discard rather than guess
                 return None
             self._pending_char = "r"
+            return None
+        if self._operator is not None and key in TEXT_OBJECT_SCOPES:
+            # `daw` / `ciw`. Gated on the operator so BARE `a` and `i` keep
+            # their insert-entry meanings -- getting that gate wrong breaks
+            # append and insert, the two most-used keys in the vocabulary.
+            self._pending_textobject = key
             return None
         if key in SIMPLE_MOTIONS:
             return self._resolve_motion(key)
@@ -259,6 +329,11 @@ class VimGrammar:
         return bool(self._pre_count or self._post_count)
 
     def _feed_operator(self, key: str) -> Command | None:
+        if self._operator is None and self._selection_active:
+            # FQ-260812000331: with a selection present the operator has its
+            # target already, so it resolves NOW rather than waiting for a
+            # motion. This is what makes `v` → extend → `Esc` → `d` work.
+            return self._resolve_selection(key)
         if self._operator == key:
             command = Command(
                 count=self._count(),
@@ -285,6 +360,37 @@ class VimGrammar:
         self.reset()
         return command
 
+    def _resolve_selection(self, operator: str) -> Command:
+        command = Command(
+            count=self._count(),
+            operator=operator,
+            motion=SELECTION,
+            has_count=self._has_count(),
+        )
+        self.reset()
+        return command
+
+    def _resolve_text_object(self, key: str) -> Command | None:
+        """Complete `a` / `i` with its object key, or discard the command.
+
+        Anything but an object key is DISCARDED rather than guessed at -- the
+        `g`-then-something-else precedent, for the same reason: a half-typed
+        command that cannot be completed has no defensible completion.
+        """
+        scope = self._pending_textobject
+        self._pending_textobject = None
+        if key not in TEXT_OBJECTS or scope is None:
+            self.reset()
+            return None
+        command = Command(
+            count=self._count(),
+            operator=self._operator,
+            text_object=scope + key,
+            has_count=self._has_count(),
+        )
+        self.reset()
+        return command
+
     def _resolve_char_target(self, key: str) -> Command | None:
         pending = self._pending_char
         self._pending_char = None
@@ -305,7 +411,16 @@ class VimGrammar:
     def _resolve_standalone(self, key: str) -> Command:
         count = self._count()
         has_count = self._has_count()
+        selection_active = self._selection_active
         self.reset()
+        if key == "x" and selection_active:
+            # `x` is the one SHORTHAND the selection notion reaches (the owner
+            # named `y`/`c`/`d`/`x`): it deletes the selection instead of the
+            # character to the right. `X`/`D`/`C`/`Y`/`s`/`S` keep their
+            # motion pairs -- they name a range of their own.
+            return Command(
+                count=count, operator="d", motion=SELECTION, has_count=has_count
+            )
         if key in _SHORTHANDS:
             operator, motion = _SHORTHANDS[key]
             return Command(

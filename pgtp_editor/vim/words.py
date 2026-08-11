@@ -52,6 +52,105 @@ def char_class(char: str) -> int:
     return CLASS_PUNCTUATION
 
 
+def _line_bounds(text: str, pos: int) -> tuple[int, int]:
+    """The `[start, end)` offsets of the LINE containing `pos`, newline excluded."""
+    index = max(0, min(pos, len(text)))
+    start = text.rfind("\n", 0, index) + 1
+    end = text.find("\n", index)
+    return start, len(text) if end < 0 else end
+
+
+def _line_runs(text: str, start: int, end: int) -> list[tuple[int, int, int]]:
+    """The line's maximal same-class runs, as `(start, end, class)` triples."""
+    runs: list[tuple[int, int, int]] = []
+    index = start
+    while index < end:
+        run_class = char_class(text[index])
+        probe = index
+        while probe < end and char_class(text[probe]) == run_class:
+            probe += 1
+        runs.append((index, probe, run_class))
+        index = probe
+    return runs
+
+
+def _run_index(runs, pos: int) -> int:
+    for number, (start, end, _class) in enumerate(runs):
+        if start <= pos < end:
+            return number
+    return len(runs) - 1
+
+
+def inner_word_span(text: str, pos: int, count: int = 1) -> tuple[int, int] | None:
+    """`iw`: the run under the caret, and `count - 1` runs after it.
+
+    Vim's own quirk is kept: a run of WHITESPACE is an "inner word" too, so
+    `diw` on a gap deletes the gap. `2iw` therefore takes the word *and* the
+    whitespace after it, `3iw` the next word as well -- runs, not words.
+
+    Returns `None` when there is nothing to take (an empty line) or when `count`
+    OVERSHOOTS the line. Overshoot is refused rather than clamped, which is this
+    project's established answer for counts (`42j` on a 4-line file refuses).
+
+    Never crosses a line boundary: vim's word text objects are line-local, and a
+    `daw` that swallowed the newline would silently join two lines.
+    """
+    line_start, line_end = _line_bounds(text, pos)
+    if line_start >= line_end:
+        return None
+    runs = _line_runs(text, line_start, line_end)
+    first = _run_index(runs, max(line_start, min(pos, line_end - 1)))
+    last = first + max(1, count) - 1
+    if last >= len(runs):
+        return None
+    return runs[first][0], runs[last][1]
+
+
+def a_word_span(text: str, pos: int, count: int = 1) -> tuple[int, int] | None:
+    """`aw`: the word under the caret **plus its trailing whitespace**.
+
+    The pair's whole point is this difference from `iw`. Vim's rules, kept
+    exactly: with no trailing whitespace (the last word on the line) the
+    **preceding** whitespace is taken instead; and with the caret on whitespace,
+    `aw` is that whitespace *plus the word after it*.
+
+    `count` takes that many words with their whitespace, and OVERSHOOT returns
+    `None` rather than clamping. Line-local, for the reason
+    :func:`inner_word_span` states.
+    """
+    line_start, line_end = _line_bounds(text, pos)
+    if line_start >= line_end:
+        return None
+    runs = _line_runs(text, line_start, line_end)
+    first = _run_index(runs, max(line_start, min(pos, line_end - 1)))
+    wanted = max(1, count)
+
+    if runs[first][2] == CLASS_WHITESPACE:
+        # whitespace + word, `count` times over
+        index = first
+        for _ in range(wanted):
+            if index + 1 >= len(runs) or runs[index + 1][2] == CLASS_WHITESPACE:
+                return None
+            index += 2
+        return runs[first][0], runs[index - 1][1]
+
+    index = first
+    for number in range(wanted):
+        if index >= len(runs) or runs[index][2] == CLASS_WHITESPACE:
+            return None
+        end = runs[index][1]
+        index += 1
+        if number < wanted - 1 and index < len(runs) and runs[index][2] == CLASS_WHITESPACE:
+            end = runs[index][1]
+            index += 1
+    start = runs[first][0]
+    if index < len(runs) and runs[index][2] == CLASS_WHITESPACE:
+        end = runs[index][1]  # trailing whitespace
+    elif first > 0 and runs[first - 1][2] == CLASS_WHITESPACE:
+        start = runs[first - 1][0]  # none to trail: take the leading run instead
+    return start, end
+
+
 def word_forward(text: str, pos: int) -> int:
     """`w`: the start of the next word, or the end of `text` if there is none."""
     length = len(text)

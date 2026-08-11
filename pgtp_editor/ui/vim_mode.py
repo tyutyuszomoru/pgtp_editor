@@ -141,10 +141,31 @@ What this layer must NOT become
 * **No `sql/` call.** v1 motions are family-agnostic character and line
   arithmetic: `w`/`b`/`e` are vim's character-class rule (`pgtp_editor/vim/words`)
   and `%` is a character-level bracket scan, the same family as
-  `code_editor.enclosing_bracket_span`. `sql/block_spans.py::structure_chain` is
-  the DEFERRED text objects' dependency and is not consumed here -- this layer
-  serves XML, PHP and JS buffers too, so a motion reading a SQL span model would
-  be wrong on four of the six surfaces.
+  `code_editor.enclosing_bracket_span`. `sql/block_spans.py::structure_chain` was
+  named as the text objects' dependency, and `aw` / `iw` shipped
+  (`BUG-260811234853`) WITHOUT it -- by the same character-class rule as
+  `w`/`b`/`e`, because this layer serves XML, PHP and JS buffers too and an
+  object reading a SQL span model would be wrong on four of the six surfaces.
+
+The three later additions, and what each of them is NOT
+-------------------------------------------------------
+* **Text objects** `aw` / `iw` (`BUG-260811234853`) -- an operator target that is
+  not a motion, computed in `vim/words.py` as pure data. `a"` / `ib` / `ap` and
+  the SQL-structural objects stay out.
+* **Sticky / line selection** (`FQ-260812000331`) -- an **Edit mode** state in
+  which movement extends the selection, plus operators that act on a selection
+  when one exists. It is a deliberate MIDDLE GROUND and **not a vim Visual
+  sub-mode**: `v` / `V` remain insert-entry aliases that drop to Edit mode, the
+  indicator gains no third label, and the accepted cost is one extra `Esc` in the
+  `v` → extend → `Esc` → `d` flow, because operators live only in Command mode.
+  There is ONE toggle, :meth:`VimModeMixin.set_sticky_selection`, which the menu
+  command and `v` / `V` both call.
+* **The on-character caret and its coloured BLOCK** (`BUG-260812001031`) -- while
+  Command mode holds the caret sits ON a character rather than between two, which
+  is what makes `%` match the bracket under it and `y%` take both. **Edit mode's
+  between-characters caret is untouched**: the clamp is asked only in Command
+  mode, and only of the CARET -- the motions still resolve past the last
+  character, or `d$` could not delete it.
 
 Deviation from the spec's letter, stated rather than hidden
 ----------------------------------------------------------
@@ -160,8 +181,8 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QTextCursor
+from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPalette, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -177,6 +198,8 @@ from pgtp_editor.vim import (
     REDO_KEY,
     Command,
     VimGrammar,
+    a_word_span,
+    inner_word_span,
     word_backward,
     word_end,
     word_forward,
@@ -205,6 +228,30 @@ NO_BACKWARD_SEARCH = (
 
 #: What `/` and `n` say on a surface that has no Find bar at all.
 NO_FIND_BAR = "this editor has no Find bar to search with"
+
+#: What a text object says when the caret has no word to take, or when a count
+#: asks for more words than the line holds. **Refused, never clamped** -- the
+#: same answer `42j` gives on a four-line file.
+NO_TEXT_OBJECT = "there is no word here to take"
+
+#: The two granularities of sticky selection (FQ-260812000331). They are
+#: MUTUALLY EXCLUSIVE -- two granularities of one "keep selecting" state, not two
+#: independent flags -- so the state is one of these or `None`, never a pair of
+#: booleans that can both be true.
+STICKY_CHARACTER = "character"
+STICKY_LINE = "line"
+
+#: The Command-mode block caret's `(background, foreground)`, per theme
+#: (BUG-260812001031). Deliberately NOT the selection blue (`theme.py`'s
+#: `Highlight`, `0x3874F2`): the caret must be readable AS a mode cue while a
+#: selection is on screen beside it, which a second blue would not be.
+#:
+#: **These belong in `ui/theme.py`** next to `light_palette()`/`dark_palette()`,
+#: as a `command_caret_colors(light)` accessor; they are here only because
+#: `theme.py` was owned by a concurrent change when this shipped. Moving them is
+#: a lift, not a redesign -- the one reader is `_vim_block_caret_colors`.
+_COMMAND_CARET_LIGHT = ("#E56A00", "#FFFFFF")
+_COMMAND_CARET_DARK = ("#FFA500", "#1E1E1E")
 
 
 # -- the editing-mode change registry -----------------------------------------
@@ -455,6 +502,18 @@ class VimModeMixin:
         self._vim_command_line: VimCommandLine | None = None
         self._vim_command_provider = None
         self._vim_escape_fallback = None
+        #: `None`, :data:`STICKY_CHARACTER` or :data:`STICKY_LINE`. An **Edit
+        #: mode** state (FQ-260812000331), so it starts off exactly as the
+        #: editing mode does, and for the same reason: nothing is restored.
+        self._vim_sticky_kind: str | None = None
+        # The block caret must repaint where the caret WAS as well as where it
+        # is; Qt only repaints its own thin cursor's rect, so the viewport is
+        # asked for a full update on every Command-mode caret move.
+        self.cursorPositionChanged.connect(self._vim_caret_moved)
+
+    def _vim_caret_moved(self) -> None:
+        if self.in_command_mode:
+            self.viewport().update()
 
     # --- the ONE per-surface divergence in `Esc`'s meaning ------------------
     def set_command_mode_escape_fallback(self, callback) -> None:
@@ -525,8 +584,101 @@ class VimModeMixin:
             return False
         self._vim_command_mode = True
         self._vim_grammar.reset()
+        # The Command-mode caret is ON a character, so a caret parked past the
+        # last one (where Edit mode legitimately leaves it) is pulled back --
+        # vim's own rule, and what makes the block caret always cover a glyph.
+        self._vim_clamp_caret_to_character()
+        self.viewport().update()
         self._announce_editing_mode()
         return True
+
+    # --- the ON-CHARACTER caret model (Command mode only) -------------------
+    def _vim_clamp_caret_to_character(self) -> None:
+        """Pull the caret off the newline offset, keeping any selection.
+
+        **Command mode and Edit mode do not share this clamp, on purpose.** Edit
+        mode's caret sits BETWEEN characters and must be able to rest after the
+        last one -- that is where `a`, `A` and ordinary typing put it. Command
+        mode's caret is ON a character, which is what makes `%` match the bracket
+        the user sees under it and what gives `y%` both brackets.
+        """
+        cursor = self.textCursor()
+        block = cursor.block()
+        line_start = block.position()
+        last_character = max(line_start, line_start + block.length() - 2)
+        if cursor.position() <= last_character:
+            return
+        mode = (
+            QTextCursor.MoveMode.KeepAnchor
+            if cursor.hasSelection()
+            else QTextCursor.MoveMode.MoveAnchor
+        )
+        cursor.setPosition(last_character, mode)
+        self.setTextCursor(cursor)
+
+    # --- sticky / line selection (FQ-260812000331) --------------------------
+    @property
+    def sticky_selection_mode(self) -> str | None:
+        """:data:`STICKY_CHARACTER`, :data:`STICKY_LINE`, or None."""
+        return getattr(self, "_vim_sticky_kind", None)
+
+    def set_sticky_selection(self, kind: str | None) -> None:
+        """**The ONE toggle**, and the only writer of the sticky state.
+
+        The menu command and the `v` / `V` keys both land here -- one code path,
+        because two paths toggling one state can disagree and the user then sees
+        a caret that selects for no reason they can name. `kind` is
+        :data:`STICKY_CHARACTER`, :data:`STICKY_LINE`, or None to switch it off.
+
+        The anchor is FRESH at the caret: turning sticky on starts a new
+        selection rather than adopting whatever was selected before, so the
+        gesture means the same thing every time it is used.
+        """
+        if kind not in (None, STICKY_CHARACTER, STICKY_LINE):
+            raise ValueError(f"unknown sticky selection kind: {kind!r}")
+        self._vim_sticky_kind = kind
+        if kind is None:
+            return
+        cursor = self.textCursor()
+        cursor.setPosition(cursor.position())
+        self.setTextCursor(cursor)
+        if kind == STICKY_LINE:
+            self._vim_extend_selection_to_lines()
+
+    def toggle_sticky_selection(self) -> None:
+        """Character-wise sticky selection on/off -- the menu command's slot."""
+        self.set_sticky_selection(
+            None if self.sticky_selection_mode == STICKY_CHARACTER else STICKY_CHARACTER
+        )
+
+    def toggle_line_selection(self) -> None:
+        """Line-wise sticky selection on/off -- the menu command's slot.
+
+        Turning this on turns character-wise off: they are two granularities of
+        one state, not two states.
+        """
+        self.set_sticky_selection(
+            None if self.sticky_selection_mode == STICKY_LINE else STICKY_LINE
+        )
+
+    def _vim_extend_selection_to_lines(self) -> None:
+        """Grow the current selection out to whole lines (vim `V`'s feel)."""
+        cursor = self.textCursor()
+        document = self.document()
+        anchor, position = cursor.anchor(), cursor.position()
+        first = document.findBlock(min(anchor, position))
+        last = document.findBlock(max(anchor, position))
+        start = first.position()
+        end = min(
+            last.position() + last.length() - 1, document.characterCount() - 1
+        )
+        if position >= anchor:
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        else:
+            cursor.setPosition(end)
+            cursor.setPosition(start, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
 
     def _exit_command_mode(self) -> bool:
         """**The ONE reset path.** Drops to Edit mode, discards any pending
@@ -546,6 +698,10 @@ class VimModeMixin:
         if not getattr(self, "_vim_command_mode", False):
             return False
         self._vim_command_mode = False
+        # The block caret is painted only while the mode holds, so the viewport
+        # must be told -- otherwise a coloured block is left standing on a buffer
+        # that is back in Edit mode.
+        self.viewport().update()
         self._announce_editing_mode()
         return True
 
@@ -566,6 +722,10 @@ class VimModeMixin:
         """
         if not self._vim_focus_stays_in_command_mode():
             self._exit_command_mode()
+            # Sticky selection is transient editor state the user cannot see the
+            # boundary of, exactly like the mode itself, so it dies with focus
+            # rather than surprising them on the way back.
+            self._vim_sticky_kind = None
         super().focusOutEvent(event)
 
     def _vim_focus_stays_in_command_mode(self) -> bool:
@@ -599,7 +759,129 @@ class VimModeMixin:
         stack: pending command state (a half-typed `42d`) describes a document
         that no longer exists."""
         self._exit_command_mode()
+        self._vim_sticky_kind = None
         super().setPlainText(text)
+
+    # --- Edit-mode sticky selection, and the block caret's paint ------------
+    #: The Edit-mode movement keys sticky selection extends through. `Home`/`End`
+    #: are here because vim's `V` grows by whole lines and the user reaches for
+    #: them; `PageUp`/`PageDown` are Qt's own moves, not invented ones.
+    _STICKY_MOVES = {
+        Qt.Key.Key_Left: QTextCursor.MoveOperation.Left,
+        Qt.Key.Key_Right: QTextCursor.MoveOperation.Right,
+        Qt.Key.Key_Up: QTextCursor.MoveOperation.Up,
+        Qt.Key.Key_Down: QTextCursor.MoveOperation.Down,
+        Qt.Key.Key_Home: QTextCursor.MoveOperation.StartOfLine,
+        Qt.Key.Key_End: QTextCursor.MoveOperation.EndOfLine,
+        Qt.Key.Key_PageUp: QTextCursor.MoveOperation.Up,
+        Qt.Key.Key_PageDown: QTextCursor.MoveOperation.Down,
+    }
+
+    def keyPressEvent(self, event) -> None:
+        """Sticky selection's Edit-mode half: movement EXTENDS the selection.
+
+        Both host families end their own `keyPressEvent` with `super()`, so this
+        one answer serves all six surfaces and neither family gets a private
+        copy. It is a no-op unless sticky selection is on, which is the state
+        every editor is in until the menu command or `v` / `V` says otherwise.
+        """
+        if getattr(self, "_vim_sticky_kind", None) and not self.isReadOnly():
+            if self._vim_sticky_key(event):
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def _vim_sticky_key(self, event) -> bool:
+        key = event.key()
+        modifiers = event.modifiers()
+        if modifiers & (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.AltModifier
+            | Qt.KeyboardModifier.MetaModifier
+        ):
+            return False
+        move = self._STICKY_MOVES.get(key)
+        if move is not None:
+            cursor = self.textCursor()
+            steps = 1
+            if key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown):
+                steps = max(1, self.viewport().height() // max(1, self.fontMetrics().height()))
+            cursor.movePosition(move, QTextCursor.MoveMode.KeepAnchor, steps)
+            self.setTextCursor(cursor)
+            if self._vim_sticky_kind == STICKY_LINE:
+                self._vim_extend_selection_to_lines()
+            self.ensureCursorVisible()
+            return True
+        if event.text() and event.text().isprintable():
+            # Typing replaces the selection and resumes ordinary typing: the
+            # gesture is over, so the state that made it goes with it.
+            self._vim_sticky_kind = None
+        return False
+
+    def mousePressEvent(self, event) -> None:
+        """A click ends the sticky gesture -- the user is selecting by hand now,
+        and a click that silently kept extending would be a caret nobody asked
+        for. The mouse still never changes the editing MODE."""
+        self._vim_sticky_kind = None
+        super().mousePressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        """Paint the Command-mode BLOCK caret over Qt's thin one.
+
+        Why painted rather than `setCursorWidth` or an `ExtraSelection`: a fixed
+        cursor width is wrong on any glyph that is not one space wide, and
+        `XmlEditor` funnels **every** extra selection through one
+        `setExtraSelections` call, so a second writer here would fight it. A paint
+        pass owns nothing and clobbers nothing.
+        """
+        super().paintEvent(event)
+        if not self.in_command_mode or self.isReadOnly():
+            return
+        self._vim_paint_block_caret()
+
+    def _vim_block_caret_colors(self) -> tuple[QColor, QColor]:
+        """`(background, foreground)` for the block caret, following the theme.
+
+        Read from THIS widget's palette, so it is right in a light window and a
+        dark one without a setting. **Not a `setPalette` on the widget** -- that
+        is inert under the app-level QSS (`BUG-260811021804`); the colours are
+        used to paint directly, which nothing can override.
+        """
+        light = self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+        background, foreground = (
+            _COMMAND_CARET_LIGHT if light else _COMMAND_CARET_DARK
+        )
+        return QColor(background), QColor(foreground)
+
+    def _vim_block_caret_rect(self) -> tuple[QRect, str]:
+        """The block's rectangle and the character under it."""
+        cursor = self.textCursor()
+        rect = self.cursorRect(cursor)
+        line = cursor.block().text()
+        column = cursor.position() - cursor.block().position()
+        character = line[column] if 0 <= column < len(line) else ""
+        metrics = self.fontMetrics()
+        width = metrics.horizontalAdvance(
+            character if character.strip() else " "
+        )
+        return QRect(rect.left(), rect.top(), max(1, width), rect.height()), character
+
+    def _vim_paint_block_caret(self) -> None:
+        rect, character = self._vim_block_caret_rect()
+        background, foreground = self._vim_block_caret_colors()
+        painter = QPainter(self.viewport())
+        try:
+            painter.fillRect(rect, background)
+            if character.strip():
+                painter.setPen(foreground)
+                painter.setFont(self.font())
+                painter.drawText(
+                    rect,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    character,
+                )
+        finally:
+            painter.end()
 
     # --- the `Ctrl+R` interposer ------------------------------------------
     def event(self, e) -> bool:
@@ -723,6 +1005,10 @@ class VimModeMixin:
         return True
 
     def _vim_feed(self, token: str) -> bool:
+        # The grammar's selection notion is one boolean, re-stated before every
+        # keystroke rather than pushed on every selection change: the fact is
+        # cheap to read and a pushed copy is a second source of truth.
+        self._vim_grammar.set_selection_active(self.textCursor().hasSelection())
         command = self._vim_grammar.feed(token)
         if command is None:
             return True
@@ -741,8 +1027,21 @@ class VimModeMixin:
         if position is None:
             return
         cursor = self.textCursor()
-        cursor.setPosition(position)
+        if self.sticky_selection_mode is not None:
+            # A motion under sticky selection EXTENDS it, exactly as the arrow
+            # keys do in Edit mode -- one state, answered the same way by both
+            # vocabularies.
+            cursor.setPosition(position, QTextCursor.MoveMode.KeepAnchor)
+        else:
+            cursor.setPosition(position)
         self.setTextCursor(cursor)
+        if self.sticky_selection_mode == STICKY_LINE:
+            self._vim_extend_selection_to_lines()
+        # The caret sits ON a character in Command mode, so a motion that
+        # resolved to the newline offset (`$`, and `l` at the line's end) is
+        # pulled back by one. The MOTION still resolves to the offset past the
+        # last character, because `d$` must delete it.
+        self._vim_clamp_caret_to_character()
         self.ensureCursorVisible()
 
     # --- motions -----------------------------------------------------------
@@ -966,19 +1265,31 @@ class VimModeMixin:
     def _vim_run_operator(self, command: Command) -> None:
         """`d` / `c` / `y` over the range `command.motion` names.
 
-        **There is no visual mode and therefore no selection target**: the two
-        ways to operate on a range are operator+motion here, or select
-        Windows-style and use `Ctrl+C`/`Ctrl+X`/`Delete` in Edit mode. A `d`
-        pressed after a Windows-style selection is a Command-mode `d` waiting for
-        a motion, not *"delete the selection"*.
+        There is still no visual MODE, but there are now **four** ranges an
+        operator can name (FQ-260812000331, BUG-260811234853), in this order:
+
+        1. the **current selection**, when the editor holds one -- however it was
+           made: sticky/line selection, `Shift`+arrows, or the mouse. There is no
+           "vim selection" distinct from a Windows one, which is the whole point
+           of the middle ground the owner chose;
+        2. a **text object**, `aw` / `iw`;
+        3. whole **lines**, for the doubled operators;
+        4. a **motion**.
         """
-        span = (
-            self._vim_linewise_span(command)
-            if command.is_linewise
-            else self._vim_motion_span(command)
-        )
+        if command.is_selection:
+            span = self._vim_selection_span()
+        elif command.text_object is not None:
+            span = self._vim_textobject_span(command)
+        elif command.is_linewise:
+            span = self._vim_linewise_span(command)
+        else:
+            span = self._vim_motion_span(command)
         if span is None:
             return
+        if command.is_selection:
+            # The gesture is finished: the selection has been consumed, so the
+            # state that was growing it goes with it.
+            self._vim_sticky_kind = None
         start, end, clipboard_text = span
         self._vim_to_clipboard(clipboard_text)
         cursor = self.textCursor()
@@ -995,10 +1306,50 @@ class VimModeMixin:
         finally:
             cursor.endEditBlock()
         self.setTextCursor(cursor)
+        if command.operator != "c":
+            # A delete can leave the caret past the last character (`x` on the
+            # line's end), which the on-character model does not allow -- and
+            # which would paint the block caret over nothing. **`c` is excluded
+            # deliberately**: it lands in EDIT mode, where the caret belongs
+            # exactly where the text was removed, newline offset or not.
+            self._vim_clamp_caret_to_character()
         self.ensureCursorVisible()
         if command.operator == "c":
             # Exit trigger 2: `c{motion}` lands in Edit mode by definition.
             self._exit_command_mode()
+
+    def _vim_selection_span(self):
+        """The editor's current selection, as an operator range."""
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return None
+        start, end = cursor.selectionStart(), cursor.selectionEnd()
+        return start, end, self._vim_text_between(start, end)
+
+    def _vim_textobject_span(self, command: Command):
+        """`aw` / `iw` around the caret -- **not** a motion range.
+
+        Computed in the Qt-free `pgtp_editor/vim/words.py`, by the same
+        character-class rule as `w`/`b`/`e` and for the same boundary reason: this
+        layer serves XML, PHP and JS buffers, so a text object that consulted a
+        SQL span model would be wrong on four of the six surfaces.
+
+        A text object may not go through `_vim_motion_span`: `iw` reaches
+        BACKWARD to the start of the caret's own word as well as forward, which no
+        caret-relative min/max range can express.
+        """
+        text = self.toPlainText()
+        position = self.textCursor().position()
+        span = (
+            a_word_span(text, position, command.count)
+            if command.text_object == "aw"
+            else inner_word_span(text, position, command.count)
+        )
+        if span is None:
+            self.report_refusal(NO_TEXT_OBJECT)
+            return None
+        start, end = span
+        return start, end, self._vim_text_between(start, end)
 
     def _vim_motion_span(self, command: Command):
         cursor = self.textCursor()
@@ -1007,7 +1358,11 @@ class VimModeMixin:
         if target is None:
             return None
         start, end = min(position, target), max(position, target)
-        if command.is_inclusive and target > position:
+        if command.is_inclusive:
+            # Inclusive means the range covers the character at its far end --
+            # in EITHER direction. `y%` from a closing bracket scans backwards
+            # and must still yank both brackets, which is exactly the one the
+            # forward-only form dropped (BUG-260812001031).
             end = min(end + 1, self.document().characterCount() - 1)
         return start, end, self._vim_text_between(start, end)
 
@@ -1069,10 +1424,17 @@ class VimModeMixin:
     def _vim_run_action(self, command: Command) -> None:
         action = command.action
         if action in ("i", "v", "V"):
-            # `v` / `V` are **insert-entry aliases**: there is NO visual mode, so
-            # they drop to Edit mode and the user selects the Windows-native way,
-            # with the mouse or Shift+motion (owner: selection is a Windows
-            # method).
+            # `v` / `V` are **still insert-entry aliases**: there is no visual
+            # mode, so they drop to Edit mode where selection is the
+            # Windows-native gesture. What they gained (FQ-260812000331) is a
+            # side effect on the way out -- they switch on sticky (`v`) or line
+            # (`V`) selection by calling THE SAME toggle the menu command calls,
+            # never a parallel path, because two paths toggling one state
+            # eventually disagree.
+            if action in ("v", "V"):
+                self.set_sticky_selection(
+                    STICKY_CHARACTER if action == "v" else STICKY_LINE
+                )
             self._exit_command_mode()
             return
         if action in ("a", "I", "A", "o", "O"):

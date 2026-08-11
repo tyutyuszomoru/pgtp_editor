@@ -12,11 +12,18 @@ from pgtp_editor.vim import (
     CLASS_KEYWORD,
     CLASS_PUNCTUATION,
     CLASS_WHITESPACE,
+    a_word_span,
     char_class,
+    inner_word_span,
     word_backward,
     word_end,
     word_forward,
 )
+
+
+def taken(span, text):
+    """The text a span covers -- what the operator would actually delete."""
+    return None if span is None else text[span[0]:span[1]]
 
 
 @pytest.mark.parametrize(
@@ -99,6 +106,102 @@ def test_e_past_the_end_answers_the_last_character():
 def test_a_punctuation_run_is_one_word_for_e_too():
     text = "a===b"
     assert word_end(text, 0) == 3  # the last '='
+
+
+# -- the `aw` / `iw` text objects (BUG-260811234853) --------------------------
+TEXT = "alpha beta gamma"
+
+
+@pytest.mark.parametrize("pos", [0, 2, 4])
+def test_iw_takes_the_word_the_caret_is_on_wherever_in_it_the_caret_sits(pos):
+    """A text object is not a motion: `iw` reaches BACKWARD to the word's start
+    as well as forward, which no caret-relative range can say."""
+    assert taken(inner_word_span(TEXT, pos), TEXT) == "alpha"
+
+
+@pytest.mark.parametrize("pos", [0, 2, 4])
+def test_aw_takes_the_word_AND_its_trailing_whitespace(pos):
+    """The whole point of the pair, and the difference a `daw` user feels."""
+    assert taken(a_word_span(TEXT, pos), TEXT) == "alpha "
+
+
+def test_aw_on_the_LAST_word_takes_the_PRECEDING_whitespace_instead():
+    """Vim's own rule: with no trailing whitespace to take, `aw` takes the gap in
+    front, so `daw` never leaves a dangling space behind."""
+    assert taken(a_word_span(TEXT, TEXT.index("gamma")), TEXT) == " gamma"
+
+
+def test_iw_on_the_last_word_takes_no_whitespace_at_all():
+    assert taken(inner_word_span(TEXT, TEXT.index("gamma")), TEXT) == "gamma"
+
+
+def test_iw_ON_WHITESPACE_takes_the_whitespace_run_which_is_vims_quirk():
+    text = "alpha    beta"
+    assert taken(inner_word_span(text, 6), text) == "    "
+
+
+def test_aw_ON_WHITESPACE_takes_the_whitespace_AND_the_word_after_it():
+    text = "alpha    beta"
+    assert taken(a_word_span(text, 6), text) == "    beta"
+
+
+def test_a_punctuation_run_is_its_own_word_for_both_objects():
+    text = "a === b"
+    assert taken(inner_word_span(text, 3), text) == "==="
+    assert taken(a_word_span(text, 3), text) == "=== "
+
+
+def test_adjacent_runs_of_different_classes_are_separate_words():
+    text = "table.column"
+    assert taken(inner_word_span(text, 0), text) == "table"
+    assert taken(a_word_span(text, 0), text) == "table"  # no whitespace either side
+
+
+def test_counts_take_that_many_words_with_the_whitespace_between_them():
+    assert taken(a_word_span(TEXT, 0, 2), TEXT) == "alpha beta "
+    # Three words is the whole line: no trailing whitespace to take, and none in
+    # front of the first word either, so the span is simply the line.
+    assert taken(a_word_span(TEXT, 0, 3), TEXT) == "alpha beta gamma"
+
+
+def test_a_count_for_iw_counts_RUNS_the_way_vim_does():
+    assert taken(inner_word_span(TEXT, 0, 2), TEXT) == "alpha "
+    assert taken(inner_word_span(TEXT, 0, 3), TEXT) == "alpha beta"
+
+
+def test_a_count_that_OVERSHOOTS_is_refused_rather_than_clamped():
+    """The project's established answer for counts -- `42j` on a four-line file
+    refuses too, and a text object may not be the one place that clamps."""
+    assert a_word_span(TEXT, 0, 9) is None
+    assert inner_word_span(TEXT, 0, 9) is None
+
+
+def test_neither_object_crosses_a_LINE_boundary():
+    """A `daw` that swallowed the newline would silently join two lines, and the
+    trailing-whitespace rule would eat the next line's indent."""
+    text = "alpha\n    beta"
+    assert taken(a_word_span(text, 0), text) == "alpha"
+    assert taken(inner_word_span(text, 0), text) == "alpha"
+    assert a_word_span(text, 0, 2) is None
+
+
+def test_an_empty_line_has_no_word_to_take_and_says_so_rather_than_raising():
+    text = "alpha\n\nbeta"
+    assert inner_word_span(text, 6) is None
+    assert a_word_span(text, 6) is None
+
+
+def test_an_offset_past_the_end_answers_the_last_word_rather_than_raising():
+    """This module's contract: a boundary is answered, never raised at."""
+    assert taken(inner_word_span(TEXT, 999), TEXT) == "gamma"
+    assert taken(a_word_span(TEXT, 999), TEXT) == " gamma"
+    assert inner_word_span("", 0) is None
+
+
+def test_the_objects_need_no_language_either():
+    for text in ('<Page name="x">', "$row['id'] = 1;", "select a from t"):
+        span = a_word_span(text, 1)
+        assert span is not None and 0 <= span[0] <= span[1] <= len(text)
 
 
 def test_none_of_these_functions_needs_a_language():

@@ -23,8 +23,9 @@ motion may consume `sql/block_spans.py::structure_chain`.** `w` / `b` / `e` are
 defined by **character class**, and this layer serves XML, PHP and JS buffers as
 well as SQL -- four of the six editing surfaces have no SQL to tokenize, so a
 motion that consulted a SQL span model would be wrong on most of them. That
-chain's FQ-032 caller is the deferred text objects (`ciw`, `di"`, `ci(`), which
-are out of v1 scope.
+chain was named as the text objects' dependency; `aw` / `iw` shipped
+(BUG-260811234853) WITHOUT it, as pure character-class arithmetic, for exactly
+the reason above. `di"` / `ci(` / `ap` remain out of scope.
 """
 from pgtp_editor.vim.grammar import (
     CHAR_MOTIONS,
@@ -33,7 +34,10 @@ from pgtp_editor.vim.grammar import (
     LINEWISE,
     OPERATORS,
     REDO_KEY,
+    SELECTION,
     SIMPLE_MOTIONS,
+    TEXT_OBJECT_SCOPES,
+    TEXT_OBJECTS,
     Command,
     VimGrammar,
 )
@@ -41,7 +45,9 @@ from pgtp_editor.vim.words import (
     CLASS_KEYWORD,
     CLASS_PUNCTUATION,
     CLASS_WHITESPACE,
+    a_word_span,
     char_class,
+    inner_word_span,
     word_backward,
     word_end,
     word_forward,
@@ -58,9 +64,14 @@ __all__ = [
     "LINEWISE",
     "OPERATORS",
     "REDO_KEY",
+    "SELECTION",
     "SIMPLE_MOTIONS",
+    "TEXT_OBJECTS",
+    "TEXT_OBJECT_SCOPES",
     "VimGrammar",
+    "a_word_span",
     "char_class",
+    "inner_word_span",
     "word_backward",
     "word_end",
     "word_forward",

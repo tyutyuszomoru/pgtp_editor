@@ -564,6 +564,14 @@ def test_hjkl(editor):
 
 
 def test_zero_caret_and_dollar(editor):
+    """`$` lands on the LAST CHARACTER, not past it (BUG-260812001031).
+
+    That is the on-character caret model: in Command mode the caret is *on* a
+    glyph -- which is what the block caret paints and what makes `%` match the
+    bracket the user sees under it. Edit mode's between-characters caret is
+    unchanged and still rests past the last character, which is where `a` and
+    `A` put it.
+    """
     place(editor, TEXT.index("second") + 2)
     escape(editor)
     press(editor, "0")
@@ -571,7 +579,8 @@ def test_zero_caret_and_dollar(editor):
     press(editor, "^")
     assert caret(editor) == TEXT.index("second")
     press(editor, "$")
-    assert caret(editor) == TEXT.index("second line here") + len("second line here")
+    last_character = TEXT.index("second line here") + len("second line here") - 1
+    assert caret(editor) == last_character
 
 
 def test_gg_and_G_and_NG(editor):
@@ -860,8 +869,13 @@ def test_v_and_V_are_aliases_and_add_NO_visual_selection(editor):
     assert not editor.in_command_mode
 
 
-def test_a_d_after_a_windows_style_selection_WAITS_for_a_motion(editor):
-    """Not *"delete the selection"* -- there is no visual mode to make it that."""
+def test_a_d_after_a_windows_style_selection_DELETES_IT(editor):
+    """**Reversed by FQ-260812000331**, deliberately: `d` used to wait for a
+    motion here, because there was no selection notion at all. There still is no
+    visual MODE -- what there is now is a selection the operators can see, and it
+    does not matter whether the mouse, `Shift`+arrows or sticky selection made
+    it. That is the middle ground the owner chose over a real Visual mode.
+    """
     editor.setPlainText("alpha beta\n")
     cursor = editor.textCursor()
     cursor.setPosition(0)
@@ -869,8 +883,8 @@ def test_a_d_after_a_windows_style_selection_WAITS_for_a_motion(editor):
     editor.setTextCursor(cursor)
     escape(editor)
     press(editor, "d")
-    assert editor.toPlainText() == "alpha beta\n"
-    assert editor._vim_grammar.is_pending
+    assert editor.toPlainText() == " beta\n"
+    assert not editor._vim_grammar.is_pending
 
 
 def test_o_and_O_open_a_line_below_and_above(editor):
@@ -896,6 +910,519 @@ def test_A_goes_to_the_end_of_the_line_and_I_to_the_first_non_blank(editor):
     escape(editor)
     press(editor, "A")
     assert caret(editor) == len("    body")
+
+
+# ---------------------------------------------------------------------------
+# Text objects -- `aw` / `iw` (BUG-260811234853)
+#
+# The reported defect was that `caw`/`daw`/`yaw` did *nothing coherent*: `a` was
+# an insert-entry key, so the operator was discarded and the `w` ran as a bare
+# motion. These assert the whole pair against each operator, because the reason
+# the pair exists is the whitespace difference.
+# ---------------------------------------------------------------------------
+
+def test_daw_deletes_the_word_AND_its_trailing_whitespace(editor):
+    editor.setPlainText("alpha beta gamma\n")
+    place(editor, 2)
+    escape(editor)
+    press(editor, "daw")
+    assert editor.toPlainText() == "beta gamma\n"
+
+
+def test_diw_deletes_ONLY_the_word(editor):
+    editor.setPlainText("alpha beta gamma\n")
+    place(editor, 2)
+    escape(editor)
+    press(editor, "diw")
+    assert editor.toPlainText() == " beta gamma\n"
+
+
+def test_yaw_yanks_to_the_ONE_system_clipboard_and_leaves_the_buffer(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 2)
+    escape(editor)
+    press(editor, "yaw")
+    assert editor.toPlainText() == "alpha beta\n"
+    assert QApplication.clipboard().text() == "alpha "
+    assert caret(editor) == 0  # vim leaves the caret at the start of a yank
+
+
+def test_yiw_takes_the_word_without_its_whitespace(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 2)
+    escape(editor)
+    press(editor, "yiw")
+    assert QApplication.clipboard().text() == "alpha"
+
+
+def test_caw_deletes_the_object_and_lands_in_EDIT_mode(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 2)
+    escape(editor)
+    press(editor, "caw")
+    assert editor.toPlainText() == "beta\n"
+    assert not editor.in_command_mode
+
+
+def test_ciw_is_the_change_a_vim_user_reaches_for_most(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 2)
+    escape(editor)
+    press(editor, "ciw")
+    assert editor.toPlainText() == " beta\n"
+    assert not editor.in_command_mode
+    press(editor, "X")  # Edit mode: the letter types again
+    assert editor.toPlainText() == "X beta\n"
+
+
+def test_caw_on_the_last_word_leaves_the_caret_where_the_text_WAS(editor):
+    """`c` lands in Edit mode, where the between-characters caret is correct --
+    so the Command-mode on-character clamp must not pull it back over the space
+    it just left behind."""
+    editor.setPlainText("alpha beta\n")
+    place(editor, len("alpha b"))
+    escape(editor)
+    press(editor, "caw")
+    assert editor.toPlainText() == "alpha\n"
+    press(editor, "X")
+    assert editor.toPlainText() == "alphaX\n"
+
+
+def test_a_text_object_at_the_END_of_the_line_takes_the_PRECEDING_whitespace(editor):
+    """Vim's `aw` rule, and what stops `daw` leaving a dangling space."""
+    editor.setPlainText("alpha beta\n")
+    place(editor, len("alpha b"))
+    escape(editor)
+    press(editor, "daw")
+    assert editor.toPlainText() == "alpha\n"
+
+
+def test_a_text_object_ON_WHITESPACE_takes_the_gap_and_the_word_after_it(editor):
+    editor.setPlainText("alpha   beta\n")
+    place(editor, 6)
+    escape(editor)
+    press(editor, "daw")
+    assert editor.toPlainText() == "alpha\n"
+
+
+def test_a_text_object_on_a_PUNCTUATION_run_takes_that_run(editor):
+    editor.setPlainText("a === b\n")
+    place(editor, 3)
+    escape(editor)
+    press(editor, "diw")
+    assert editor.toPlainText() == "a  b\n"
+
+
+def test_a_counted_text_object_takes_that_many_words(editor):
+    editor.setPlainText("one two three four\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "d2aw")
+    assert editor.toPlainText() == "three four\n"
+
+
+def test_the_count_may_be_typed_before_the_operator_too(editor):
+    editor.setPlainText("one two three four\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "2daw")
+    assert editor.toPlainText() == "three four\n"
+
+
+def test_a_text_object_count_that_OVERSHOOTS_is_refused_rather_than_clamped(editor):
+    """The same answer `42j` gives on a four-line file: refuse, and say why."""
+    refusals = []
+    editor.expansion_refused.connect(refusals.append)
+    editor.setPlainText("one two\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "d9aw")
+    assert editor.toPlainText() == "one two\n"
+    assert refusals and "word" in refusals[0]
+
+
+def test_a_text_object_never_joins_two_lines(editor):
+    editor.setPlainText("alpha\nbeta\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "daw")
+    assert editor.toPlainText() == "\nbeta\n"
+
+
+def test_bare_a_and_i_are_STILL_insert_entry_in_command_mode(editor):
+    """The gate the text objects hang on: `a` appends and `i` inserts when no
+    operator is pending, which is what makes them the most-used keys here."""
+    editor.setPlainText("ab\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "a")
+    assert not editor.in_command_mode
+    assert caret(editor) == 1
+    escape(editor)
+    press(editor, "i")
+    assert not editor.in_command_mode
+
+
+def test_a_text_object_answers_the_same_way_on_XML_text(xml):
+    """Character classes, not a SQL model -- four of the six surfaces have no SQL
+    to tokenize."""
+    xml.setPlainText('<Page name="x">\n')
+    place(xml, 6)  # inside "name"
+    escape(xml)
+    press(xml, "diw")
+    assert xml.toPlainText().startswith('<Page ="x">')
+
+
+# ---------------------------------------------------------------------------
+# Sticky / line selection, and the selection-aware operators
+# (FQ-260812000331 -- a middle ground, NOT a vim Visual sub-mode)
+# ---------------------------------------------------------------------------
+
+def arrow(editor, key, count=1):
+    for _ in range(count):
+        QTest.keyClick(editor, key)
+
+
+def test_v_switches_on_sticky_selection_on_its_way_to_edit_mode(editor):
+    """`v` is STILL an insert-entry alias -- there is no visual mode. What it
+    gained is a side effect, invoked through the one toggle."""
+    place(editor, 0)
+    escape(editor)
+    press(editor, "v")
+    assert not editor.in_command_mode
+    assert editor.sticky_selection_mode == vim_mode.STICKY_CHARACTER
+
+
+def test_V_switches_on_LINE_selection_and_the_two_are_MUTUALLY_EXCLUSIVE(editor):
+    place(editor, 0)
+    escape(editor)
+    press(editor, "V")
+    assert editor.sticky_selection_mode == vim_mode.STICKY_LINE
+    escape(editor)
+    press(editor, "v")
+    assert editor.sticky_selection_mode == vim_mode.STICKY_CHARACTER
+
+
+def test_v_and_the_MENU_COMMAND_share_ONE_toggle(editor):
+    """Two paths toggling one state eventually disagree, and the user then sees a
+    caret that selects for no reason they can name."""
+    import inspect
+
+    from pgtp_editor.ui.vim_mode import VimModeMixin
+
+    source = inspect.getsource(VimModeMixin._vim_run_action)
+    assert "set_sticky_selection" in source
+    for slot in (VimModeMixin.toggle_sticky_selection, VimModeMixin.toggle_line_selection):
+        assert "set_sticky_selection" in inspect.getsource(slot)
+
+
+def test_ordinary_movement_EXTENDS_the_selection_while_sticky_is_on(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    arrow(editor, Qt.Key.Key_Right, 5)
+    assert editor.textCursor().selectedText() == "alpha"
+
+
+def test_line_selection_grows_by_WHOLE_lines(editor):
+    editor.setPlainText("one\ntwo\nthree\n")
+    place(editor, 1)
+    editor.set_sticky_selection(vim_mode.STICKY_LINE)
+    assert editor.textCursor().selectedText() == "one"
+    arrow(editor, Qt.Key.Key_Down)
+    assert editor.textCursor().selectedText().replace(" ", "\n") == "one\ntwo"
+
+
+def test_the_toggle_starts_a_FRESH_anchor_at_the_caret(editor):
+    editor.setPlainText("alpha beta\n")
+    cursor = editor.textCursor()
+    cursor.setPosition(0)
+    cursor.setPosition(5, cursor.MoveMode.KeepAnchor)
+    editor.setTextCursor(cursor)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    assert not editor.textCursor().hasSelection()
+
+
+@pytest.mark.parametrize("operator,expected", [("d", " beta\n"), ("x", " beta\n")])
+def test_d_and_x_act_on_the_selection_when_there_is_one(editor, operator, expected):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    arrow(editor, Qt.Key.Key_Right, 5)
+    escape(editor)
+    press(editor, operator)
+    assert editor.toPlainText() == expected
+
+
+def test_y_copies_the_selection_and_c_deletes_it_and_drops_to_edit_mode(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    arrow(editor, Qt.Key.Key_Right, 5)
+    escape(editor)
+    press(editor, "y")
+    assert QApplication.clipboard().text() == "alpha"
+    assert editor.toPlainText() == "alpha beta\n"
+
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    place(editor, 0)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    arrow(editor, Qt.Key.Key_Right, 5)
+    escape(editor)
+    press(editor, "c")
+    assert editor.toPlainText() == " beta\n"
+    assert not editor.in_command_mode
+
+
+def test_an_operator_falls_back_to_the_MOTION_when_nothing_is_selected(editor):
+    """Selection-aware, not selection-only: with no selection `d` is still an
+    operator waiting for a motion."""
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "dw")
+    assert editor.toPlainText() == "beta\n"
+
+
+def test_the_whole_v_extend_ESC_d_flow_including_its_accepted_extra_Esc(editor):
+    """The owner's recorded muscle-memory flow, and its ONE structural extra
+    `Esc`: operators exist only in Command mode, so you step back into it before
+    operating. A true Visual mode was rejected deliberately."""
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "v")           # sticky on, Edit mode
+    arrow(editor, Qt.Key.Key_Right, 5)
+    escape(editor)               # the accepted extra Esc
+    press(editor, "d")
+    assert editor.toPlainText() == " beta\n"
+
+
+def test_consuming_the_selection_ENDS_the_sticky_gesture(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    arrow(editor, Qt.Key.Key_Right, 5)
+    escape(editor)
+    press(editor, "d")
+    assert editor.sticky_selection_mode is None
+
+
+def test_typing_a_printable_character_ends_the_sticky_gesture(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    arrow(editor, Qt.Key.Key_Right, 5)
+    press(editor, "z")
+    assert editor.sticky_selection_mode is None
+    assert editor.toPlainText() == "z beta\n"
+
+
+def test_a_mouse_click_ends_the_sticky_gesture_but_not_the_editing_mode(editor):
+    from PySide6.QtCore import QPoint
+
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    QTest.mouseClick(
+        editor.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(4, 4)
+    )
+    assert editor.sticky_selection_mode is None
+    assert not editor.in_command_mode
+
+
+def test_focus_loss_ends_the_sticky_gesture_the_way_it_ends_the_mode(editor):
+    editor.setFocus()
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    escape(editor)
+    editor.clearFocus()
+    assert editor.sticky_selection_mode is None
+    assert not editor.in_command_mode
+
+
+def test_a_read_only_editor_has_NO_sticky_selection_either(editor):
+    """The layer is inactive ENTIRELY on a read-only buffer."""
+    editor.setReadOnly(True)
+    editor.set_sticky_selection(vim_mode.STICKY_CHARACTER)
+    place(editor, 0)
+    arrow(editor, Qt.Key.Key_Right, 3)
+    assert not editor.textCursor().hasSelection()
+
+
+def test_there_is_still_NO_visual_mode_in_the_indicator(editor):
+    """The middle ground adds no third editing mode: the indicator keeps its two
+    labels, because sticky selection is a selection state, not a mode."""
+    place(editor, 0)
+    escape(editor)
+    press(editor, "v")
+    assert editor.editing_mode_label() == EDITING_EDIT
+    assert mode_text("", "", EDITING_EDIT).count("mode") >= 1
+
+
+# ---------------------------------------------------------------------------
+# The on-character caret model and the coloured BLOCK caret
+# (BUG-260812001031)
+# ---------------------------------------------------------------------------
+
+def block_caret_pixel(editor):
+    """The colour actually RENDERED at the caret's top-left character cell.
+
+    Pixels, not a palette read-back: a per-widget `setPalette` is inert under the
+    app-level QSS (`BUG-260811021804`), so only what reaches the screen counts.
+    """
+    QApplication.processEvents()
+    image = editor.viewport().grab().toImage()
+    rect = editor.cursorRect(editor.textCursor())
+    return image.pixelColor(rect.left() + 1, rect.top() + rect.height() // 2)
+
+
+def test_the_command_mode_caret_is_painted_as_a_COLOURED_BLOCK(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    escape(editor)
+    expected, _foreground = editor._vim_block_caret_colors()
+    assert block_caret_pixel(editor) == expected
+
+
+def test_the_block_caret_is_a_WHOLE_CHARACTER_wide(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    escape(editor)
+    rect, character = editor._vim_block_caret_rect()
+    assert character == "a"
+    assert rect.width() == editor.fontMetrics().horizontalAdvance("a")
+
+
+@pytest.mark.parametrize("light", [True, False])
+def test_the_block_caret_FOLLOWS_THE_THEME(editor, light):
+    from pgtp_editor.ui.theme import dark_palette, light_palette
+
+    editor.setPalette(light_palette() if light else dark_palette())
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    escape(editor)
+    background, foreground = editor._vim_block_caret_colors()
+    assert background.lightness() != foreground.lightness()
+    assert block_caret_pixel(editor) == background
+
+
+def test_the_two_themes_do_NOT_paint_the_same_caret(editor):
+    from pgtp_editor.ui.theme import dark_palette, light_palette
+
+    editor.setPalette(light_palette())
+    light_colour = editor._vim_block_caret_colors()
+    editor.setPalette(dark_palette())
+    assert editor._vim_block_caret_colors() != light_colour
+
+
+def test_edit_mode_paints_NO_block_caret(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    background, _foreground = editor._vim_block_caret_colors()
+    assert block_caret_pixel(editor) != background
+
+
+def test_leaving_command_mode_REVERTS_the_caret(editor):
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    escape(editor)
+    background, _foreground = editor._vim_block_caret_colors()
+    assert block_caret_pixel(editor) == background
+    press(editor, "i")  # insert-entry: back to Edit mode
+    assert block_caret_pixel(editor) != background
+
+
+def test_a_READ_ONLY_editor_never_shows_the_block_caret(editor):
+    """The rule the caret may not break: a read-only editor has no editing mode
+    at all, so it cannot have a Command-mode cue."""
+    editor.setPlainText("alpha beta\n")
+    place(editor, 0)
+    escape(editor)
+    background, _foreground = editor._vim_block_caret_colors()
+    assert block_caret_pixel(editor) == background
+    editor.setReadOnly(True)
+    assert not editor.in_command_mode
+    assert block_caret_pixel(editor) != background
+
+
+def test_the_command_mode_caret_cannot_rest_on_the_NEWLINE_offset(editor):
+    """The on-character model: `$` and `l` stop on the last real character, so
+    the block always covers a glyph."""
+    editor.setPlainText("alpha\nbeta\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "$")
+    assert caret(editor) == len("alpha") - 1
+    press(editor, "lll")
+    assert caret(editor) == len("alpha") - 1
+
+
+def test_EDIT_mode_still_rests_past_the_last_character(editor):
+    """Command mode and Edit mode do NOT share the clamp: `A` and ordinary typing
+    depend on the between-characters caret, which is unchanged."""
+    editor.setPlainText("alpha\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "A")
+    assert not editor.in_command_mode
+    assert caret(editor) == len("alpha")
+
+
+def test_entering_command_mode_pulls_a_caret_off_the_newline_offset(editor):
+    editor.setPlainText("alpha\n")
+    place(editor, len("alpha"))
+    escape(editor)
+    assert caret(editor) == len("alpha") - 1
+
+
+def test_percent_matches_the_bracket_the_caret_is_ON_in_both_directions(editor):
+    editor.setPlainText("f(a, g(b))\n")
+    text = editor.toPlainText()
+    place(editor, 1)
+    escape(editor)
+    press(editor, "%")
+    assert caret(editor) == text.rindex(")")
+    press(editor, "%")
+    assert caret(editor) == 1
+
+
+def test_y_percent_yanks_BOTH_brackets_from_either_end(editor):
+    """The reported drop: `y%` used to exclude one of the pair, because the caret
+    offset was a between-characters position rather than the index of the
+    character it sits on."""
+    editor.setPlainText("f(a, g(b))\n")
+    place(editor, 1)
+    escape(editor)
+    press(editor, "y%")
+    assert QApplication.clipboard().text() == "(a, g(b))"
+    place(editor, editor.toPlainText().rindex(")"))
+    press(editor, "y%")
+    assert QApplication.clipboard().text() == "(a, g(b))"
+
+
+def test_d_percent_spans_both_brackets(editor):
+    editor.setPlainText("f(a, g(b))\n")
+    place(editor, 1)
+    escape(editor)
+    press(editor, "d%")
+    assert editor.toPlainText() == "f\n"
+
+
+def test_d_dollar_still_deletes_the_LAST_character(editor):
+    """The clamp is on the CARET, not on the motion: `D` / `d$` must still take
+    the character the caret may not rest on."""
+    editor.setPlainText("alpha\nbeta\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "d$")
+    assert editor.toPlainText() == "\nbeta\n"
+
+
+def test_x_still_deletes_the_LAST_character_of_a_line(editor):
+    editor.setPlainText("ab\n")
+    place(editor, 0)
+    escape(editor)
+    press(editor, "$")
+    press(editor, "x")
+    assert editor.toPlainText() == "a\n"
 
 
 # ---------------------------------------------------------------------------

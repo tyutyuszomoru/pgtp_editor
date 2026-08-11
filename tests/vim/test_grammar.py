@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from pgtp_editor.vim import LINEWISE, REDO_KEY, VimGrammar
+from pgtp_editor.vim import LINEWISE, REDO_KEY, SELECTION, VimGrammar
 
 
 def feed(keys: str | list[str]):
@@ -156,11 +156,11 @@ def test_two_DIFFERENT_operators_are_discarded_rather_than_guessed_at():
 
 
 def test_an_operator_followed_by_a_non_motion_is_discarded():
-    """`di` is a text object, which is explicitly OUT of v1 -- so it resolves to
-    nothing rather than to a half-guessed delete."""
+    """`dp` is neither a motion nor a text object, so it resolves to nothing
+    rather than to a half-guessed delete."""
     grammar = VimGrammar()
     grammar.feed("d")
-    assert grammar.feed("i") is None
+    assert grammar.feed("p") is None
     assert not grammar.is_pending
 
 
@@ -188,6 +188,118 @@ def test_the_inclusive_motions_are_vims_own_set():
     _grammar, exclusive = feed("dw")
     assert inclusive[0].is_inclusive
     assert not exclusive[0].is_inclusive
+
+
+# -- text objects (BUG-260811234853) ------------------------------------------
+@pytest.mark.parametrize("operator", ["d", "c", "y"])
+@pytest.mark.parametrize("scope", ["a", "i"])
+def test_every_operator_takes_both_text_objects(operator, scope):
+    """The reported case (`caw`/`daw`/`yaw`) and its inner sibling, resolved by
+    the grammar so the widget gains ONE branch rather than three."""
+    _grammar, resolved = feed(operator + scope + "w")
+    assert len(resolved) == 1
+    assert (resolved[0].operator, resolved[0].text_object) == (operator, scope + "w")
+    assert resolved[0].motion is None  # a text object is NOT a motion
+
+
+def test_a_text_object_is_pending_until_its_object_key_arrives():
+    grammar = VimGrammar()
+    grammar.feed("d")
+    assert grammar.feed("a") is None
+    assert grammar.is_pending and grammar.pending_text == "da"
+    assert grammar.feed("w").text_object == "aw"
+
+
+@pytest.mark.parametrize("keys,count", [("d2aw", 2), ("2daw", 2), ("c3iw", 3), ("2d3iw", 6)])
+def test_counts_compose_through_a_text_object_exactly_as_they_do_a_motion(keys, count):
+    _grammar, resolved = feed(keys)
+    assert (resolved[0].count, resolved[0].has_count) == (count, True)
+
+
+def test_a_text_object_without_a_count_still_says_none_was_typed():
+    _grammar, resolved = feed("daw")
+    assert resolved[0].count == 1 and not resolved[0].has_count
+
+
+def test_an_unknown_object_key_is_DISCARDED_rather_than_guessed_at():
+    """`da"` is a quoted-string object, explicitly out of scope -- so it resolves
+    to nothing rather than to a half-guessed delete, the `g`-then-anything-else
+    precedent."""
+    grammar = VimGrammar()
+    grammar.feed("d")
+    grammar.feed("a")
+    assert grammar.feed('"') is None
+    assert not grammar.is_pending
+
+
+@pytest.mark.parametrize("key", ["a", "i"])
+def test_bare_a_and_i_are_STILL_insert_entry_when_no_operator_is_pending(key):
+    """The gate the whole feature hangs on: widening it would break append and
+    insert, the two most-used keys in the vocabulary."""
+    _grammar, resolved = feed(key)
+    assert resolved[0].action == key
+    assert resolved[0].text_object is None
+
+
+# -- the selection notion (FQ-260812000331) -----------------------------------
+@pytest.mark.parametrize("operator", ["d", "c", "y"])
+def test_an_operator_resolves_IMMEDIATELY_when_a_selection_is_present(operator):
+    """`v` → extend → `Esc` → `d`: with a selection the operator has its target
+    already, so it does not wait for a motion."""
+    grammar = VimGrammar()
+    grammar.set_selection_active(True)
+    command = grammar.feed(operator)
+    assert command is not None
+    assert (command.operator, command.motion) == (operator, SELECTION)
+    assert command.is_selection and not grammar.is_pending
+
+
+def test_x_deletes_the_selection_when_there_is_one():
+    grammar = VimGrammar()
+    grammar.set_selection_active(True)
+    command = grammar.feed("x")
+    assert (command.operator, command.motion) == ("d", SELECTION)
+
+
+@pytest.mark.parametrize("key,motion", [("X", "h"), ("D", "$"), ("C", "$"), ("Y", LINEWISE)])
+def test_the_OTHER_shorthands_keep_their_motions_under_a_selection(key, motion):
+    """The owner named `y`/`c`/`d`/`x`. The rest name a range of their own, so a
+    selection does not silently redirect them."""
+    grammar = VimGrammar()
+    grammar.set_selection_active(True)
+    assert grammar.feed(key).motion == motion
+
+
+def test_without_a_selection_an_operator_still_waits_for_a_motion():
+    grammar = VimGrammar()
+    grammar.set_selection_active(False)
+    assert grammar.feed("d") is None
+    assert grammar.is_pending
+
+
+def test_a_doubled_operator_still_works_once_the_selection_is_gone():
+    grammar = VimGrammar()
+    grammar.set_selection_active(False)
+    grammar.feed("d")
+    assert grammar.feed("d").is_linewise
+
+
+def test_the_selection_flag_survives_a_reset_because_it_is_not_pending_state():
+    """`Esc` discards a half-typed command; it does not un-select the buffer."""
+    grammar = VimGrammar()
+    grammar.set_selection_active(True)
+    grammar.reset()
+    assert grammar.feed("y").is_selection
+
+
+def test_the_machine_stores_no_selection_ITSELF_only_the_boolean():
+    """One bit of ambient fact, not a visual mode: no anchor, no granularity, no
+    range lives in this Qt-free machine."""
+    grammar = VimGrammar()
+    grammar.set_selection_active(True)
+    command = grammar.feed("d")
+    assert not hasattr(command, "selection_start")
+    assert command.target is None
 
 
 # -- actions ------------------------------------------------------------------
