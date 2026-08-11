@@ -97,6 +97,31 @@ def dark_palette() -> QPalette:
     return palette
 
 
+#: The vim Command-mode block caret's `(background, foreground)`, per theme
+#: (BUG-260812001031). Lives HERE, beside `light_palette()`/`dark_palette()`,
+#: because a per-theme colour table outside this module is how a theme stops
+#: being theme-able -- the mistake `mode_indicator.py`'s docstring records.
+#: `vim_mode.py` defined these locally when the caret shipped only because this
+#: file was owned by a concurrent change at the time.
+#:
+#: Deliberately NOT the selection blue (`Highlight`, `0x3874F2`): the caret must
+#: be readable AS a mode cue while a selection is on screen beside it, which a
+#: second blue would not be. No palette role carries this orange, so it is a
+#: real pair rather than a derivation.
+_COMMAND_CARET_LIGHT = ("#E56A00", "#FFFFFF")
+_COMMAND_CARET_DARK = ("#FFA500", "#1E1E1E")
+
+
+def command_caret_colors(light: bool) -> tuple[str, str]:
+    """The `(background, foreground)` for the vim Command-mode block caret.
+
+    Pure -- returns the pair for the theme, mutating nothing, exactly as
+    `light_palette()`/`dark_palette()` do with their QPalette and as
+    `mode_indicator.mode_colors()` does with its dict.
+    """
+    return _COMMAND_CARET_LIGHT if light else _COMMAND_CARET_DARK
+
+
 # Cached QDarkStyleSheet text, one per theme (BUG-010; extended for the light
 # QSS below). Loaded lazily -- qdarkstyle warns if loaded before a
 # QApplication exists, and apply_theme always runs with one.

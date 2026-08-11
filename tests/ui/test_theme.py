@@ -481,3 +481,31 @@ def test_tool_buttons_get_the_same_ring(qtbot, qapp, _reset_app_palette, light):
     qapp.processEvents()
     assert _ring_pixel(first) == _focus_ring_colour(light)
     assert _ring_pixel(second) != _focus_ring_colour(light)
+
+
+# ---------------------------------------------------------------------------
+# The vim Command-mode block caret colours live HERE, not in vim_mode.py
+# (BUG-260812001031 follow-up)
+# ---------------------------------------------------------------------------
+
+def test_command_caret_colors_are_theme_aware_and_pure():
+    """The pair differs per theme and the accessor mutates nothing -- the same
+    posture `light_palette()`/`dark_palette()` and `mode_colors()` have."""
+    from pgtp_editor.ui.theme import command_caret_colors
+
+    light = command_caret_colors(True)
+    dark = command_caret_colors(False)
+    assert light != dark
+    for background, foreground in (light, dark):
+        assert QColor(background).lightness() != QColor(foreground).lightness()
+    assert command_caret_colors(True) == light
+
+
+def test_command_caret_background_is_NOT_the_selection_blue():
+    """A second blue beside `Highlight` would be unreadable AS a mode cue while
+    a selection sits next to it."""
+    from pgtp_editor.ui.theme import command_caret_colors
+
+    for light, palette in ((True, light_palette()), (False, dark_palette())):
+        highlight = palette.color(QPalette.ColorRole.Highlight)
+        assert QColor(command_caret_colors(light)[0]) != highlight

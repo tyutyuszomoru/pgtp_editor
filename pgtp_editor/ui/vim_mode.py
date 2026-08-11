@@ -193,6 +193,7 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.ui.completion_popup import _CompletionPopup
 from pgtp_editor.ui.mode_indicator import EDITING_COMMAND, EDITING_EDIT
+from pgtp_editor.ui.theme import command_caret_colors
 from pgtp_editor.vim import (
     LINEWISE,
     REDO_KEY,
@@ -240,19 +241,6 @@ NO_TEXT_OBJECT = "there is no word here to take"
 #: booleans that can both be true.
 STICKY_CHARACTER = "character"
 STICKY_LINE = "line"
-
-#: The Command-mode block caret's `(background, foreground)`, per theme
-#: (BUG-260812001031). Deliberately NOT the selection blue (`theme.py`'s
-#: `Highlight`, `0x3874F2`): the caret must be readable AS a mode cue while a
-#: selection is on screen beside it, which a second blue would not be.
-#:
-#: **These belong in `ui/theme.py`** next to `light_palette()`/`dark_palette()`,
-#: as a `command_caret_colors(light)` accessor; they are here only because
-#: `theme.py` was owned by a concurrent change when this shipped. Moving them is
-#: a lift, not a redesign -- the one reader is `_vim_block_caret_colors`.
-_COMMAND_CARET_LIGHT = ("#E56A00", "#FFFFFF")
-_COMMAND_CARET_DARK = ("#FFA500", "#1E1E1E")
-
 
 # -- the editing-mode change registry -----------------------------------------
 #
@@ -846,11 +834,13 @@ class VimModeMixin:
         dark one without a setting. **Not a `setPalette` on the widget** -- that
         is inert under the app-level QSS (`BUG-260811021804`); the colours are
         used to paint directly, which nothing can override.
+
+        The colours themselves come from `theme.py`, the one place per-theme
+        values live -- this module owns the *decision* (which theme the widget
+        is in), never a second colour table.
         """
         light = self.palette().color(QPalette.ColorRole.Base).lightness() > 128
-        background, foreground = (
-            _COMMAND_CARET_LIGHT if light else _COMMAND_CARET_DARK
-        )
+        background, foreground = command_caret_colors(light)
         return QColor(background), QColor(foreground)
 
     def _vim_block_caret_rect(self) -> tuple[QRect, str]:

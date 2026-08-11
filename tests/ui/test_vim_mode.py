@@ -1313,6 +1313,39 @@ def test_the_two_themes_do_NOT_paint_the_same_caret(editor):
     assert editor._vim_block_caret_colors() != light_colour
 
 
+def test_the_caret_colours_are_SOURCED_FROM_theme_py(editor):
+    """`vim_mode` owns the *decision* (which theme this widget is in), never a
+    second colour table. Patching `theme.command_caret_colors` must move the
+    caret -- if the pair is ever re-declared locally here, this fails."""
+    from pgtp_editor.ui import theme
+
+    assert theme.command_caret_colors(True) == editor._vim_block_caret_colors.__globals__[
+        "command_caret_colors"
+    ](True)
+
+    for light in (True, False):
+        expected = theme.command_caret_colors(light)
+        editor.setPalette(theme.light_palette() if light else theme.dark_palette())
+        background, foreground = editor._vim_block_caret_colors()
+        assert (background.name().upper(), foreground.name().upper()) == (
+            expected[0].upper(),
+            expected[1].upper(),
+        )
+
+
+def test_vim_mode_declares_NO_caret_colours_of_its_own():
+    """No second per-theme colour table beside `theme.py`'s -- the failure mode
+    `mode_indicator.py`'s docstring records."""
+    import inspect
+    import re
+
+    from pgtp_editor.ui import vim_mode
+
+    source = inspect.getsource(vim_mode)
+    literals = re.findall(r"[\"']#[0-9A-Fa-f]{6}[\"']", source)
+    assert literals == [], f"colour literals in vim_mode.py: {literals}"
+
+
 def test_edit_mode_paints_NO_block_caret(editor):
     editor.setPlainText("alpha beta\n")
     place(editor, 0)
