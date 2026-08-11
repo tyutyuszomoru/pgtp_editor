@@ -2615,7 +2615,7 @@ spec is a ruling this file will re-ask, and a sweep would have re-put all three 
 
 ## DEC-260811022536 — Is the synthesized `CREATE TABLE`'s four-gap incompleteness permanent, or a v1 stopgap to be closed?
 
-- **Status:** ANSWERED (2026-08-11) — **PARTIAL BY INTENT; see the deferred half below.**
+- **Status:** ANSWERED (2026-08-11) — **PARTIAL BY INTENT; the deferred half is `DEC-260811094437`.**
 - **Answer: close the per-column two now — identity/`SERIAL` and `GENERATED` columns. Inheritance and
   partitioning are ruled on SEPARATELY, later, when a feature actually needs them.** Neither
   *"accept all four permanently"* nor *"close all four"* was taken.
@@ -2634,14 +2634,11 @@ spec is a ruling this file will re-ask, and a sweep would have re-put all three 
   gap restructures the artifact, the gap waits for a feature that consumes the artifact; where it merely
   extends what is already rendered, it is closed on the spot. Cost-to-close and frequency-in-practice are both
   legitimate inputs, and a disclosed boundary is not the same as an unfinished one.
-- **⚠ THE DEFERRED HALF NEEDS ITS OWN ENTRY, AND I COULD NOT CREATE IT.** The owner directed that a follow-up
-  entry be raised for inheritance/partitioning rather than leaving this one half-answered. `owner-decision`
-  has **no `Bash` tool and cannot read the clock**, and a `DEC-<YYMMDDHHMMSS>` id must never be invented — a
-  fabricated timestamp looks authoritative and sorts wrongly forever. **The main session must dispatch
-  `owner-decision` (FILE mode) with a `date +%y%m%d%H%M%S` id** to raise: *"Do the synthesized `CREATE
-  TABLE`'s inheritance and partitioning gaps get closed, and what triggers it?"* — trigger condition: the
-  first feature that consumes this buffer as anything other than a read-only view. Until that entry exists,
-  **this paragraph is the record of the open half.**
+- **THE DEFERRED HALF IS NOW `DEC-260811094437`** (filed 2026-08-11, `OPEN`): *"Do the synthesized `CREATE
+  TABLE`'s inheritance and partitioning gaps get closed, and what triggers closing them?"* — trigger
+  condition as stated in this answer, the first feature that consumes this buffer as anything other than a
+  read-only view. **This entry is fully answered; the open half lives there, not here.** Read
+  `DEC-260811094437` before acting on the two remaining gaps.
 - **Unblocks:**
   - the per-column half → the main session dispatches **`feature-triage`** to place a follow-up against §18.1
     in `docs/FEATURE_QUEUE.md`: render identity/`SERIAL` and `GENERATED` column attributes in
@@ -3111,3 +3108,84 @@ product scope, which is why this is filed rather than decided.
   at `CONSOLIDATED_SPEC.md:7037-7038`, and `manual-maintainer` reconciling `manual.md:2381` with `:2518/2644`.
 - **2** → docstring + spec sentence + the manual reconciliation only; no code change.
 - **3** → the `kind` check alone, plus the manual reconciliation; `manual.md:2381` becomes correct as written.
+
+---
+
+## DEC-260811094437 — Do the synthesized `CREATE TABLE`'s inheritance and partitioning gaps get closed, and what triggers closing them?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-11, by the main session — this is the **deferred half of `DEC-260811022536`**, split out
+  as that entry's answer directed. `DEC-260811022536` is otherwise ANSWERED and closed.
+- **Blocks:** **nothing today.** Nothing in the tree consumes the synthesized `CREATE TABLE` as anything but
+  read-only text. It **hardens** with every feature built on that buffer, and unlike most deferred items it
+  has a **named trigger**, so it can be answered in advance rather than only in hindsight.
+
+**Context (written for a cold reader).** §18.1's DDL Explorer shows a single read-only buffer containing a
+`CREATE TABLE` for every table, **synthesized from `pg_catalog`** by `pgtp_editor/db/table_ddl.py` — Postgres
+has no `pg_get_tabledef`, so it is a reconstruction from columns, types, defaults, constraints, indexes and
+comments. Four things it does not reconstruct: identity/`SERIAL`, `GENERATED` columns, table **inheritance**,
+and **partitioning**. Nothing is ever guessed — a partitioned table renders as the plain table it resembles,
+with no invented `PARTITION BY` — and every table's text carries a two-line SQL-comment notice naming the
+gaps (`table_ddl.py:67-74`).
+
+On 2026-08-11 the owner answered `DEC-260811022536` **partially and by intent**: close the two **per-column**
+gaps now (identity/`SERIAL`, `GENERATED`), because they extend the existing column rendering rather than
+restructure the statement and they are what an ordinary schema actually hits — nearly every table has a
+surrogate key. The two **structural** gaps were deferred, with the reason stated: closing them now means
+**paying for partitioning support before any feature consumes it**. This entry is that deferred half.
+
+**Verified state of the tree at filing time.** `RECONSTRUCTION_NOTICE_DETAIL` at `table_ddl.py:71-74` still
+names **all four** gaps verbatim — the per-column work is in flight in the main session and has not landed.
+That does **not** affect this entry's premise: the structural pair is deferred by the owner's recorded ruling,
+not by the state of the banner. When the per-column work lands the banner shortens to name **inheritance and
+partitioning only**, and this decision is unchanged either way.
+
+**Why the trigger is a real question and not hypothetical, but also not imminent.** `DEC-260811022536`'s
+answer names the condition: *the first feature that consumes this buffer as anything other than a read-only
+view.* While the text is only ever shown, an omitted `PARTITION BY` is incomplete but harmless and the notice
+says so; the moment it becomes an **input** — a generated migration, a deployment script, a `.pgtp` ↔ database
+sync step, a diff — the omission becomes a wrong answer that looks authoritative. Two verified facts sharpen
+this:
+
+- **§18.5's `Generate Deployment SQL` is the spec's rank-1 unbuilt deliverable**, so a consumer is coming.
+- But it is specified to be built on `db/schema_diff.py` + `db/migration_gen.py`, **not** on this buffer, and
+  `migration_gen.py` today **refuses table and column differences outright** (`UnsupportedDifference`; its
+  docstring: *"Emit routine and trigger migration SQL — NOT table or column migrations"*, and its emitted
+  script carries `_NOTE` saying so). So the trigger is not `Generate Deployment SQL` shipping — it is
+  **`migration_gen` gaining `object_kind="table"` support**, at which point it needs a table renderer and
+  `table_ddl.py` is the only pure one in the tree. That is the concrete, greppable trigger.
+
+**Options.**
+
+1. **Close them when the first consuming feature is designed, not before.** Keeps the cost where the benefit
+   is; the notice names the two gaps in the meantime. *Cost:* the consuming feature carries the work as a
+   dependency and is that much larger, and **whoever designs it must notice the dependency** — the notice
+   lives in the buffer, not in the spec section they will be reading. That is a real failure mode, not a
+   theoretical one.
+2. **Close them pre-emptively, before any consumer exists.** Removes the dependency and the notice entirely;
+   the pane round-trips any table. *Cost:* exactly the *"paying for partitioning before anything consumes
+   it"* the owner already declined — extra catalog queries, a restructured statement (partition key,
+   partition-of clauses, `INHERITS` with inherited columns suppressed), and the largest test-shape growth of
+   any option.
+3. **Close them never; make the boundary permanent and structural.** §18.1 documents the pane as showing a
+   *representation*, and any consuming feature is **required** to source its DDL elsewhere. *Cost:*
+   forecloses the cheapest path for a future migration generator (it would have to grow a second table
+   renderer, i.e. the drift `table_ddl.py`'s own docstring warns about for constraint text), and the boundary
+   has to be asserted somewhere a future designer will actually hit.
+
+**Recommendation: option 1, plus one addition that costs almost nothing and fixes its only real weakness.**
+Record the dependency in `CONSOLIDATED_SPEC.md` **§18.1** *and* in **§18.5's `Generate Deployment SQL`**
+section, so a designer reading either one encounters it — rather than relying on someone noticing two
+SQL-comment lines inside a buffer. Option 2 spends now what the owner just declined to spend. Option 3 is
+defensible but buys permanence at the price of guaranteeing a duplicate renderer later, and it is the one
+option that cannot be reversed cheaply once a second renderer exists.
+
+**What becomes possible once answered.**
+- **1** → `spec-maintainer` writes the dependency into §18.1 and §18.5 (*"table DDL synthesis does not cover
+  inheritance or partitioning; any feature consuming it as an input must close those first"*); no code change
+  today, and the notice's remaining two lines are then explained by the spec rather than only by themselves.
+- **2** → `feature-triage` places an FQ against §18.1 to extend `table_ddl.py` with partitioning and
+  inheritance (plus the catalog queries in `introspect.py`), and the notice is deleted when it lands.
+- **3** → `spec-maintainer` states the boundary as permanent in §18.1, rewords the notice from a list of
+  missing things into an intentional boundary, and adds the sourcing constraint to §18.5 so no future
+  migration generator reaches for this buffer.
