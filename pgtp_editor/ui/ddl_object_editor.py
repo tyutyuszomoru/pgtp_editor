@@ -488,6 +488,16 @@ def parse_buffer_identity(text: str, fallback: DdlObjectRef) -> DdlObjectRef | N
     )
 
 
+def _drop_statement(ref: DdlObjectRef) -> str:
+    """The DROP the user must run themselves to remove the object a renamed
+    buffer left behind. TEXT ONLY -- nothing in this app executes it; there is
+    no target-database ad-hoc execution path (`sql_console_panel.py:21-30`: the
+    SQL Console can never reach the target, not even behind a confirmation)."""
+    if ref.is_trigger:
+        return f"DROP TRIGGER {ref.name} ON {ref.schema}.{ref.table};"
+    return f"DROP {ref.kind.upper()} {ref.qualified};"
+
+
 def _comparable(ref: DdlObjectRef) -> tuple:
     """`DdlObjectRef.key` with the argument types normalized, so a buffer's
     `INTEGER` and the catalog's `integer` are the same identity."""
@@ -1357,8 +1367,14 @@ class DdlObjectEditorPanel(
         owner ruling (2026-08-10, BUG-260810193333): *"trust the user that they
         know what they are doing, run the sql."* After a confirmed apply of a
         renamed buffer the target holds BOTH objects, and dropping the old one
-        is the user's job (the deployment-script path, Database ▸ Compare
-        Schemas…, is still the reviewable way to do it).
+        is the user's job -- **this app has no gesture that drops an object in
+        the target** (the SQL Console is structurally sandbox-only, and the
+        Explorer's `Drop …` entries are table/column/index/constraint ALTERs),
+        so the confirmation hands the user the `DROP` statement to run against
+        the target themselves (`_drop_statement`). Do NOT re-add a menu path
+        here: §18.3's `Database ▸ Compare Schemas…` is designed but has never
+        been built (`db/schema_snapshot.py:81`), and naming it sent the user to
+        a command that does not exist (BUG-260811021816).
 
         This reverses the original hard "no override, no consent path" rule.
         The reason it could not stay is the asymmetry it produced: `Check and
@@ -1378,9 +1394,15 @@ class DdlObjectEditorPanel(
         if buffer_ref is None:
             self._report(
                 [
-                    "refused: could not determine the object's signature from the "
-                    "buffer, so a changed signature cannot be ruled out. Use the "
-                    "deployment-script path (Database ▸ Compare Schemas…)."
+                    "refused: could not determine the object's signature from "
+                    "the buffer, so a changed signature cannot be ruled out. "
+                    "Nothing was applied. "
+                    f"{GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]} needs a single "
+                    "CREATE [OR REPLACE] FUNCTION/PROCEDURE or CREATE TRIGGER "
+                    "header with a complete argument list; an ALTER or a bare "
+                    "statement has no signature to compare. Use Deployment ▸ "
+                    f"{GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]} to run this "
+                    "buffer where trying things is free."
                 ]
             )
             return False
@@ -1420,8 +1442,10 @@ class DdlObjectEditorPanel(
                 "PostgreSQL identifies a routine by (schema, name, argument "
                 "types), so this does NOT replace the object you checked out: "
                 f"it CREATES A SECOND OBJECT and leaves {live_ref.qualified} "
-                "live. Dropping the old one is up to you (Database ▸ Compare "
-                "Schemas… produces a reviewable script)."
+                "live. This editor has no gesture that drops it -- the Sandbox "
+                "SQL Console can never reach the target database -- so you must "
+                "drop it yourself against the target, with:\n\n"
+                f"    {_drop_statement(live_ref)}"
             )
             gesture = GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]
             if not self._confirm(

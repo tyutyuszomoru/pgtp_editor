@@ -5,6 +5,8 @@ The editable counterpart of §18.1's read-only EditorPanel: same CodeEditor in
 "sql" mode plus its own FindReplaceBar, project-decoupled, no database access,
 no sandbox button row (carve-out 2).
 """
+import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,12 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from pgtp_editor.ui.code_editor import CodeEditor, _SQL_KEYWORDS
-from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel, DdlObjectRef
+import pgtp_editor.ui.ddl_object_editor as _ddl_object_editor_module
+from pgtp_editor.ui.ddl_object_editor import (
+    DdlObjectEditorPanel,
+    DdlObjectRef,
+    _drop_statement,
+)
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 
 _SRC = (
@@ -1105,6 +1112,104 @@ def test_precondition_1_refuses_a_buffer_whose_signature_cannot_be_parsed(qtbot)
 
     assert seams.target_calls == []
     assert any("could not determine the object's signature" in line for line in lines)
+
+
+# --- BUG-260811021816: no user-facing string may name an unbuilt command -----
+def test_no_string_in_the_module_names_the_unbuilt_compare_schemas_command(qtbot):
+    """`Database ▸ Compare Schemas…` has never been built (§18.3 is designed but
+    unshipped -- `db/schema_snapshot.py:81`), yet two strings here sent the user
+    to it. The regression pin scans the SOURCE with whitespace normalized,
+    because the second site was WRAPPED mid-phrase (`"Database ▸ Compare "` +
+    `"Schemas… produces…"`) and a naive grep for the phrase never saw it.
+    """
+    source = Path(_ddl_object_editor_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    # `ast` joins implicitly concatenated fragments for us, which is exactly the
+    # wrapping that hid site 2 from grep. Docstrings are excluded ON PURPOSE:
+    # `_precondition_signature`'s docstring names the unbuilt command to tell the
+    # next reader NOT to re-add it, and that note is not user-facing.
+    docstrings = {
+        node.body[0].value
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    literals = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node not in docstrings
+    ]
+    # Whitespace-normalized, so a phrase broken over source lines still reads as
+    # one phrase even inside a single literal.
+    offenders = [
+        text for text in literals if "Compare Schemas" in re.sub(r"\s+", " ", text)
+    ]
+
+    assert offenders == []
+
+
+def test_precondition_1_refusal_points_at_the_sandbox_gesture_that_exists(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams, text="-- just a comment, no CREATE at all\n")
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    joined = " ".join(lines)
+    assert "Check and commit to sandbox" in joined
+    assert "Compare Schemas" not in joined
+
+
+def test_precondition_1_mismatch_hands_the_user_the_drop_statement(qtbot):
+    """Site 2 is the one that matters: the user is standing in front of a
+    duplicate object and this sentence is the ONLY cleanup instruction. The app
+    has no target-drop gesture, so the confirmation must hand over the SQL."""
+    seams = _Seams(live=_LIVE_OTHER, confirm=[True, True])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
+    panel.record_check_report(_green())
+
+    assert panel.apply_to_target() is True
+
+    _title, text = seams.confirms[0]
+    assert "DROP FUNCTION pr.recalc(integer);" in text
+    assert "Compare Schemas" not in text
+
+
+def test_drop_statement_renders_a_routine_with_its_argument_types():
+    assert (
+        _drop_statement(
+            DdlObjectRef(kind="function", schema="pr", name="recalc",
+                         arg_types=("integer",))
+        )
+        == "DROP FUNCTION pr.recalc(integer);"
+    )
+    assert (
+        _drop_statement(
+            DdlObjectRef(kind="procedure", schema="pr", name="rebuild",
+                         arg_types=("integer", "text"))
+        )
+        == "DROP PROCEDURE pr.rebuild(integer, text);"
+    )
+
+
+def test_drop_statement_renders_a_trigger_as_name_on_table():
+    """The branch most likely to be got wrong: `qualified` renders a trigger as
+    `schema.table.name`, which is not what `DROP TRIGGER` wants."""
+    assert (
+        _drop_statement(
+            DdlObjectRef(kind="trigger", schema="pr", name="trg_audit",
+                         table="orders")
+        )
+        == "DROP TRIGGER trg_audit ON pr.orders;"
+    )
 
 
 def test_precondition_1_allows_an_object_the_target_does_not_have_yet(qtbot):
