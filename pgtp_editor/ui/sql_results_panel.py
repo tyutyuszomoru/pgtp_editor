@@ -255,16 +255,24 @@ def statement_status(run: StatementRun) -> str:
     return f"{run.index}. {body}"
 
 
-def run_status_lines(report: RunReport) -> list[str]:
+def run_status_lines(report: RunReport, *, transactional: bool = False) -> list[str]:
     """The whole status strip for one Run, as lines -- **pure**, so the exact
     sentences are testable without a widget.
 
     A failure produces three things, none of them optional: which statement
     failed (index **and** buffer line **and** an echo of the statement), the
     server's own message, and an honest statement of what is now in the
-    sandbox. §18.5 D4 forbids leaving partial application of a multi-statement
-    Run unmentioned, and each statement here really did commit on its own (see
-    `RunReport.committed`).
+    database. §18.5 D4 forbids leaving partial application of a multi-statement
+    Run unmentioned.
+
+    **`transactional` decides WHICH of those honest statements is true**, and it
+    is not cosmetic (§18.5 D4b, `DEC-260811023646`). With per-statement commit
+    (the sandbox console) the earlier statements really did commit on their own
+    (see `RunReport.committed`) and the strip must say so. Inside **one
+    uncommitted transaction** (the Quality SQL Console) the opposite is true: the
+    server aborted the whole transaction, so *nothing* was committed, and
+    reporting the sandbox's sentence there would be exactly the silently-wrong
+    result this project refuses -- on production.
     """
     if not report.runs:
         return []
@@ -286,7 +294,13 @@ def run_status_lines(report: RunReport) -> list[str]:
         + (f" — {failure.echo}" if failure.echo else "")
     )
     done = len(report.committed)
-    if done:
+    if done and transactional:
+        noun = "statement" if done == 1 else "statements"
+        lines.append(
+            f"{done} earlier {noun} ran inside this Run's transaction and were "
+            "rolled back with it: NOTHING was committed."
+        )
+    elif done:
         noun = "statement" if done == 1 else "statements"
         lines.append(
             f"{done} earlier {noun} already ran and COMMITTED (each statement "
@@ -341,10 +355,18 @@ class SqlResultsPanel(QWidget):
         *,
         on_execute: Callable[[str], None] | None = None,
         sql_provider: Callable[[], str] | None = None,
+        run_tooltip: str | None = None,
+        status_lines: Callable[[RunReport], list[str]] = run_status_lines,
     ) -> None:
         super().__init__(parent)
         self._on_execute = on_execute
         self._sql_provider = sql_provider
+        #: How one Run's strip is worded. `run_status_lines` by default; the
+        #: Quality SQL Console passes the `transactional=True` variant, because
+        #: "already COMMITTED" is false inside one uncommitted transaction
+        #: (§18.5 D4b). A seam rather than an `if`, so this panel still knows
+        #: nothing about which console owns it.
+        self._status_lines = status_lines
         self._result: QueryResult | None = None
         self._run_report: RunReport | None = None
         #: `None` / `STATUS_ERROR` / `STATUS_WARNING` -- the *kind* of the status
@@ -361,8 +383,13 @@ class SqlResultsPanel(QWidget):
 
         self.run_button = QPushButton("Run")
         self.run_button.setToolTip(
-            "Run the statement against this project's sandbox database. The "
-            "sandbox is disposable — reset it to undo anything a statement did."
+            run_tooltip
+            if run_tooltip is not None
+            else (
+                "Run the statement against this project's sandbox database. The "
+                "sandbox is disposable — reset it to undo anything a statement "
+                "did."
+            )
         )
         self.run_button.setEnabled(on_execute is not None)
         self.run_button.clicked.connect(lambda _checked=False: self.run())
@@ -506,7 +533,7 @@ class SqlResultsPanel(QWidget):
         self._result = grid_run.result if grid_run is not None else (
             report.runs[-1].result if report.runs else None
         )
-        text = "\n".join(run_status_lines(report)) or EMPTY_SQL_TEXT
+        text = "\n".join(self._status_lines(report)) or EMPTY_SQL_TEXT
         failure = report.failure
         if grid_run is None:
             self._clear_table()

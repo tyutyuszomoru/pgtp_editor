@@ -490,9 +490,17 @@ def parse_buffer_identity(text: str, fallback: DdlObjectRef) -> DdlObjectRef | N
 
 def _drop_statement(ref: DdlObjectRef) -> str:
     """The DROP the user must run themselves to remove the object a renamed
-    buffer left behind. TEXT ONLY -- nothing in this app executes it; there is
-    no target-database ad-hoc execution path (`sql_console_panel.py:21-30`: the
-    SQL Console can never reach the target, not even behind a confirmation)."""
+    buffer left behind.
+
+    **TEXT ONLY, still -- this editor executes it nowhere.** What changed with
+    §18.5 D4b (`FQ-260811020328`) is only *where the user can run it*: the
+    **Quality SQL Console** (`Database ▸ Quality SQL Console…`) is an in-app
+    ad-hoc read/write path to the target database, so the old sentence *"there
+    is no target-database ad-hoc execution path"* is false and must not be
+    restored. Handing over the exact statement is still the useful half; whether
+    this editor should grow a real target-drop GESTURE is explicitly not decided
+    (§18.5 D4b).
+    """
     if ref.is_trigger:
         return f"DROP TRIGGER {ref.name} ON {ref.schema}.{ref.table};"
     return f"DROP {ref.kind.upper()} {ref.qualified};"
@@ -1367,14 +1375,18 @@ class DdlObjectEditorPanel(
         owner ruling (2026-08-10, BUG-260810193333): *"trust the user that they
         know what they are doing, run the sql."* After a confirmed apply of a
         renamed buffer the target holds BOTH objects, and dropping the old one
-        is the user's job -- **this app has no gesture that drops an object in
-        the target** (the SQL Console is structurally sandbox-only, and the
-        Explorer's `Drop …` entries are table/column/index/constraint ALTERs),
-        so the confirmation hands the user the `DROP` statement to run against
-        the target themselves (`_drop_statement`). Do NOT re-add a menu path
-        here: §18.3's `Database ▸ Compare Schemas…` is designed but has never
-        been built (`db/schema_snapshot.py:81`), and naming it sent the user to
-        a command that does not exist (BUG-260811021816).
+        is the user's job -- **this app still has no *gesture* that drops an
+        object in the target** (the Explorer's `Drop …` entries are
+        table/column/index/constraint ALTERs), so the confirmation hands the user
+        the `DROP` statement (`_drop_statement`) and names **where** to run it:
+        §18.5 D4b's `Database ▸ Quality SQL Console…`, which since
+        `FQ-260811020328` is an in-app ad-hoc read/write path to the target.
+        The older claim that *"the SQL Console is structurally sandbox-only"* is
+        true of the SANDBOX console only and must not be restored as a statement
+        about the app. Do NOT name §18.3's `Database ▸ Compare Schemas…` here: it
+        is designed but has never been built (`db/schema_snapshot.py:81`), and
+        naming it sent the user to a command that does not exist
+        (BUG-260811021816).
 
         This reverses the original hard "no override, no consent path" rule.
         The reason it could not stay is the asymmetry it produced: `Check and
@@ -1442,9 +1454,10 @@ class DdlObjectEditorPanel(
                 "PostgreSQL identifies a routine by (schema, name, argument "
                 "types), so this does NOT replace the object you checked out: "
                 f"it CREATES A SECOND OBJECT and leaves {live_ref.qualified} "
-                "live. This editor has no gesture that drops it -- the Sandbox "
-                "SQL Console can never reach the target database -- so you must "
-                "drop it yourself against the target, with:\n\n"
+                "live. This editor has no gesture that drops it, so dropping "
+                "it is yours to do -- run this in the Quality SQL Console "
+                "(Database ▸ Quality SQL Console…), which reaches the target "
+                "database:\n\n"
                 f"    {_drop_statement(live_ref)}"
             )
             gesture = GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]

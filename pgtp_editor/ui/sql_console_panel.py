@@ -14,22 +14,42 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/ui/sql_console_panel.py
-"""`SqlConsolePanel`: the Sandbox SQL Console (§18.5 D4) -- one center tab where
-the user types ad-hoc SQL, presses Run, and reads what the **sandbox** said.
+"""`SqlConsolePanel`: **both** SQL consoles (§18.5 D4 and D4b) -- one center tab
+where the user types ad-hoc SQL, presses Run, and reads what the database said.
 
-**The safety boundary, restated because it is the whole design** (§18.5 D4's
-"read this first"): ad-hoc execution is sandbox-only and can never target the
-production/target database -- not behind a confirmation, not behind a
-preference. The boundary is *structural*: this panel never builds
-`ConnectionParams` and never opens a connection; it hands SQL to
-`db/sandbox_query.py::run_sandbox_query`, whose first parameter is a
-`SandboxSession` (creatable only through `db/sandbox.py::open_sandbox`, the
-single ownership gate). The session itself is not held here either -- it is
-fetched, at Run time, from the injected `session_provider` seam, which the host
-(`ui/sandbox_controller.py`) backs with its own live session. **There is
-deliberately no "run against target" affordance anywhere in this file, not even
-a disabled one.** Adding one requires a spec change and a Supersession Ledger
-row.
+**One class, two tabs, two commit policies** (`FQ-260811020328`). The panel is
+parameterized by a `ConsoleFlavour` and never forked:
+
+* `SANDBOX_FLAVOUR` -- the Sandbox SQL Console (§18.5 D4). Runs against this
+  project's disposable sandbox through `db/sandbox_query.py::run_sandbox_query`,
+  which commits **per statement**.
+* `QUALITY_FLAVOUR` -- the Quality SQL Console (§18.5 D4b). Runs full read/write
+  SQL against the **quality (production)** database through
+  `db/quality_query.py::run_quality_query`, inside **one transaction that stays
+  open** until the user presses **Commit** (`DEC-260811023646`).
+
+A second panel class would be the duplication trap: every later fix to the
+results strip, the confirmation, the completion wiring or the statement splitter
+would have to be made twice, and the second copy is the one that gets missed.
+
+**Where the target comes from, in both cases: an injected provider, at Run
+time.** This panel never builds `ConnectionParams` and never opens a connection.
+The sandbox flavour's provider hands over a `SandboxSession` (creatable only
+through `db/sandbox.py::open_sandbox`, the single ownership gate); the quality
+flavour's hands over a `db/quality_query.py::QualitySession`, which owns the
+held-open transaction and is the only object in the app that can reach quality
+with ad-hoc SQL. There is still no *target* affordance on the SANDBOX console --
+`run_sandbox_query` takes a `SandboxSession` and nothing else -- and the two
+consoles stay two tabs with two titles and two colours precisely so the boundary
+survives its own reversal.
+
+**§18.5 D4's "may never target production" clause is superseded by owner
+ruling** (§18.5 D4b, with a Supersession Ledger row): full read/write against
+quality, always available whenever a quality connection with a password exists,
+with no per-run confirmation beyond the object-change dialog below. What carries
+the safety instead is the **explicit commit gesture**: a Run against quality
+changes nothing durable until the user presses Commit, and every path that
+throws an uncommitted run away *says so*.
 
 **What it is made of, all reuse:** a vertical `QSplitter` with
 `ui/code_editor.py::CodeEditor(language="sql")` on top (the same SQL
@@ -65,17 +85,33 @@ statement that produced it: **its index and its buffer line**, via
 `Statement.line_offset + db/apply.py::line_of_position` -- the one
 implementation of that rule.
 
-**Transaction discipline, stated because it diverges from the spec's wording.**
-§18.5 D4 asks for all statements of a Run in *one* transaction that commits.
-The sanctioned seam is `db/sandbox.py::SandboxExecutor.fetch`, which is
-documented as *"run **one** statement … commits on success"* and opens one
-connection per call, so **each statement of a Run is its own committing
+**Transaction discipline -- and the two consoles differ here, deliberately.**
+
+*Sandbox (D4).* §18.5 D4 asks for all statements of a Run in *one* transaction
+that commits. The sanctioned seam is `db/sandbox.py::SandboxExecutor.fetch`,
+which is documented as *"run **one** statement … commits on success"* and opens
+one connection per call, so **each statement of a Run is its own committing
 transaction**. The seam that does span statements atomically (`execute`) returns
 no rows and no status message, so it cannot answer D4's own requirements (a
 grid, plus each statement's command status). Rather than reach into `db/` from
 the UI, the console runs statement-by-statement, **stops at the first failure**,
 and *says* what already committed -- the one thing D4 forbids is leaving partial
 application unmentioned.
+
+*Quality (D4b, `DEC-260811023646`).* Per-statement commit against production
+would import the very behaviour this project exists to replace, so the quality
+flavour runs the whole submission on **one held-open connection inside one
+uncommitted transaction**, shows the user what it did, and requires the explicit
+**Commit** gesture. The statement loop is the same loop (still stopping at the
+first failure -- PostgreSQL aborts the whole transaction there, so continuing
+would only collect *"current transaction is aborted"* noise), and the difference
+lives entirely in `db/quality_query.py::QualitySession`. A failed Run is rolled
+back immediately and the panel says nothing was committed; a successful Run sits
+in the pending banner until the user commits or rolls back. **The three
+lifecycle edges** -- tab close, window close and connection loss with an
+uncommitted run outstanding -- are defined here (`request_close`,
+`discard_pending`) and in `QualitySession.close`, and none of them may discard a
+run silently or leak the connection.
 
 **Object-changing statements ask first.** When any statement classifies as
 `ddl` or `unknown` (`sql/statements.py::CHANGES_OBJECTS`, the single home of
@@ -114,15 +150,17 @@ from __future__ import annotations
 import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut, QTextCursor
+from PySide6.QtGui import QKeySequence, QPalette, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
+    QPushButton,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -130,6 +168,14 @@ from PySide6.QtWidgets import (
 )
 
 from ..db.apply import line_of_position
+from ..db.quality_query import (
+    DISCARD_ROLLBACK_GESTURE,
+    DISCARD_TAB_CLOSED,
+    DISCARD_WINDOW_CLOSED,
+    TransactionOutcome,
+    run_quality_query,
+    transaction_message,
+)
 from ..db.sandbox_query import (
     DEFAULT_MAX_ROWS,
     DEFAULT_STATEMENT_TIMEOUT_MS,
@@ -158,10 +204,17 @@ from .code_editor import (
     is_mutating_editor_operation,
 )
 from .completion_popup import CompletionPopupHostMixin
+from .ddl_buffer_panel import danger_selection_colors
 from .expand_select_seam import expand_select_expansion
 from .format_settings import current_sql_config
+from .mode_indicator import mode_stylesheet
 from .schema_gesture_seam import SchemaGestureHostMixin
-from .sql_results_panel import RunReport, SqlResultsPanel, StatementRun
+from .sql_results_panel import (
+    RunReport,
+    SqlResultsPanel,
+    StatementRun,
+    run_status_lines,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ..db.sandbox import SandboxSession
@@ -255,6 +308,181 @@ OBJECT_CHANGE_CONSEQUENCE = (
 REMEMBER_LABEL = "Don't ask again for this sandbox session"
 
 
+# --- §18.5 D4b: the Quality SQL Console's own vocabulary --------------------
+#
+# Separate constants rather than a formatted template over the sandbox ones: the
+# two consoles must not read the same, or a user learns to dismiss on one what
+# they meant to read on the other (D4b's open question 3, answered here by
+# naming the target everywhere).
+
+#: The quality console's center-tab key, beside `("sandbox-sql",)` in the SAME
+#: `CenterStage` key -> widget map (§7's append-only dynamic tabs).
+#: Single-instance, and **both consoles may be open at once**.
+QUALITY_TAB_KEY = ("quality-sql",)
+
+#: The quality console's tab label. Distinct from `TAB_TITLE` on purpose -- the
+#: title carries half of D4b's danger marking, the red band carries the other.
+QUALITY_TAB_TITLE = "Quality SQL"
+
+#: Why Run is refused with no resolvable quality connection. Names the way back,
+#: exactly as `NO_SESSION_TEXT` does.
+NO_QUALITY_TARGET_TEXT = (
+    "No quality connection — the target database could not be resolved with a "
+    "password; check the target connection in Project Settings. "
+    "Ad-hoc SQL here runs against the quality (production) database."
+)
+
+#: Shown while a quality run is in flight. It names the uncommitted state in the
+#: same breath as the target, because that pairing is the feature.
+QUALITY_RUNNING_TEXT = "Running against the quality database (uncommitted)…"
+
+QUALITY_OBJECT_CHANGE_TITLE = "This Run changes objects in the QUALITY database"
+QUALITY_UNKNOWN_CHANGE_TITLE = "This Run may change objects in the QUALITY database"
+
+#: The quality consequence. It cannot be D4's sentence: there is no Reset here,
+#: and the honest reassurance is the commit gesture instead.
+QUALITY_OBJECT_CHANGE_CONSEQUENCE = (
+    "This is the production database and there is no Reset. Nothing becomes "
+    "durable until you press Commit: the whole Run stays inside one "
+    "uncommitted transaction, and Roll Back discards it."
+)
+
+#: Scoped to the console's own quality session, like its sandbox sibling.
+QUALITY_REMEMBER_LABEL = "Don't ask again for this quality session"
+
+#: The banner above a quality console. Half of the danger marking (§18.7's
+#: question, answered on a second surface), painted in the SAME swapped
+#: `MODE_MAINTENANCE` red the quality DDL Explorer's selection band uses.
+DANGER_BANNER_TEXT = (
+    "QUALITY — every Run here targets the production database. "
+    "Nothing is durable until you press Commit."
+)
+
+#: What the pending banner says with nothing outstanding: nothing at all. The
+#: banner is hidden rather than showing a reassuring "all clear", which would be
+#: one more thing to read on the surface where reading matters most.
+NO_PENDING_TEXT = ""
+
+#: The commit and rollback buttons. **Neither carries a keyboard shortcut, and
+#: that is the whole basis of `DEC-260811025132`** -- see `_build_commit_row`.
+COMMIT_LABEL = "Commit"
+ROLLBACK_LABEL = "Roll Back"
+
+#: The tab/window-close question when a run is uncommitted.
+CLOSE_PENDING_TITLE = "Uncommitted run on the quality database"
+
+#: Which commit policy a flavour follows. An explicit tag, not a bool, because
+#: `DEC-260811025132`'s justification depends on which one is in force and a
+#: future third policy must be forced to name itself here.
+COMMIT_PER_STATEMENT = "per-statement"
+COMMIT_EXPLICIT = "explicit"
+
+
+def pending_text(statements: int) -> str:
+    """The pending banner for `statements` uncommitted statements -- pure, so
+    the sentence is assertable without a widget."""
+    if statements <= 0:
+        return NO_PENDING_TEXT
+    noun = "statement" if statements == 1 else "statements"
+    return (
+        f"UNCOMMITTED — {statements} {noun} ran inside an open transaction. "
+        "Press Commit to make them durable in the quality database, or Roll "
+        "Back to discard them."
+    )
+
+
+def close_pending_text(statements: int, what: str) -> str:
+    """The tab/window-close question's body. Pure, and it states the outcome of
+    each answer rather than asking a bare "are you sure?"."""
+    noun = "statement" if statements == 1 else "statements"
+    return (
+        f"{statements} {noun} ran against the quality database and are NOT "
+        f"committed.\n\nClosing {what} rolls the transaction back, so nothing "
+        "it did will be kept. Commit first if you meant to keep it.\n\n"
+        f"Close {what} and discard the run?"
+    )
+
+
+@dataclass(frozen=True)
+class ConsoleFlavour:
+    """Everything that differs between the two consoles, in one value.
+
+    A single record rather than a scatter of constructor keywords, so *"what
+    does the quality console do differently?"* has one answer a reader can hold
+    -- and so a third flavour (if one is ever justified) cannot half-exist.
+    Nothing here is behaviour: the behavioural fork is one `commit_model` tag
+    plus the injected executor, which is what keeps `if quality:` out of every
+    method below.
+    """
+
+    tab_key: tuple[str, ...]
+    tab_title: str
+    #: How the target is NAMED in prose ("the sandbox" / "the quality
+    #: database"). Every sentence that mentions the destination reads it from
+    #: here, so no surface can name the wrong database.
+    target_label: str
+    placeholder: str
+    no_session_text: str
+    running_text: str
+    object_change_title: str
+    unknown_change_title: str
+    consequence: str
+    remember_label: str
+    run_tooltip: str
+    #: `COMMIT_PER_STATEMENT` or `COMMIT_EXPLICIT`.
+    commit_model: str = COMMIT_PER_STATEMENT
+    #: Whether this console wears the §18.7 danger marking.
+    danger: bool = False
+
+    @property
+    def explicit_commit(self) -> bool:
+        return self.commit_model == COMMIT_EXPLICIT
+
+
+SANDBOX_FLAVOUR = ConsoleFlavour(
+    tab_key=CONSOLE_TAB_KEY,
+    tab_title=TAB_TITLE,
+    target_label="the sandbox",
+    placeholder=(
+        "SELECT … — runs against this project's sandbox database, never the target"
+    ),
+    no_session_text=NO_SESSION_TEXT,
+    running_text=RUNNING_TEXT,
+    object_change_title=OBJECT_CHANGE_TITLE,
+    unknown_change_title=UNKNOWN_CHANGE_TITLE,
+    consequence=OBJECT_CHANGE_CONSEQUENCE,
+    remember_label=REMEMBER_LABEL,
+    run_tooltip=(
+        "Run the statement against this project's sandbox database. The "
+        "sandbox is disposable — reset it to undo anything a statement did."
+    ),
+    commit_model=COMMIT_PER_STATEMENT,
+    danger=False,
+)
+
+QUALITY_FLAVOUR = ConsoleFlavour(
+    tab_key=QUALITY_TAB_KEY,
+    tab_title=QUALITY_TAB_TITLE,
+    target_label="the quality database",
+    placeholder=(
+        "SELECT … — runs against the QUALITY (production) database; nothing is "
+        "durable until you press Commit"
+    ),
+    no_session_text=NO_QUALITY_TARGET_TEXT,
+    running_text=QUALITY_RUNNING_TEXT,
+    object_change_title=QUALITY_OBJECT_CHANGE_TITLE,
+    unknown_change_title=QUALITY_UNKNOWN_CHANGE_TITLE,
+    consequence=QUALITY_OBJECT_CHANGE_CONSEQUENCE,
+    remember_label=QUALITY_REMEMBER_LABEL,
+    run_tooltip=(
+        "Run the statements against the QUALITY (production) database, inside "
+        "one transaction. Nothing becomes durable until you press Commit."
+    ),
+    commit_model=COMMIT_EXPLICIT,
+    danger=True,
+)
+
+
 @dataclass(frozen=True)
 class ObjectChangeConfirmation:
     """A richer answer than `bool` for the one confirmation that carries a
@@ -296,7 +524,10 @@ def as_confirmation(answer: Any) -> ObjectChangeConfirmation:
 
 
 def object_change_prompt(
-    statements: Sequence[Statement], classifications: Sequence[str]
+    statements: Sequence[Statement],
+    classifications: Sequence[str],
+    *,
+    flavour: ConsoleFlavour = SANDBOX_FLAVOUR,
 ) -> str:
     """The confirmation's body: which statements change objects, what that
     costs, and -- for `unknown` -- an honest *"could not tell"*.
@@ -305,7 +536,13 @@ def object_change_prompt(
     are not cosmetic: telling a user that `DO $$ … $$` "changes objects" would
     be asserting something the classifier explicitly did not establish, and
     §18.5 D4 requires the prompt to say the classifier could not tell instead.
+
+    `flavour` supplies the target's NAME and its consequence sentence (D4b's
+    open question 3: at minimum name the target, because a confirmation worded
+    identically on both consoles is the one a user learns to dismiss on the
+    wrong one). Defaults to the sandbox, so D4's wording is unchanged.
     """
+    where = flavour.target_label
     changing = [
         (index, statement, kind)
         for index, (statement, kind) in enumerate(
@@ -318,12 +555,12 @@ def object_change_prompt(
 
     if ddl_count and unknown_count:
         head = (
-            f"{ddl_count} statement(s) of this Run change objects in the "
-            f"sandbox, and {unknown_count} could not be classified at all."
+            f"{ddl_count} statement(s) of this Run change objects in "
+            f"{where}, and {unknown_count} could not be classified at all."
         )
     elif ddl_count:
         noun = "statement changes" if ddl_count == 1 else "statements change"
-        head = f"{ddl_count} {noun} objects in the sandbox."
+        head = f"{ddl_count} {noun} objects in {where}."
     else:
         noun = "statement" if unknown_count == 1 else "statements"
         head = (
@@ -332,7 +569,7 @@ def object_change_prompt(
             "unclassifiable statement is never assumed harmless."
         )
 
-    lines = [head, "", OBJECT_CHANGE_CONSEQUENCE, ""]
+    lines = [head, "", flavour.consequence, ""]
     for index, statement, kind in changing:
         note = (
             "could not be classified"
@@ -346,7 +583,7 @@ def object_change_prompt(
             f"Statement {index} (line {statement.start_line}, {note}): {first}"
         )
     lines.append("")
-    lines.append("Run these statements against the sandbox?")
+    lines.append(f"Run these statements against {where}?")
     return "\n".join(lines)
 
 
@@ -384,7 +621,9 @@ def _statement_run(
     )
 
 
-def default_object_change_confirm(title: str, text: str) -> ObjectChangeConfirmation:
+def default_object_change_confirm(
+    title: str, text: str, *, remember_label: str = REMEMBER_LABEL
+) -> ObjectChangeConfirmation:
     """The console's own object-change dialog, used when no host wired a
     `confirm` seam.
 
@@ -404,12 +643,34 @@ def default_object_change_confirm(title: str, text: str) -> ObjectChangeConfirma
         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
     )
     box.setDefaultButton(QMessageBox.StandardButton.No)
-    checkbox = QCheckBox(REMEMBER_LABEL)
+    checkbox = QCheckBox(remember_label)
     box.setCheckBox(checkbox)
     confirmed = box.exec() == QMessageBox.StandardButton.Yes
     return ObjectChangeConfirmation(
         confirmed=confirmed, remember=confirmed and checkbox.isChecked()
     )
+
+
+def default_discard_confirm(title: str, text: str) -> bool:
+    """The default *"discard the uncommitted run?"* dialog (§18.5 D4b's tab- and
+    window-close edges).
+
+    Its own dialog rather than the object-change one, because that dialog offers
+    *"don't ask again for this session"* -- an option that must never exist for
+    this question. Defaults to **No**: the safe answer to "throw away work
+    against production?" is to keep it. Every test injects `confirm_discard`
+    instead (§30).
+    """
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(title)
+    box.setText(title)
+    box.setInformativeText(text)
+    box.setStandardButtons(
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    )
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    return box.exec() == QMessageBox.StandardButton.Yes
 
 
 class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget):
@@ -440,13 +701,23 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         *"don't ask again for this sandbox session"* checkbox; a plain `bool`
         host keeps working and simply never remembers.
 
+    ``flavour``
+        `SANDBOX_FLAVOUR` (the default, §18.5 D4) or `QUALITY_FLAVOUR` (D4b).
+        It carries the tab key and title, every sentence that names the target
+        database, the danger marking and the **commit model**. The quality
+        flavour's `session_provider` returns a
+        `db/quality_query.py::QualitySession` and its `run_query` is
+        `run_quality_query`; nothing else in this class knows which console it
+        is.
+
     Wiring surface for the host: `set_schema_index`, `set_session_available`,
     `set_sql`, `append_sql`, `focus_editor`, `run`, `row_limit`,
     `set_row_limit`, `statement_timeout_ms`, `set_statement_timeout_ms`,
-    `clear`, the read-only
-    `sql_text`/`current_sql`/`result`/`run_report`, and the
-    `execute_requested` / `result_ready` / `run_finished` / `format_refused`
-    signals.
+    `clear`, `commit_run`, `rollback_run`, `request_close`, `discard_pending`,
+    the read-only
+    `sql_text`/`current_sql`/`result`/`run_report`/`flavour`/`has_uncommitted_run`,
+    and the `execute_requested` / `result_ready` / `run_finished` /
+    `format_refused` / `transaction_finished` signals.
     """
 
     #: Emitted with the SQL actually being sent, so a host can mirror it in a
@@ -462,6 +733,12 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
     #: Emitted with `sql/issues.py` issues when Format Selection refuses
     #: (§18.4's contract: the text is left byte-for-byte unchanged).
     format_refused = Signal(list)
+    #: Emitted with the `db/quality_query.py::TransactionOutcome` of every commit
+    #: and every discard on the explicit-commit flavour -- including the ones the
+    #: user cannot see, on tab and window close. That is how a host journals what
+    #: became durable and what was thrown away; the sandbox console never emits
+    #: it.
+    transaction_finished = Signal(object)
 
     def __init__(
         self,
@@ -471,10 +748,32 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         run_query: Callable[..., QueryResult] = run_sandbox_query,
         run_async: Callable[..., Any] = run_async,
         confirm: Callable[[str, str], Any] = default_object_change_confirm,
+        confirm_discard: Callable[[str, str], bool] | None = None,
+        flavour: ConsoleFlavour = SANDBOX_FLAVOUR,
     ) -> None:
         super().__init__(parent)
+        self._flavour = flavour
+        # A SECOND confirmation seam, and deliberately not the object-change one:
+        # that dialog carries a "don't ask again for this session" checkbox,
+        # which would be a catastrophic thing to offer on *"discard your
+        # uncommitted production transaction?"*. Same `(title, text) -> bool`
+        # shape, so no test ever reaches a modal (§30).
+        self._confirm_discard = (
+            confirm_discard if confirm_discard is not None else default_discard_confirm
+        )
         self._session_provider = session_provider
         self._run_query = run_query
+        if (
+            confirm is default_object_change_confirm
+            and flavour.remember_label != REMEMBER_LABEL
+        ):
+            # The unwired default must offer THIS console's checkbox label. The
+            # seam signature stays `confirm(title, text)`, so a host that wires
+            # its own dialog is unaffected.
+            confirm = partial(
+                default_object_change_confirm,
+                remember_label=flavour.remember_label,
+            )
         # Plain attribute, replaced wholesale by a synchronous stub in tests --
         # the SandboxController/ConnectionSetupDialog convention.
         self._run_async = run_async
@@ -489,6 +788,13 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         # id() after the original died, asks again.
         self._ack_ref: Any = None
         self._ack_id: int | None = None
+        #: The session the LAST run went through, kept only for the explicit
+        #: commit model: the commit gesture must reach the very transaction that
+        #: run opened, not whatever the provider would hand over now.
+        self._pending_session: Any = None
+        #: True while a commit/rollback gesture is in flight (both buttons are
+        #: disabled for the duration, like Run).
+        self._settling = False
 
         # §18.6 completion, injected exactly as into a DDL object tab: None
         # (the default) disables it entirely. This panel never imports
@@ -502,17 +808,45 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         # needs a schema. Read at gesture time, so a later `set_schema_index`
         # is picked up without re-wiring.
         self.editor.set_dynamic_expander(self._expand_select_expansion)
-        self.editor.setPlaceholderText(
-            "SELECT … — runs against this project's sandbox database, never the target"
-        )
+        self.editor.setPlaceholderText(flavour.placeholder)
 
         # The results panel supplies Run, the grid and the status strip. Giving
         # it a `sql_provider` is what tells it its text lives elsewhere (it then
         # hides its own editor), so the CodeEditor above is the single source.
+        #
+        # `status_lines` is the one wording seam the two flavours need there: the
+        # strip's failure block says *"N earlier statements already ran and
+        # COMMITTED"*, which is true per-statement and **false** inside one
+        # uncommitted transaction. One flag, resolved to the truthful sentence in
+        # `sql_results_panel.run_status_lines`, rather than a second strip.
         self.results = SqlResultsPanel(
             on_execute=self._execute,
             sql_provider=self.current_sql,
+            run_tooltip=flavour.run_tooltip,
+            status_lines=(
+                partial(run_status_lines, transactional=True)
+                if flavour.explicit_commit
+                else run_status_lines
+            ),
         )
+
+        # §18.5 D4b's danger marking, and the pending-transaction banner. Both
+        # are absent (never merely empty) on the sandbox console: a second
+        # "safe" colour and an "all clear" line would each say nothing (§18.7's
+        # trap 3).
+        self.danger_banner: QLabel | None = None
+        if flavour.danger:
+            self.danger_banner = QLabel(DANGER_BANNER_TEXT)
+            self.danger_banner.setWordWrap(True)
+            self._apply_danger_colour()
+
+        self.pending_label: QLabel | None = None
+        self.commit_button: QPushButton | None = None
+        self.rollback_button: QPushButton | None = None
+        if flavour.explicit_commit:
+            self.pending_label = QLabel(NO_PENDING_TEXT)
+            self.pending_label.setWordWrap(True)
+            self.pending_label.setVisible(False)
 
         self.row_limit_spin = QSpinBox()
         self.row_limit_spin.setRange(MIN_ROW_LIMIT, MAX_ROW_LIMIT)
@@ -548,6 +882,8 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         controls.addWidget(self.timeout_label)
         controls.addWidget(self.timeout_spin)
         controls.addStretch(1)
+        if flavour.explicit_commit:
+            self._build_commit_row(controls)
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
         self.splitter.addWidget(self.editor)
@@ -557,7 +893,11 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        if self.danger_banner is not None:
+            layout.addWidget(self.danger_banner)
         layout.addLayout(controls)
+        if self.pending_label is not None:
+            layout.addWidget(self.pending_label)
         layout.addWidget(self.splitter, 1)
 
         # This panel answers its own keys, and it answers them in two places
@@ -614,14 +954,41 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         self.editor.selectionChanged.connect(self._update_format_shortcut_enabled)
 
         # §27's Ctrl+Return = Run, the one execution gesture that carries a
-        # shortcut (§18.5 D4: the sandbox is disposable and `reset()`-able, so
-        # this does not reopen the "an irreversible outward effect must not be
-        # one keystroke away" rule -- and there is no target-database Run to
-        # reach with or without a key). Same mechanism as the two shortcuts
-        # above -- a `QShortcut` scoped `WidgetWithChildrenShortcut` so it can
-        # only fire while focus is inside this console and never from an
-        # unrelated tab -- and it calls the SAME `run()` the results panel's Run
-        # button calls, so there is exactly one execution path.
+        # shortcut -- live on BOTH consoles, identically (`DEC-260811025132`,
+        # answered 2026-08-11).
+        #
+        # **The old justification is dead and must not be restored.** It read
+        # *"the sandbox is disposable and `reset()`-able … and there is no
+        # target-database Run to reach with or without a key"*. The second half
+        # became false the moment §18.5 D4b's Quality SQL Console shipped -- this
+        # very class is that Run -- and the first half never applied to quality,
+        # which has no `reset()`.
+        #
+        # **What authorizes the chord here is the COMMIT MODEL, and nothing
+        # else.** Under `DEC-260811023646` a quality Run executes into an
+        # *uncommitted* transaction the user then inspects; the **commit gesture
+        # is the point of no return**, and it deliberately carries no shortcut
+        # (`_build_commit_row`). So the app's rule -- *"an irreversible outward
+        # effect must never be one keystroke away"* (§18.5, `README.md`, pinned
+        # by the Deployment menu's shortcut-less actions) -- is preserved in
+        # substance rather than waived.
+        #
+        # ⚠ **WARNING, recorded as a dependency and not a preference: if this
+        # console's commit model ever becomes auto-commit -- whole-run or
+        # per-statement -- this justification COLLAPSES.** `Ctrl+Return` would
+        # then be one keystroke from a durable production change, and the chord
+        # must be revisited (the alternatives on the table are: withhold it on
+        # the quality flavour, or require the Run button for a tab's first run).
+        # A future session must not read "Ctrl+Return is live on the quality
+        # console" as settled independently of the explicit commit gesture.
+        #
+        # Same mechanism as the two shortcuts above -- a `QShortcut` scoped
+        # `WidgetWithChildrenShortcut` so it can only fire while focus is inside
+        # THIS console and never from an unrelated tab, which is also what lets
+        # both consoles be open at once without Qt's fire-neither ambiguity
+        # (`WindowShortcut` here would kill Run on BOTH) -- and it calls the SAME
+        # `run()` the results panel's Run button calls, so there is exactly one
+        # execution path.
         self._run_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
         self._run_shortcut.setContext(
             Qt.ShortcutContext.WidgetWithChildrenShortcut
@@ -634,7 +1001,90 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         self.editor.installEventFilter(self)
 
         if not self._session_available:
-            self.results.set_enabled(False, NO_SESSION_TEXT)
+            self.results.set_enabled(False, flavour.no_session_text)
+
+    # --- §18.5 D4b: the commit gesture and the danger marking ---------------
+
+    def _build_commit_row(self, controls: QHBoxLayout) -> None:
+        """The explicit-commit flavour's two buttons.
+
+        **Neither carries a keyboard shortcut, and that is load-bearing rather
+        than an omission** (`DEC-260811025132`): the whole reason `Ctrl+Return`
+        may stay live on this console is that the *commit* is the point of no
+        return, so putting Commit one keystroke away would recreate exactly the
+        hazard the ruling avoided. `setAutoDefault(False)` is part of the same
+        rule -- an auto-default button answers `Return` -- and the labels carry
+        no `&`, so there is no mnemonic either. Do not add one, and do not let
+        this button inherit one from a menu action: there is deliberately no
+        menu-bar or context-menu command form of Commit.
+        """
+        self.commit_button = QPushButton(COMMIT_LABEL)
+        self.commit_button.setAutoDefault(False)
+        self.commit_button.setDefault(False)
+        self.commit_button.setToolTip(
+            "Make everything this run did durable in the quality database. "
+            "This is the point of no return, and it deliberately has no "
+            "keyboard shortcut."
+        )
+        self.commit_button.clicked.connect(lambda _checked=False: self.commit_run())
+
+        self.rollback_button = QPushButton(ROLLBACK_LABEL)
+        self.rollback_button.setAutoDefault(False)
+        self.rollback_button.setDefault(False)
+        self.rollback_button.setToolTip(
+            "Discard everything this run did. Nothing reaches the quality "
+            "database."
+        )
+        self.rollback_button.clicked.connect(
+            lambda _checked=False: self.rollback_run()
+        )
+
+        self.commit_button.setEnabled(False)
+        self.rollback_button.setEnabled(False)
+        controls.addWidget(self.commit_button)
+        controls.addWidget(self.rollback_button)
+
+    def _palette_is_light(self) -> bool:
+        return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+
+    def _apply_danger_colour(self) -> None:
+        """Paint the danger banner in the SAME swapped `MODE_MAINTENANCE` red the
+        quality DDL Explorer's selection band uses (§18.7 / D4b).
+
+        **A widget-level stylesheet, never `setPalette`.** A per-widget palette
+        override is INERT under the app-level qdarkstyle sheet, whose universal
+        `QWidget` rule declares `color` -- that is `BUG-260811021804`, already
+        shipped once and fixed. A widget-level sheet merges with, and outranks,
+        the application one.
+
+        The colour is **imported** (`ddl_buffer_panel.danger_selection_colors`,
+        itself derived from `mode_indicator.mode_colors`) so no third red enters
+        the app, and it is re-resolved from the live palette on every call:
+        idempotent and last-write-wins, which `changeEvent` requires -- that
+        event fires several times per theme flip and the first ones still report
+        the OLD palette.
+        """
+        banner = getattr(self, "danger_banner", None)
+        if banner is None:
+            return
+        band, text = danger_selection_colors(self._palette_is_light())
+        banner.setStyleSheet(mode_stylesheet(band, text))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Re-derive the danger colour when the theme flips.
+
+        Self-detection rather than host wiring, following
+        `ui/sql_results_panel.py`'s status strip: there is no generic theme
+        broadcast, and this panel sits in a tab that may not exist when the flip
+        happens. Both event types are kept because only `PaletteChange` was
+        measured to reach a nested child under `theme.py::apply_theme`.
+        """
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.PaletteChange,
+        ):
+            self._apply_danger_colour()
 
     # --- the editor's own keys and menu (BUG-056, BUG-063) ------------------
 
@@ -721,10 +1171,20 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
 
     # --- identity -----------------------------------------------------------
 
+    @property
+    def flavour(self) -> ConsoleFlavour:
+        """Which console this is. Read by the host to key the tab and to decide
+        whether an uncommitted-run question applies."""
+        return self._flavour
+
+    def tab_key(self) -> tuple[str, ...]:
+        """This console's key in `CenterStage`'s key -> widget map."""
+        return self._flavour.tab_key
+
     def tab_title(self) -> str:
-        """The `CenterStage` tab label. Fixed -- the console holds no document,
-        so there is no dirty marker to carry."""
-        return TAB_TITLE
+        """The `CenterStage` tab label. Fixed per flavour -- the console holds no
+        document, so there is no dirty marker to carry."""
+        return self._flavour.tab_title
 
     # --- text ---------------------------------------------------------------
 
@@ -805,9 +1265,11 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
             self.results.set_enabled(not self._running)
         else:
             # The session this console was running against is gone, so the
-            # "don't ask again for this sandbox session" grant goes with it.
+            # "don't ask again for this session" grant goes with it.
             self._forget_object_change_ack()
-            self.results.set_enabled(False, reason or NO_SESSION_TEXT)
+            self.results.set_enabled(
+                False, reason or self._flavour.no_session_text
+            )
 
     # --- running ------------------------------------------------------------
 
@@ -828,7 +1290,7 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
             self._session_provider() if self._session_provider is not None else None
         )
         if session is None:
-            self.results.set_enabled(False, NO_SESSION_TEXT)
+            self.results.set_enabled(False, self._flavour.no_session_text)
             return
 
         statements = split_statements(sql)
@@ -840,6 +1302,11 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         if not self._object_change_allowed(session, statements, classifications):
             self.results.report_notice(DECLINED_TEXT)
             return
+        # The commit gesture must reach the transaction THIS run opens, so the
+        # session is captured here rather than re-fetched from the provider
+        # later: a provider that handed over a different session would commit
+        # something the user never saw.
+        self._pending_session = session
 
         # Both controls are read ONCE per Run, deliberately: a control changed
         # while a multi-statement Run is in flight must not change the rules
@@ -847,14 +1314,22 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         max_rows = self.row_limit()
         statement_timeout_ms = self.statement_timeout_ms()
         self._running = True
-        self.results.set_enabled(False, RUNNING_TEXT)
+        self.results.set_enabled(False, self._flavour.running_text)
+        self._update_commit_affordances()
         self.execute_requested.emit(sql)
 
         def work() -> RunReport:
-            # Statement by statement, **stopping at the first failure**: each
-            # `run_query` call is one `SandboxExecutor.fetch`, i.e. its own
-            # committing transaction, so continuing past a failure would pile
-            # more committed changes on top of a broken Run.
+            # Statement by statement, **stopping at the first failure**.
+            #
+            # Sandbox: each `run_query` call is one `SandboxExecutor.fetch`, i.e.
+            # its own committing transaction, so continuing past a failure would
+            # pile more committed changes on top of a broken Run.
+            #
+            # Quality: the calls share ONE open transaction, which PostgreSQL
+            # aborts at the failing statement -- every later statement would come
+            # back as "current transaction is aborted" noise attributed to the
+            # wrong SQL. Same loop, same reason to stop, two different truths
+            # about what is now in the database, which is what `_finish` reports.
             runs: list[StatementRun] = []
             for index, (statement, kind) in enumerate(
                 zip(statements, classifications), start=1
@@ -890,6 +1365,8 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         self._running = False
         self.results.set_enabled(self._session_available)
         self.results.show_run(report)
+        self._settle_failed_transaction(report)
+        self._update_commit_affordances()
         if self.results.result is not None:
             self.result_ready.emit(self.results.result)
         self.run_finished.emit(report)
@@ -900,7 +1377,208 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         self._running = False
         self.results.set_enabled(self._session_available)
         self.results.show_result(result)
+        self._update_commit_affordances()
         self.result_ready.emit(result)
+
+    # --- §18.5 D4b: the uncommitted transaction and its three edges ---------
+
+    def _settle_failed_transaction(self, report: RunReport) -> None:
+        """Under the explicit-commit model, a FAILED run is rolled back at once
+        and the discard is stated.
+
+        There is nothing to offer the user here: PostgreSQL has aborted the whole
+        transaction, so Commit would be a lie and leaving it open would keep
+        locks on production for no reason. What must not happen is the discard
+        going unmentioned (`DEC-260811023646`), so the banner says it.
+        """
+        if not self._flavour.explicit_commit:
+            return
+        session = self._pending_session
+        if session is None or report.failure is None:
+            return
+        outcome = self._session_discard(session, DISCARD_ROLLBACK_GESTURE)
+        if outcome is None:
+            return
+        self._show_pending(
+            "The run failed, so the whole transaction was rolled back: "
+            "NOTHING was committed."
+        )
+
+    def pending_statements(self) -> int:
+        """How many statements are executed-but-not-committed right now. 0 on the
+        sandbox console (its statements commit as they run) and 0 whenever the
+        quality session is absent, settled or lost -- the single predicate the
+        buttons, the banner and both close questions read."""
+        session = self._pending_session
+        if not self._flavour.explicit_commit or session is None:
+            return 0
+        return int(getattr(session, "statements_pending", 0) or 0)
+
+    @property
+    def has_uncommitted_run(self) -> bool:
+        """Whether an uncommitted run is outstanding. What the host asks before
+        closing the tab or the window."""
+        return self.pending_statements() > 0
+
+    def commit_run(self) -> None:
+        """**The point of no return** (`DEC-260811023646`): make the open
+        transaction durable in the quality database.
+
+        Deliberately shortcut-less -- see `_build_commit_row`. Goes through the
+        same `run_async` seam as a Run, because a commit can block on the server
+        exactly as a statement can.
+        """
+        self._settle(commit=True)
+
+    def rollback_run(self) -> None:
+        """Discard the open transaction, keeping the console and its buffer.
+        Nothing reaches the quality database."""
+        self._settle(commit=False)
+
+    def _settle(self, *, commit: bool) -> None:
+        session = self._pending_session
+        if not self._flavour.explicit_commit or session is None:
+            return
+        if self._running or self._settling:
+            return
+        self._settling = True
+        self._update_commit_affordances()
+
+        def work() -> TransactionOutcome:
+            if commit:
+                return session.commit()
+            return session.discard(DISCARD_ROLLBACK_GESTURE)
+
+        def on_result(outcome: TransactionOutcome) -> None:
+            self._settling = False
+            self._show_pending(transaction_message(outcome))
+            self._update_commit_affordances()
+            self.transaction_finished.emit(outcome)
+
+        def on_error(exc: BaseException) -> None:
+            # `QualitySession.commit`/`discard` never raise for anything the
+            # database did, so this is the async seam itself failing. Reported,
+            # never swallowed: the user must not be left believing a commit that
+            # nothing observed.
+            self._settling = False
+            self._show_pending(
+                "The commit gesture itself failed to run "
+                f"({exc.__class__.__name__}: {str(exc).strip()}). The "
+                "transaction's state is UNKNOWN — check the quality database "
+                "before assuming anything was committed."
+            )
+            self._update_commit_affordances()
+
+        self._run_async(work, on_result=on_result, on_error=on_error)
+
+    def discard_pending(self, reason: str) -> TransactionOutcome | None:
+        """Roll back and CLOSE the held connection, returning what happened (or
+        None when there was nothing to close).
+
+        The single implementation of all three lifecycle edges -- tab close,
+        window close, and a target that stopped resolving. Synchronous on
+        purpose: it runs on the way out of a tab or a window, where there is
+        nobody left to hand a callback to, and leaving a connection open on
+        production because the app was busy quitting is the leak this method
+        exists to prevent.
+        """
+        session = self._pending_session
+        if not self._flavour.explicit_commit or session is None:
+            return None
+        outcome = self._session_close(session, reason)
+        self._pending_session = None
+        self._update_commit_affordances()
+        return outcome
+
+    def request_close(self, *, what: str = "this console") -> bool:
+        """Whether this console may close **now**, having asked about any
+        uncommitted run and dealt with it.
+
+        Returns False to VETO the close, which is the only way an uncommitted run
+        can be protected: the tab's ✕ is otherwise unconditional. A confirmed
+        close rolls the transaction back through `discard_pending` and says so in
+        the banner (which the user will not see, so the sentence also rides out
+        on `transaction_finished` for the host to journal). The sandbox console
+        always returns True -- it has nothing outstanding, by construction.
+
+        `what` names what is closing, so the **tab-close** and **window-close**
+        edges are one implementation with one sentence shape rather than two
+        questions that can drift apart.
+        """
+        pending = self.pending_statements()
+        if pending <= 0:
+            self.discard_pending(
+                DISCARD_WINDOW_CLOSED if what == "the window" else DISCARD_TAB_CLOSED
+            )
+            return True
+        if not self._confirm_discard(
+            CLOSE_PENDING_TITLE, close_pending_text(pending, what)
+        ):
+            return False
+        outcome = self.discard_pending(
+            DISCARD_WINDOW_CLOSED if what == "the window" else DISCARD_TAB_CLOSED
+        )
+        if outcome is not None:
+            self._show_pending(transaction_message(outcome))
+            self.transaction_finished.emit(outcome)
+        return True
+
+    def _session_discard(self, session: Any, reason: str):
+        discard = getattr(session, "discard", None)
+        if discard is None:
+            return None
+        outcome = discard(reason)
+        self.transaction_finished.emit(outcome)
+        return outcome
+
+    def _session_close(self, session: Any, reason: str):
+        close = getattr(session, "close", None)
+        if close is None:
+            return None
+        return close(reason)
+
+    def _show_pending(self, text: str) -> None:
+        """Put one sentence in the pending banner (or hide it when empty)."""
+        label = self.pending_label
+        if label is None:
+            return
+        label.setText(text)
+        label.setVisible(bool(text))
+
+    def _update_commit_affordances(self) -> None:
+        """Enable the two buttons exactly while there is an open transaction to
+        act on, and keep the banner in step.
+
+        One place, so the buttons cannot disagree with the banner or with what
+        the session would actually accept. A LOST connection disables both: the
+        server rolled the transaction back, so neither gesture has a subject.
+        """
+        if not self._flavour.explicit_commit:
+            return
+        session = self._pending_session
+        pending = self.pending_statements()
+        idle = not self._running and not self._settling
+        lost = bool(getattr(session, "is_lost", False)) if session else False
+        aborted = (
+            bool(getattr(session, "transaction_aborted", False)) if session else False
+        )
+        if self.commit_button is not None:
+            # Never offered on an aborted transaction: PostgreSQL would refuse
+            # it, and a button that cannot work is worse than an absent one.
+            self.commit_button.setEnabled(
+                bool(pending) and idle and not lost and not aborted
+            )
+        if self.rollback_button is not None:
+            self.rollback_button.setEnabled(
+                (bool(pending) or aborted) and idle and not lost
+            )
+        if pending and idle and not lost:
+            self._show_pending(pending_text(pending))
+        elif lost:
+            self._show_pending(
+                "The connection to the quality database was lost: the run was "
+                "rolled back by the server and NOTHING was committed."
+            )
 
     # --- the ddl/unknown confirmation (§18.5 D4) ----------------------------
 
@@ -919,16 +1597,21 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         if self._object_change_acknowledged(session):
             return True
         title = (
-            UNKNOWN_CHANGE_TITLE
+            self._flavour.unknown_change_title
             if all(
                 kind == UNKNOWN
                 for kind in classifications
                 if kind in CHANGES_OBJECTS
             )
-            else OBJECT_CHANGE_TITLE
+            else self._flavour.object_change_title
         )
         answer = as_confirmation(
-            self._confirm(title, object_change_prompt(statements, classifications))
+            self._confirm(
+                title,
+                object_change_prompt(
+                    statements, classifications, flavour=self._flavour
+                ),
+            )
         )
         if not answer.confirmed:
             return False

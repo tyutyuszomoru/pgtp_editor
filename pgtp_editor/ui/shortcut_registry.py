@@ -296,7 +296,8 @@ RESERVED_SEQUENCES: dict[str, str] = {
     # is a wrong answer to a direct question -- and `docs/KEYBINDINGS.md` and
     # `ui/format_settings.py` both already say five.
     "Ctrl+Alt+F": "Format Selection — a context-menu command plus a shortcut on "
-                  "five editing surfaces: the Sandbox SQL Console, the DDL "
+                  "five editing surfaces: the Sandbox SQL Console and its "
+                  "Quality twin (one panel class, hence one surface), the DDL "
                   "object tabs, and the Raw XML, Edit XSD and draft fragment "
                   "tabs; there is no menu-bar action to move (§27)",
     # BUG-062. The same shape as `Ctrl+Alt+F` above, and reserved for the same
@@ -323,7 +324,18 @@ RESERVED_SEQUENCES: dict[str, str] = {
                   "(FQ-030)",
     "Ctrl+Shift+Space": "Signature help for the call at the caret, in the SQL "
                         "editors (FQ-030)",
-    "Ctrl+Return": "Run, on the Sandbox SQL Console tab (§27)",
+    # Widened from "the Sandbox SQL Console tab" to BOTH consoles by
+    # `FQ-260811020328` / `DEC-260811025132`: §18.5 D4b's Quality SQL Console is
+    # the same panel class answering the same chord under the same gate
+    # (DEC-009), so the reserved SET is unchanged and no new row exists -- only
+    # this description had to stop naming one host. The old reason ("the sandbox
+    # is disposable and `reset()`-able … and there is no target-database Run to
+    # reach with or without a key") is FALSE on the quality console; what
+    # authorizes the chord there is that the console's separate, shortcut-less
+    # **Commit** gesture is the point of no return, never disposability.
+    "Ctrl+Return": "Run, on the Sandbox and Quality SQL Console tabs — each "
+                   "hosted as a widget-scoped QShortcut on its own panel, so "
+                   "both consoles can be open at once (§27, §18.5 D4/D4b)",
     "Ctrl+Space": "the completion popup, in three editor contexts (§27)",
     "Ctrl+G": "Go to line, in the caption grid (§27)",
     # §27/§26, FQ-016: the Edit menu's Cut/Copy/Paste/Delete were deleted as

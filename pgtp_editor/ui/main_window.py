@@ -86,6 +86,13 @@ from pgtp_editor.db.ddl_project import (
     save_settings,
     trigger_ddl_path,
 )
+from pgtp_editor.db.quality_query import (
+    DISCARD_TARGET_GONE,
+    DISCARD_WINDOW_CLOSED,
+    QualitySession,
+    run_quality_query,
+    transaction_message,
+)
 from pgtp_editor.db.introspect import RoutineInfo, fetch_routines_and_triggers
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.schema_index import SchemaIndex
@@ -1157,6 +1164,17 @@ class MainWindow(QMainWindow):
         #: `_build_database_menu` (called from `_build_menu_bar` below) assigns
         #: it, and the refresh may run before that on an early call path.
         self._sandbox_console_action = None
+        #: Database ▸ Quality SQL Console… (§18.5 D4b) -- same hidden-until-
+        #: reachable treatment and the same pre-initialisation reason.
+        self._quality_console_action = None
+        #: The ONE `db/quality_query.py::QualitySession` this window holds, or
+        #: None. It owns the held-open transaction the Commit gesture commits, so
+        #: it must be a single instance per window: a second session would be a
+        #: second transaction nobody can see (§18.5 D4b).
+        self._quality_session = None
+        #: The SQL of the last quality Run, kept only so a later Commit can
+        #: journal what became durable (see `_record_quality_transaction`).
+        self._quality_run_sql = ""
         #: The §18.5 D3a Check gesture and the two session gestures, all
         #: VISIBILITY-managed (carve-out 2: absent, never disabled). Same
         #: before-`_build_menu_bar` initialisation reason as above.
@@ -1968,6 +1986,15 @@ class MainWindow(QMainWindow):
         if not self._xsd_ui.confirm_close_for_exit():
             event.ignore()
             return
+        # §18.5 D4b's WINDOW-CLOSE edge (`DEC-260811023646`). An uncommitted
+        # transaction on the production database is the one thing that must not
+        # be thrown away silently, so the console asks -- and a declined answer
+        # aborts the close, exactly like the XSD lane above. Whatever the answer,
+        # `_close_quality_session` below runs on the way out, so the held
+        # connection can never outlive the window.
+        if not self._confirm_close_quality_console():
+            event.ignore()
+            return
         # Persist window geometry/dock state on close (Sub-project D). No modal
         # prompt here -- File > Close handles the unsaved-changes prompt.
         self._settings.setValue("geometry", self.saveGeometry())
@@ -1987,7 +2014,28 @@ class MainWindow(QMainWindow):
         # deserves a clean EOF rather than a half-dead peer.
         if self._mcp_session is not None and self._mcp_action is not None:
             self._mcp_action.setChecked(False)
+        # §18.5 D4b: release the held quality connection LAST and
+        # unconditionally. `_confirm_close_quality_console` above has already
+        # rolled back anything outstanding and told the user; this is the
+        # belt-and-braces close for the paths that never ran a statement (a
+        # console opened and abandoned still holds no transaction, but may hold a
+        # connection), so no psycopg session survives the window.
+        self._close_quality_session(DISCARD_WINDOW_CLOSED)
         super().closeEvent(event)
+
+    def _confirm_close_quality_console(self) -> bool:
+        """Ask about an uncommitted quality run before the window closes;
+        False aborts the close (§18.5 D4b's window-close edge).
+
+        Delegates the question to the panel, so the tab-close and window-close
+        edges ask the same sentence through the same confirmation seam and cannot
+        drift apart. With no quality console open, or nothing uncommitted, it is
+        a no-op that returns True.
+        """
+        panel = self.center_stage.quality_sql_tab()
+        if panel is None:
+            return True
+        return bool(panel.request_close(what="the window"))
 
     def _on_light_theme_toggled(self, checked):
         apply_theme(QApplication.instance(), checked)
@@ -3933,6 +3981,23 @@ class MainWindow(QMainWindow):
         self._sandbox_console_action.triggered.connect(
             lambda: self._open_sandbox_sql_console()
         )
+        # §18.5 D4b (`FQ-260811020328`): the SECOND console, and the one the
+        # paragraph above says does not exist. It DOES now, by owner ruling --
+        # full read/write ad-hoc SQL against the quality (production) database,
+        # always available whenever a quality connection with a password exists,
+        # with no Maintenance-mode gate and no per-run confirmation beyond the
+        # object-change dialog. What carries the safety instead is the explicit
+        # **Commit** gesture (`DEC-260811023646`): a Run changes nothing durable.
+        #
+        # Created HIDDEN and shown by `_refresh_quality_console_affordances`,
+        # following §26's absent-not-disabled rule and the SAME predicate the
+        # `Apply to quality` leg uses (`_target_apply_available`). It carries no
+        # shortcut, exactly like the sandbox entry.
+        self._quality_console_action = menu.addAction("Quality SQL Console…")
+        self._quality_console_action.setVisible(False)
+        self._quality_console_action.triggered.connect(
+            lambda: self._open_quality_sql_console()
+        )
         # `Open Sandbox Session` / `Close Sandbox Session` are GONE (BUG-040).
         # The session now comes up with the project, so `Open` had no state left
         # to be useful in and `Close` only offered the user a way to break their
@@ -5848,6 +5913,152 @@ class MainWindow(QMainWindow):
         if not available and self.center_stage.sandbox_sql_tab() is not None:
             self.center_stage.close_sandbox_sql_tab()
 
+    # --- §18.5 D4b: the Quality SQL Console ---------------------------------
+
+    def _quality_console_available(self) -> bool:
+        """Whether `Database ▸ Quality SQL Console…` is offered.
+
+        **The same predicate the `Apply to quality` leg uses**
+        (`_target_apply_available` -> `_target_is_configured` over BUG-034's one
+        selector `active_target_params`), deliberately: two readings of *"is
+        there a quality target?"* is how two surfaces come to disagree about the
+        same database.
+
+        Note what it does NOT do: prompt. The owner's ruling is *"available
+        whenever a quality connection **with a password** exists"*, and the
+        password is answered by `_target_params_for_apply()` at the moment the
+        user opens the console -- exactly as the Apply leg answers it at the
+        moment the user applies. Asking here would raise a modal from a
+        visibility refresh, for a console nobody has asked for yet.
+        """
+        return self._target_apply_available()
+
+    def _quality_session_provider(self):
+        """The console's `session_provider` seam: this window's single
+        `QualitySession`, created on first use.
+
+        Created lazily and kept, because the session **owns the held-open,
+        uncommitted transaction** (§18.5 D4b, `DEC-260811023646`) -- re-creating
+        one per Run would silently abandon whatever the last Run left
+        uncommitted, which is the failure this whole feature exists to prevent.
+        Returns None when no quality target with a password resolves; the panel
+        then refuses the Run with a stated reason.
+        """
+        session = self._quality_session
+        if session is not None and not session.is_lost:
+            return session
+        # A lost session is finished (its handle is already closed): drop it and
+        # make a new one, which is the honest reading of "reconnect".
+        self._quality_session = None
+        params = self._target_params_for_apply()
+        if params is None:
+            return None
+        self._quality_session = QualitySession(params)
+        return self._quality_session
+
+    def _open_quality_sql_console(self):
+        """Database ▸ Quality SQL Console… -- open, or focus, the single quality
+        console tab. Returns the panel, or None (creating NOTHING) when no
+        quality connection with a password can be had: a console that refuses
+        every Run is worse than no console at all, the same rule the sandbox
+        console follows."""
+        if not self._quality_console_available():
+            self.statusBar().showMessage(
+                "Quality SQL Console… needs a quality (target) connection — "
+                "none is configured; set one up in Project Settings."
+            )
+            return None
+        if self._quality_session_provider() is None:
+            # The target exists but the password question was declined. Stated,
+            # not silent, and nothing is created.
+            self.statusBar().showMessage(
+                "Quality SQL Console… needs the quality database's password; "
+                "nothing was opened."
+            )
+            return None
+        panel = self.center_stage.open_quality_sql_tab(
+            session_provider=self._quality_session_provider,
+            run_query=run_quality_query,
+        )
+        panel.set_schema_index(self._ddl_schema_index)
+        # Idempotent, exactly like the sandbox console's wiring: a re-invoke
+        # hands back the SAME panel and must not stack a second subscription.
+        if not getattr(panel, "_pgtp_refusal_wired", False):
+            panel.format_refused.connect(self._report_ddl_format_refusal)
+            panel.editor.expansion_refused.connect(
+                self._report_editor_gesture_refusal
+            )
+            panel.run_finished.connect(self._remember_quality_run)
+            panel.transaction_finished.connect(self._record_quality_transaction)
+            panel._pgtp_refusal_wired = True
+        panel.set_session_available(True)
+        panel.focus_editor()
+        return panel
+
+    def _remember_quality_run(self, report) -> None:
+        """Keep the SQL of the last quality Run, so a later Commit can journal
+        what became durable.
+
+        The Run itself is NOT journalled: under the explicit commit model a Run
+        has changed nothing durable yet, and an activity line saying otherwise
+        would be the journal asserting something untrue (§18.5 D4b)."""
+        runs = tuple(getattr(report, "runs", None) or ())
+        self._quality_run_sql = "\n".join(
+            (getattr(run.result, "sql", "") or "").strip() for run in runs
+        ).strip()
+
+    def _record_quality_transaction(self, outcome) -> None:
+        """Journal a COMMITTED quality transaction (FQ-019's `ran` verb, on the
+        `Quality DB` source), and state every outcome in the status bar.
+
+        A discard is reported but not journalled: nothing reached the database,
+        and an activity entry for it would read as if something had."""
+        self.statusBar().showMessage(transaction_message(outcome))
+        if not getattr(outcome, "committed", False):
+            return
+        sql = getattr(self, "_quality_run_sql", "") or ""
+        if not sql.strip():
+            return
+        self.record_activity(SOURCE_QUALITY_DB, VERB_RAN, ddl=sql)
+
+    def _refresh_quality_console_affordances(self) -> None:
+        """Make the quality console's presence follow the quality target's
+        (§26's absent-not-disabled rule).
+
+        And when the target stops resolving, deal with the console rather than
+        leaving it: any uncommitted transaction is rolled back with a stated
+        reason (`DISCARD_TARGET_GONE`) and the connection is closed before the
+        tab goes -- the third of `DEC-260811023646`'s lifecycle edges. No
+        question is asked here, because the user did not initiate this and there
+        is no longer a database to commit to."""
+        available = self._quality_console_available()
+        if self._quality_console_action is not None:
+            self._quality_console_action.setVisible(available)
+        if available:
+            return
+        panel = self.center_stage.quality_sql_tab()
+        if panel is not None:
+            outcome = panel.discard_pending(DISCARD_TARGET_GONE)
+            if outcome is not None:
+                self.statusBar().showMessage(transaction_message(outcome))
+            self.center_stage.close_quality_sql_tab()
+        self._close_quality_session(DISCARD_TARGET_GONE)
+
+    def _close_quality_session(self, reason: str):
+        """Roll back and close this window's `QualitySession`, if any, and
+        report what was discarded. Returns the `TransactionOutcome` or None.
+
+        The one place the held connection is released, so *"can this leak?"* has
+        a single answer: no path closes the tab or the window without coming
+        through here (or through the panel's `discard_pending`, which closes the
+        very same session object)."""
+        session = self._quality_session
+        self._quality_session = None
+        if session is None:
+            return None
+        outcome = session.close(reason)
+        return outcome
+
     def _wire_ddl_object_panel_reporting(self, panel, ref) -> None:
         """Connect a freshly opened DDL object tab's §18.5 reporting channels,
         its D4 console bridge and its sandbox apply seams. Shared by both
@@ -6253,6 +6464,12 @@ class MainWindow(QMainWindow):
         for panel in self.center_stage.ddl_object_panels():
             self._wire_ddl_object_apply_seams(panel)
         self._refresh_sandbox_console_affordances()
+        # §18.5 D4b rides the same refresh, even though its predicate is the
+        # QUALITY target's: this method already re-wires the `Apply to quality`
+        # seams off `_target_apply_available()` on every project transition, so
+        # the two quality affordances stay in step with each other by
+        # construction rather than by two schedules.
+        self._refresh_quality_console_affordances()
         self._refresh_project_status_sandbox_actions()
 
     def _refresh_project_status_sandbox_actions(self) -> None:

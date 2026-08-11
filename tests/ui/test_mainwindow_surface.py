@@ -276,6 +276,22 @@ EXPECTED_HOST_SURFACE = {
     "_open_project_status",
     "_open_sandbox_session",
     "_open_sandbox_sql_console",
+    # §18.5 D4b (`FQ-260811020328`): the Quality SQL Console's lane. Deliberate
+    # host growth, reviewed here: it is the sibling of the sandbox console's
+    # names above, and the two must live at the same altitude or the pair drifts.
+    # `_quality_session` is the window's ONE held-open transaction
+    # (`DEC-260811023646`) -- a second one would be a transaction nobody can see.
+    "_open_quality_sql_console",
+    "_quality_console_action",
+    "_quality_console_available",
+    "_quality_session",
+    "_quality_session_provider",
+    "_quality_run_sql",
+    "_close_quality_session",
+    "_confirm_close_quality_console",
+    "_record_quality_transaction",
+    "_refresh_quality_console_affordances",
+    "_remember_quality_run",
     "_owning_table_name",
     "_parsing_menu",
     "_php_tabs",
