@@ -14,22 +14,33 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/ui/new_trigger_dialog.py
-"""The Add Trigger dialog (FQ-002) -- reached by right-clicking a **table**
-node in the DDL Explorer, and the origin of a brand-new trigger.
+"""The Add Trigger dialog (FQ-002) -- reached by right-clicking a **table or
+view** node in the DDL Explorer, and the origin of a brand-new trigger.
 
 Collects exactly the fields `CREATE TRIGGER` needs beyond the table itself:
 name, timing, event(s), level, and the trigger function to attach.
 
-Four deliberate constraints:
+Five deliberate constraints:
 
 - **The target table is given, not chosen.** The right-clicked node already
   fixed it; re-offering it as a field would only invite disagreeing with the
   node the user clicked.
+- **The target's KIND is given too, and it filters the timings**
+  (DEC-260811025733). A table offers `BEFORE`/`AFTER`, a view offers
+  `INSTEAD OF` and nothing else, and both lists come from
+  `ddl_skeleton.trigger_timings_for_kind` rather than being decided here. This
+  is PostgreSQL's split, not a preference: `INSTEAD OF` is only legal on a view
+  and is the standard way to make one updatable, while `BEFORE`/`AFTER` are only
+  legal on a table. Before the ruling this dialog never learned the kind and
+  offered all three, so a view could be handed `BEFORE INSERT` -- a rendered,
+  authoritative-looking statement the server rejects. A `"matview"` target has
+  no legal timing at all and is refused outright here as a safety net; the tree
+  does not offer the gesture on one in the first place.
 - **Events are multi-select.** Postgres combines them with `OR`
   (`BEFORE INSERT OR UPDATE`), so this is a set of checkboxes rather than a
   one-of combo. At least one is required.
 - **Every choice is driven off `db/ddl_skeleton.py`'s own constants**
-  (`TRIGGER_TIMINGS` / `TRIGGER_EVENTS` / `TRIGGER_LEVELS`) rather than
+  (`trigger_timings_for_kind` / `TRIGGER_EVENTS` / `TRIGGER_LEVELS`) rather than
   re-typed here, so the widgets and the emitter cannot drift apart. Notably
   there is no "for each transaction" level -- Postgres has none (the original
   FQ-002 request asked for it and was corrected).
@@ -77,9 +88,9 @@ from PySide6.QtWidgets import (
 from pgtp_editor.db.ddl_skeleton import (
     TRIGGER_EVENTS,
     TRIGGER_LEVELS,
-    TRIGGER_TIMINGS,
     SkeletonError,
     trigger_skeleton,
+    trigger_timings_for_kind,
 )
 from pgtp_editor.db.sandbox import UnsafeIdentifierError
 
@@ -93,6 +104,17 @@ _NO_FUNCTIONS_MESSAGE = (
     " a function that RETURNS trigger. Create one first, then add the trigger."
 )
 
+#: The refusal for a target that can carry no trigger at whatever timing --
+#: today only a materialized view. Stated, not crashed: the tree already keeps
+#: the gesture off a matview node, so this is the safety net behind that gate
+#: for any other way in (a caller wiring the dialog up itself, a future kind).
+NO_TRIGGERS_MESSAGE = (
+    "Materialized views cannot have triggers — PostgreSQL supports none on them."
+)
+
+#: What the read-only target row is called, per kind.
+_TARGET_LABELS = {"table": "Table:", "view": "View:", "matview": "Materialized view:"}
+
 
 class NewTriggerDialog(QDialog):
     def __init__(
@@ -100,9 +122,16 @@ class NewTriggerDialog(QDialog):
         table: str,
         functions: FunctionSource = (),
         parent: QWidget | None = None,
+        *,
+        kind: str = "table",
     ) -> None:
         super().__init__(parent)
         self._table = table
+        # `introspect.TableInfo.kind` verbatim. Keyword-only and defaulted to the
+        # commonest and most restrictive case, so an existing two-argument call
+        # keeps meaning "a table" rather than silently widening.
+        self._kind = kind
+        self._timings = trigger_timings_for_kind(kind)
         names = functions() if callable(functions) else functions
         # Sorted and de-duplicated: the same stable, flat presentation the
         # existing table picker uses.
@@ -113,8 +142,10 @@ class NewTriggerDialog(QDialog):
         self._name_edit.textChanged.connect(self._refresh_validation)
 
         self._timing_combo = QComboBox()
-        self._timing_combo.addItems(TRIGGER_TIMINGS)
+        self._timing_combo.addItems(self._timings)
         self._timing_combo.currentIndexChanged.connect(self._refresh_validation)
+        if not self._timings:
+            self._timing_combo.setEnabled(False)
 
         # One checkbox per canonical event, in the emitter's own order. The
         # emitter re-orders and de-duplicates anyway, so the checked set can be
@@ -139,7 +170,9 @@ class NewTriggerDialog(QDialog):
             self._function_combo.setEnabled(False)
 
         form = QFormLayout()
-        form.addRow("Table:", QLabel(table))
+        # The row names what was clicked: calling a view "Table:" while the only
+        # timing on offer is `INSTEAD OF` would read as a mismatch.
+        form.addRow(_TARGET_LABELS.get(kind, "Table:"), QLabel(table))
         form.addRow("Name:", self._name_edit)
         form.addRow("Timing:", self._timing_combo)
         form.addRow("Events:", events_row)
@@ -167,6 +200,17 @@ class NewTriggerDialog(QDialog):
     def table(self) -> str:
         """The target table, exactly as the caller handed it over."""
         return self._table
+
+    def kind(self) -> str:
+        """What the target is — `"table"` / `"view"` / `"matview"`, as handed
+        over. Read by tests and by anything that needs to know why the timing
+        list looks the way it does."""
+        return self._kind
+
+    def offered_timings(self) -> list[str]:
+        """The timings this target may carry, i.e. what the combo holds. Empty
+        for a materialized view."""
+        return list(self._timings)
 
     def trigger_name(self) -> str:
         return self._name_edit.text().strip()
@@ -211,6 +255,10 @@ class NewTriggerDialog(QDialog):
     def _render(self) -> tuple[str, str | None]:
         """Render, or explain the refusal. Never raises: `SkeletonError` and
         `UnsafeIdentifierError` both become inline validation text."""
+        # Ahead of every other check: with no legal timing there is no field
+        # state that could become a statement, so nothing else is worth saying.
+        if not self._timings:
+            return "", NO_TRIGGERS_MESSAGE
         if not self._functions:
             return "", _NO_FUNCTIONS_MESSAGE
         if not self.trigger_name():
@@ -229,6 +277,7 @@ class NewTriggerDialog(QDialog):
                     events=self.events(),
                     level=self.level(),
                     function_name=function_name,
+                    kind=self._kind,
                 ),
                 None,
             )

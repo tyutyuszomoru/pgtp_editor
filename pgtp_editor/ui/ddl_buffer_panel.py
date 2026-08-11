@@ -63,6 +63,7 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.db.ddl_buffer import EDITABLE_SPAN_KINDS, DdlObjectSpan
 from pgtp_editor.db.ddl_project import DriftMarkers, routine_ddl_paths, trigger_ddl_path
+from pgtp_editor.db.ddl_skeleton import trigger_timings_for_kind
 from pgtp_editor.db.introspect import DatabaseSchema
 from pgtp_editor.ui.alter_column_dialogs import (
     OP_DROP_COLUMN,
@@ -72,6 +73,9 @@ from pgtp_editor.ui.alter_column_dialogs import (
 )
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.mode_indicator import MODE_MAINTENANCE, mode_colors
+# The refusal sentence is IMPORTED from the dialog that also shows it inline, so
+# the tree and the dialog cannot come to explain the same rule differently.
+from pgtp_editor.ui.new_trigger_dialog import NO_TRIGGERS_MESSAGE
 from pgtp_editor.ui.table_dialogs import OP_COLUMN_COMMENT, OP_TABLE_COMMENT
 
 _SPAN_ROLE = Qt.ItemDataRole.UserRole
@@ -1559,10 +1563,7 @@ class BrowserPanel(QWidget):
             # FQ-002's *creation* entry stays at the TOP LEVEL: it creates a new
             # object, which is a different act from altering this one, and
             # burying it in the mutation submenu would say otherwise.
-            menu.addAction(
-                "Add Trigger…",
-                lambda: self.add_trigger_requested.emit(table_info),
-            )
+            self._add_trigger_entry(menu, table_info)
             # The second creation entry, beside the first and above the
             # mutation submenu. Offered from a table node -- not only from the
             # branch root -- because a table node is the one place in this tree
@@ -1621,6 +1622,37 @@ class BrowserPanel(QWidget):
         one -- the click context `Create Table…` seeds its name field with."""
         name = getattr(table_info, "name", "") or ""
         return name.split(".", 1)[0] if "." in name else ""
+
+    def _add_trigger_entry(self, menu: QMenu, table_info) -> None:
+        """FQ-002's `Add Trigger…`, per relation kind (DEC-260811025733).
+
+        **Offered on a table and on a view, refused on a materialized view.**
+        The split is PostgreSQL's, not a preference: `INSTEAD OF` on a view is
+        the standard way to make one updatable and is squarely what this app is
+        for, while a materialized view supports no trigger at all. The dialog is
+        told the kind and offers only that kind's timings, so a view can no
+        longer be handed `BEFORE INSERT` -- which is what this branch, keying on
+        the role alone with no kind check, allowed once the Tables branch widened
+        to views and matviews.
+
+        **The matview case is a STATED refusal, not an absence** -- a disabled
+        entry carrying the reason, FQ-023's convention and the same shape
+        `DdlEditorPanel` uses for `edit_refusal_for_span`. It differs from
+        `_add_alter_table_submenu`'s silent exclusion deliberately: there, a
+        whole submenu of fifteen operations has no one-sentence equivalent and
+        the menu keeps other content anyway, whereas here one command maps to
+        one sentence, and the gesture IS present on both sibling kinds of the
+        very same tree role -- so a user who has seen it on a table would read
+        its bare disappearance as the app having forgotten, and go hunting.
+        """
+        if trigger_timings_for_kind(getattr(table_info, "kind", "table")):
+            menu.addAction(
+                "Add Trigger…",
+                lambda: self.add_trigger_requested.emit(table_info),
+            )
+            return
+        # A sentence, not a command: there is nothing for it to do.
+        menu.addAction(NO_TRIGGERS_MESSAGE).setEnabled(False)
 
     def _add_create_table_entry(self, menu: QMenu, schema: str) -> None:
         menu.addAction(

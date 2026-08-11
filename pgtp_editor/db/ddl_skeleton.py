@@ -99,9 +99,48 @@ from dataclasses import dataclass
 # reason every identifier goes through the one `quote_ident`.
 from .sandbox import _sql_string_literal, quote_ident
 
-#: Trigger firing time. `INSTEAD OF` is view-only in Postgres; that is the
-#: caller's constraint to enforce, not this emitter's.
+#: Every trigger firing time this emitter knows how to spell. Which of them is
+#: legal depends on what the trigger is attached to -- see
+#: `TRIGGER_TIMINGS_BY_KIND`, which is the tuple a caller should offer. This one
+#: is the union, useful for "is this word a timing at all".
 TRIGGER_TIMINGS = ("BEFORE", "AFTER", "INSTEAD OF")
+
+#: Which firing times each relation kind can actually carry. **This is
+#: PostgreSQL's rule, not a preference:** a table (including a partitioned one,
+#: which `introspect.TableInfo.kind` also reports as `"table"`) takes
+#: `BEFORE`/`AFTER`; a view takes `INSTEAD OF` and nothing else -- that is the
+#: standard way to make a view updatable; and a materialized view takes no
+#: trigger at all, so its entry is deliberately empty rather than absent.
+#:
+#: **Enforced HERE, by `trigger_skeleton`, and no longer delegated.** Until
+#: DEC-260811025733 `TRIGGER_TIMINGS` above said `INSTEAD OF` was "the caller's
+#: constraint to enforce, not this emitter's" — and no such caller existed, so a
+#: view node happily rendered `BEFORE INSERT`, which the server rejects. A
+#: constraint delegated to a caller that does not exist is not a division of
+#: labour, so the rule lives with the one thing that knows the grammar, and the
+#: dialog derives its combo from this table instead of re-deciding it.
+TRIGGER_TIMINGS_BY_KIND: dict[str, tuple[str, ...]] = {
+    "table": ("BEFORE", "AFTER"),
+    "view": ("INSTEAD OF",),
+    "matview": (),
+}
+
+
+def trigger_timings_for_kind(kind: str) -> tuple[str, ...]:
+    """The firing times `kind` may carry, in `TRIGGER_TIMINGS` order.
+
+    `()` for `"matview"` — a legitimate answer meaning "no trigger is possible
+    here", which a caller renders as a refusal. An *unrecognised* kind raises
+    instead: silently treating it as a table is how a wrong statement gets
+    emitted with confidence (refuse-don't-degrade, as everywhere else here).
+    """
+    try:
+        return TRIGGER_TIMINGS_BY_KIND[kind]
+    except KeyError:
+        raise SkeletonError(
+            f"unknown relation kind {kind!r} — expected one of "
+            f"{', '.join(sorted(TRIGGER_TIMINGS_BY_KIND))}"
+        ) from None
 
 #: Canonical event order. Emission always follows THIS order regardless of the
 #: order the caller passes, so a dialog backed by an unordered set of checkbox
@@ -141,20 +180,35 @@ def trigger_skeleton(
     events: "list[str] | tuple[str, ...] | set[str]",
     level: str,
     function_name: str,
+    kind: str = "table",
 ) -> str:
     """`CREATE TRIGGER` naming an **existing** trigger function.
 
     `table` may be schema-qualified (`public.orders`); each part is quoted
     separately so the dot stays a separator rather than becoming part of the
     name. `events` is combined with ` OR ` in `TRIGGER_EVENTS` order.
+
+    `kind` is what `table` *is* (`"table"` / `"view"` / `"matview"`, exactly
+    `introspect.TableInfo.kind`) and it decides which timings are accepted —
+    `TRIGGER_TIMINGS_BY_KIND`, enforced here (DEC-260811025733). It defaults to
+    `"table"` because that is the restrictive answer: a caller that forgets to
+    say gets `BEFORE`/`AFTER` and a refusal for `INSTEAD OF`, never a statement
+    the server rejects.
     """
     quoted_name = _identifier(name, "trigger name")
     quoted_table = _qualified(table, "table")
     quoted_function = _qualified(function_name, "trigger function")
 
-    if timing not in TRIGGER_TIMINGS:
+    allowed_timings = trigger_timings_for_kind(kind)
+    if not allowed_timings:
         raise SkeletonError(
-            f"timing must be one of {', '.join(TRIGGER_TIMINGS)} — got {timing!r}"
+            "materialized views support no triggers in PostgreSQL — "
+            f"cannot create one on {table!r}"
+        )
+    if timing not in allowed_timings:
+        raise SkeletonError(
+            f"timing must be one of {', '.join(allowed_timings)} for a {kind} — "
+            f"got {timing!r}"
         )
     if level not in TRIGGER_LEVELS:
         raise SkeletonError(

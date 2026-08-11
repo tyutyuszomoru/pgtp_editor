@@ -17,6 +17,7 @@ from pgtp_editor.db.ddl_skeleton import (
     TRIGGER_EVENTS,
     TRIGGER_LEVELS,
     TRIGGER_TIMINGS,
+    TRIGGER_TIMINGS_BY_KIND,
     ColumnSpec,
     SkeletonError,
     add_column_skeleton,
@@ -40,6 +41,7 @@ from pgtp_editor.db.ddl_skeleton import (
     set_column_not_null_skeleton,
     set_table_comment_skeleton,
     trigger_skeleton,
+    trigger_timings_for_kind,
 )
 from pgtp_editor.db.sandbox import UnsafeIdentifierError
 
@@ -90,9 +92,64 @@ def test_trigger_unqualified_table_is_quoted_as_one_part():
     assert 'ON "orders"\n' in _trigger(table="orders")
 
 
+@pytest.mark.parametrize(
+    "kind,timing",
+    [
+        (kind, timing)
+        for kind, timings in sorted(TRIGGER_TIMINGS_BY_KIND.items())
+        for timing in timings
+    ],
+)
+def test_every_declared_timing_is_accepted_on_the_kind_that_may_carry_it(kind, timing):
+    """**Supersedes** the flat `TRIGGER_TIMINGS` parametrization
+    (DEC-260811025733): `INSTEAD OF` is no longer accepted on a table, so the
+    union is not a list of things any one target may be handed."""
+    assert _trigger(kind=kind, timing=timing).startswith("CREATE TRIGGER")
+
+
+def test_a_table_refuses_instead_of():
+    """The defect the ruling closes, at the emitter: `INSTEAD OF` on a table is
+    not a statement PostgreSQL accepts."""
+    with pytest.raises(SkeletonError, match="timing must be one of"):
+        _trigger(kind="table", timing="INSTEAD OF")
+
+
+@pytest.mark.parametrize("timing", ("BEFORE", "AFTER"))
+def test_a_view_refuses_before_and_after(timing):
+    with pytest.raises(SkeletonError, match="for a view"):
+        _trigger(kind="view", timing=timing)
+
+
 @pytest.mark.parametrize("timing", TRIGGER_TIMINGS)
-def test_every_declared_timing_is_accepted(timing):
-    assert _trigger(timing=timing).startswith("CREATE TRIGGER")
+def test_a_matview_refuses_every_timing(timing):
+    """PostgreSQL supports no trigger on a materialized view at all, so the
+    refusal names the relation kind rather than the timing."""
+    with pytest.raises(SkeletonError, match="materialized views support no triggers"):
+        _trigger(kind="matview", timing=timing)
+
+
+def test_an_unknown_relation_kind_is_refused():
+    """Refuse-don't-degrade: silently assuming "table" is how a wrong statement
+    gets emitted with confidence."""
+    with pytest.raises(SkeletonError, match="unknown relation kind"):
+        _trigger(kind="sequence")
+
+
+def test_the_kind_defaults_to_table():
+    """A caller that says nothing gets the restrictive answer, not the union."""
+    assert trigger_timings_for_kind("table") == ("BEFORE", "AFTER")
+    assert _trigger(timing="AFTER").startswith("CREATE TRIGGER")
+    with pytest.raises(SkeletonError):
+        _trigger(timing="INSTEAD OF")
+
+
+def test_the_per_kind_table_covers_exactly_the_kinds_introspect_reports():
+    """`introspect.TableInfo.kind` is one of these three (`relkind` in
+    `r`/`p`/`v`/`m`, with `p` folded into "table"), and every timing offered is
+    one the emitter knows how to spell."""
+    assert set(TRIGGER_TIMINGS_BY_KIND) == {"table", "view", "matview"}
+    for timings in TRIGGER_TIMINGS_BY_KIND.values():
+        assert set(timings) <= set(TRIGGER_TIMINGS)
 
 
 @pytest.mark.parametrize("level", TRIGGER_LEVELS)

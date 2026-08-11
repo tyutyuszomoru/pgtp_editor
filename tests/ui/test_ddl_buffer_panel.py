@@ -18,6 +18,9 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     resolve_edit_target,
 )
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+# Imported from the dialog, not re-typed: the panel shows the dialog's own
+# sentence, and a second spelling here would let the two drift (DEC-260811025733).
+from pgtp_editor.ui.new_trigger_dialog import NO_TRIGGERS_MESSAGE
 
 # DatabaseSchema is used directly (not just via _schema()) in several tests
 # below to exercise empty/dangling-reference/cross-schema edge cases.
@@ -1389,6 +1392,51 @@ def test_context_menu_on_a_table_node_offers_add_trigger(qtbot):
     menu.actions()[0].trigger()
     assert len(requested) == 1
     assert requested[0].name == "pr.widget"
+
+
+def test_add_trigger_is_offered_on_a_view_node(qtbot):
+    """DEC-260811025733: a view keeps the gesture -- `INSTEAD OF` on a view is
+    the standard way to make one updatable, so this is a real command there. It
+    emits the view's own `TableInfo`, kind included, which is how the dialog
+    learns to offer `INSTEAD OF` only."""
+    panel = _alter_panel(qtbot, kind="view")
+    view_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.add_trigger_requested.connect(requested.append)
+
+    menu = panel._menu_for_item(view_item)
+
+    labels = [action.text() for action in menu.actions()]
+    assert labels == ["Add Trigger…", CREATE_TABLE_LABEL]  # no Alter Table ▸
+    menu.actions()[0].trigger()
+    assert [(info.name, info.kind) for info in requested] == [("pr.widget", "view")]
+
+
+def test_add_trigger_on_a_matview_node_is_a_stated_refusal(qtbot):
+    """DEC-260811025733: PostgreSQL supports no trigger on a materialized view,
+    so the command is not offered -- but per FQ-023 it says why rather than
+    vanishing, as a DISABLED entry carrying the reason (the shape
+    `DdlEditorPanel` uses for `edit_refusal_for_span`). Nothing can be emitted
+    from it: a disabled action does not fire, and there is no enabled entry
+    whose text mentions triggers."""
+    panel = _alter_panel(qtbot, kind="matview")
+    matview_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.add_trigger_requested.connect(requested.append)
+
+    menu = panel._menu_for_item(matview_item)
+
+    refusals = [a for a in menu.actions() if a.text() == NO_TRIGGERS_MESSAGE]
+    assert len(refusals) == 1
+    assert not refusals[0].isEnabled()
+    assert not any(a.text() == "Add Trigger…" for a in menu.actions())
+    # The reason is stated exactly once, and the sibling creation entry survives.
+    assert [a.text() for a in menu.actions()] == [
+        NO_TRIGGERS_MESSAGE,
+        CREATE_TABLE_LABEL,
+    ]
+    refusals[0].trigger()
+    assert requested == []
 
 
 def test_context_menu_on_the_routines_branch_offers_new_routine(qtbot):

@@ -4846,9 +4846,16 @@ class MainWindow(QMainWindow):
         )
 
     def _on_ddl_add_trigger_requested(self, table_info) -> None:
-        """Right-click ▸ Add Trigger… on a table node (FQ-002)."""
+        """Right-click ▸ Add Trigger… on a table or view node (FQ-002).
+
+        The relation KIND travels with the name (DEC-260811025733): the dialog
+        offers `BEFORE`/`AFTER` for a table and `INSTEAD OF` for a view, and the
+        tree does not emit this at all for a materialized view."""
         dialog = NewTriggerDialog(
-            table_info.name, self._trigger_function_candidates(), parent=self
+            table_info.name,
+            self._trigger_function_candidates(),
+            parent=self,
+            kind=getattr(table_info, "kind", "table"),
         )
         dialog.accepted.connect(lambda: self._open_created_ddl_object(dialog))
         dialog.show()
