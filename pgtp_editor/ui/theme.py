@@ -131,10 +131,88 @@ _qss_cache: dict[bool, str] = {}
 #: qdarkstyle's QSS. Tests assert on this rather than re-spelling the text.
 FOCUS_RULE_SELECTOR = "QPushButton:focus, QToolButton:focus"
 
+#: Per-edge mapping for the tab-bar focus cue (BUG-260812004649): the QSS edge
+#: pseudo-state -> the border side qdarkstyle's matching ``:selected`` rule
+#: already paints 3px of accent on (always the side facing the tab pane).
+#: The focus rule recolours exactly that border and touches nothing else.
+FOCUS_TAB_EDGES: dict[str, str] = {
+    "top": "border-bottom",
+    "bottom": "border-top",
+    "left": "border-right",
+    "right": "border-left",
+}
+
+
+def focus_tab_selector(edge: str) -> str:
+    """The full selector list the tab focus rule for ``edge`` is emitted under.
+
+    Tests assert on this rather than re-spelling the text -- and it is a list,
+    not a single selector, because qdarkstyle scopes a parallel
+    ``QDockWidget QTabBar::tab...`` arm throughout for Qt's tabified-dock bars
+    (which are ``South``-shaped, hence ``:bottom`` earning its rule even though
+    the app calls ``setTabPosition`` nowhere)."""
+    return (
+        f"QTabBar::tab:{edge}:selected:focus, "
+        f"QDockWidget QTabBar::tab:{edge}:selected:focus"
+    )
+
+
+def _focus_visible_tab_qss(pal) -> str:
+    """The tab-bar half of the focus tail (BUG-260812004649).
+
+    qdarkstyle ships ``QTabBar::tab:<edge>``, ``:selected``, ``:!selected``,
+    ``:!selected:hover`` and the ``:disabled`` variants -- and **no** ``:focus``
+    selector of any kind, so a focused tab bar paints identically to an
+    unfocused one. Tab-traversal lands on a ``QTabBar`` three times per cycle on
+    a real window (the ``CenterStage`` document tabs, the left dock and the
+    bottom dock), and nothing tells the user the arrow keys are now live.
+
+    **``:selected:focus``, not ``:focus``, and that is not a style choice.**
+    ``QTabBar`` takes focus as a whole widget and Qt sets ``State_HasFocus`` on
+    the style option of the **current** tab only -- rendered proof: painting
+    ``:selected:focus`` vs ``:!selected:focus`` gives 617px and 0px. The
+    pseudo-state cannot reach an unselected tab, and it does not need to:
+    selection follows focus in a ``QTabBar`` (arrows move ``currentIndex``
+    directly), so "where you are" is always the selected tab. A bare
+    ``QTabBar::tab:focus`` is additionally **dead** here -- the same loud rule
+    paints 1342px standalone and **0px** once qdarkstyle applies, because its
+    ``:<edge>:selected`` outranks it on specificity. That is a rule which passes
+    a stylesheet-string test while painting nothing.
+
+    **The box does not move.** Only ONE ``border-<side>`` colour is set, on the
+    3px border qdarkstyle's ``:selected`` rule already draws; no ``border``
+    shorthand, no ``padding``/``margin``/``outline``. Any of those does move it:
+    a naive ``border: 2px`` rule takes tabs from 37px to 41px wide and shifts
+    every following tab, and ``padding: 0`` overshoots to 33px (tab padding is
+    per-edge and asymmetric, so the button fix's compensation does not transfer).
+    Measured with these rules: ``tabRect()`` is identical focused and unfocused,
+    with 28 ring pixels appearing on the selected tab's pane-facing edge only.
+
+    **The selection accent is REPLACED while focused, not overlaid -- do not
+    "restore" it.** Selected-ness is still carried by the tab background
+    (``#54687A`` vs ``#455364`` in dark) and by ``margin-top``, so nothing is
+    lost. The colour is ``COLOR_TEXT_1``, the precedent the button rule set:
+    4.40:1 dark / 7.97:1 light against the selected tab, 5.98:1 / 9.07:1 against
+    its unselected neighbours. ``COLOR_ACCENT_3`` is rejected here for the same
+    reason as on buttons -- 1.15:1 / 1.08:1.
+
+    No ``:hover`` interaction to reconcile: qdarkstyle's hover rule is
+    ``:!selected:hover`` and this one is ``:selected:focus`` -- disjoint by
+    construction. Appended after qdarkstyle's text so it wins by order against
+    ``:<edge>:selected`` at equal specificity."""
+    return "".join(
+        f"\n{focus_tab_selector(edge)} {{\n"
+        f"  {side}: 3px solid {pal.COLOR_TEXT_1};\n"
+        f"}}\n"
+        for edge, side in FOCUS_TAB_EDGES.items()
+    )
+
 
 def _focus_visible_qss(pal) -> str:
     """The app-authored tail appended to qdarkstyle's QSS so a keyboard-focused
-    button is VISIBLE (BUG-260812002838).
+    button is VISIBLE (BUG-260812002838) -- and, via
+    ``_focus_visible_tab_qss``, so is a keyboard-focused tab bar
+    (BUG-260812004649). One tail, one cached string per theme.
 
     qdarkstyle styles ``QPushButton``/``QToolButton`` with ``outline: none;
     border: none;`` and supplies ``:hover``/``:pressed``/``:checked`` but **no**
@@ -181,7 +259,7 @@ def _focus_visible_qss(pal) -> str:
         f"  border: 2px solid {pal.COLOR_TEXT_1};\n"
         f"  padding: 0px;\n"
         f"}}\n"
-    )
+    ) + _focus_visible_tab_qss(pal)
 
 
 def _qdarkstyle_stylesheet(light: bool) -> str:

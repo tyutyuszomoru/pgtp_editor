@@ -299,6 +299,13 @@ def test_apply_theme_false_is_platform_independent(qapp, _reset_app_palette):
 # refuses to apply -- and while writing this fix the rule DID render while a
 # naive whole-image colour count read as "nothing changed", because the ring
 # colour and the button label are the same colour. Sample the ring.
+#
+# BUG-260812004649 extends the same block to QTabBar, and the sampling trap
+# above bit a second time there in the opposite direction: the tab-bar ring and
+# the tab LABEL are both COLOR_TEXT_1, so a whole-image count of that colour
+# moved 27 -> 132 on focus -- a number that reads as a pass, driven mostly by
+# the label being repainted. Sample the specific pane-facing edge pixel of a
+# specific tab (`tabRect(i).bottom() - 1`), inset from the 4px corner radius.
 
 
 def _ring_pixel(button) -> str:
@@ -481,6 +488,211 @@ def test_tool_buttons_get_the_same_ring(qtbot, qapp, _reset_app_palette, light):
     qapp.processEvents()
     assert _ring_pixel(first) == _focus_ring_colour(light)
     assert _ring_pixel(second) != _focus_ring_colour(light)
+
+
+# -- BUG-260812004649: keyboard focus must be VISIBLE on tab bars too --------
+# Same defect class, same file, same colour precedent as the buttons above --
+# qdarkstyle ships no `:focus` selector for `QTabBar::tab` at all, so a focused
+# tab bar and an unfocused one paint identically and nothing tells the user the
+# arrow keys are now live. `focusNextPrevChild` lands on a QTabBar three times
+# per traversal cycle on a real MainWindow, so this is the plain Tab key.
+#
+# The ORIGINAL report asked for a "focused but unselected tab" cue. There is no
+# such state: QTabBar takes focus as a whole widget and Qt sets State_HasFocus
+# on the CURRENT tab's style option only. `test_focus_never_reaches_an_...`
+# below pins that, because it is the reason the rule is `:selected:focus` --
+# which is also the only form specific enough to beat qdarkstyle's
+# `:top:selected`. A bare `QTabBar::tab:focus` paints 0px here while passing any
+# stylesheet-string test.
+
+
+def _tab_edge_colours(bar, index: int) -> list[str]:
+    """The colours painted along the pane-facing (bottom) edge of tab `index`
+    of a `RoundedNorth` bar -- the 3px border qdarkstyle's `:selected` rule
+    draws in its accent and the focus rule recolours.
+
+    Sampled at `tabRect().bottom() - 1`, inset 8px from either end so the 4px
+    corner radius is never in the sample. Deliberately NOT a whole-image colour
+    count -- see the block comment at the top of this section.
+
+    The row is CLAMPED to the render, and that is not defensive padding.
+    `QTabBar` recomputes its tab layout one pass behind its own widget geometry
+    after a stylesheet change (qdarkstyle's light tabs are 27px tall against
+    dark's 25px), and the two never re-converge -- forcing a relayout merely
+    alternates which of them is stale. Painting follows `tabRect`, so after a
+    theme flip the border is either clipped off the bottom of the render or sits
+    a couple of rows above it; clamping lands inside the 3px border in both
+    cases as well as in the aligned one."""
+    image = bar.grab().toImage()
+    rect = bar.tabRect(index)
+    y = min(rect.bottom() - 1, image.height() - 1)
+    return [
+        image.pixelColor(x, y).name()
+        for x in range(rect.left() + 8, rect.right() - 8)
+    ]
+
+
+def _selected_tab_background(light: bool) -> str:
+    """qdarkstyle's `QTabBar::tab:selected` background -- what the ring has to
+    read against where it is actually drawn."""
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
+    return QColor((LightPalette if light else DarkPalette).COLOR_BACKGROUND_5).name()
+
+
+def _tab_selection_accent(light: bool) -> str:
+    """qdarkstyle's own selected-tab border accent -- the colour the edge wears
+    when the bar is NOT focused. Used as the presence anchor: it proves the
+    sampler is looking at the border at all."""
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
+    return QColor((LightPalette if light else DarkPalette).COLOR_ACCENT_4).name()
+
+
+@pytest.fixture
+def focus_tabs(qtbot, qapp, _reset_app_palette):
+    """A shown QTabWidget with three tabs under a real theme, current index 1,
+    and its bar explicitly UNFOCUSED.
+
+    `clearFocus()` is not tidiness: showing a QTabWidget whose only focusable
+    child is its bar hands the bar focus immediately, so an "unfocused"
+    baseline taken straight after `show()` is silently a FOCUSED one -- which
+    made the first run of these tests report the ring present in both states.
+    `show()` is equally mandatory: the app-wide QSS is only resolved on polish
+    and an unshown grab is not evidence."""
+    from PySide6.QtWidgets import QTabWidget, QWidget
+
+    def build(light: bool):
+        apply_theme(qapp, light)
+        tabs = QTabWidget()
+        qtbot.addWidget(tabs)
+        for index in range(3):
+            tabs.addTab(QWidget(), f"Tab {index}")
+        tabs.setCurrentIndex(1)
+        tabs.resize(400, 200)
+        tabs.show()
+        qapp.processEvents()
+        bar = tabs.tabBar()
+        bar.clearFocus()
+        qapp.processEvents()
+        assert not bar.hasFocus()
+        return tabs, bar
+
+    return build
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_focused_tab_bar_paints_a_visible_ring(focus_tabs, qapp, light):
+    """The real defect: Tab-traverse into a tab bar and the screen does not
+    change, so nothing says the arrow keys now switch tabs."""
+    _tabs, bar = focus_tabs(light)
+    bar.setFocus()
+    qapp.processEvents()
+    assert bar.hasFocus()
+    assert _focus_ring_colour(light) in _tab_edge_colours(bar, 1)
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_an_unfocused_tab_bar_paints_no_ring(focus_tabs, qapp, light):
+    """The absence half, anchored by a presence assertion in the SAME sampler:
+    the edge really is being sampled, because qdarkstyle's own selection accent
+    is found there. Without that anchor this test would pass just as happily
+    against a sampler pointed at empty background."""
+    _tabs, bar = focus_tabs(light)
+    resting = _tab_edge_colours(bar, 1)
+    assert _tab_selection_accent(light) in resting  # the anchor
+    assert _focus_ring_colour(light) not in resting
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_focus_never_reaches_an_unselected_tab(focus_tabs, qapp, light):
+    """Pins the measured fact that disproved the original report: with the bar
+    focused, an UNSELECTED tab's edge carries no ring, because Qt never sets
+    State_HasFocus on it. Anchored on tab 1 in the same render."""
+    _tabs, bar = focus_tabs(light)
+    bar.setFocus()
+    qapp.processEvents()
+    ring = _focus_ring_colour(light)
+    assert ring in _tab_edge_colours(bar, 1)  # the anchor
+    assert ring not in _tab_edge_colours(bar, 0)
+    assert ring not in _tab_edge_colours(bar, 2)
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_focus_does_not_move_the_tab(focus_tabs, qapp, light):
+    """The exclusion ground that kept tabs out of the button fix, and the
+    assertion that must never be dropped. The rule recolours the 3px border
+    qdarkstyle ALREADY draws rather than adding a box: a naive
+    `border: 2px solid` takes tabs from 37px to 41px wide and shifts every
+    following tab, and `padding: 0` (the compensation that worked for buttons)
+    overshoots to 33px, because tab padding is per-edge and asymmetric."""
+    _tabs, bar = focus_tabs(light)
+    resting = [bar.tabRect(i) for i in range(3)]
+    bar.setFocus()
+    qapp.processEvents()
+    assert [bar.tabRect(i) for i in range(3)] == resting
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_tab_ring_clears_3_to_1_in_both_themes(light):
+    """Measured against the backgrounds the ring is actually drawn between --
+    the selected tab it borders and the unselected neighbours beside it -- not
+    eyeballed. `COLOR_ACCENT_3` is asserted to FAIL so the colour rejected on
+    the buttons cannot be quietly re-proposed here (1.15:1 / 1.08:1)."""
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
+    palette = LightPalette if light else DarkPalette
+    ring = _focus_ring_colour(light)
+    selected = _selected_tab_background(light)
+    unselected = QColor(palette.COLOR_BACKGROUND_4).name()
+    assert _contrast(ring, selected) >= 3.0
+    assert _contrast(ring, unselected) >= 3.0
+    assert _contrast(QColor(palette.COLOR_ACCENT_3).name(), selected) < 3.0
+
+
+def test_the_tab_ring_survives_a_theme_flip(focus_tabs, qapp):
+    """Same invariant as the button ring: the tail is folded into the CACHED
+    per-theme string, so repeated flips must not compound it -- each of the four
+    per-edge selectors appears exactly once."""
+    from pgtp_editor.ui.theme import FOCUS_TAB_EDGES, focus_tab_selector
+
+    _tabs, bar = focus_tabs(False)
+    bar.setFocus()
+    qapp.processEvents()
+    assert _focus_ring_colour(False) in _tab_edge_colours(bar, 1)
+
+    apply_theme(qapp, True)
+    apply_theme(qapp, False)
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    assert _focus_ring_colour(True) in _tab_edge_colours(bar, 1)
+    for edge in FOCUS_TAB_EDGES:
+        assert qapp.styleSheet().count(focus_tab_selector(edge)) == 1
+    assert qapp.styleSheet().count("QPushButton:focus") == 1
+
+
+def test_every_edge_gets_a_rule_on_its_pane_facing_side(qapp, _reset_app_palette):
+    """All four edges are covered even though the app calls `setTabPosition`
+    nowhere: Qt gives a tabified-QDockWidget bar a SOUTH shape, which a user can
+    create by dragging docks together, and a future vertical bar would silently
+    lose the cue. Each rule sets exactly ONE `border-<side>` -- the side facing
+    the pane -- and no `border` shorthand, `padding`, `margin` or `outline`,
+    which is what keeps the geometry fixed."""
+    from pgtp_editor.ui.theme import FOCUS_TAB_EDGES, focus_tab_selector
+
+    apply_theme(qapp, False)
+    sheet = qapp.styleSheet()
+    assert set(FOCUS_TAB_EDGES) == {"top", "bottom", "left", "right"}
+    for edge, side in FOCUS_TAB_EDGES.items():
+        selector = focus_tab_selector(edge)
+        assert f"QDockWidget QTabBar::tab:{edge}:selected:focus" in selector
+        body = sheet.split(selector, 1)[1].split("}", 1)[0]
+        assert f"{side}: 3px solid" in body
+        for forbidden in ("padding", "margin", "outline", "border:"):
+            assert forbidden not in body
 
 
 # ---------------------------------------------------------------------------
