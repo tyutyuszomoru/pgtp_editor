@@ -39,7 +39,11 @@ from pgtp_editor.ui.code_editor import (
     classify_editor_chord,
     is_mutating_editor_operation,
 )
-from pgtp_editor.ui.ddl_buffer_panel import RELOAD_LABEL, resolve_edit_target
+from pgtp_editor.ui.ddl_buffer_panel import (
+    RELOAD_LABEL,
+    edit_refusal_for_span,
+    resolve_edit_target,
+)
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 
@@ -279,7 +283,23 @@ class EditorPanel(QWidget):
         menu = self.editor.createStandardContextMenu()
         # A browse-only instance still gets the standard (copy/select-all) menu
         # -- reading the buffer is the whole point of it -- just no Edit DDL.
-        if not self._browse_only and span is not None and self._schema is not None:
+        refusal = edit_refusal_for_span(span) if span is not None else None
+        if not self._browse_only and refusal is not None:
+            # A click inside a table's, view's or matview's synthesized DDL
+            # resolves to an object that cannot be edited here
+            # (`FQ-260810183812`). It is answered with a stated reason rather
+            # than with an absent entry: the span exists, the click landed
+            # somewhere real, and FQ-023's rule is that a gesture states why it
+            # refuses instead of vanishing. Disabled, because there is nothing
+            # for it to do -- it is a sentence, not a command.
+            menu.addSeparator()
+            menu.addAction(refusal).setEnabled(False)
+        if (
+            not self._browse_only
+            and refusal is None
+            and span is not None
+            and self._schema is not None
+        ):
             resolved = resolve_edit_target(self._schema, span)
             if resolved is not None:
                 ref, source = resolved

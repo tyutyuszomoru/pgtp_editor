@@ -283,9 +283,14 @@ def test_clicking_a_table_node_populates_properties_panel(qtbot, tmp_path):
     assert window.properties_panel.header_text() == "Table: pr.equipment"
 
 
-def test_clicking_a_table_node_does_not_jump_the_center_editor(qtbot, tmp_path):
-    """A table node has no DdlObjectSpan -- unlike a routine/trigger leaf
-    click, it must never move the center editor's caret."""
+def test_clicking_a_table_node_jumps_the_center_editor_to_its_ddl(qtbot, tmp_path):
+    """`FQ-260810183812`: a table node now HAS a span, so clicking it reaches
+    its synthesized `CREATE TABLE` in the DDL tab -- the feature's headline
+    ("every tree item that has DDL navigates to it"), wired end to end through
+    the unchanged `navigate_requested` path.
+
+    This supersedes the pre-feature assertion that a table click never moved
+    the center editor, which held only because tables had no DDL at all."""
     window = _window(qtbot, tmp_path)
     window._ddl_explorer_action.setChecked(True)
     window.center_stage.setCurrentIndex(window.center_stage.raw_xml_tab_index)
@@ -294,7 +299,10 @@ def test_clicking_a_table_node_does_not_jump_the_center_editor(qtbot, tmp_path):
 
     panel._on_item_clicked(table_item, 0)
 
-    assert window.center_stage.currentIndex() == window.center_stage.raw_xml_tab_index
+    assert window.center_stage.currentIndex() == window.center_stage.ddl_tab_index
+    editor = window.center_stage.ddl_editor_panel.editor
+    line = editor.textCursor().blockNumber() + 1
+    assert editor.toPlainText().splitlines()[line - 1] == "-- TABLE pr.equipment --"
 
 
 # ---------------------------------------------------------------------------
