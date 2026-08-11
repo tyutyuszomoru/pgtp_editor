@@ -3189,3 +3189,154 @@ option that cannot be reversed cheaply once a second renderer exists.
 - **3** → `spec-maintainer` states the boundary as permanent in §18.1, rewords the notice from a list of
   missing things into an intentional boundary, and adds the sourcing constraint to §18.5 so no future
   migration generator reaches for this buffer.
+
+---
+
+## DEC-260812004358 — Confirm the trade: after the move, toolbar and shortcut customization are Maintenance-only
+
+- **Status:** OPEN
+- **Raised:** 2026-08-12, by the main session, from `FQ-260812002827` (consolidated two-pane **Software
+  settings** dialog), which flags this itself as *"owner to answer at design time"*.
+- **Blocks:** **nothing.** The feature is being implemented now with the default below, structured so an
+  answer drops into one place (the menu-building code that today creates the two `View` entries). Reversing
+  it later is re-adding two `View` actions that open the dialog on a given pane. **Do not read this entry as
+  a reason to stall the feature.**
+- **Default being shipped:** the trade as designed — **Maintenance-only, no `View` entries** — because the
+  owner settled the move explicitly and this follows from it.
+
+**Context (for a cold reader).** `FQ-260812002827` consolidates six settings categories into one two-pane
+**Software settings** dialog, opened by a single new command that appears as one Maintenance-launcher button
+and one `Settings`-menu entry. The owner settled, verbatim, that *"relocating means moving, so they won't be
+anymore where they were before"* — so `View ▸ Customize Toolbar…` and `View ▸ Customize Shortcuts…` are
+**removed** from `View` and become panes inside the new dialog. That part is settled and is **not** reopened
+here.
+
+The consequence needing explicit confirmation is a reachability change. The `Settings` menu is
+Maintenance-only (`_MAINTENANCE_ONLY_MENU_TITLES = ("Settings",)`, `pgtp_editor/ui/main_window.py:356`,
+per FQ-027/DEC-006). Both customize surfaces are reachable at **any** time today via `View`. After the move,
+a user **cannot rebind a keyboard shortcut or customize the toolbar outside Maintenance mode**.
+
+This is consistent with FQ-027's design that the app is *configured* in Maintenance mode — that is exactly
+why the `Settings` menu is gated that way — so it is very likely intended. But it is a real reduction in
+reachability for two surfaces that never had it, and toolbar/shortcut customization is the kind of thing a
+user reaches for mid-work rather than in a dedicated configuration session.
+
+**Options.**
+1. **Accept the trade as designed.** One settings home, one entry point, exactly what the consolidation was
+   for; nothing to explain to a future reader about why a surface has two doors. *Cost:* changing a chord or
+   a toolbar button now requires entering Maintenance mode, i.e. a mode switch in the middle of ordinary
+   work. Note the escape hatch is partial at best: DEC-006 established that Maintenance mode **hides** rather
+   than prevents, so an existing chord still fires — but the customize *dialogs* have no chord of their own,
+   so there is genuinely no non-Maintenance path to them.
+2. **Keep a `View` entry for the two customize surfaces as a second entry point into the same dialog pane.**
+   Preserves today's reachability at no functional cost — the pane is the same object, opened focused on that
+   category. *Cost:* weakens "one settings home", which is the stated point of the consolidation; two of six
+   categories then have a privileged second door, and a reader has to be told why those two and not the other
+   four.
+
+**Recommendation: option 1, accept the trade.** The owner settled the move on the principle that the app is
+configured in Maintenance mode, and a second `View` door reintroduces the scattering the feature exists to
+remove. If mid-work rebinding turns out to matter in practice, option 2 is a small, additive change later —
+whereas shipping both doors now makes removing one a user-visible regression.
+
+**What becomes possible once answered.** Confirmation = nothing to do, the shipped default stands and
+`spec-maintainer` records the reachability trade in the Supersession Ledger rows for the two relocated
+surfaces. Reversal = re-add two `View` actions that open the Software Settings dialog on the Customize
+Toolbar / Keyboard Shortcuts pane, and state in the spec why those two categories are exempt from the
+Maintenance gate.
+
+---
+
+## DEC-260812004359 — Is the Software Settings dialog modal, given the shortcuts editor is non-modal today?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-12, by the main session, from `FQ-260812002827`, which flags this itself as *"owner to
+  answer at design time"*.
+- **Blocks:** **nothing.** The dialog is being built now with the default below; modality is one call on the
+  dialog (`setModal(...)`) plus its single-instance handling, so an answer drops into one place. **Not a
+  reason to stall the feature.**
+- **Default being shipped:** the Software Settings dialog is **non-modal**, preserving the existing
+  behaviour of the shortcuts editor, because it is the choice that changes nothing about a shipped surface.
+
+**Context (for a cold reader).** `pgtp_editor/ui/customize_shortcuts_dialog.py` is **non-modal** today
+(`View ▸ Customize Shortcuts…`, FQ-012). `FQ-260812002827` re-hosts it as a pane inside the consolidated
+Software Settings dialog. Re-hosting changes its parent window, and therefore its modality is now the
+*host's* property rather than its own.
+
+Why it matters concretely: a **non-modal** shortcut editor lets the user try a chord against the live
+application while the editor is open. Inside a **modal** settings dialog they cannot, so rebinding becomes
+edit → close → test → reopen. Whether that live-preview property was load-bearing or merely incidental to
+how the dialog happened to be written is the owner's call — it is a product property, not an implementation
+detail. For reference, the app already ships modal dialogs of this kind (`ui/launcher_dialog.py:222`
+`setModal(True)`) and non-modal panels (`ui/project_status_panel.py:499` `setModal(False)`), so both shapes
+have precedent.
+
+**Options.**
+1. **Non-modal settings dialog** (the default being shipped). Preserves the shortcuts editor's live-preview
+   behaviour exactly; no shipped behaviour changes. *Cost:* a non-modal dialog can sit behind the main window
+   and be re-opened, so it needs **single-instance handling** (raise-and-focus the existing instance rather
+   than spawning a second) — the app already does this for other dialogs, so the cost is small but real. It
+   also means settings changes can land while the user is editing, so each pane must apply cleanly at any
+   moment rather than assuming a quiet application.
+2. **Modal settings dialog.** Simpler lifecycle: one instance by construction, no raise-and-focus logic, no
+   question about changes landing mid-edit; matches the launcher's shape. *Cost:* removes live chord
+   preview from shortcut rebinding — a small but genuine regression of a shipped surface — and blocks the
+   whole app while someone browses six settings categories.
+
+**Recommendation: option 1, non-modal.** It is the only option that changes nothing about a surface that
+already ships, and the cost it carries (single-instance handling) is a pattern already present in the
+codebase. Going modal trades a real user-facing property for implementation tidiness, which is the wrong
+direction for a surface whose whole job is configuration.
+
+**What becomes possible once answered.** Confirmation = the shipped default stands; `spec-maintainer`
+records "the Software Settings dialog is non-modal, single-instance, because the shortcuts pane's live chord
+preview is load-bearing" so the next reader does not "tidy" it to modal. Reversal = one `setModal(True)`,
+drop the single-instance raise logic, and the manual notes that chords are tested after closing settings.
+
+---
+
+## DEC-260812004400 — Do the two unimplemented settings panes appear disabled, or not at all?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-12, by the main session, from `FQ-260812002827`, which flags this itself as *"owner to
+  answer at design time"*.
+- **Blocks:** **nothing**, and this is the least load-bearing of the three filed from this feature — it is
+  trivially reversible (two rows in the category list). It is filed because the project has a **recorded
+  precedent pointing the other way**, so choosing silently would either contradict that precedent or quietly
+  narrow it. **Not a reason to stall the feature.**
+- **Default being shipped:** **four panes**, the two unimplemented ones omitted.
+
+**Context (for a cold reader).** The consolidated Software Settings dialog (`FQ-260812002827`) has six
+categories in the owner's own list. Four re-host working surfaces (snippets, customize toolbar, autoformatter
+settings, keyboard shortcuts). Panes 5 (**syntax highlight colors**, `FQ-260812002828`) and 6 (**color
+scheme**, `FQ-260812002829`) do not exist: the owner's instruction was that they *"must be skipped, because
+needs owner description to implement"*, and both queue entries are `QUEUED — BLOCKED: DO NOT IMPLEMENT`.
+
+So the question is only what the dialog's left-hand category list shows: **six entries with two
+disabled/"coming soon"**, or **four entries** until the descriptions land.
+
+**The precedent that makes this worth asking.** FQ-023 shipped the principle that a gesture should **state
+its reason rather than vanish** — `Add Trigger…` on a matview appears as a **disabled entry stating why**,
+on the argument that a silent absence reads as the app having forgotten. If that principle extends to
+settings categories, six-with-two-disabled is the consistent answer. Against that, the project has elsewhere
+treated visibly dead controls in a shipped surface as a defect.
+
+**Options.**
+1. **Four panes, two omitted** (the default being shipped). No dead controls in a shipped dialog; the list is
+   exactly what the dialog can do. *Cost:* a user who expects colour settings finds nothing and cannot tell
+   whether they are absent, elsewhere, or unbuilt — the exact "silent absence" FQ-023 argued against.
+2. **Six panes, two disabled with a stated reason** ("not yet available"). Communicates the roadmap, matches
+   the FQ-023 shape, and pre-empts "where are the colour settings?". *Cost:* ships two permanently inert rows
+   in a brand-new dialog, and they stay inert until two blocked features get owner descriptions of unknown
+   date — a "coming soon" with no date is a promise the app cannot keep.
+
+**Recommendation: option 1, four panes.** The FQ-023 precedent applies to a gesture whose **siblings are
+present** — `Add Trigger…` exists on other object kinds, so its absence on a matview reads as a bug and must
+be explained. A settings category nobody has ever been told about carries no such expectation; there is
+nothing for the absence to contradict. And the reversal is two list rows, so shipping the smaller surface
+first costs nothing if the owner disagrees.
+
+**What becomes possible once answered.** Confirmation = the shipped default stands; the child entries
+`FQ-260812002828`/`FQ-260812002829` add their pane *and* its list row when their descriptions land. Reversal
+= add two disabled rows with a stated reason, and decide (a second, smaller question) whether selecting one
+shows an explanatory panel or nothing.
