@@ -174,6 +174,26 @@ def test_standalone_indexes_are_appended_verbatim():
     assert "ix_tag" in rendered.index_offsets
 
 
+def test_index_order_is_deterministic_across_fetches():
+    """The constraint half of this rule is pinned above; the index half was
+    not. `pg_index` rows arrive in whatever order the server chose, so two
+    fetches of an unchanged table must still render byte-identically."""
+    def make(name):
+        return IndexInfo(
+            schema="pr", table="orders", name=name, columns=["tag"],
+            method="btree",
+            definition=f"CREATE INDEX {name} ON pr.orders USING btree (tag)",
+        )
+
+    forwards = [make("ix_zulu"), make("ix_alpha")]
+    table = _table(columns=[_col("tag")])
+    first = build_table_ddl(table, (), forwards)
+    second = build_table_ddl(table, (), list(reversed(forwards)))
+    assert first.text == second.text
+    assert first.index_offsets == second.index_offsets
+    assert first.text.index("ix_alpha") < first.text.index("ix_zulu")
+
+
 def test_constraint_backed_indexes_are_not_emitted_as_create_index():
     """PostgreSQL rejects `DROP INDEX` on one and the constraint already
     prints it -- emitting both would print the same object twice."""

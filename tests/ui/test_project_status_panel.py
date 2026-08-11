@@ -618,6 +618,29 @@ def test_the_dim_follows_a_theme_flip(qapp, qtbot):
     assert node.state_label.styleSheet() == dark_sheet
 
 
+def test_the_dim_is_still_dimmed_IN_PIXELS_after_a_theme_flip(qapp, qtbot):
+    """The flip test above compares stylesheet strings, which is the weaker
+    half of the pair: a sheet can change and still paint nothing (that is
+    BUG-260811021804 in one sentence). This one flips and then measures.
+
+    `processEvents` before grabbing on purpose: `PaletteChange` fires several
+    times per flip and the first ones still report the old lightness, so the
+    handler is last-write-wins rather than right on the first event.
+    """
+    node = _dim_probe(qapp, qtbot, False)
+    before = _image_of(node.state_label)
+
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    dimmed = _image_of(node.state_label)
+    assert dimmed != before  # the flip repainted at all
+
+    node.state_label.setStyleSheet("")
+    qapp.processEvents()
+    undimmed = _image_of(node.state_label)
+    assert dimmed != undimmed  # ...and what it repainted is still a dim
+
+
 @pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
 def test_the_dim_does_not_compound_when_re_applied(qapp, qtbot, light):
     """`_apply_dim` reads its base colour from the node, which carries no

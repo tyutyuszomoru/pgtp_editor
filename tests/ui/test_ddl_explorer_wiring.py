@@ -12,6 +12,12 @@ from PySide6.QtCore import QSettings
 
 from pgtp_editor.db.config import ConnectionParams, save_connection
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
+from pgtp_editor.ui.ddl_buffer_panel import (
+    CLEAR_FILTER_BUTTON_LABEL,
+    FILTER_BUTTON_LABEL,
+    FILTER_MODE_CONTAINS,
+    FILTER_PLACEHOLDER,
+)
 from pgtp_editor.ui.main_window import MainWindow
 
 from ._menu_helpers import action_labels, find_action, find_top_menu
@@ -542,3 +548,67 @@ def test_explorer_prompts_once_for_a_password_the_pgtp_could_not_supply(qtbot, t
 
     assert used and used[0].password == "s3cret"
     assert load_settings(project_dir).target.password == "s3cret"
+
+
+# ---------------------------------------------------------------------------
+# The two Explorers differ where §18.7 says they differ (`FQ-260810165518`,
+# `FQ-260810180336`) -- asserted on the panels MainWindow actually builds, not
+# on freshly constructed ones. `BrowserPanel` derives the danger band from
+# `browse_only`, so this is the seam that says which role got which flag.
+# ---------------------------------------------------------------------------
+
+
+def test_only_the_QUALITY_explorer_carries_the_danger_selection_band(qtbot, tmp_path):
+    """The difference IS the feature: reddening both would say nothing, and
+    reddening the sandbox would mark the disposable database as the dangerous
+    one."""
+    window = _window(qtbot, tmp_path)
+
+    assert window.ddl_browser_panel.has_danger_highlight() is True
+    assert window.sandbox_ddl_browser_panel.has_danger_highlight() is False
+
+
+def test_BOTH_explorers_get_the_name_filter(qtbot, tmp_path):
+    """`browse_only` withholds edits, creations and mutations -- a search aid is
+    none of those, so the sandbox tree is filterable too."""
+    window = _window(qtbot, tmp_path)
+
+    for panel in (window.ddl_browser_panel, window.sandbox_ddl_browser_panel):
+        assert panel.filter_input.placeholderText() == FILTER_PLACEHOLDER
+        assert panel.filter_button.text() == FILTER_BUTTON_LABEL
+        assert panel.clear_filter_button.text() == CLEAR_FILTER_BUTTON_LABEL
+
+
+def test_a_live_filter_survives_the_explorers_own_reload(qtbot, tmp_path):
+    """The end-to-end form of the correctness risk: re-opening the Explorer
+    re-fetches and rebuilds the tree through `set_schema`, and a filtered box
+    that silently came back unfiltered is a tree the user believes is narrowed.
+    """
+    window = _window(qtbot, tmp_path)
+    window._ddl_explorer_action.setChecked(True)
+    panel = window.ddl_browser_panel
+    panel.filter_input.setText("calc")
+    panel.apply_filter()
+    hidden_before = _hidden_labels(panel)
+    assert hidden_before
+
+    window._ddl_explorer_action.setChecked(False)
+    window._ddl_explorer_action.setChecked(True)  # a re-fetch and a full rebuild
+
+    assert panel.active_filter() == (FILTER_MODE_CONTAINS, "calc")
+    assert _hidden_labels(panel) == hidden_before
+    assert panel.filter_banner_label.isVisibleTo(panel)
+
+
+def _hidden_labels(panel):
+    hidden = []
+
+    def walk(item):
+        if item.isHidden():
+            hidden.append(item.text(0))
+        for index in range(item.childCount()):
+            walk(item.child(index))
+
+    for index in range(panel.tree.topLevelItemCount()):
+        walk(panel.tree.topLevelItem(index))
+    return sorted(hidden)

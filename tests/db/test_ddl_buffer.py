@@ -316,6 +316,47 @@ def test_the_buffer_is_reproducible_across_fetches():
     assert first == second
 
 
+def test_the_buffer_is_byte_identical_WHATEVER_ORDER_THE_CATALOG_RETURNED():
+    """The determinism that matters, and the one building the same schema twice
+    cannot show: `psycopg` hands back rows in whatever order the server chose,
+    so `DatabaseSchema`'s dicts arrive differently ordered between two fetches
+    of an unchanged database. Rebuilding an identically-ordered schema proves
+    only that the function is a function.
+
+    Both the TEXT and the SPANS must be identical -- a span list that reorders
+    would move `_span_at_line`'s first-match answer.
+    """
+    schema = _relation_schema()
+    schema.tables["pr.audit"] = TableInfo(
+        name="pr.audit",
+        kind="table",
+        columns=[ColumnInfo("id", "integer", True, False, False, None)],
+    )
+    schema.indexes["pr.ix_id"] = IndexInfo(
+        schema="pr", table="orders", name="ix_id", columns=["id"],
+        method="btree", definition="CREATE INDEX ix_id ON pr.orders (id)",
+    )
+    schema.constraints["pr.orders.orders_tag_key"] = ConstraintInfo(
+        schema="pr", table="orders", name="orders_tag_key", kind="unique",
+        columns=["tag"], definition="UNIQUE (tag)",
+    )
+    forwards_text, forwards_spans = build_ddl_text(schema)
+
+    reversed_schema = DatabaseSchema(
+        tables=dict(reversed(list(schema.tables.items()))),
+        constraints=dict(reversed(list(schema.constraints.items()))),
+        indexes=dict(reversed(list(schema.indexes.items()))),
+    )
+    backwards_text, backwards_spans = build_ddl_text(reversed_schema)
+
+    assert backwards_text == forwards_text
+    assert backwards_spans == forwards_spans
+    # ...and the fixture really did exercise more than one of each, so the
+    # assertion above is not vacuously comparing a one-element ordering.
+    assert forwards_text.count("CREATE INDEX") == 2
+    assert forwards_text.count("CONSTRAINT ") == 2
+
+
 def test_only_routines_and_triggers_are_editable_kinds():
     """The read-only boundary does not move: tables, views and matviews are in
     the buffer to be READ, and are not part of the checkout model."""

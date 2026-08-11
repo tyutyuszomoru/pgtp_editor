@@ -2372,6 +2372,54 @@ def test_the_marker_letters_are_never_matched(qtbot):
     assert _visible_labels(panel) == []
 
 
+def test_the_drift_and_dirty_markers_are_never_matched_either(qtbot):
+    """The label carries more decoration than `[F]`/`[D]`: §18.2's `*`/`!` drift
+    markers and BUG-033's unsaved-edit star are appended to the same text. A
+    filter that read the label would make `*` select "everything the user has
+    touched", which is a different feature nobody asked for."""
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(
+        schema, spans,
+        drift_markers={"ddl/pr.calc_total.sql": DriftMarkers(locally_edited=True)},
+    )
+    assert "pr.calc_total [F] *" in _visible_labels(panel)
+
+    _filter_for(panel, "*")
+    assert _visible_labels(panel) == []
+    _filter_for(panel, "!")
+    assert _visible_labels(panel) == []
+
+
+def test_a_row_marked_dirty_UNDER_a_live_filter_keeps_matching_its_bare_name(qtbot):
+    """The two label rewriters meet here: `set_object_dirty` re-renders the row
+    text while a filter is applied. The stored name is what the filter reads, so
+    a starred row must neither vanish nor start matching its star."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    assert "pr.calc_total [F] *" in _visible_labels(panel)
+    _filter_for(panel, "*")
+    assert _visible_labels(panel) == []
+
+
+def test_the_trigger_count_suffix_on_a_table_is_not_matched(qtbot):
+    """A table row reads `pr.equipment  (2)` -- the count is presentation, so
+    filtering for it must not select "tables with two triggers"."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert "pr.equipment  (2)" in _visible_labels(panel)
+
+    _filter_for(panel, "(2)")
+    assert _visible_labels(panel) == []
+
+
 def test_a_trigger_is_hidden_in_BOTH_of_its_occurrences(qtbot):
     """One object is never half-hidden (§18.1's dual-grouped tree)."""
     panel, _, _ = _filtered_panel()
@@ -2594,14 +2642,51 @@ def test_the_sandbox_tree_keeps_the_ordinary_selection(themed_browser, light):
     assert panel.has_danger_highlight() is False
 
 
+#: The app-wide qdarkstyle selection blue, per theme -- the colour the indent
+#: strip was still painting when only the two `::item` selectors were overridden.
+ORDINARY_SELECTION = {True: "#9FCBFF", False: "#346792"}
+
+
 @pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
 def test_no_ordinary_blue_survives_inside_the_danger_band(themed_browser, light):
     """Found by looking at pixels: overriding only the two `::item` selectors
     left the selected row's indent strip painting the app-wide selection blue,
     so the band was red with a blue notch in it."""
     panel = themed_browser(light)
-    ordinary = _rendered("#9FCBFF" if light else "#346792")
+    ordinary = _rendered(ORDINARY_SELECTION[light])
     assert _pixel_counts(panel.tree)[ordinary] == 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_ordinary_selection_colour_this_file_watches_for_is_REALLY_painted(
+    themed_browser, light
+):
+    """The anchor for the test above, and the reason it is not a false green of
+    its own shape: an "assert this colour is absent" test passes forever if the
+    colour was never the app's selection blue in the first place (a theme tweak,
+    a typo, a case difference). The sandbox tree is selected identically and
+    NOT reddened, so it must paint exactly that value.
+    """
+    panel = themed_browser(light, browse_only=True)
+    assert _pixel_counts(panel.tree)[_rendered(ORDINARY_SELECTION[light])] > 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_danger_band_reaches_the_rows_INDENT_STRIP_not_just_its_text(
+    themed_browser, light
+):
+    """The regression stated positionally rather than by a global count: the
+    strip left of the label is drawn from the universal `QWidget` rule's
+    `selection-background-color`, so the band must be red at x=1 of the selected
+    row, not merely red somewhere."""
+    panel = themed_browser(light)
+    red = _rendered(danger_selection_colors(light)[0])
+    rect = panel.tree.visualItemRect(panel.tree.currentItem())
+    assert rect.width() > 0 and rect.height() > 0
+    image = panel.tree.viewport().grab().toImage()
+    middle = rect.top() + rect.height() // 2
+    assert image.pixelColor(1, middle).name() == red
+    assert image.pixelColor(rect.left() + 1, middle).name() == red
 
 
 def test_the_danger_red_survives_a_light_dark_round_trip(themed_browser, qapp):
