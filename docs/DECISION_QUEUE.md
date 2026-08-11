@@ -2870,3 +2870,97 @@ its reason was not the rule. Option 2 buys the least: it keeps the failure mode 
 - Either way, **the falsified sentence *"there is no target-database Run to reach with or without a key"*
   must be removed** from `sql_console_panel.py:573-574` — it is untrue the moment D4b ships, independent of
   this ruling.
+
+---
+
+## DEC-260811025733 — Is `Add Trigger…` deliberately offered on view and matview nodes, or is that an oversight?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-11, by `manual-maintainer`, while recounting the `Alter Table ▸` submenu against
+  `pgtp_editor/ui/ddl_buffer_panel.py`. Verified against the tree before filing.
+- **Blocks:** **nothing** — nothing is mid-build on this path. It hardens with time: the code currently
+  expresses *no intent* at this one branch while both of its neighbours state theirs, so the next person to
+  read it will guess, and a guess written as a comment is how a narrow rule gets widened by analogy (this
+  has already happened twice in the shortcut area, BUG-052 and BUG-063).
+
+**Context — what the code actually does today (all verified).**
+
+Since `FQ-260810183812` widened the DDL Explorer's **Tables** branch to views and materialized views,
+every relation node carries `_TABLE_ROLE` regardless of kind (`ddl_buffer_panel.py:1195-1206`;
+`introspect.TableInfo.kind ∈ {"table","view","matview"}`, set from `relkind` in `('r','p','v','m')`).
+Inside the single context-menu builder `_context_menu_for`, three adjacent gestures treat that uniformly-set
+role three different ways:
+
+- **`Add Trigger…`** (`ddl_buffer_panel.py:1556-1565`) keys on `_TABLE_ROLE` with **no `kind` check** and no
+  comment about kinds. So it is offered on table, view **and** matview nodes.
+- **`Create Table…`** (`:1566-1573`) has the same reach and its comment **explicitly justifies** including a
+  view's node: *"what you create is a table regardless of what you clicked"*.
+- **`Alter Table ▸`** (`_add_alter_table_submenu`, `:1631-1667`) opens with
+  `if getattr(table_info, "kind", "table") != "table": return None`, under a docstring paragraph headed
+  *"Views and materialized views get no submenu"*.
+
+So within one function: one gesture reasons about views explicitly, one excludes them explicitly, and this
+one does neither.
+
+**Why this is a decision and not an obvious bug.** PostgreSQL genuinely supports `INSTEAD OF` triggers on
+views — the standard way to make a view updatable, squarely within what this app is for. Offering the
+gesture on a view may be correct and valuable.
+
+**But the surface behind it is kind-blind, and that is the sharp edge.** `NewTriggerDialog.__init__` takes
+`table: str` and nothing else (`pgtp_editor/ui/new_trigger_dialog.py:97-116`) — it never learns the relation
+kind — and it fills its timing combo with `TRIGGER_TIMINGS` unfiltered, i.e. `("BEFORE", "AFTER",
+"INSTEAD OF")` (`db/ddl_skeleton.py:104`). `trigger_skeleton` validates the timing against that same tuple
+and no further (`ddl_skeleton.py:155-158`), its docstring saying *"`INSTEAD OF` is view-only in Postgres;
+that is the caller's constraint to enforce, not this emitter's."* **Nothing downstream is that caller.** So
+from a view node today the user can pick `BEFORE INSERT` and get a rendered, authoritative-looking statement
+Postgres will reject — the worst of the three possible states, because it looks supported.
+
+**The spec does not settle it.** `CONSOLIDATED_SPEC.md:7037-7038` says the `INSTEAD OF` constraint is *"the
+**dialog's** to enforce or to leave to the database"* — an explicit unresolved either/or, not a ruling.
+
+**Matviews are a third case.** PostgreSQL supports **no** triggers on materialized views at all. The tree
+does distinguish them (`kind == "matview"`), so a per-kind answer is expressible; the current branch simply
+does not ask.
+
+**The manual is already inconsistent with itself**, which is a symptom rather than a separate problem:
+`resources/manual.md:2381` says *"right-click a **table** node"* for this gesture, while `:2518` says
+*"A view's node still offers the two creation entries, **Add Trigger…** and **Create Table…**"* and `:2644`
+repeats it for views and matviews. Whichever way this is answered, one of those lines is wrong.
+
+**Options.**
+
+- **1 — Intended for views, excluded for matviews.** Keep the gesture on `kind in ("table", "view")`, add
+  the `kind` check only for `matview`, and make the dialog kind-aware: a view target offers `INSTEAD OF`
+  only, a table target offers `BEFORE`/`AFTER` only. *Cost:* `NewTriggerDialog` gains a parameter it does
+  not have today (a signature change with existing tests over the offered timings —
+  `tests/ui/test_new_trigger_dialog.py:99` asserts the combo equals `TRIGGER_TIMINGS` verbatim, so that
+  assertion has to become kind-conditional), plus the docstring, the spec's open either/or and two manual
+  lines. It is the largest of the three, and it is the only one that makes the gesture *actually* correct
+  on a view.
+- **2 — Intended for views, dialog left unfiltered** (i.e. today's behaviour, merely documented). *Cost:*
+  keeps the state where a view node leads to a statement the server refuses; the spec's "or to leave to the
+  database" sentence covers it, but the refusal surfaces only at execution, long after the user believed the
+  app had offered them the option. Cheapest to write, most expensive to use.
+- **3 — Oversight, remove it.** Add `if kind != "table"` to the `Add Trigger…` branch, exactly mirroring
+  `_add_alter_table_submenu`'s existing exclusion, and fix `manual.md:2518, 2644`. *Cost:* the app then has
+  **no** path to an `INSTEAD OF` trigger from the tree, so making a view updatable — a real, in-scope
+  Postgres technique — must be done by hand or via a later feature. The exclusion would be honest about
+  scope but would withdraw a capability that partly works today (the dialog does render a correct
+  `INSTEAD OF` statement if the user picks it).
+
+**Recommendation: 1.** The two neighbouring gestures show the codebase already treats "does this gesture
+mean something on a view?" as a question worth answering per gesture rather than per role, and for triggers
+the honest answer is *yes for views, no for matviews* — that is Postgres, not a preference. Option 2 is the
+one state the `Alter Table ▸` docstring's own principle rejects (*"offering a table mutation on a view would
+generate DDL the server refuses… not offered rather than offered and broken"*); applying that principle here
+means either fixing the timings or removing the gesture, not documenting the breakage. Option 3 is
+defensible and cheap if `INSTEAD OF` triggers are out of scope for v1 — but that is the owner's call about
+product scope, which is why this is filed rather than decided.
+
+**What becomes possible once answered.**
+- **1** → one `kind` check at `ddl_buffer_panel.py:1556`, a kind argument threaded into `NewTriggerDialog`
+  with the timing list filtered, an updated `tests/ui/test_new_trigger_dialog.py:99`, a docstring at the
+  menu branch stating the intent as `Create Table…`'s does, `spec-maintainer` closing §18's open either/or
+  at `CONSOLIDATED_SPEC.md:7037-7038`, and `manual-maintainer` reconciling `manual.md:2381` with `:2518/2644`.
+- **2** → docstring + spec sentence + the manual reconciliation only; no code change.
+- **3** → the `kind` check alone, plus the manual reconciliation; `manual.md:2381` becomes correct as written.
