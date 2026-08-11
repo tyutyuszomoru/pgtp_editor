@@ -7662,6 +7662,20 @@ please color the new wide caret so it also instantly identifies visually when we
 **Reported:** 2026-08-12
 **Report (verbatim):** "in edit snippets Add button does nothing"
 
+**Confirmed in the wild / traceback:** The owner hit this live and confirms it is this bug (not a new one). It manifests as a **non-fatal console traceback** — Qt swallows the exception from the slot so the app keeps running ("doesn't stop the party"), but it prints to the console, and it is exactly why Add-snippet does nothing. The call chain is `add_snippet` (line 247) → `_unique_prefix` (line 312). Verbatim:
+
+```
+AttributeError: 'bool' object has no attribute 'strip'
+Traceback (most recent call last):
+  File "/home/zrb/Projects/pgtp_editor/pgtp_editor/ui/edit_snippets_dialog.py", line 247, in add_snippet
+    prefix = self._unique_prefix(prefix)
+  File "/home/zrb/Projects/pgtp_editor/pgtp_editor/ui/edit_snippets_dialog.py", line 312, in _unique_prefix
+    if wanted.strip().lower() not in taken:
+       ^^^^^^^^^^^^
+```
+
+This validates the diagnosed root cause exactly: `QPushButton.clicked` emits `bool checked`, which binds to `add_snippet`'s first positional param `prefix = False`, so `_unique_prefix(False)` runs `False.strip()` at `edit_snippets_dialog.py:312`. The proposed fix below (argument-dropping lambdas at `edit_snippets_dialog.py:183-185`) is unchanged — the traceback simply confirms it.
+
 **Root cause:** `pgtp_editor/ui/edit_snippets_dialog.py`, `EditSnippetsDialog.__init__`, lines 183-185. The three mutating buttons are wired directly to methods that take positional parameters other than a leading `bool`:
 
 ```python
