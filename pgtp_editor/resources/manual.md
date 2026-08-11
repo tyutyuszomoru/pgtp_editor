@@ -2099,9 +2099,9 @@ Connections**. Closing the project takes the entry away again **and hides its tw
 tabs with it** — a tree still showing a closed project's sandbox would be
 describing something you are no longer working on.
 
-**The sandbox tree is browse-only.** It has no **Edit DDL**, neither of the
-creation entries (**Add Trigger…**, **New Function/Procedure…**), and no
-**Alter Table ▸** submenu; right-clicking anywhere in it offers **Reload DDL**
+**The sandbox tree is browse-only.** It has no **Edit DDL**, none of the
+creation entries (**Add Trigger…**, **Create Table…**, **New
+Function/Procedure…**), and no **Alter Table ▸** submenu; right-clicking anywhere in it offers **Reload DDL**
 alone, and the sandbox buffer's right-click menu has the reading commands plus
 **Reload DDL** but no **Edit DDL** either. Reload is the one exception on purpose:
 it only *re-reads* this database, and this is the explorer whose contents you most
@@ -2379,9 +2379,10 @@ you then fill in and save like any other DDL object tab (see *Editing a single
 function, procedure, or trigger*, above).
 
 **Add Trigger…** — right-click a **table** node under **Tables** in the DDL
-Objects tree. (It sits at the top level of that node's menu, above the
-**Alter Table ▸** submenu, because creating a new object is a different act from
-changing this one; **Edit DDL** still belongs to routine and trigger rows only.)
+Objects tree. (It sits at the top of that node's menu, with the other creation
+entry **Create Table…** beside it and the **Alter Table ▸** submenu below both,
+because creating a new object is a different act from changing this one;
+**Edit DDL** still belongs to routine and trigger rows only.)
 The
 dialog shows the clicked table as a fixed line — you picked it by right-clicking
 it, so it isn't offered again as a field — plus:
@@ -2441,13 +2442,41 @@ supported way to work.
 
 The DDL Explorer can also **change an existing table**. In the **DDL Objects
 (Quality)** tree, right-click a table node — or one of its column rows under
-**`Columns  (N)`** — and open the **Alter Table ▸** submenu. It holds twelve
-entries in two groups, separated by a line: **the eight column operations** below,
-then **four constraint operations** — **Add Constraint…**, **Add Foreign Key…**,
-**Drop Constraint…** and **Rename Constraint…** — which have a section of their
-own (*Constraints and foreign keys*, next). The split is there because "what are
-this table's columns?" and "what are this table's constraints?" are two different
-questions, and twelve undifferentiated entries would read as one long list.
+**`Columns  (N)`** — and open the **Alter Table ▸** submenu. It gathers everything
+that is **scoped to the table you clicked**, in five groups separated by a line:
+
+- **eight column operations** — the table below.
+- **four constraint operations** — **Add Constraint…**, **Add Foreign Key…**,
+  **Drop Constraint…**, **Rename Constraint…** — which have a section of their own
+  (*Constraints and foreign keys*, next).
+- **two index operations** — **Create Index…** and **Drop Index…** (*Indexes,
+  comments, and creating or dropping a table*, after that).
+- **one comment entry**, and this is the single place the two entry points differ:
+  a **table node** offers **Set Table Comment…**, a **column row** offers **Set
+  Column Comment…**. The entry always names the thing you actually right-clicked,
+  so it can never quietly retarget your click a level up or down.
+- **Drop Table…**, alone at the bottom — the one entry that removes the object the
+  whole menu is about, kept a separator away from a mis-click on **Drop Index…**.
+
+That is **sixteen entries from either entry point**, differing only in which
+comment entry is offered. The grouping is there because "what are this table's
+columns?", "…its constraints?", "…its indexes?", "what does it say about itself?"
+and "does it exist at all?" are five different questions, and sixteen
+undifferentiated entries would read as one long list.
+
+> **The submenu's title names the commonest case, not the generated verb.** Most
+> of these emit `ALTER TABLE`, but **Create Index…**, **Drop Index…**, the comment
+> entries and **Drop Table…** emit `CREATE INDEX`, `DROP INDEX`, `COMMENT ON …`
+> and `DROP TABLE`. They live here because they are scoped to this table, which is
+> the question you are answering when you right-click one — and the tab each one
+> opens is titled after the statement it actually holds, never after the route you
+> took (see *The tab an Alter Table operation opens*).
+
+**Create Table… is the one operation that is not on the submenu**, because it is
+not scoped to the clicked table: it creates a new one. It sits at the **top level**
+of a table node's menu, beside **Add Trigger…** and above **Alter Table ▸**, and
+also on the **Tables** branch root itself — see *Indexes, comments, and creating or
+dropping a table*.
 
 The eight column operations are:
 
@@ -2463,8 +2492,8 @@ The eight column operations are:
 | **Drop DEFAULT…** | `ALTER TABLE … ALTER COLUMN … DROP DEFAULT` |
 
 > **Generating executes nothing.** Every entry here opens a dialog, and confirming
-> that dialog does exactly one thing: it puts the generated `ALTER TABLE` text into
-> an ordinary, editable tab. No connection is opened, nothing is sent to any
+> that dialog does exactly one thing: it puts the generated statement into an
+> ordinary, editable tab. No connection is opened, nothing is sent to any
 > database, and nothing about your table changes. **Running the statement is a
 > separate, explicit gesture** you make afterwards, from the **Deployment** menu.
 > That separation is the whole safety model: you always read the DDL — and can
@@ -2472,16 +2501,23 @@ The eight column operations are:
 
 **Where the click lands is the dialog's starting point, not a cage.** Right-click
 a **column** row and that column is pre-selected; right-click the **table** node
-and you get the same twelve operations with no column pre-selected (the dropdown
-simply starts at the table's first column). Either way the dialog states where it
+and you get the same operations with no column pre-selected (the dropdown simply
+starts at the table's first column). Either way the dialog states where it
 came from on a read-only **From:** line, and both the **Table:** and **Column:**
 dropdowns stay changeable — so a dialog you opened from the wrong row is a
 correction, not a cancel-and-retry. The dropdowns are filled from the schema the
 explorer already fetched; the dialogs never talk to the database themselves.
 
-**Views and materialized views have no Alter Table ▸ submenu**, on the table node
-or on a column. Every entry emits `ALTER TABLE`, which the server would refuse on a
-view, so the operation is not offered rather than offered and broken. For the same
+**Views and materialized views have no Alter Table ▸ submenu**, on the relation
+node or on a column. Nearly every entry emits `ALTER TABLE` or `DROP TABLE`, which
+the server would refuse on a view, so the submenu is not offered rather than
+offered and broken. A handful of its entries *do* have legal view spellings —
+`COMMENT ON VIEW`, an index on a materialized view — but the generators behind
+them write `TABLE`, so they would still produce the wrong statement; a
+view-shaped action set is a separate feature this one does not claim to be. A
+view's node still offers the two creation entries, **Add Trigger…** and **Create
+Table…**, at its top level; a view's **column** row offers no editing gesture at
+all (just **Reload DDL**, which is offered everywhere). For the same
 kind of reason the whole submenu is **absent in the Sandbox explorer**, which is
 browse-only (see *The Sandbox Explorer, and how it differs*).
 
@@ -2518,7 +2554,7 @@ you really want the cascade, type the word into the tab yourself.
 
 ### Constraints and foreign keys
 
-Below the separator, the **Alter Table ▸** submenu offers four constraint
+The second group of the **Alter Table ▸** submenu holds four constraint
 operations. They open from the same two places as the column entries — a table
 node or one of its column rows — carry the same click context, and generate text
 into the same kind of editable tab: **nothing here runs against a database
@@ -2590,20 +2626,33 @@ you came for. Generating the DDL changes nothing — see the note above.
 
 ### Indexes, comments, and creating or dropping a table
 
-Six further operations exist on top of the twelve: **create index**, **drop
-index**, **set a table comment**, **set a column comment**, **create table** and
-**drop table**. Each has its dialog and its statement generator, and each obeys
-the same rules as everything else in this chapter — the lists are filled from the
-schema the explorer already fetched, the dialogs never open a connection, **OK**
-stays disabled until the statement actually renders, and confirming one only puts
-text into an editable tab.
+Six further operations round out the set: **Create Index…**, **Drop Index…**,
+**Set Table Comment…**, **Set Column Comment…**, **Create Table…** and **Drop
+Table…**. Each obeys the same rules as everything else in this chapter — the lists
+are filled from the schema the explorer already fetched, the dialogs never open a
+connection, **OK** stays disabled until the statement actually renders, and
+confirming one only puts text into an editable tab.
 
-> **Where these sit in the menus is still being wired.** The dialogs and the
-> generated statements are what this section describes; once their entry points
-> land, this section will name them. Until then, do not go hunting for a menu path
-> here that isn't in the manual.
+**Where they are.** In the **DDL Objects (Quality)** tree:
 
-**Create index** asks for an index name, one or more columns (the same "+"
+- **Create Index…**, **Drop Index…** and **Drop Table…** are on the **Alter
+  Table ▸** submenu of a table node or one of its column rows, in the third and
+  fifth groups (see *Altering a table's columns*).
+- The comment entry is on that same submenu, and follows your click: **Set Table
+  Comment…** from a table node, **Set Column Comment…** from a column row.
+- **Create Table…** is *not* on the submenu. It is a top-level entry — beside
+  **Add Trigger…** on a table node (a view's or matview's node too, since what you
+  create is a table regardless of what you clicked), and on the **Tables** branch
+  root itself, which is the "make a new one of the kind this branch lists" gesture
+  the **Functions & Procedures** root already had. Opened from a node, the new
+  table's name is pre-seeded with that node's schema so it lands where you
+  clicked; opened from the branch root, which names no schema, the name field
+  starts empty.
+
+None of these appears in the **Sandbox** explorer, which is browse-only (see *The
+Sandbox Explorer, and how it differs*).
+
+**Create Index…** asks for an index name, one or more columns (the same "+"
 picker, order preserved), a **Unique** toggle and a **Method:** dropdown —
 `btree` (the default and the right answer for almost every index), `hash`,
 `gist`, `spgist`, `gin`, `brin`. The method is always spelled out in the
@@ -2620,7 +2669,7 @@ does not exist; type it into the tab afterwards.
 > checkbox for it would produce text that fails on the way it is meant to be run.
 > If you want it, type the word into the tab and run it yourself.
 
-**Drop index** is the one operation that is not about a table: an index is named
+**Drop Index…** is the one entry here that is not about a table: an index is named
 in its own right, as `schema.index_name`, and there is no `DROP INDEX … ON table`
 in PostgreSQL. So you pick the index itself from a list showing what each one is —
 `idx_orders_code — UNIQUE btree (code)`.
@@ -2634,8 +2683,10 @@ in PostgreSQL. So you pick the index itself from a list showing what each one is
 > each one it left out, with the constraint that owns it, and points you at
 > **Drop Constraint…** — remove the constraint and its index goes with it.
 
-**Comments** are one dialog in two flavours — the table's comment, or one
-column's — chosen by the operation you picked rather than by a field inside it.
+**Set Table Comment… / Set Column Comment…** are one dialog in two flavours — the
+table's comment, or one column's — chosen by which entry the submenu offered you,
+which in turn follows the row you right-clicked rather than a field inside the
+dialog.
 The existing comment is offered for editing, which is the difference between
 changing a description and retyping it from memory. **Leaving the box empty
 removes the comment:** it generates `COMMENT ON … IS NULL`, which is the only
@@ -2643,7 +2694,7 @@ spelling PostgreSQL has for "no comment", and an empty box is the only way you
 can ask for it. The dialog says so under the field, because "take that comment
 off" is a legitimate thing to want rather than an error.
 
-**Create table** is a small column builder: one row per column with a **Name**, a
+**Create Table…** is a small column builder: one row per column with a **Name**, a
 **Type** (the same editable list of common types the column dialogs use — anything
 else can simply be typed), a **Nullable** checkbox, an optional **Default**, and a
 **PK** checkbox marking it as part of the primary key. **"+"** adds a row, **"−"**
@@ -2652,7 +2703,7 @@ column order. The primary key is emitted unnamed (`PRIMARY KEY ("id")`), because
 Postgres's auto-name for it — `orders_pkey` — is the one auto-name that is both
 predictable and what everybody already uses.
 
-> **That is everything Create table expresses, on purpose.** No foreign keys, no
+> **That is everything Create Table… expresses, on purpose.** No foreign keys, no
 > `UNIQUE` or `CHECK` constraints, no indexes, no identity/generated columns, and
 > no partitioning, inheritance or tablespace. There is no hidden checkbox for them
 > — those are exactly what the constraint and index operations above add to the
@@ -2661,7 +2712,7 @@ predictable and what everybody already uses.
 > have to guess at how its own fields interact, which is the one outcome this
 > whole feature exists to avoid.
 
-**Drop table** asks nothing beyond which table, and **there is no "are you
+**Drop Table…** asks nothing beyond which table, and **there is no "are you
 sure?"** — no confirmation dialog, no typing the table's name to unlock the
 button. That is the same safety model as every other operation here, stated where
 you are most likely to expect a scary prompt: **generating `DROP TABLE` executes
