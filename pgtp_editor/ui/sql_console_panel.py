@@ -45,7 +45,9 @@ the same selection-only terms, through the same `sql/formatter.py` function.
 
 **Truncation is a fact, never a guess.** The row cap lives in this console's
 own spin box (`DEFAULT_ROW_LIMIT`, bounded by `MAX_ROW_LIMIT`, with no
-"unlimited" option) and is passed down as `max_rows`; whether the result *was*
+"unlimited" option -- its sibling control, the statement timeout below, bounds
+how long the server may work where this bounds how much comes back) and is
+passed down as `max_rows`; whether the result *was*
 cut off is read from `QueryResult.truncated`, which `run_sandbox_query`
 establishes by fetching one row past the cap. A result sitting exactly on the
 cap and a result that was cut off therefore stay distinguishable -- reporting a
@@ -91,11 +93,21 @@ by default, a synchronous stub in tests), Run is disabled while a run is in
 flight, and a failure comes back as a `QueryResult` carrying the database's own
 message -- never an empty grid.
 
-**Still missing from D4, deliberately, and reported rather than faked:** the
-mandatory per-statement timeout. `SandboxExecutor.fetch(params, sql, *,
-max_rows)` has no timeout parameter, so there is nowhere for the UI to pass one;
-inventing a channel here would change the `db/` contract from the UI. There is
-likewise no Cancel button (D4's own stated gap).
+**Every statement is time-bounded, and there is no way to ask for one that is
+not.** The second spin box is D4's *primary* safety control (`DEFAULT_TIMEOUT_MS`,
+floor `MIN_TIMEOUT_MS`, ceiling `MAX_TIMEOUT_MS`, **no "unlimited" option** --
+that absence is the design). It is read once per Run and passed down as
+`statement_timeout_ms` to every statement of it; the executor applies it
+transaction-locally, and a statement the server cancels comes back as a normal
+error result in D4's own words, with its `sqlstate`/`position`/`line` intact --
+never a hang, never a bare driver string.
+
+**Still missing from D4, and reported rather than faked:** there is no Cancel
+button. D4's per-call connection discipline (one connection per statement,
+opened inside the seam) leaves the UI no handle to `cancel()` on, so the timeout
+is currently the *only* way a running statement ends early. That is a real gap
+and it is D4's own stated one; this console does not paper over it with a button
+that would not work.
 """
 from __future__ import annotations
 
@@ -120,6 +132,8 @@ from PySide6.QtWidgets import (
 from ..db.apply import line_of_position
 from ..db.sandbox_query import (
     DEFAULT_MAX_ROWS,
+    DEFAULT_STATEMENT_TIMEOUT_MS,
+    MIN_STATEMENT_TIMEOUT_MS,
     QueryResult,
     run_sandbox_query,
 )
@@ -174,6 +188,20 @@ MAX_ROW_LIMIT = 100_000
 #: The smallest cap. One row is a legitimate "just show me the shape" request;
 #: zero rows would make every result look truncated and answer nothing.
 MIN_ROW_LIMIT = 1
+
+#: The statement timeout in force when the console opens, and its floor --
+#: §18.5 D4's *primary* control. Taken from `db/sandbox_query.py` rather than
+#: re-declared, same reason as `DEFAULT_ROW_LIMIT`: one number, not two that can
+#: drift apart.
+DEFAULT_TIMEOUT_MS = DEFAULT_STATEMENT_TIMEOUT_MS
+MIN_TIMEOUT_MS = MIN_STATEMENT_TIMEOUT_MS
+
+#: The largest timeout the spin box offers. **A choice this console makes**: the
+#: spec fixes the floor and forbids an "unlimited" setting but names no ceiling,
+#: and a `QSpinBox` must have one. Ten minutes is long enough for a genuine bulk
+#: statement someone is deliberately waiting on, and short enough that a Run
+#: started and forgotten cannot hold a connection for an afternoon.
+MAX_TIMEOUT_MS = 600_000
 
 #: Why Run is refused with no live sandbox. Names the way back, the way every
 #: other §18.5 degradation does -- never a bare "unavailable".
@@ -396,7 +424,7 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         `NO_SESSION_TEXT` rather than doing something invisible. A
         `SandboxSession` is the *only* accepted destination -- there is no
         `ConnectionParams` path in or out of this class.
-    ``run_query(session, sql, *, max_rows) -> QueryResult``
+    ``run_query(session, sql, *, max_rows, statement_timeout_ms) -> QueryResult``
         The execution function, defaulting to the real
         `db/sandbox_query.py::run_sandbox_query`. Tests replace it and never
         touch a server. It never raises: every failure arrives as a
@@ -414,7 +442,8 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
 
     Wiring surface for the host: `set_schema_index`, `set_session_available`,
     `set_sql`, `append_sql`, `focus_editor`, `run`, `row_limit`,
-    `set_row_limit`, `clear`, the read-only
+    `set_row_limit`, `statement_timeout_ms`, `set_statement_timeout_ms`,
+    `clear`, the read-only
     `sql_text`/`current_sql`/`result`/`run_report`, and the
     `execute_requested` / `result_ready` / `run_finished` / `format_refused`
     signals.
@@ -497,10 +526,27 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         self.row_limit_label = QLabel("Row limit:")
         self.row_limit_label.setBuddy(self.row_limit_spin)
 
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)
+        self.timeout_spin.setValue(DEFAULT_TIMEOUT_MS)
+        self.timeout_spin.setSingleStep(1_000)
+        self.timeout_spin.setSuffix(" ms")
+        self.timeout_spin.setGroupSeparatorShown(True)
+        self.timeout_spin.setToolTip(
+            "How long the server may work on one statement before it is "
+            "cancelled. A cancelled statement is reported as such, with the "
+            "timeout that was in force. There is no unlimited setting "
+            f"(minimum {MIN_TIMEOUT_MS} ms, maximum {MAX_TIMEOUT_MS} ms)."
+        )
+        self.timeout_label = QLabel("Statement timeout:")
+        self.timeout_label.setBuddy(self.timeout_spin)
+
         controls = QHBoxLayout()
         controls.setContentsMargins(0, 0, 0, 0)
         controls.addWidget(self.row_limit_label)
         controls.addWidget(self.row_limit_spin)
+        controls.addWidget(self.timeout_label)
+        controls.addWidget(self.timeout_spin)
         controls.addStretch(1)
 
         self.splitter = QSplitter(Qt.Orientation.Vertical)
@@ -729,6 +775,20 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
         which is the point -- there is no unlimited setting to fall into."""
         self.row_limit_spin.setValue(int(rows))
 
+    # --- statement timeout --------------------------------------------------
+
+    def statement_timeout_ms(self) -> int:
+        """The per-statement timeout currently in force, as passed to
+        `run_sandbox_query` (§18.5 D4's primary control)."""
+        return int(self.timeout_spin.value())
+
+    def set_statement_timeout_ms(self, ms: int) -> None:
+        """Set the timeout; the spin box clamps to
+        `MIN_TIMEOUT_MS..MAX_TIMEOUT_MS`, which is the point -- there is no
+        unlimited setting to fall into, and a value below the floor is raised to
+        it rather than accepted."""
+        self.timeout_spin.setValue(int(ms))
+
     # --- session availability ----------------------------------------------
 
     @property
@@ -781,7 +841,11 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
             self.results.report_notice(DECLINED_TEXT)
             return
 
+        # Both controls are read ONCE per Run, deliberately: a control changed
+        # while a multi-statement Run is in flight must not change the rules
+        # halfway through it.
         max_rows = self.row_limit()
+        statement_timeout_ms = self.statement_timeout_ms()
         self._running = True
         self.results.set_enabled(False, RUNNING_TEXT)
         self.execute_requested.emit(sql)
@@ -795,7 +859,12 @@ class SqlConsolePanel(SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget)
             for index, (statement, kind) in enumerate(
                 zip(statements, classifications), start=1
             ):
-                result = self._run_query(session, statement.text, max_rows=max_rows)
+                result = self._run_query(
+                    session,
+                    statement.text,
+                    max_rows=max_rows,
+                    statement_timeout_ms=statement_timeout_ms,
+                )
                 runs.append(_statement_run(index, statement, kind, result))
                 if not result.ok:
                     break

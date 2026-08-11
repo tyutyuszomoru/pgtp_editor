@@ -1223,6 +1223,73 @@ def test_real_executor_fetch_imports_psycopg_lazily_and_caps_by_one():
     assert "description is None" in source
 
 
+def test_all_three_fetch_declarations_carry_the_statement_timeout():
+    """§18.5 D4's timeout is declared in **three** places, not two: the protocol,
+    the real executor, and `db/sandbox_query.py::QueryRunner`, which
+    independently re-declares the same signature as the `runner=` injection
+    point. A narrower third declaration fails at CALL time, not at import --
+    the worst shape for a seam whose purpose is that tests never reach a
+    server."""
+    import inspect
+
+    from pgtp_editor.db.sandbox import (
+        DEFAULT_STATEMENT_TIMEOUT_MS,
+        SandboxExecutor,
+        _RealSandboxExecutor,
+    )
+    from pgtp_editor.db.sandbox_query import QueryRunner
+
+    for declaration in (
+        SandboxExecutor.fetch,
+        _RealSandboxExecutor.fetch,
+        QueryRunner.__call__,
+    ):
+        parameter = inspect.signature(declaration).parameters["statement_timeout_ms"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameter.default == DEFAULT_STATEMENT_TIMEOUT_MS
+
+
+def test_real_executor_fetch_sets_the_timeout_before_the_statement():
+    """It must be `set_config(..., true)` -- `SET LOCAL statement_timeout = %s`
+    is impossible, because PostgreSQL's `SET` is a utility statement taking no
+    bind parameters, so that spelling could only be written by interpolating a
+    spin box's value into SQL. And it must come FIRST: a timeout set after the
+    statement bounds nothing."""
+    import inspect
+
+    from pgtp_editor.db.sandbox import DEFAULT_SANDBOX_EXECUTOR
+
+    source = inspect.getsource(type(DEFAULT_SANDBOX_EXECUTOR).fetch)
+    # Comments are stripped first: the method deliberately EXPLAINS the `SET
+    # LOCAL` spelling it must not use, so a naive scan would trip over the
+    # explanation instead of the code.
+    code = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+    assert "set_config('statement_timeout', %s, true)" in code
+    assert code.index("set_config") < code.index("cursor.execute(sql)")
+    # The value is BOUND, never interpolated into statement text -- `SET` is a
+    # utility statement and takes no bind parameters, so the `SET LOCAL`
+    # spelling would force an f-string around a spin box's value.
+    assert "SET LOCAL" not in code
+    assert "statement_timeout =" not in code
+    # Defence in depth: the executor clamps up to the floor even if a caller
+    # somehow got past `run_sandbox_query`'s louder rejection.
+    assert "MIN_STATEMENT_TIMEOUT_MS" in code
+
+
+def test_the_timeout_constants_state_the_spec_numbers_and_offer_no_unlimited():
+    from pgtp_editor.db import sandbox
+
+    assert sandbox.DEFAULT_STATEMENT_TIMEOUT_MS == 30_000
+    assert sandbox.MIN_STATEMENT_TIMEOUT_MS == 1_000
+    # There is deliberately no sentinel meaning "no timeout" (§18.5 D4): the
+    # absence of an unlimited setting is the half of the design that carries
+    # the safety.
+    assert not hasattr(sandbox, "UNLIMITED_STATEMENT_TIMEOUT_MS")
+    assert not hasattr(sandbox, "NO_STATEMENT_TIMEOUT")
+
+
 def test_fetched_rows_defaults_are_a_no_result_set():
     from pgtp_editor.db.sandbox import FetchedRows
 

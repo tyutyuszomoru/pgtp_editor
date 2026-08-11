@@ -27,13 +27,22 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent, QKeySequence
 from PySide6.QtWidgets import QSpinBox, QSplitter
 
-from pgtp_editor.db.sandbox_query import QueryError, QueryOutcome, QueryResult
+from pgtp_editor.db.sandbox_query import (
+    DEFAULT_STATEMENT_TIMEOUT_MS,
+    MIN_STATEMENT_TIMEOUT_MS,
+    QueryError,
+    QueryOutcome,
+    QueryResult,
+)
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.sql_console_panel import (
     DECLINED_TEXT,
     DEFAULT_ROW_LIMIT,
+    DEFAULT_TIMEOUT_MS,
     MAX_ROW_LIMIT,
+    MAX_TIMEOUT_MS,
     MIN_ROW_LIMIT,
+    MIN_TIMEOUT_MS,
     NO_SESSION_TEXT,
     NOTHING_EXECUTABLE_TEXT,
     OBJECT_CHANGE_CONSEQUENCE,
@@ -68,10 +77,12 @@ class RecordingQuery:
 
     def __init__(self, result: QueryResult | None = None) -> None:
         self.result = result if result is not None else rows_result()
-        self.calls: list[tuple[object, str, int]] = []
+        self.calls: list[tuple[object, str, int, int]] = []
 
-    def __call__(self, session, sql, *, max_rows):
-        self.calls.append((session, sql, max_rows))
+    def __call__(
+        self, session, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS
+    ):
+        self.calls.append((session, sql, max_rows, statement_timeout_ms))
         return self.result
 
 
@@ -98,10 +109,12 @@ class ScriptedQuery:
 
     def __init__(self, answers: dict[str, QueryResult] | None = None) -> None:
         self.answers = answers or {}
-        self.calls: list[tuple[object, str, int]] = []
+        self.calls: list[tuple[object, str, int, int]] = []
 
-    def __call__(self, session, sql, *, max_rows):
-        self.calls.append((session, sql, max_rows))
+    def __call__(
+        self, session, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS
+    ):
+        self.calls.append((session, sql, max_rows, statement_timeout_ms))
         if sql in self.answers:
             return self.answers[sql]
         return QueryResult(
@@ -113,7 +126,7 @@ class ScriptedQuery:
 
     @property
     def statements(self) -> list[str]:
-        return [sql for _session, sql, _rows in self.calls]
+        return [call[1] for call in self.calls]
 
 
 class RecordingConfirm:
@@ -216,7 +229,7 @@ def test_the_row_limit_in_force_is_the_one_passed_down(qtbot):
 
     console.run()
 
-    assert query.calls == [(SESSION, "SELECT 1", 25)]
+    assert query.calls == [(SESSION, "SELECT 1", 25, DEFAULT_TIMEOUT_MS)]
 
 
 # -- running ---------------------------------------------------------------
@@ -292,7 +305,7 @@ def test_a_no_rows_statement_reports_its_command_status(qtbot):
 
 
 def test_a_seam_level_exception_still_arrives_as_an_error_result(qtbot):
-    def boom(session, sql, *, max_rows):
+    def boom(session, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS):
         raise RuntimeError("thread pool exploded")
 
     console = SqlConsolePanel(
@@ -783,7 +796,9 @@ def test_ctrl_return_runs_once_through_the_same_run_gesture(qtbot):
 
     console._run_shortcut.activated.emit()
 
-    assert query.calls == [(SESSION, "SELECT 1", DEFAULT_ROW_LIMIT)]
+    assert query.calls == [
+        (SESSION, "SELECT 1", DEFAULT_ROW_LIMIT, DEFAULT_TIMEOUT_MS)
+    ]
     assert console.result is query.result
 
 
@@ -1106,11 +1121,87 @@ def test_as_confirmation_normalises_both_shapes_and_never_remembers_a_refusal():
     ) == ObjectChangeConfirmation(False, False)
 
 
-def test_there_is_no_statement_timeout_control_yet(qtbot):
-    """§18.5 D4 asks for one, but `SandboxExecutor.fetch` has no parameter to
-    pass it to, so the console does NOT fake one. Asserted so the gap stays
-    visible rather than being quietly "implemented" as a no-op control."""
+# -- the statement timeout (§18.5 D4's PRIMARY control) --------------------
+#
+# **SUPERSEDED, deliberately not deleted silently.** This section replaces
+# `test_there_is_no_statement_timeout_control_yet`, which asserted the *absence*
+# of `console.timeout_spin` / `console.statement_timeout_ms` on the grounds that
+# `SandboxExecutor.fetch` had no parameter to pass a timeout to. That gap was
+# the defect (BUG-260811024600), not the design: the seam has been widened in
+# all three of its declarations, and the control now exists. The old assertion
+# is inverted rather than dropped so the record of *why* the gap existed, and
+# that it was closed on purpose, stays readable in one place.
+
+
+def test_the_console_has_a_statement_timeout_control(qtbot):
     console, _query = make_console(qtbot)
 
-    assert not hasattr(console, "timeout_spin")
-    assert not hasattr(console, "statement_timeout_ms")
+    assert isinstance(console.timeout_spin, QSpinBox)
+    assert console.statement_timeout_ms() == DEFAULT_TIMEOUT_MS == 30_000
+
+
+def test_the_timeout_spin_box_has_a_floor_and_no_unlimited_setting(qtbot):
+    """The floor is the spec's 1 000 ms, and the box has a finite maximum -- so
+    there is no reachable value meaning "let it run forever". That absence is
+    the half of D4's design that carries the safety."""
+    console, _query = make_console(qtbot)
+
+    assert console.timeout_spin.minimum() == MIN_TIMEOUT_MS == 1_000
+    assert console.timeout_spin.maximum() == MAX_TIMEOUT_MS
+    assert MAX_TIMEOUT_MS > DEFAULT_TIMEOUT_MS
+    # The console's numbers are the db layer's, not a second pair that can drift.
+    assert DEFAULT_TIMEOUT_MS is DEFAULT_STATEMENT_TIMEOUT_MS
+    assert MIN_TIMEOUT_MS is MIN_STATEMENT_TIMEOUT_MS
+
+
+@pytest.mark.parametrize("asked", [0, -1, 10, 999])
+def test_a_timeout_below_the_floor_is_clamped_up_not_accepted(qtbot, asked):
+    console, _query = make_console(qtbot)
+
+    console.set_statement_timeout_ms(asked)
+
+    assert console.statement_timeout_ms() == MIN_TIMEOUT_MS
+
+
+def test_a_timeout_above_the_ceiling_is_clamped_down(qtbot):
+    console, _query = make_console(qtbot)
+
+    console.set_statement_timeout_ms(MAX_TIMEOUT_MS * 10)
+
+    assert console.statement_timeout_ms() == MAX_TIMEOUT_MS
+
+
+def test_the_timeout_in_force_is_the_one_passed_down(qtbot):
+    """Asserted THROUGH THE SEAM: what the fake executor was handed, not what a
+    constant says."""
+    console, query = make_console(qtbot)
+    console.set_statement_timeout_ms(5_000)
+    console.set_sql("SELECT 1")
+
+    console.run()
+
+    assert query.calls[0][3] == 5_000
+
+
+def test_changing_the_spin_box_between_runs_changes_what_the_next_run_sends(qtbot):
+    console, query = make_console(qtbot)
+    console.set_sql("SELECT 1")
+
+    console.run()
+    console.set_statement_timeout_ms(120_000)
+    console.run()
+
+    assert [call[3] for call in query.calls] == [DEFAULT_TIMEOUT_MS, 120_000]
+
+
+def test_every_statement_of_one_run_gets_the_same_timeout(qtbot):
+    """Read once per Run, exactly like the row cap: a control changed while a
+    multi-statement Run is in flight must not change the rules halfway."""
+    query = ScriptedQuery()
+    console, _query = make_console(qtbot, query)
+    console.set_statement_timeout_ms(45_000)
+    console.set_sql("SELECT 1; SELECT 2; SELECT 3")
+
+    console.run()
+
+    assert [call[3] for call in query.calls] == [45_000, 45_000, 45_000]

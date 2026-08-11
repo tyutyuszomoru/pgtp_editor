@@ -863,6 +863,27 @@ class FetchedRows:
     status: str = ""
 
 
+#: §18.5 D4's mandatory per-statement timeout, in milliseconds -- the console's
+#: **primary** safety control (the row cap only bounds what comes back; this
+#: bounds how long the server works). 30 s is long enough for any statement a
+#: person waits at a console for, and short enough that a runaway one frees the
+#: connection while they are still looking at the screen.
+#:
+#: **Lives here, not beside `DEFAULT_MAX_ROWS` in `db/sandbox_query.py`**, even
+#: though that is the intuitive home: `sandbox_query` imports `sandbox` and never
+#: the reverse, so declaring it there and importing it back into the executor
+#: would be an import cycle. Same reasoning that moved `FetchedRows` here -- the
+#: seam owns its own vocabulary; `sandbox_query` re-exports it.
+DEFAULT_STATEMENT_TIMEOUT_MS = 30_000
+
+#: The floor, in milliseconds. **There is deliberately no "unlimited" setting
+#: anywhere in this lane** -- that absence is the half of the design that
+#: carries the safety, so a caller can pick a longer timeout but never no
+#: timeout. A sub-second floor would additionally make the control a foot-gun
+#: (every statement cancelled before the planner finishes).
+MIN_STATEMENT_TIMEOUT_MS = 1_000
+
+
 class SandboxExecutor(Protocol):
     """The execution seam `SandboxSession` needs -- distinct from
     `db/introspect.py::Runner`, which is read-only-oriented (one connection,
@@ -899,7 +920,12 @@ class SandboxExecutor(Protocol):
         ...
 
     def fetch(
-        self, params: ConnectionParams, sql: str, *, max_rows: int
+        self,
+        params: ConnectionParams,
+        sql: str,
+        *,
+        max_rows: int,
+        statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
     ) -> FetchedRows:
         """Run **one** statement, which may be DML/DDL or a query, and return
         at most `max_rows + 1` rows plus the driver's own metadata.
@@ -910,6 +936,16 @@ class SandboxExecutor(Protocol):
         rather than applied afterwards so a real implementation can
         `fetchmany` instead of dragging a million rows across the wire and
         discarding them.
+
+        `statement_timeout_ms` is §18.5 D4's **mandatory** timeout, applied
+        inside the statement's own transaction. It carries a default rather
+        than being required so that "mandatory" means *there is always a
+        timeout in force* -- an implementation (or an older caller) that says
+        nothing gets 30 s, not forever. Values below
+        `MIN_STATEMENT_TIMEOUT_MS` are clamped up; there is no value meaning
+        "unlimited". A statement the server cancels comes back as an exception
+        with sqlstate `57014`, which `db/sandbox_query.py::timeout_error` turns
+        into D4's sentence.
 
         Commits on success, because an ad-hoc statement may legitimately be
         DML against the (disposable) sandbox and leaving it in a rolled-back
@@ -963,7 +999,12 @@ class _RealSandboxExecutor:
             connection.close()
 
     def fetch(
-        self, params: ConnectionParams, sql: str, *, max_rows: int
+        self,
+        params: ConnectionParams,
+        sql: str,
+        *,
+        max_rows: int,
+        statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
     ) -> FetchedRows:
         import psycopg  # noqa: PLC0415 -- lazy on purpose (see module docstring)
 
@@ -976,6 +1017,24 @@ class _RealSandboxExecutor:
         )
         try:
             with connection.cursor() as cursor:
+                # §18.5 D4's mandatory timeout, set FIRST and inside this
+                # statement's own transaction.
+                #
+                # **`set_config(..., true)`, not `SET LOCAL statement_timeout =
+                # %s`.** PostgreSQL's `SET` is a *utility* statement and takes
+                # no bind parameters, so the `SET LOCAL` spelling could only be
+                # written by interpolating a number that arrives from a spin box
+                # into SQL. `set_config`'s third argument `true` IS `SET LOCAL`
+                # scope (transaction-local, discarded at commit) and it does
+                # take a parameter. psycopg 3 is not in autocommit here (this
+                # method commits explicitly below), so a transaction is open and
+                # the local scope covers the statement.
+                cursor.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (
+                        f"{max(int(statement_timeout_ms), MIN_STATEMENT_TIMEOUT_MS)}ms",
+                    ),
+                )
                 cursor.execute(sql)
                 description = cursor.description
                 if description is None:
