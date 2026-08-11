@@ -2615,7 +2615,45 @@ spec is a ruling this file will re-ask, and a sweep would have re-put all three 
 
 ## DEC-260811022536 — Is the synthesized `CREATE TABLE`'s four-gap incompleteness permanent, or a v1 stopgap to be closed?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-11) — **PARTIAL BY INTENT; see the deferred half below.**
+- **Answer: close the per-column two now — identity/`SERIAL` and `GENERATED` columns. Inheritance and
+  partitioning are ruled on SEPARATELY, later, when a feature actually needs them.** Neither
+  *"accept all four permanently"* nor *"close all four"* was taken.
+- **Owner's reasoning.** Identity/`SERIAL` and `GENERATED` **extend the existing column rendering rather than
+  restructure the statement** — the column data is already in hand — and they are what an ordinary schema
+  actually hits, since nearly every table has a surrogate key. Inheritance and partitioning **restructure the
+  statement** (partition key, partition-of clauses, per-partition rendering, `INHERITS` with inherited columns
+  suppressed) and closing them now would mean **paying for partitioning support before any feature consumes
+  it**.
+- **The banner therefore STAYS, naming two remaining gaps rather than four**, and — this is the part that must
+  not be lost — **it is not to be read as an unfinished job.** The narrower boundary is deliberate: the two
+  cheap, common gaps are closed because they are cheap and common, and the two structural ones remain
+  **genuinely open** rather than accepted. A future reader finding a two-gap notice should read *"decided
+  boundary, pending a consumer"*, not *"someone stopped halfway"*.
+- **Wider principle:** a completeness question may be answered per-gap rather than wholesale. Where closing a
+  gap restructures the artifact, the gap waits for a feature that consumes the artifact; where it merely
+  extends what is already rendered, it is closed on the spot. Cost-to-close and frequency-in-practice are both
+  legitimate inputs, and a disclosed boundary is not the same as an unfinished one.
+- **⚠ THE DEFERRED HALF NEEDS ITS OWN ENTRY, AND I COULD NOT CREATE IT.** The owner directed that a follow-up
+  entry be raised for inheritance/partitioning rather than leaving this one half-answered. `owner-decision`
+  has **no `Bash` tool and cannot read the clock**, and a `DEC-<YYMMDDHHMMSS>` id must never be invented — a
+  fabricated timestamp looks authoritative and sorts wrongly forever. **The main session must dispatch
+  `owner-decision` (FILE mode) with a `date +%y%m%d%H%M%S` id** to raise: *"Do the synthesized `CREATE
+  TABLE`'s inheritance and partitioning gaps get closed, and what triggers it?"* — trigger condition: the
+  first feature that consumes this buffer as anything other than a read-only view. Until that entry exists,
+  **this paragraph is the record of the open half.**
+- **Unblocks:**
+  - the per-column half → the main session dispatches **`feature-triage`** to place a follow-up against §18.1
+    in `docs/FEATURE_QUEUE.md`: render identity/`SERIAL` and `GENERATED` column attributes in
+    `pgtp_editor/db/table_ddl.py`, and shorten the two-line banner (the `"NOT reconstructed: identity/SERIAL,
+    GENERATED columns, inheritance, partitioning"` notice) to name **inheritance and partitioning only**;
+  - **`spec-maintainer`** records in §18.1 that the boundary is now **two structural gaps, deliberately
+    pending a consumer** — not four, and not permanent — so a sweep neither re-files the closed two nor
+    enshrines the open two as accepted;
+  - **`manual-maintainer`** follows the banner wording wherever the manual quotes it;
+  - and it settles the standing question of **how much weight future features may put on this buffer**: it
+    round-trips ordinary tables once the per-column work lands, and still does **not** round-trip inherited or
+    partitioned ones, so nothing may treat it as a deployment source until that half is ruled on.
 - **Raised:** 2026-08-11, by the main session, from `FQ-260810183812` (shipped today, spec §18.1, merge
   commit `9d93fd8`)
 - **Blocks:** **nothing today.** The feature is shipped, tested (7357 passed / 51 skipped) and states its own
@@ -2678,7 +2716,40 @@ to none means the pane's first impression on a routine table is *"this is incomp
 
 ## DEC-260811023646 — What are the transaction semantics for a multi-statement run in the Quality SQL Console?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-11)
+- **Answer: option C — run inside a transaction, show the results, require a deliberate commit gesture.**
+  The run goes through `db/apply.py::apply_ddl(..., commit=False)`, the user sees what happened while it is
+  still uncommitted, and only an explicit commit gesture makes it durable. Chosen over **B** (per-statement
+  commit — what *"mirror the sandbox exactly"* literally means today) and over **A** (one auto-committing
+  transaction).
+- **Owner's reasoning.** Every *other* guard on this feature had already been ruled away — no
+  Maintenance-mode gate, no per-run confirmation beyond the existing object-change dialog, full read/write
+  against quality — so **the one remaining safety property must be the strong form, not the inherited one**.
+  And *"show me what it did before it is permanent"* is the precise claim `README.md` makes over DBeaver:
+  shipping per-statement commit against production would have imported the very behaviour this project
+  exists to replace, onto the one surface where it does the most damage. The owner deliberately took the
+  option that **adds surface** rather than the one that inherits behaviour.
+- **Wider principle:** where a feature's other guards have been deliberately removed, the guard that remains
+  is chosen on its own merits and never by analogy to a surface with a different blast radius. Consistency
+  with the sandbox is not an argument on a target that has no `reset()`.
+- **The held-open connection is accepted as real new surface, and its edges are a REQUIREMENT of the
+  implementation, not an open question.** Neither existing seam holds a connection between calls (both
+  `SandboxExecutor.fetch` and `apply_ddl` open and close per call), so the quality console must, and it must
+  have a **defined, tested behaviour on tab close, on window close, and on connection loss** with an
+  uncommitted run outstanding. Whoever implements it decides those three behaviours as part of the work —
+  they are not a further decision to file.
+- **Unblocks:** `FQ-260811020328`'s last open seam, and therefore the whole feature. Concretely: the quality
+  execution path calls `apply_ddl(..., commit=False)`; the console gains a commit/rollback affordance; the
+  results grid gains an uncommitted-state representation; the three lifecycle behaviours above are defined.
+  Because this is **new surface** rather than a variation of the shipped panel, the main session routes it
+  through **`feature-triage`** against `FQ-260811020328` rather than straight into implementation.
+- **`spec-maintainer` owes:** the two consoles now differ, deliberately — **one panel class, two commit
+  policies** — which must be recorded in §18.5's console section with this reasoning, against the corrected
+  D4 paragraph (`CONSOLIDATED_SPEC.md` §18.5, *"Multiple statements, transactions, and what commits"*, the
+  ⚠ CORRECTED TO WHAT SHIPPED block) rather than against the spec's superseded letter.
+  **`manual-maintainer` owes:** the manual's running-SQL sections must state which console commits when.
+- **Load-bearing for `DEC-260811025132`:** that entry's answer (keep `Ctrl+Return`) is conditional on this
+  one. See the dependency recorded there.
 - **Raised:** 2026-08-11, by the main session, from `FQ-260811020328` (Quality SQL Console), which flags this
   as the one place where its own *"mirror the sandbox console exactly"* directive may be the wrong instinct
   and explicitly leaves it here.
@@ -2782,7 +2853,45 @@ not slipped in as consistency.
 
 ## DEC-260811025132 — Should `Ctrl+Return` (Run) be live on the Quality SQL Console at all?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-11)
+- **Answer: option 1 — keep `Ctrl+Return`, identical to the sandbox console.** The shared panel's
+  `_run_shortcut` (`pgtp_editor/ui/sql_console_panel.py`, the `QShortcut` built immediately after
+  `_format_shortcut` in `__init__`) stays unconditional; no construction-time flag, no per-instance
+  divergence row in `docs/KEYBINDINGS.md`.
+- **Owner's reasoning — and this is CONDITIONAL ON `DEC-260811023646` BEING ANSWERED A3/C, not a standalone
+  preference.** Under C the **commit gesture is the point of no return, not the Run key**. Pressing
+  `Ctrl+Return` therefore executes into an *uncommitted* transaction the user then inspects — so it does not
+  put an irreversible outward effect one keystroke away. The app's rule (§18.5; `README.md:50`; the
+  no-shortcuts-on-Deployment invariant pinned by `tests/ui/test_ddl_object_editor.py`'s Deployment-menu
+  shortcut assertion) is **preserved in substance rather than waived**, which is exactly why option 1 is not
+  a reversal of it.
+- **⚠ DEPENDENCY, recorded as a dependency and not a preference — read this before changing the commit
+  model.** If the Quality SQL Console's commit model is ever changed to **per-statement commit** or to a
+  **whole-run auto-commit**, this answer's justification **collapses**: `Ctrl+Return` would then be one
+  keystroke from a durable production change, and the chord **must be revisited** (options 2 and 3 in this
+  entry are the alternatives on the table). A future session must not read "`Ctrl+Return` is live on the
+  quality console" as settled independently of C. The two rulings ship and stand together.
+- **Wider principle:** a shortcut's admissibility is a property of **what the gesture makes durable**, not of
+  what it is called. The same chord can be legitimate on one host and not on another, and when a host's
+  durability model changes, every chord justified by that model is reopened.
+- **Still required regardless of this ruling, and NOT optional.** The recorded justification for the
+  `Ctrl+Return` carve-out contains the sentence *"there is no target-database Run to reach with or without a
+  key"*, which becomes **false the moment `FQ-260811020328` ships**. It exists in **three** places, all
+  verified 2026-08-11, and all three must be replaced with the A3/C-based justification above (*"the commit
+  gesture, not the Run key, is the point of no return"*):
+  1. `pgtp_editor/ui/sql_console_panel.py` — the comment block above `self._run_shortcut = QShortcut(...)`;
+  2. `docs/KEYBINDINGS.md` — the `Ctrl+Return` row, whose Notes end *"The sandbox is disposable and
+     `reset()`-able, so this does not reopen 'an irreversible outward effect must not be one keystroke
+     away'."* The row's **Surfaces/description also still says "Sandbox SQL Console" only** and must be
+     widened to both consoles;
+  3. `pgtp_editor/ui/shortcut_registry.py` — the `RESERVED_SEQUENCES` value
+     `"Run, on the Sandbox SQL Console tab (§27)"`, same widening.
+  `owner-decision` does not edit those files: **`spec-maintainer`** owns the spec/§27 justification and the
+  ledger row, the **main session** owns the code comment and the registry string, and
+  **`manual-maintainer`** owns the manual's `Ctrl+Return` mentions.
+- **Unblocks:** the chord needs no work at all — it already exists in the shared panel and simply is not
+  withheld. What this converts into is purely the three-site wording correction above, which lands with
+  `FQ-260811020328`.
 - **Raised:** 2026-08-11, by the main session, from `FQ-260811020328` (Quality SQL Console) as folded into
   `CONSOLIDATED_SPEC.md` §18.5 **D4b**, and independently flagged by `spec-maintainer` on the fold
   (`CONSOLIDATED_SPEC.md:57-63`).
@@ -2875,7 +2984,45 @@ its reason was not the rule. Option 2 buys the least: it keeps the failure mode 
 
 ## DEC-260811025733 — Is `Add Trigger…` deliberately offered on view and matview nodes, or is that an oversight?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-11)
+- **Answer: option 1 — intended for views, excluded for matviews, and the dialog is gated by relation kind.**
+  `Add Trigger…` stays offered for `kind in ("table", "view")` and is excluded for `matview`; and
+  `NewTriggerDialog` becomes kind-aware — a **view** target offers `INSTEAD OF` only, a **table** target
+  offers `BEFORE`/`AFTER` only. The largest of the three options was chosen because it is the only one that
+  makes the gesture *actually correct* on a view.
+- **Owner's reasoning.** **The split is PostgreSQL's, not a preference:** `INSTEAD OF` on a view is the
+  standard way to make a view updatable and is squarely in scope for this app, while materialized views
+  support no triggers at all. And per-kind reasoning is the **established local pattern rather than a new
+  one** — the two neighbouring gestures in the same context-menu builder already answer *"does this gesture
+  mean something on a view?"* per gesture: `Create Table…` includes a view's node with an explicit comment
+  (*"what you create is a table regardless of what you clicked"*), and `_add_alter_table_submenu` excludes
+  views and matviews with an explicit early return. `Add Trigger…` was the one branch expressing no intent.
+- **This closes a LIVE DEFECT, not a tidiness item — record it as such.** Today, from a view node, a user can
+  pick `BEFORE INSERT` and get a rendered, authoritative-looking statement the server rejects. Verified
+  2026-08-11: `NewTriggerDialog.__init__` takes `table: str` and never learns the kind; it fills its timing
+  combo with the unfiltered `db/ddl_skeleton.py::TRIGGER_TIMINGS = ("BEFORE", "AFTER", "INSTEAD OF")`;
+  `trigger_skeleton` validates only against that same tuple, its docstring saying *"`INSTEAD OF` is view-only
+  in Postgres; that is the caller's constraint to enforce, not this emitter's"* — **and no such caller
+  existed.** Option 2 (document today's behaviour) was rejected for exactly this reason: it is the one state
+  `_add_alter_table_submenu`'s own docstring principle rejects — *not offered* rather than *offered and
+  broken*.
+- **Wider principle:** where a shared tree role spans several relation kinds, each gesture on that role must
+  state its own per-kind answer. A branch that expresses no intent is the shape by which a narrow rule gets
+  widened by analogy — which has already cost this project twice in the shortcut area (BUG-052, BUG-063).
+  And **the emitter's disclaimer is only honest if the caller it names exists**: a docstring delegating a
+  constraint to "the caller" with no caller is a defect, not a division of labour.
+- **Unblocks — the implied work, for the main session to route:**
+  1. the `kind` check on the `Add Trigger…` branch in `pgtp_editor/ui/ddl_buffer_panel.py::_context_menu_for`,
+     with a docstring stating the intent as `Create Table…`'s neighbouring comment does;
+  2. the relation kind threaded into `NewTriggerDialog`, with the timing list filtered per kind;
+  3. `tests/ui/test_new_trigger_dialog.py`'s assertion that the combo equals `TRIGGER_TIMINGS` verbatim
+     becomes **kind-conditional**;
+  4. `db/ddl_skeleton.py`'s `TRIGGER_TIMINGS` / `trigger_skeleton` docstrings **stop disclaiming a check that
+     now has a caller**;
+  5. **`spec-maintainer`** settles the spec's explicit either/or (§18's trigger dialog note, *"the dialog's to
+     enforce or to leave to the database"* — it is now **the dialog's**);
+  6. **`manual-maintainer`** reconciles the three inconsistent manual lines (`resources/manual.md`: *"right-click
+     a **table** node"* vs. the two passages saying a view's and a matview's node still offer `Add Trigger…`).
 - **Raised:** 2026-08-11, by `manual-maintainer`, while recounting the `Alter Table ▸` submenu against
   `pgtp_editor/ui/ddl_buffer_panel.py`. Verified against the tree before filing.
 - **Blocks:** **nothing** — nothing is mid-build on this path. It hardens with time: the code currently
