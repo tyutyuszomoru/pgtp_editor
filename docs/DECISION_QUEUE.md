@@ -2777,3 +2777,96 @@ not slipped in as consistency.
 - Any answer other than B means the two consoles differ, which **`spec-maintainer`** must record in the
   console section (one console, two commit policies, with the reason) and **`manual-maintainer`** must state
   where the manual describes running SQL.
+
+---
+
+## DEC-260811025132 — Should `Ctrl+Return` (Run) be live on the Quality SQL Console at all?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-11, by the main session, from `FQ-260811020328` (Quality SQL Console) as folded into
+  `CONSOLIDATED_SPEC.md` §18.5 **D4b**, and independently flagged by `spec-maintainer` on the fold
+  (`CONSOLIDATED_SPEC.md:57-63`).
+- **Blocks:** **nothing.** D4b can be built now with Run on the button; the chord is three lines in one
+  place (`sql_console_panel.py:579-583`) and is added or withheld once this is answered. Do not stall the
+  feature on it.
+- **Answer with `DEC-260811023646`.** The two compound (see below) and are best put to the owner together.
+
+**Already settled by the owner and NOT in question here.** The quality console is **full read/write**
+against the production database, and it is **always available** whenever a quality connection with a
+password exists — no Maintenance-mode gate, no per-run confirmation beyond the existing object-change
+dialog for DDL/unknown statements.
+
+**Context.** D4b mirrors the Sandbox SQL Console (`pgtp_editor/ui/sql_console_panel.py`) but executes
+against production. The feature entry's keyboard analysis concluded that `Ctrl+Return` needs **no new
+chord, no `RESERVED_SEQUENCES` entry and no ledger row**: it is the same panel class answering the same
+chord under DEC-009, hosted as a `QShortcut` with `WidgetWithChildrenShortcut` scope so two open consoles
+cannot contend. **That analysis is correct about mechanism** and is not what is being asked. The question
+is whether the chord *should* be there, and this is the one place where "mirror the sandbox exactly" is
+worth interrogating rather than inheriting.
+
+**Verified in the tree, and this is the crux.** The app's rule is *"an irreversible outward effect must not
+be one keystroke away"* (§18.5; `README.md:50`; no Deployment-menu item carries a shortcut, pinned by
+`tests/ui/test_ddl_object_editor.py:1655`). `Ctrl+Return` is the **single stated exception**, and every
+place that records it justifies the exception with **two premises, both of which D4b falsifies**:
+
+- `pgtp_editor/ui/sql_console_panel.py:570-578` — *"the sandbox is disposable and `reset()`-able, so this
+  does not reopen the 'an irreversible outward effect must not be one keystroke away' rule — **and there is
+  no target-database Run to reach with or without a key**."*
+- `docs/KEYBINDINGS.md:78` and `pgtp_editor/ui/shortcut_registry.py:326` carry the same reason, verbatim in
+  the ledger row.
+
+D4b **is** the target-database Run the comment says does not exist, and it is not disposable and has no
+`reset()`. So this is not a new carve-out being requested; it is an existing carve-out whose stated reason
+stops holding for one of its two hosts. Whichever way the owner rules, that wording must be corrected.
+
+**The concrete exposure.** Every other guard on this feature has been deliberately removed by owner ruling.
+For a plain `UPDATE`/`DELETE` with no `WHERE`, `Ctrl+Return` is the entire distance between a typo and a
+committed production change — on a visually similar tab, using a chord the user's fingers already know from
+the sandbox console.
+
+**Compounding with `DEC-260811023646` (multi-statement transaction semantics).** If that is answered
+**B — per-statement commit** (which, note, is what "mirror the sandbox" *literally* means today, verified
+there), a single stray `Ctrl+Return` can leave production **half-changed**. If it is answered **C —
+confirm/commit gesture**, a stray `Ctrl+Return` is far less consequential and option 1 below becomes much
+easier to accept. Answering this one without that one decides risk twice.
+
+**Options.**
+
+- **1 — Keep it, identical to the sandbox.** Lowest friction, no new mechanism, nothing to explain to a
+  user moving between the two consoles; the danger marking and the distinct tab title carry the warning.
+  *Cost:* the app's one shortcut-carrying execution gesture becomes a production write, and its recorded
+  justification has to be rewritten from "the sandbox is disposable" into an argument that a production
+  write **is** acceptable one keystroke away — which is a reversal of a rule stated in the README, the spec,
+  the manual and a test.
+- **2 — Keep it, but require the Run *button* for the first run of a session on that tab** (thereafter the
+  chord works). Muscle memory cannot fire blind on a freshly opened tab; the chord still serves the user who
+  has consciously engaged with the surface. *Cost:* a stateful, invisible rule — the same keystroke works or
+  does nothing depending on history the user cannot see, which is exactly the kind of behaviour that reads
+  as a bug; a new "has run once" state to define, test and document; and it does nothing about the
+  **second** typo, which is as expensive as the first.
+- **3 — Do not bind it on the quality console; Run is button-only there.** The asymmetry is itself the
+  signal: the gesture that means *go* in the sandbox deliberately does nothing here, which is the same
+  device already used for the Deployment menu. Keeps the "one keystroke away" rule intact and its recorded
+  reason true. *Cost:* breaks "mirror the sandbox exactly", so `docs/KEYBINDINGS.md` needs a stated
+  per-instance divergence (one chord, live on one host of the panel class and inert on the other — the
+  ledger has no such row shape today) and the manual must say so; and a user who has learned the chord will
+  press it and get silence, which must be worth more than the friction it costs.
+
+**Recommendation: 3 — button-only on the quality console**, unless `DEC-260811023646` is answered **C**, in
+which case **1** is acceptable because the commit gesture, not the chord, becomes the point of no return.
+The reasoning is that the exception's own recorded justification is a statement about disposability, and
+disposability is precisely what the quality console does not have; a rule that survives only by rewriting
+its reason was not the rule. Option 2 buys the least: it keeps the failure mode and adds hidden state.
+
+**What the answer converts into (one place, either way).**
+- **1** → keep the `QShortcut` block in the shared panel unconditional; `spec-maintainer` rewrites the
+  §18.5 D4/§27 justification and `docs/KEYBINDINGS.md:78`, and `shortcut_registry.py:326`'s description
+  ("Sandbox SQL Console" only) must be widened; `manual-maintainer` updates
+  `resources/manual.md:4694, 4922-4928`.
+- **2** → same, plus a per-tab "first run has happened" gate on the shortcut's `setEnabled`, with a test.
+- **3** → the shared panel gains one construction-time flag controlling whether `_run_shortcut` is created
+  at all (the quality console passes it off); `docs/KEYBINDINGS.md:78` gains the stated divergence;
+  `resources/manual.md`'s three `Ctrl+Return` sites gain *"Sandbox console only"*.
+- Either way, **the falsified sentence *"there is no target-database Run to reach with or without a key"*
+  must be removed** from `sql_console_panel.py:573-574` — it is untrue the moment D4b ships, independent of
+  this ruling.
