@@ -372,8 +372,14 @@ def test_opening_installs_one_fold_region_per_object_in_the_editor(qtbot, tmp_pa
         if editor._foldable_region_starting_at(document.findBlockByNumber(block))
         is not None
     }
-    assert foldable == {span.start_line - 1 for span in spans}
-    assert len(foldable) == 3  # 2 routines + 1 trigger
+    # Every span with a BODY is foldable. The single-line detail spans
+    # `FQ-260810183812` adds for a table's columns/constraints/indexes have
+    # `end_line == start_line`, so they contribute no region -- which is the
+    # existing "spans with no body fold nothing" rule, not a new exception.
+    assert foldable == {
+        span.start_line - 1 for span in spans if span.end_line > span.start_line
+    }
+    assert len(foldable) == 4  # 2 routines + 1 trigger + 1 table
 
 
 def test_reopening_reinstalls_fold_regions_for_the_new_buffer(qtbot, tmp_path):
