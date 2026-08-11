@@ -7656,3 +7656,34 @@ please color the new wide caret so it also instantly identifies visually when we
 **Spec impact:** Touches `CONSOLIDATED_SPEC.md` §8 / FQ-032 (the vim Edit-mode/Command-mode block; `%` is described there as "a character-level bracket scan, the same family as `code_editor.enclosing_bracket_span`", `vim_mode.py:143-144`). Introducing an on-character Command-mode cursor model, a block caret, and a colored mode cue are new design that the shipped FQ-032 did not specify (it shipped a thin caret and the between-chars `%` convention). **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here. If the owner considers the on-character clamp a behavior change with a right/wrong answer (it reverses the shipped `%` convention encoded in a test), that is a candidate for an `owner-decision`, but the vim-authenticity intent in the report is clear enough to implement against.
 
 ---
+
+## BUG-260812001455: In Edit Snippets, the Add button (and Delete, and Restore Built-ins) does nothing — `clicked`'s `bool checked` is passed as the handler's first positional argument, raising inside the slot
+**Status:** OPEN
+**Reported:** 2026-08-12
+**Report (verbatim):** "in edit snippets Add button does nothing"
+
+**Root cause:** `pgtp_editor/ui/edit_snippets_dialog.py`, `EditSnippetsDialog.__init__`, lines 183-185. The three mutating buttons are wired directly to methods that take positional parameters other than a leading `bool`:
+
+```python
+self.add_button.clicked.connect(self.add_snippet)          # add_snippet(prefix, title, template)
+self.delete_button.clicked.connect(self.remove_selected)   # remove_selected(self)
+self.restore_button.clicked.connect(self.restore_missing_defaults)  # restore_missing_defaults(self)
+```
+
+`QAbstractButton.clicked` emits `clicked(bool checked=False)`. Qt passes that `checked` value (always `False` for a non-checkable button) as the first positional argument of the connected slot. So a click calls `add_snippet(False)`: `False` binds to `prefix`, then `add_snippet` line 247 does `prefix = self._unique_prefix(prefix)`, and `_unique_prefix` line 312 does `wanted.strip().lower()` on a `bool` → **`AttributeError: 'bool' object has no attribute 'strip'`** (reproduced: clicking Add adds no row and raises this from the slot). Under a live event loop Qt swallows the slot exception (prints the traceback to stderr, keeps running), so the user sees the button silently do nothing. `remove_selected` and `restore_missing_defaults` take no parameters beyond `self`, so the injected `False` is an unexpected positional argument → `TypeError` — same dead-button symptom (verified: Delete and Restore also fail to act on `.click()`). Root cause is **(a) from the triage list — the connection is wrong**, not a no-op handler and not a stale view: the handler bodies are correct and are exercised green by the existing tests, which call the methods *directly*. The Export/Import buttons (lines 186-187) escape the bug only because they connect to `signal.emit`, which silently ignores the extra positional `checked` arg. The read-only guard (`_apply_read_only`, line 428) disables these buttons, so this is a live-store, editable-dialog bug only.
+
+**Proposed fix:** In `EditSnippetsDialog.__init__` (`edit_snippets_dialog.py:183-185`), stop passing `clicked`'s `checked` into the handlers. Use lambdas that drop the argument and call the methods with their intended defaults:
+
+```python
+self.add_button.clicked.connect(lambda: self.add_snippet())
+self.delete_button.clicked.connect(lambda: self.remove_selected())
+self.restore_button.clicked.connect(lambda: self.restore_missing_defaults())
+```
+
+(Leave lines 186-187 export/import as-is — `*.emit` is unaffected.) This is the smallest correct change and keeps every method's programmatic seam intact (tests still call `add_snippet()`/`remove_selected()`/`restore_missing_defaults()` directly). Two equally acceptable alternatives if the implementer prefers not to use lambdas: (i) give each handler a leading `*_ ` / `checked=False` sink parameter — but that pollutes the public seam signatures the tests and docstrings describe, so the lambda is cleaner; (ii) a tiny private `_on_add`/`_on_delete`/`_on_restore` trampoline each `def _on_add(self, _checked=False): self.add_snippet()`. Gotchas: **do not** simply add `checked` as `add_snippet`'s first param — `add_snippet(prefix=…, title=…, template=…)` is called positionally elsewhere in tests and its defaults matter (`_NEW_PREFIX`/`_NEW_TITLE`), so shifting the parameter list breaks the seam. After the fix, Add appends a `newsnippet`/`(describe this snippet)` row via `_unique_prefix` (unique default name already handled, line 310-317) and selects it (line 251); persistence is correct as-is — the dialog never writes the store, the controller persists on OK via `SnippetController._on_accepted → save` (`snippet_controller.py:203-235`), so persist-on-add vs persist-on-close is already the intended persist-on-OK and needs no change.
+
+**Test impact:** `tests/ui/test_edit_snippets_dialog.py` owns this dialog. It is green today because every add/delete/restore test invokes the methods **directly** (`widget.add_snippet()`, `widget.remove_selected()`, `widget.restore_missing_defaults()` — lines 105, 113-114, 121, 128, 138, 145), never through the button, so the mis-wiring is invisible to the whole suite. Add click-driven cases that exercise the real `clicked` path: (a) `widget.add_button.click()` appends a row and leaves `validation_error() is None` (the reported symptom); (b) `widget.delete_button.click()` after selecting a row removes it; (c) `widget.restore_button.click()` on a set missing built-ins restores them. These would each fail before the fix (the Add case raising `AttributeError`, the others `TypeError`) and pass after. The existing `test_export_and_import_buttons_emit_rather_than_act` (line 210) already click-drives export/import and stays green. No new test file; no change to `tests/ui/test_snippet_controller.py` or `tests/sql/test_snippet_store.py`.
+
+**Spec impact:** None on intended behavior. `CONSOLIDATED_SPEC.md` §18.9 (FQ-030, "SHIPPED IN FULL") describes the editor with Add/Delete/Restore/Export/Import as working; this is a wiring defect against that spec, not a divergence the spec chose. No `owner-decision` and no `docs/KEYBINDINGS.md` impact — these are `QPushButton.clicked` connections, not keyboard chords.
+
+---
