@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QListWidget, QWidget
+from PySide6.QtWidgets import QDialogButtonBox, QListWidget, QWidget
 
 from pgtp_editor.sql.snippet_store import (
     SNIPPETS_FILENAME,
@@ -475,6 +475,48 @@ def test_cancelling_the_editor_undoes_every_edit_in_it(qtbot, lane, tmp_path):
     assert controller.snippets() == (MINE, THEIRS)
     assert shell.stage.ddl_explorer_panel().editor.snippets() == (MINE, THEIRS)
     assert load_snippets(cfg / SNIPPETS_FILENAME).snippets == (MINE, THEIRS)
+
+
+def test_clicking_add_then_ok_persists_the_new_snippet(qtbot, lane):
+    """The whole path a user actually has: click Add, press OK, and the row is
+    in the file and live in the editors. Every other add test in this lane calls
+    `add_snippet()` directly, which is how a dead Add button stayed green
+    (BUG-260812001455)."""
+    controller, shell, _audit, _messages, cfg = lane
+    save_snippets(cfg / SNIPPETS_FILENAME, (MINE,))
+    controller.load()
+    dialog = _open(qtbot, controller)
+    dialog.add_button.click()
+    assert len(dialog.result_snippets()) == 2
+    dialog.button_box.button(QDialogButtonBox.StandardButton.Ok).click()
+    persisted = load_snippets(cfg / SNIPPETS_FILENAME).snippets
+    assert len(persisted) == 2 and persisted[0] == MINE
+    assert controller.snippets() == persisted
+    assert shell.stage.ddl_explorer_panel().editor.snippets() == persisted
+
+
+def test_clicking_delete_then_ok_persists_the_removal(qtbot, lane):
+    controller, shell, _audit, _messages, cfg = lane
+    save_snippets(cfg / SNIPPETS_FILENAME, (MINE, THEIRS))
+    controller.load()
+    dialog = _open(qtbot, controller)
+    dialog.table.setCurrentCell(0, 0)
+    dialog.delete_button.click()
+    dialog.button_box.button(QDialogButtonBox.StandardButton.Ok).click()
+    assert load_snippets(cfg / SNIPPETS_FILENAME).snippets == (THEIRS,)
+    assert shell.stage.ddl_explorer_panel().editor.snippets() == (THEIRS,)
+
+
+def test_clicking_restore_then_ok_persists_the_built_ins(qtbot, lane):
+    controller, _shell, _audit, _messages, cfg = lane
+    save_snippets(cfg / SNIPPETS_FILENAME, (MINE,))
+    controller.load()
+    dialog = _open(qtbot, controller)
+    dialog.restore_button.click()
+    dialog.button_box.button(QDialogButtonBox.StandardButton.Ok).click()
+    persisted = load_snippets(cfg / SNIPPETS_FILENAME).snippets
+    assert persisted[0] == MINE
+    assert set(DEFAULT_SNIPPETS).issubset(set(persisted))
 
 
 def test_a_corrupt_store_still_leaves_the_defaults_live_in_the_editors(lane):
