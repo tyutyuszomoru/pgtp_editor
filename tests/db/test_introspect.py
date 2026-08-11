@@ -143,6 +143,63 @@ def test_fetch_schema_captures_fk_target():
     assert schema.column("pr.part", "id").fk_target is None
 
 
+# --- identity / generated columns (`DEC-260811022536`) ------------------------
+
+
+def test_columns_sql_sources_identity_and_generated_on_the_SAME_round_trip():
+    """`db/table_ddl.py` renders `GENERATED ... AS IDENTITY` and `GENERATED
+    ALWAYS AS (<expr>) STORED`, which needs `attidentity`/`attgenerated`. Both
+    live on `pg_attribute` -- the table this query already reads -- so they ride
+    the existing column query; a fourth statement would be a second round trip
+    (`FQ-260810183812`'s rule)."""
+    assert "a.attidentity" in SCHEMA_SQL[1]
+    assert "a.attgenerated" in SCHEMA_SQL[1]
+    assert len(SCHEMA_SQL) == 3
+
+
+def test_fetch_schema_surfaces_identity_and_generated_columns():
+    runner = _commented_runner(
+        [("pr", "widget", "r", None)],
+        [
+            ("pr", "widget", "id", "integer", True, None, None, "a", ""),
+            ("pr", "widget", "code", "integer", True, None, None, "d", ""),
+            ("pr", "widget", "qty", "integer", False, None, None, "", ""),
+            ("pr", "widget", "total", "integer", False, "(qty * 2)", None, "", "s"),
+        ],
+    )
+    schema = fetch_schema(_PARAMS, runner=runner)
+    assert schema.column("pr.widget", "id").identity == "a"
+    assert schema.column("pr.widget", "code").identity == "d"
+    assert schema.column("pr.widget", "qty").identity is None
+    assert schema.column("pr.widget", "total").generated == "s"
+    # A generated column's expression arrives in `default` -- it IS the
+    # `pg_attrdef` row `pg_get_expr` reads.
+    assert schema.column("pr.widget", "total").default == "(qty * 2)"
+
+
+def test_the_catalogs_empty_string_becomes_none_not_empty_string():
+    """One thing to test, not two: `''` is the catalog's "neither", so
+    consumers ask `is None` and never also `== ""`."""
+    runner = _commented_runner(
+        [("pr", "widget", "r", None)],
+        [("pr", "widget", "qty", "integer", False, None, None, "", "")],
+    )
+    column = fetch_schema(_PARAMS, runner=runner).column("pr.widget", "qty")
+    assert column.identity is None
+    assert column.generated is None
+
+
+def test_column_rows_without_identity_values_are_tolerated():
+    """The pre-2026-08-11 7-tuple column row shape still builds a ColumnInfo
+    (with neither flag) rather than raising -- the tolerance every other row
+    shape in this module extends, and the reason the canned runners across the
+    suite keep working."""
+    runner, _ = _canned_runner()
+    column = fetch_schema(_PARAMS, runner=runner).column("pr.equipment", "id")
+    assert column.identity is None
+    assert column.generated is None
+
+
 def test_columns_sql_sources_column_comments():
     """The widened query must actually select `col_description` keyed on the
     column's own `attrelid`/`attnum` (2026-08-05, §18.1's Properties-panel

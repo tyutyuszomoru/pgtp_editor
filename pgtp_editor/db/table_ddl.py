@@ -26,16 +26,49 @@ multi-column PK, a partial index, a table with no constraints at all) testable
 without a server.
 
 **A synthesized `CREATE TABLE` is a RECONSTRUCTION, and this module states so
-in its own output.** PostgreSQL has no `pg_get_tabledef`; v1 reads columns,
-constraints, indexes and comments, and therefore omits identity/`SERIAL`
-sequences, `GENERATED` columns, table inheritance and partitioning. Presenting
-that text as *"the table's DDL"* without saying so is a silent wrong result
-(§1's master invariant): a user who sees no `GENERATED ALWAYS AS IDENTITY`
-concludes the column has none. So every table's text carries
-`RECONSTRUCTION_NOTICE` -- **per table, not once per buffer** (see below).
-Nothing here ever *guesses*: a partitioned or inherited table renders as the
-columns and constraints that were read, with the omission named, never with an
-invented `PARTITION BY`.
+in its own output.** PostgreSQL has no `pg_get_tabledef`; this reads columns,
+constraints, indexes and comments. Presenting that text as *"the table's DDL"*
+without saying so is a silent wrong result (§1's master invariant), so every
+table's text carries `RECONSTRUCTION_NOTICE` -- **per table, not once per
+buffer** (see below). Nothing here ever *guesses*: a partitioned or inherited
+table renders as the columns and constraints that were read, with the omission
+named, never with an invented `PARTITION BY`.
+
+**Two structural gaps remain, by decision rather than by neglect**
+(`DEC-260811022536`, 2026-08-11): **table inheritance and partitioning**. They
+restructure the statement -- partition key, partition-of clauses, per-partition
+rendering, `INHERITS` with inherited columns suppressed -- and no feature
+consumes this buffer as anything but read-only text, so closing them would buy
+partitioning support before anything needs it. The boundary is *stated*, not
+*pending*: `DEC-260811094437` holds the trigger that would reopen it (the first
+feature that consumes this buffer as an input rather than a view). A reader
+finding the two-gap notice should read it as a drawn line, not as a half-done
+job.
+
+**The two per-column gaps ARE closed** (same ruling): identity columns render
+`GENERATED ALWAYS / BY DEFAULT AS IDENTITY` and stored generated columns render
+`GENERATED ALWAYS AS (<expr>) STORED`, from `ColumnInfo.identity` /
+`ColumnInfo.generated`. They extend the column line and nothing else, which is
+why they were cheap, and nearly every table has a surrogate key, which is why
+they were worth it. Each is **mutually exclusive with a rendered `DEFAULT`**:
+an identity column's `nextval` is the sequence's business, not a default clause,
+and a generated column's expression *is* its `pg_attrdef` row -- printing both
+would render the expression twice.
+
+**`SERIAL` is rendered as the catalog holds it -- `integer DEFAULT
+nextval('...'::regclass)` -- never as the word `SERIAL`.** There is a real
+argument the other way (`SERIAL` is what the human wrote, and it is shorter),
+and it is rejected for three reasons. `SERIAL` is not a type: it is a macro for
+*integer + sequence + ownership*, so emitting it would mean **inferring** that
+the sequence behind this column is the one `SERIAL` would have created --
+inference is exactly what this module does not do. It also *loses* information a
+read-only inspection pane exists to show, namely which sequence feeds the
+column, which need not be the canonically named one. And `pg_dump` makes the
+same call for the same reason. So a `SERIAL` column is fully rendered here
+already; what is not emitted is its owned sequence's own `CREATE SEQUENCE`,
+which is a separate catalog object and not part of this statement -- the same
+way an index's `CREATE INDEX` is emitted as its own statement rather than folded
+into the column line.
 
 Constraint text is `pg_get_constraintdef` **verbatim** (`ConstraintInfo.
 definition`) and index text is `pg_get_indexdef` verbatim
@@ -68,9 +101,16 @@ RECONSTRUCTION_NOTICE = (
     "-- NOTE: reconstructed by PGTP Editor from pg_catalog (columns, "
     "constraints, indexes, comments) --"
 )
+#: The second line names what is out of scope. It named FOUR things until
+#: `DEC-260811022536` closed the two per-column ones (identity/`SERIAL` and
+#: `GENERATED` columns are rendered now); the remaining two are **structural and
+#: deliberately out of scope**, not a to-do. The wording says "does not cover"
+#: rather than "not reconstructed yet" for exactly that reason: it is a stated
+#: boundary a reader can rely on, while still being honest that a partitioned or
+#: inherited table's shape is missing from the text they are looking at.
 RECONSTRUCTION_NOTICE_DETAIL = (
-    "--       this is NOT the original CREATE statement. NOT reconstructed: "
-    "identity/SERIAL, GENERATED columns, inheritance, partitioning."
+    "--       this is NOT the original CREATE statement, and it does not cover "
+    "table inheritance or partitioning."
 )
 
 #: Ordering rank for inline constraints, so a table's rendered DDL is
@@ -137,11 +177,39 @@ class RelationDdl:
         return "\n".join(self.lines)
 
 
+#: `pg_attribute.attidentity` -> the SQL that declares it. `''` (not an identity
+#: column) is normalized to `None` by `introspect._build_tables`, so an unknown
+#: value here means a catalog this build has never seen -- and the right answer
+#: for that is to render no identity clause rather than invent one.
+_IDENTITY_CLAUSE = {
+    "a": " GENERATED ALWAYS AS IDENTITY",
+    "d": " GENERATED BY DEFAULT AS IDENTITY",
+}
+
+
 def _column_line(column: ColumnInfo) -> str:
+    """ONE line per column, always -- `column_offsets` maps a column name to a
+    line index, and every subsequent constraint/column offset is derived from
+    `len(lines)`, so a column that wrapped onto two lines would silently shift
+    every offset below it and break click-to-navigate.
+
+    Order of clauses: type, `NOT NULL`, then **exactly one** of the generated
+    expression, the identity clause, or the default (`DEC-260811022536`) -- see
+    the module docstring for why the three are mutually exclusive.
+    """
     parts = [f"    {quote_ident(column.name)} {column.data_type}"]
     if not column.is_nullable:
         parts.append(" NOT NULL")
-    if column.default:
+    if column.generated == "s" and column.default:
+        # The expression IS the `pg_attrdef` row, i.e. `ColumnInfo.default`; it
+        # replaces the default clause instead of accompanying it.
+        parts.append(f" GENERATED ALWAYS AS ({column.default}) STORED")
+    elif column.identity in _IDENTITY_CLAUSE:
+        # An identity column's `nextval` belongs to its implicit sequence, so
+        # rendering a DEFAULT beside the identity clause would be both wrong
+        # (PostgreSQL rejects it) and redundant.
+        parts.append(_IDENTITY_CLAUSE[column.identity])
+    elif column.default:
         parts.append(f" DEFAULT {column.default}")
     return "".join(parts)
 
