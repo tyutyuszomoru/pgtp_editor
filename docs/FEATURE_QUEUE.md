@@ -4842,7 +4842,14 @@ Two premises in the original request were **already false** and are corrected he
 ---
 
 ## FQ-260810183812: DDL Explorer read-only pane shows ALL object kinds' DDL (synthesized CREATE TABLE + views/matviews), and clicking any tree item — tables, views, constraints, FKs, indexes — jumps to its DDL
-**Status:** QUEUED
+**Status:** PROCESSED (spec §18.1; `db/table_ddl.py` + `db/ddl_buffer.py` + `ui/ddl_buffer_panel.py`, merge commit 9d93fd8; 7357 passed / 51 skipped, +66 tests)
+**Closing note:** the entry offered "note the gaps or silently omit" for the reconstruction's four blind spots (identity/`SERIAL`, `GENERATED`, inheritance, partitioning); the spec removed the silent option and shipping settled the granularity as **per table**, two SQL-comment lines under each table's banner. Once per buffer would have been invisible to precisely the users this feature creates, because its whole gesture is a jump into the middle of a long buffer. Views carry no notice — their body is `pg_get_viewdef` verbatim, so claiming incompleteness there would itself be a wrong result. Nothing is guessed: no invented `PARTITION BY`/`INHERITS`.
+
+Five of the six open questions were settled in the build: constraint/FK jumps target the **inline constraint line** (honouring "no ALTERs"), a table click is **additive** (navigates *and* still populates Properties), a column click targets **its own line** rather than the banner, and buffer order is **dual-grouped like the tree** so it matches the order the user clicks in. Constraint-backed indexes are excluded as standalone `CREATE INDEX` — Postgres rejects `DROP INDEX` on one, and the constraint already prints it.
+
+The sixth was declined rather than guessed: **synthesis is eager, with no cache.** The stated concern (re-synthesizing on every reparse) does not apply at the real call sites — `build_ddl_text` runs once per *introspection*, never per keystroke — so a cache would have added an invalidation rule with nothing to invalidate against, and a stale cache here is a wrong result. `RelationDdl` is the pure seam one would slot into if a 300-table schema ever proves it necessary.
+
+Whether the four gaps are acceptable long-term is an owner call, filed as **DEC-260811022536** — it does not block anything, since the buffer now states the omission.
 **Requested:** 2026-08-10
 **Idea (verbatim/summarized):** "Add to the DDL Explorer read-only editor pane the DDL of tables, views… all objects. On click of any item, take me to the DDL." Clarifications: "just output the tables' DDL as-is (CREATE TABLE), don't worry about ALTER or whatever — just as tables are their DDL"; and "also constraints, foreign keys…" (make constraints/FKs/indexes clickable items that jump to their DDL too).
 
