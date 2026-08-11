@@ -1,11 +1,81 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-12 (the Quality SQL Console SHIPPED —
-> `6258349`, 7585 passed / 51 skipped) — **the whole of §18.5 D4b is now BUILT, and shipping it falsified
-> the mechanism named inside an ANSWERED owner decision.** Details in **(N0)** below, which supersedes
-> the status halves of (M0)'s items 1 and 3 and of (L0)'s items 1 and 2.
+> **Status:** living document · **Last synthesized:** 2026-08-12 (two batches folded: the **Software
+> settings** consolidation `19c14c5`, and the **second vim increment** `e60e0d0` + `de75617`, plus four
+> bugfixes at `1ff2b11` / `7703eba`) — **four shipped, specified surfaces were RELOCATED out of their menus,
+> and the vim block's own reasoning was falsified in four places by its second increment.** Details in
+> **(O0)** below.
 >
-> **(N0) THIS PASS — THE FEATURE SHIPPED, AND THE DECISION THAT AUTHORIZED IT NAMED A MECHANISM THAT
+> **(O0) THIS PASS — A RELOCATION IS A WITHDRAWAL, AND AN INFERENCE FROM AN ABSENCE IS NOT THE ABSENCE.**
+>
+> 1. **`FQ-260812002827` → §7's new *The Software settings dialog* block (SHIPPED `19c14c5`), with FOUR
+>    RELOCATION LEDGER ROWS, one per absorbed surface.** `View ▸ Customize Toolbar…`, `View ▸ Customize
+>    Shortcuts…`, `Settings ▸ Edit Snippets…` and `Settings ▸ Autoformatter settings…` are **gone from their
+>    menus**; `Settings` now holds exactly one entry, `Software settings…` (id **`settings.software-settings`**
+>    — the queue's proposed `settings.software` was **unachievable**, because ids are *derived* from the
+>    label by `command_id_for`). It is also the launcher Maintenance column's **third** button.
+> 2. **⚠ The consequence recorded as a WITHDRAWAL, not a tidy-up: toolbar and shortcut customization were
+>    reachable at ANY time and are now MAINTENANCE-ONLY** — and DEC-006's *"hiding is a guardrail, not a
+>    boundary"* leak does **not** rescue them, because these dialogs never had a chord. `DEC-260812004358`,
+>    OPEN.
+> 3. **Two design decisions folded, not just the placement.** **Each pane keeps the apply/OK contract it
+>    already had and the host adds NONE — its only button is `Close`**, because a host OK would have to
+>    invent a **fifth** apply semantics over four that already disagree, and would give a *non-modal* window
+>    a body of unsaved state. And the **load-bearing mechanic**: an embedded `QDialog` still calls `done()`
+>    on Ok/Cancel, which hides it — so the host watches `finished` and **rebuilds that pane from now-current
+>    state**, which is why *a pane is never a stale scratch copy* and why four independently-written dialogs
+>    could be re-hosted with no change to their own contracts.
+> 4. **The four absorbed ids get NO alias rows, and the rule is now stated where §7's toolbar-id machinery
+>    did not cover it: ALIAS when the successor answers the same request; DROP when it does not.** There is
+>    no successor meaning *"customize the toolbar"*, so aliasing would make a pinned button open a
+>    multi-category dialog on whatever pane is first — a plausible-looking wrong result. `resolve_ids` drops
+>    them.
+> 5. **Three owner decisions are OPEN and shipped with defaults, recorded as DEFAULTS-PENDING-ANSWER:**
+>    `DEC-260812004358` (Maintenance-only), `DEC-260812004359` (non-modal), `DEC-260812004400` (four panes,
+>    the two blocked ones **absent, not stubbed** — `FQ-260812002828` / `FQ-260812002829`).
+> 6. **The vim batch (`e60e0d0`, `de75617`) reversed FOUR of §8's own statements, and the sharpest one was
+>    an INFERENCE rather than a fact.** §8 said *"the select-with-`v`-then-`d` reflex does not exist here"*
+>    and *"a `d` after a Windows-style selection is a `d` waiting for a motion"*, **deriving both from "there
+>    is no visual mode"**. There is **still** no visual mode — and both derived sentences are now false.
+>    *The absence was a fact about MODES; the inference was a claim about OPERATORS.* What shipped instead is
+>    **sticky selection**, an Edit-mode mechanic with a Command-mode trigger.
+> 7. **Text objects left "deferred" — and the DEPENDENCY STORY §8 told about them was wrong.** `aw`/`iw`
+>    consume **nothing** from `sql/`: they are `vim/words.py`'s own character-class arithmetic over the runs
+>    `w`/`b`/`e` already walk, so they are family-agnostic, need no per-surface refusal, and the purity test
+>    did not move. *The prediction reasoned from the hardest member of a set (`di"`) to the whole set.*
+>    Line-local, counts multiplying across the operator, **overshoot refused not clamped**.
+> 8. **The Command-mode caret is ON a character, painted in a `paintEvent`** — not `setCursorWidth`, not an
+>    `ExtraSelection` (XmlEditor funnels every extra selection through one call). **Three shipped assertions
+>    reversed**: `$`/`l` no longer *rest* past the last character — while the **motions are unchanged**, so
+>    `d$` still takes the newline. *A motion's endpoint and a caret's resting place are two different
+>    questions.*
+> 9. **Three bugfixes folded, one of which closed a gap the spec had never had a statement about at all:**
+>    the read-only Explorer gets a **real audit route** (`_NO_AUDIT_ROUTE` now covers exactly two surfaces);
+>    Maintenance mode's *"menu bar only"* scope now **also prunes the center stage**, hosted on
+>    `set_workflow_mode`; and **keyboard focus visibility**, which this document had never mentioned — now
+>    `ui/theme.py`'s, sourced from `COLOR_TEXT_1` with **no second colour table**.
+> 10. **⚠ THE CLOSING RE-VERIFICATION CAUGHT AN INHERITED CLAIM — the ELEVENTH consecutive time, and the
+>    first that this pass had not written itself.** §18.4's `[XML]` refusal seam was carried as **unwired in
+>    four places**; it is **wired** (`audit_router.XML_PREFIX` → `TO_ACTIVITY`,
+>    `MainWindow._report_xml_format_refusal` on all three `XmlEditor` hosts), and closed in exactly the shape
+>    the banner asked for. **§18.4 now has no unwired seam.** *An absence you did not write is not an absence
+>    you may repeat.* The same re-verification also **withdrew a finding this pass nearly filed against
+>    another agent's file:** a mid-pass grep showed 25 `manual.md` hits for the four removed menu entries —
+>    re-reading them showed `manual-maintainer` had **already** rewritten every one into past tense
+>    (*"were reachable"*, *"are gone"*, *"no … entry any more"*). **That is the second consecutive pass to
+>    almost file against a parallel agent on the strength of a grep count.** *A grep hit is a location, not a
+>    claim; read the line before you file it.*
+> 11. **`README.md` revisited (standing obligation) and CHANGED in four places** — see the report; the
+>    *Where it is going* bullet calling vim text objects *"the deferred half … the one part that needs a
+>    language model"* was **shipped work described as future**, which is the defect class this obligation
+>    exists to catch.
+>
+> *(Previous pass:)*
+> **The Quality SQL Console SHIPPED — `6258349`, 7585 passed / 51 skipped — the whole of §18.5 D4b is BUILT,
+> and shipping it falsified the mechanism named inside an ANSWERED owner decision.** Details in **(N0)**,
+> which supersedes the status halves of (M0)'s items 1 and 3 and of (L0)'s items 1 and 2.
+>
+> **(N0) PREVIOUS PASS — THE FEATURE SHIPPED, AND THE DECISION THAT AUTHORIZED IT NAMED A MECHANISM THAT
 > CANNOT BE BUILT.**
 >
 > 1. **§18.5 D4b is SHIPPED (`FQ-260811020328`, `6258349`) and every ⏳ in it is retired.** Verified by
@@ -1190,11 +1260,11 @@
 4. [Technology choices](#4-technology-choices)
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
-7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live*
-8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab. **FQ-034 — SHIPPED (`cde65fa`), status-corrected 2026-08-10:** the `Select` menu has **four** entries — `Select Parent Block` became a repeatable **`Expand Selection`** with an expansion stack, extended to the SQL editors, plus **`Shrink Selection`** on `Ctrl+Shift+Z`; the ladder's spans come from two Qt-free `sql/` modules (`blocks.py`, lifted out of `formatter.py`, and `block_spans.py`), and the two halves are hosted by **different mechanisms** because Qt claims `Ctrl+Shift+Z` natively on both schemes. *(This entry read "**FQ-034, target design NOT YET BUILT**" — a survivor the FQ-034 status pass missed, found here.)* **FQ-032 — SHIPPED (`b0c42da`, 2026-08-10):** §8 also owns the **vim editing mode** — `Esc` puts an editable editor into **Command mode** beside ordinary **Edit mode**, per editor, transient, nothing persisted; a pure Qt-free grammar in `pgtp_editor/vim/`, the Qt half in `ui/vim_mode.py`, and **`ui/editor_shared.py`**, the family-agnostic layer its two forced lifts created (one hint/refusal path, one line-wrap toggle). Command mode claims **four `Ctrl` chords**, so the one reset path is a **correctness guarantee** with a test per trigger*
+7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live. **`FQ-260812002827` (SHIPPED `19c14c5`) adds §7's [Software settings dialog](#the-software-settings-dialog--the-apps-one-configuration-home-fq-260812002827-settled-and-shipped-19c14c5) — the app's ONE configuration home**, absorbing `Customize Toolbar…` / `Customize Shortcuts…` off `View` and `Edit Snippets…` / `Autoformatter settings…` off `Settings`, which is left with **one** entry (`settings.software-settings`, also the launcher Maintenance column's third button). Each pane keeps its own apply/OK contract, **the host adds none** (its only button is `Close`), and the host **rebuilds a pane on its `finished`** so no pane is ever a stale scratch copy. **The four absorbed ids get NO alias rows** — absorbed is not renamed. **Three owner decisions are OPEN with shipped defaults** (`DEC-260812004358`/`-59`/`-4400`), and toolbar/shortcut customization is now **Maintenance-only**. Also here: **Maintenance mode's scope is no longer "menu bar only"** — it prunes the **center stage** too (BUG-260812001640, `1ff2b11`) — and **keyboard focus visibility** is `ui/theme.py`'s, appended to the cached theme QSS from `COLOR_TEXT_1` with no second colour table (BUG-260812002838/-4649, `7703eba`)*
+8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab. **FQ-034 — SHIPPED (`cde65fa`), status-corrected 2026-08-10:** the `Select` menu has **four** entries — `Select Parent Block` became a repeatable **`Expand Selection`** with an expansion stack, extended to the SQL editors, plus **`Shrink Selection`** on `Ctrl+Shift+Z`; the ladder's spans come from two Qt-free `sql/` modules (`blocks.py`, lifted out of `formatter.py`, and `block_spans.py`), and the two halves are hosted by **different mechanisms** because Qt claims `Ctrl+Shift+Z` natively on both schemes. *(This entry read "**FQ-034, target design NOT YET BUILT**" — a survivor the FQ-034 status pass missed, found here.)* **FQ-032 — SHIPPED (`b0c42da`, 2026-08-10):** §8 also owns the **vim editing mode** — `Esc` puts an editable editor into **Command mode** beside ordinary **Edit mode**, per editor, transient, nothing persisted; a pure Qt-free grammar in `pgtp_editor/vim/`, the Qt half in `ui/vim_mode.py`, and **`ui/editor_shared.py`**, the family-agnostic layer its two forced lifts created (one hint/refusal path, one line-wrap toggle). Command mode claims **four `Ctrl` chords**, so the one reset path is a **correctness guarantee** with a test per trigger. **A SECOND VIM INCREMENT SHIPPED 2026-08-12 (`e60e0d0`, `de75617`) and reversed four of that block's own statements:** the `aw`/`iw` **text objects** left "deferred" — and **without touching `sql/`**, falsifying the dependency story §8 told about them; the operators gained a **selection target** through one boolean (`set_selection_active`), which is what keeps `pgtp_editor/vim/` Qt-free; `v`/`V` gained **sticky selection**, so *"the select-with-`v`-then-`d` reflex does not exist here"* is withdrawn while **there is still no visual mode**; and the Command-mode caret is **on a character, painted in a `paintEvent`**, so `$`/`l` no longer rest past the last character (the motions are unchanged — `d$` still takes the newline). Two new keyless `Select` entries, `Sticky Selection` / `Line Selection`*
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
-11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion) — *the `Schema` menu is **Maintenance mode's home menu** (FQ-027, 2026-08-09): the only window-bar menu besides a trimmed `File` and `Help` that survives the mode's filter, whole and ungated; the launcher's Maintenance column is `Edit XSD` + `Import XSD`. **BUG-057 (2026-08-10):** `docs/curated_<YYYYMMDD>.xsd` is the tracked authoritative drop, byte-pinned to the shipped `resources/curated.xsd` by a test — **the date identifies the DROP, the `vX.Y` marker identifies the CONTENT** — and the version rule is now stated: **the marker is the schema's identity, not the app's release counter, so any content change bumps it.** The bundled schema is ruled to **v1.3**; the six code/doc sites are enumerated there and dispatched*
+11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion) — *the `Schema` menu is **Maintenance mode's home menu** (FQ-027, 2026-08-09): the only window-bar menu besides a trimmed `File` and `Help` that survives the mode's filter, whole and ungated; the launcher's Maintenance column is `Edit XSD` + `Import XSD`. **BUG-057 (2026-08-10):** `docs/curated_<YYYYMMDD>.xsd` is the tracked authoritative drop, byte-pinned to the shipped `resources/curated.xsd` by a test — **the date identifies the DROP, the `vX.Y` marker identifies the CONTENT** — and the version rule is now stated: **the marker is the schema's identity, not the app's release counter, so any content change bumps it.** The bundled schema is ruled to **v1.3**; the six code/doc sites are enumerated there and dispatched. **The Maintenance column gained a THIRD button, `Software settings…`, 2026-08-12 (`19c14c5`) — the first one that is not a Schema gesture (§7)***
 12. [Diff / Merge](#12-diff--merge) — *Compare/Merge is a **MODE** since FQ-021a (**shipped** `75e2cdb`): Raw XML goes read-only via §8's reasons set, `DiffMergePanel` owns the exit, the entry point is `Deployment ▸ Compare/Merge pgtp`. **FQ-021's third leg has now SHIPPED too (`1ccfe9d`, status-corrected 2026-08-10):** `Next Difference` / **`Previous Difference`** (relabelled) and **`Apply Changes to Target`** are **mode-only members of the Editor bar's `Navigation` menu**, off `Tools` entirely, gated on `diff_merge_mode_changed` rather than on the current tab. The unreachable-capability regression §29 recorded is **closed***
 13. [Captions](#13-captions) — *the find/replace **modal is deleted**; the in-panel bar is permanent, with `Replace All` + `Clear filter` + a filter/project scope dropdown (FQ-017, 2026-08-07)*
 14. [Columns](#14-columns)
@@ -1205,14 +1275,14 @@
     - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap. **`FQ-260810183812`, target design NOT YET BUILT (2026-08-10):** the read-only buffer widens from routines-and-triggers to **ALL object kinds** — synthesized **`CREATE TABLE`**, views and matviews — and **every tree item that has DDL navigates to it**, including new constraint / FK / index nodes. `DdlObjectSpan` **grows kinds** rather than gaining a sibling type; the synthesizer is a **new pure Qt-free `db/` module** beside `ddl_buffer.py`; and because a synthesized `CREATE TABLE` is a **reconstruction** (no identity, `GENERATED`, inheritance or partitioning), **the omission must be VISIBLE IN THE BUFFER** — presenting it as *"the table's DDL"* would be a silent wrong result. Six open questions are flagged, §29. **`FQ-260810180336`, target design NOT YET BUILT (2026-08-11):** a **name-filter bar** above the tree (input · match-mode dropdown · `Filter` · `Clear Filter`) hiding non-matching object rows in **both** Explorer instances, `browse_only` not gating it. The fold's load-bearing finding: the DDL Explorer **already has a `FindReplaceBar`**, so §18.1 now states **which input searches what** — the existing bar searches the DDL **text** and moves the caret; this matches object **names** and hides rows. The Find machinery is deliberately **not** reused (documents vs. tree items); `item.setHidden` and `MODE_LABELS`' shape are, with a **new predicate enum**. No chord in v1. Five open questions flagged*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder); **checkout is no longer a separate gesture** and the tab key is **`ref.key` always** (FQ-024, 2026-08-08). **FQ-035 SHIPPED (`82f2be6`, ambiguities ruled and shipped `caed134`):** the New Project dialog has an optional **`.pgtp` attach field** and a **quality/target connection section revealed and auto-populated by it** via `connection_from_tree` — the creation flow is five steps, and `create_project` writes `target` and `pgtp` instead of leaving both at their empty defaults until first open. Both flagged ambiguities are **answered**: checkout happens **at accept through ONE copier** (`check_out_pgtp`, which raises `OSError` rather than deciding), and there is **no quality gate but one advisory**. **BUG-260810173246 is RESOLVED (`73f55c9`):** one `_linked_working_copy` predicate makes *"a recorded path with no file behind it is not a link"* true for all three readers and the writer's guard, and a half-link **self-heals** on the next open of the same source. *(Superseded: "target design NOT YET BUILT" and "two ambiguities are flagged for the owner rather than decided".)**
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
-    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *SQL engine implemented, core + **two** consumers: `Ctrl+Alt+F` Format Selection in the DDL object editor (with a context-menu item) and the Sandbox SQL Console (chord only), `[SQL]` Audit refusals wired. **FQ-033 SHIPPED 2026-08-10 (`061e973`), and its four "NOT YET BUILT" banners are retired:** configurable keyword casing (keywords only) + a bounded break/indent rule set (`sql/format_config.py`, which also now OWNS `CLAUSE_STARTERS`/`DEFAULT_INDENT_UNIT`), a separate Qt-free `xmlfmt/` XML engine behind the same gesture on the three `XmlEditor` surfaces, and the `Autoformatter settings…` dialog + `autoformatter` QSettings group (hosts read the config **at gesture time**, so a save reaches an open tab with no notification plumbing). the `Settings ▸ Autoformatter settings…` menu line landed in **`81bf658`**, so the configurable surface is live in the product. **ONE SEAM REMAINS UNWIRED and is stated as pending: the `[XML]` refusal handler** (so an XML refusal underlines its span and files no Audit row), held on `audit_router.py` while BUG-060/062 are in flight*
+    - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *SQL engine implemented, core + **two** consumers: `Ctrl+Alt+F` Format Selection in the DDL object editor (with a context-menu item) and the Sandbox SQL Console (chord only), `[SQL]` Audit refusals wired. **FQ-033 SHIPPED 2026-08-10 (`061e973`), and its four "NOT YET BUILT" banners are retired:** configurable keyword casing (keywords only) + a bounded break/indent rule set (`sql/format_config.py`, which also now OWNS `CLAUSE_STARTERS`/`DEFAULT_INDENT_UNIT`), a separate Qt-free `xmlfmt/` XML engine behind the same gesture on the three `XmlEditor` surfaces, and the `Autoformatter settings…` dialog + `autoformatter` QSettings group (hosts read the config **at gesture time**, so a save reaches an open tab with no notification plumbing). the `Settings ▸ Autoformatter settings…` menu line landed in **`81bf658`** — and was **RE-HOMED 2026-08-12 (`19c14c5`) as the *Autoformatter* pane of `Settings ▸ Software settings…`**, with the id `settings.autoformatter-settings` deleted and no alias row (§7); the dialog and its persistence are unchanged. ~~**ONE SEAM REMAINS UNWIRED … the `[XML]` refusal handler**~~ — **CLOSED: `audit_router.XML_PREFIX` → `TO_ACTIVITY` and `MainWindow._report_xml_format_refusal` on all three `XmlEditor` hosts, verified 2026-08-12. §18.4 has NO unwired seam** (the banner had survived in four places; ledger §28)*
     - [18.5 The DDL object editor, apply & sandbox validation](#185-the-ddl-object-editor-apply--sandbox-validation) — *partly implemented: the editable tab, Save/Save As, formatting and completion ship, and as of 2026-08-06 so do **Apply to Sandbox / Apply to Target / "Deploy this edit…"** (`ui/ddl_object_editor.py`, with all four Apply-to-Target preconditions enforced; **the *"Deploy this edit…"* picker and the tab's apply button row are WITHDRAWN by FQ-026, 2026-08-10 — a deliberate withdrawal of a shipped feature, with each of the four operations reduced to one name across menu label, confirmation title, `[Check]` line and manual: `Check and commit to sandbox` · `Check and rollback` · `Check Object in Sandbox` · `Apply to quality`; specified, implementation landing**) and the **sandbox session controller** (`ui/sandbox_controller.py`, the host for `db/sandbox.py`'s previously unreachable `open_sandbox`). **Reachability audited 2026-08-09 (`9b9aef7`): the whole validate/execute lane ships AND is reachable** — `db/apply.py` (`Deployment ▸ Run on quality`, `Apply to Target…`), `db/ddl_check.py`'s D3/**D3a** ladder plus the clickable `[Check]` findings channel (`Parsing ▸ Check Object in Sandbox` / `Check Object Without Applying`, `Deployment ▸ Run on sandbox`), **D4's Sandbox SQL Console** (`db/sandbox_query.py`, `ui/sql_console_panel.py`, `ui/sql_results_panel.py` — reached from `Database ▸ Sandbox SQL Console…` and the tab's `Run in Sandbox Console`), and the MainWindow wiring (`_wire_ddl_object_apply_seams` per open panel, so the button row is **present**). Still **not** built: **`Generate Deployment SQL`** — the rank-1 deliverable, no module and no menu action — plus §18.3's two Database-menu entries and the wiring of `sql/statements.py`. The deliverable remains the generated deployment SQL script. **2026-08-08:** Save's trigger becomes **`Deployment ▸ Save in Project`** (the mechanism, including the *"cancelling Save As from the close prompt aborts the close"* guard, is unchanged), the `Deployment` menu's three named destinations are added **beside** the still-shipping *"Deploy this edit…"* picker (*the 2026-08-08 "superseded / not built" claim is corrected 2026-08-09 — ledger §28*), **carve-out 2 is narrowed to present-and-reporting**, and **`Run on quality` works PROJECTLESS** by owner ruling. The former *"Does not ship — the validate/execute lane"* block is **deleted** and replaced by a per-module **entry-gesture table** (2026-08-09 audit). **2026-08-09 (BUG-040):** the sandbox session **auto-connects on project bind** (reversing FQ-023's lazy-open rejection), the manual `Open`/`Close Sandbox Session` menu items are **deleted**, and the two Check gestures now live on **`Parsing`** (BUG-039). **2026-08-09 (BUG-038):** D3a's tier-3
       `relid` binding is extended from the `CREATE TRIGGER` tab to the **trigger FUNCTION tab** — a gap
       closed, not a decision reversed; the **unattached** trigger function remains an open question (§29).*
     - [18.6 Schema-aware Ctrl+Space completion in the DDL object editor](#186-schema-aware-ctrlspace-completion-in-the-ddl-object-editor) — *implemented; **BUG-041 is FIXED** (2026-08-10) — `resolve_caret_context` now descends into a `$$ … $$` body before the opacity test, so `NEW.`/`OLD.`, `ALIAS_REF` and `LOCAL_REF` all fire **inside** a routine body; `CaretContext.kind` has **four** values and both new kinds have live UI consumers*
     - [18.7 Two live DDL Explorer instances — target vs. sandbox](#187-two-live-ddl-explorer-instances--target-vs-sandbox) — ***SHIPPED** (FQ-022, `aa7a0e1`; designed 2026-08-05): two `BrowserPanel`s, two `EditorPanel`s, two dock tabs and `Database ▸ DDL Explorer (Quality)` / `DDL Explorer (Sandbox)`, driven by one role-parameterized path and **session-free** (`bool(sandbox_params.host)`, never `has_session`). The sandbox instance is **`browse_only=True`** — no `Edit DDL`, no creation entries, no `Alter Table ▸` — its one context-menu entry being `Reload DDL`. Four things §18.7 asked for were deliberately not built, and two deviations are recorded. **`FQ-260810165518` is FOLDED (2026-08-11), target design NOT YET BUILT: the QUALITY tree's selection highlight becomes the danger colour and the sandbox tree stays ordinary** — and the fold **changed the mechanism**, because the queue entry's per-widget `QPalette` override was **measured inert**: the app-level QDarkStyle QSS paints `QTreeView::item:selected:*` itself, so it must be a widget-level `setStyleSheet`, and `theme.py`'s `Highlight` `#3874f2` is not what a tree row actually paints. The red lives in `mode_indicator.py`'s per-theme table, never as a literal and never as an edit to `theme.py`; §18.7 now also states **where the app's colour vocabulary stops**. Four open questions flagged. *(Superseded: "settled design, now being implemented"; and "the two instances are still visually identical, which is what `FQ-260810165518` is queued to change (not folded)".)**
     - [18.8 The Project Status window](#188-the-project-status-window) — *implemented (5-node diagram, per-node click-through windows, Database ▸ Project Status…); Sandbox1's data-clone and Sandbox2's install buttons are **now wired** (`_refresh_project_status_sandbox_actions`, sandbox-configured predicate), and the App node's action window is still the flagged placeholder (§29). **FQ-028/FQ-018 (2026-08-10):** it gains a **30 s window-active-gated poller** — the app's first repeating-interval `QTimer` — shared with §7's status-bar connectivity dots, which makes this window **auto-refreshing while open** instead of static*
-    - [18.9 SQL authoring aids — snippets, expand-SELECT, JOIN-on-FK, signature help](#189-sql-authoring-aids--snippets-expand-select-join-on-fk-signature-help-fq-030) — *FQ-030 — **SHIPPED IN FULL** 2026-08-10 (pure layers; editor halves `d6e5aa2`; the schema gestures `f5d2601`). One `Expansion` and one `CodeEditor.apply_expansion` for every producer; a **deliberately non-TextMate** `{{1}}`/`{{1:placeholder}}`/`{{0}}` syntax because `$1` and `$$` are PostgreSQL syntax; **refusals over guesses**; **explicit-trigger only**, with the memoized `tokenize` identified and deliberately unbuilt (an owner call); **exactly two hosts** for the schema gestures, **inert not refusing** in the other three. **The final slice shipped too (`229dc11`): the snippet store (`snippets.json`, per-user, whole-set-not-a-diff, corrupt ⇒ read-only and never overwritten), the editor, explicit export/import, and the app's FIRST maintenance-only menu — `Settings ▸ Edit Snippets…`, shortcut-free by rule (DEC-006).** DEC-001's principle — portable project, personal state in the app's folder, sharing only by an explicit gesture — is recorded here. **Its one recorded debt is PAID (BUG-045, `d3d7d15`): `SchemaIndex` gained `column_infos()`/`routines()` and the seam's private-`_schema` reach was deleted outright.** The key-hosting reason these panels used to give — *"`QShortcut` is unreliable offscreen"* — was **measured false** and is gone from the code (BUG-046/BUG-052); the real reason is DEC-009's widget-only family, §8*
+    - [18.9 SQL authoring aids — snippets, expand-SELECT, JOIN-on-FK, signature help](#189-sql-authoring-aids--snippets-expand-select-join-on-fk-signature-help-fq-030) — *FQ-030 — **SHIPPED IN FULL** 2026-08-10 (pure layers; editor halves `d6e5aa2`; the schema gestures `f5d2601`). One `Expansion` and one `CodeEditor.apply_expansion` for every producer; a **deliberately non-TextMate** `{{1}}`/`{{1:placeholder}}`/`{{0}}` syntax because `$1` and `$$` are PostgreSQL syntax; **refusals over guesses**; **explicit-trigger only**, with the memoized `tokenize` identified and deliberately unbuilt (an owner call); **exactly two hosts** for the schema gestures, **inert not refusing** in the other three. **The final slice shipped too (`229dc11`): the snippet store (`snippets.json`, per-user, whole-set-not-a-diff, corrupt ⇒ read-only and never overwritten), the editor, explicit export/import, and the app's FIRST maintenance-only menu — `Settings ▸ Edit Snippets…`, shortcut-free by rule (DEC-006). **RE-HOMED 2026-08-12 (`19c14c5`) as the *Snippets* pane of `Settings ▸ Software settings…`**, id deleted, no alias row (§7); the store, DEC-001 and the trades are unchanged.** DEC-001's principle — portable project, personal state in the app's folder, sharing only by an explicit gesture — is recorded here. **Its one recorded debt is PAID (BUG-045, `d3d7d15`): `SchemaIndex` gained `column_infos()`/`routines()` and the seam's private-`_schema` reach was deleted outright.** The key-hosting reason these panels used to give — *"`QShortcut` is unreliable offscreen"* — was **measured false** and is gone from the code (BUG-046/BUG-052); the real reason is DEC-009's widget-only family, §8*
 19. [PHP generation (vendor) & Save](#19-php-generation-vendor--save)
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
@@ -1221,8 +1291,8 @@
 23. [MCP integration](#23-mcp-integration) — ***fully wired** (re-audited 2026-08-10): `pgtp_editor/mcp/` ships, headless `--mcp` works, and **Tools ▸ ☐ `Start MCP Server`** (`MainWindow._mcp_action`) is the GUI opt-in, unchecked at every launch with no persisted key. §23's *"remaining gap"* banner is **closed**; its *"opt-in in Preferences"* wording named the stub FQ-016 deleted and is corrected*
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
-26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half. **BUG-064 (`a9efb67`): `History`'s two entries are `Undo Project Edit` / `Redo Project Edit` and carry NO shortcut** — they are a project-scoped command, not the menu twin of the focus-scoped `Ctrl+Z`/`Ctrl+Y`, and unlike those chords they **are** rebindable*
-27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through `View ▸ Customize Shortcuts…` (FQ-012, 2026-08-09), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*). **`Ctrl+Shift+Z` gains its first row 2026-08-10** — a second redo key, shipped long before and never written down; it is now **reserved** (BUG-050) and answered by the DDL object tab and the read-only DDL Explorer as well as the XML editors (BUG-048/BUG-053). **The `Ctrl+Shift+B` row is rewritten (BUG-046):** the duplicate `CodeEditor.keyPressEvent` host is **deleted** and its offscreen justification was **measured false** — one host per window, per §8's DEC-012 rule. **The section now opens with DEC-015's governing rule (2026-08-10): a chord means the same thing on every system — bound by this app on every platform, never inherited from Qt's platform table, and NO platform-conditional bindings.** With it: `docs/KEYBINDINGS.md` as the single chord register **kept true by a test, not by transcription**, and the warning that the offscreen suite runs Qt's **Windows** scheme so a Linux-only dead key passes every test. **DEC-015's per-chord consequences ALL SHIPPED (`a9efb67`) and the rows now assert them:** `Ctrl+Y` bound explicitly on both platforms, `Ctrl+Shift+Z` **freed from redo and reclassified `CLAIMED_NOT_UNDO_REDO`** — claimed by all six editing surfaces so Qt's native redo cannot fire, awaiting FQ-034's shrink-selection — and the legacy `Alt+Backspace` / `Alt+Shift+Backspace` pair **SUPPRESSED on both platforms**, the call DEC-014 had left open. **`docs/KEYBINDINGS.md` EXISTS**, with a measured per-scheme appendix, and its **Reserved column is a set equality against `RESERVED_SEQUENCES`**, so a reserved-set change ships with its ledger row in the same commit — **all five of its recorded Known gaps are now CLOSED**. **The owner's X11-chord rulings SHIPPED TOO (`55c2538`):** the uniformity rule's one exception is the **physically-absent-keys carve-out** (`F14`/`F16`/`F18`/`F20`, `F14`'s undo bypass knowingly accepted with its own review trigger); **`Ctrl+Shift+Insert` is paste on both platforms** and is in `EDITOR_PASTE_CHORDS`; **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are app-implemented at all six surfaces** through one `code_editor.apply_editor_operation`, so **Windows gained three gestures** and the app now owns those primitives' edge cases forever. **The table and matcher are `EDITOR_CHORDS` / `classify_editor_chord`** — renamed rather than duplicated, because a second table means a second matcher and two calls per surface, which is the whole BUG-048/049/053/056 family*
+26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half. **BUG-064 (`a9efb67`): `History`'s two entries are `Undo Project Edit` / `Redo Project Edit` and carry NO shortcut** — they are a project-scoped command, not the menu twin of the focus-scoped `Ctrl+Z`/`Ctrl+Y`, and unlike those chords they **are** rebindable. **2026-08-12: `View` LOSES `Customize Toolbar…` and `Customize Shortcuts…` and `Settings` collapses to ONE entry, `Software settings…`** (`FQ-260812002827`, `19c14c5`, §7) — four ids deleted, **no alias rows**; and the Editor bar's **`Select` menu grows to SIX entries**, the two new ones (`Sticky Selection` / `Line Selection`) **keyless and checkable with re-derived state**, hidden on a read-only editor (`FQ-260812000331`, `de75617`, §8)*
+27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through the **Keyboard shortcuts** pane of `Settings ▸ Software settings…` (FQ-012, 2026-08-09; **re-homed off `View` 2026-08-12, `19c14c5` — so rebinding is now MAINTENANCE-ONLY**, `DEC-260812004358` OPEN), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*). **`Ctrl+Shift+Z` gains its first row 2026-08-10** — a second redo key, shipped long before and never written down; it is now **reserved** (BUG-050) and answered by the DDL object tab and the read-only DDL Explorer as well as the XML editors (BUG-048/BUG-053). **The `Ctrl+Shift+B` row is rewritten (BUG-046):** the duplicate `CodeEditor.keyPressEvent` host is **deleted** and its offscreen justification was **measured false** — one host per window, per §8's DEC-012 rule. **The section now opens with DEC-015's governing rule (2026-08-10): a chord means the same thing on every system — bound by this app on every platform, never inherited from Qt's platform table, and NO platform-conditional bindings.** With it: `docs/KEYBINDINGS.md` as the single chord register **kept true by a test, not by transcription**, and the warning that the offscreen suite runs Qt's **Windows** scheme so a Linux-only dead key passes every test. **DEC-015's per-chord consequences ALL SHIPPED (`a9efb67`) and the rows now assert them:** `Ctrl+Y` bound explicitly on both platforms, `Ctrl+Shift+Z` **freed from redo and reclassified `CLAIMED_NOT_UNDO_REDO`** — claimed by all six editing surfaces so Qt's native redo cannot fire, awaiting FQ-034's shrink-selection — and the legacy `Alt+Backspace` / `Alt+Shift+Backspace` pair **SUPPRESSED on both platforms**, the call DEC-014 had left open. **`docs/KEYBINDINGS.md` EXISTS**, with a measured per-scheme appendix, and its **Reserved column is a set equality against `RESERVED_SEQUENCES`**, so a reserved-set change ships with its ledger row in the same commit — **all five of its recorded Known gaps are now CLOSED**. **The owner's X11-chord rulings SHIPPED TOO (`55c2538`):** the uniformity rule's one exception is the **physically-absent-keys carve-out** (`F14`/`F16`/`F18`/`F20`, `F14`'s undo bypass knowingly accepted with its own review trigger); **`Ctrl+Shift+Insert` is paste on both platforms** and is in `EDITOR_PASTE_CHORDS`; **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are app-implemented at all six surfaces** through one `code_editor.apply_editor_operation`, so **Windows gained three gestures** and the app now owns those primitives' edge cases forever. **The table and matcher are `EDITOR_CHORDS` / `classify_editor_chord`** — renamed rather than duplicated, because a second table means a second matcher and two calls per surface, which is the whole BUG-048/049/053/056 family*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
 30. [Testing policy](#30-testing-policy)
@@ -1568,13 +1638,26 @@ pgtp_editor/
 │   │                  # multi-character token so it can never collide with a bare letter. _SHORTHANDS
 │   │                  # resolves x X D C Y s S into (operator, motion) pairs here, so the widget has one
 │   │                  # code path per operator. Esc is NOT fed here — the widget answers it and calls
-│   │                  # reset(): one reset path in the grammar, exactly as the mode has one
+│   │                  # reset(): one reset path in the grammar, exactly as the mode has one.
+│   │                  # SINCE e60e0d0: TEXT_OBJECTS = {"w"} / TEXT_OBJECT_SCOPES = {"a","i"} and the
+│   │                  # SELECTION = "@" sentinel beside LINEWISE. set_selection_active(bool) is the ENTIRE
+│   │                  # notion of selection in this package — a boolean, restated by the Qt half before
+│   │                  # every keystroke, which is how the grammar answers a question about a QTextCursor
+│   │                  # without importing Qt. It is deliberately NOT cleared by reset(): it describes the
+│   │                  # document, not the pending command. Counts multiply across the operator (pre * post)
 │   └── words.py       # w / b / e by VIM'S OWN CHARACTER-CLASS RULE — char_class() over
 │                      # CLASS_WHITESPACE / CLASS_KEYWORD (alnum + "_") / CLASS_PUNCTUATION, then
 │                      # word_forward / word_backward / word_end over caret offsets. NEVER a tokenizer call,
 │                      # and that is a boundary rule: a vim word is not a SQL token and four of the six
 │                      # editing surfaces have no SQL to tokenize. Never raises — a motion at a boundary is a
-│                      # no-op answered with the nearest legal position, not an error
+│                      # no-op answered with the nearest legal position, not an error.
+│                      # SINCE e60e0d0 it also owns the aw / iw TEXT OBJECTS — a_word_span / inner_word_span
+│                      # over the SAME runs, so one word rule serves both. LINE-LOCAL (a daw that swallowed
+│                      # the newline would silently join two lines) and returning None on OVERSHOOT rather
+│                      # than clamping, which the Qt half turns into a stated refusal. §8 recorded that text
+│                      # objects would have to consume sql/block_spans.py and be SQL-only; that prediction
+│                      # was FALSE for the word objects — nothing here imports sql/ and the purity test
+│                      # did not move
 ├── lint/              # §22 PHP linting — SHIPS (commit 90c6806), consumed by ui/php_file_tab.py (§21);
 │   │                  # Qt-free except config.py (QStandardPaths, the generation/config.py precedent)
 │   ├── findings.py    # pure: linter stdout/stderr/exit code → LintOutcome/LintStatus + ready-to-append
@@ -1603,7 +1686,11 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 `code_editor.py`, `php_file_tab.py` (§21's per-file standalone PHP tab — **ships**, hosted in
 `CenterStage`'s dynamic key→widget map `_php_file_tabs`; `File ▸ Open PHP File…` now exists),
 `event_body.py`, `properties_panel.py`, `find_replace_bar.py` (permanently visible since FQ-016, §8/§15),
-`search.py`, `history.py`, `theme.py`, `toolbar_registry.py`, `toolbar_controller.py` (owns the menu-bar
+`search.py`, `history.py`, `theme.py` (palettes, the cached per-theme QDarkStyle QSS, `command_caret_colors`
+for §8's Command-mode caret, and — since `7703eba` — the app's **only** `:focus` declarations,
+`FOCUS_RULE_SELECTOR` / `focus_tab_selector` / `FOCUS_TAB_EDGES` appended to that cached string from
+`COLOR_TEXT_1`, so keyboard focus is visible and there is no second colour table — §7),
+`toolbar_registry.py`, `toolbar_controller.py` (owns the menu-bar
 walk and the toolbar's persistence, §7 — **not** `main_window.py`), `customize_toolbar_dialog.py`,
 `shortcut_registry.py` (FQ-012's **pure, Qt-free** rebinding rules — `toolbar_registry.py`'s twin, §27) /
 `customize_shortcuts_dialog.py` (its widget),
@@ -1620,7 +1707,11 @@ bypass are **deleted** with FQ-027's suppression removal — ledger §28; §7),
 layer, mixed into **both** `XmlEditor` and `CodeEditor` before `QPlainTextEdit`, applying `pgtp_editor/vim/`'s
 resolved commands through `QTextCursor`; owns the one `_exit_command_mode()` reset, the `VimCommandLine`
 (`:`) widget, the pure `palette_matches()` matcher and the **module-level weak-held editing-mode observer
-registry** `add_editing_mode_observer` / `remove_editing_mode_observer` — §8),
+registry** `add_editing_mode_observer` / `remove_editing_mode_observer`. **Since `e60e0d0`/`de75617` it also
+owns STICKY SELECTION** — `sticky_selection_mode` with `set_sticky_selection` as its **one writer**,
+`_STICKY_MOVES` and the Edit-mode `keyPressEvent` half that extends a selection — **and the on-character
+Command-mode caret**, `paintEvent` + `_vim_clamp_caret_to_character`, whose colours come from
+`theme.py::command_caret_colors` because this module declares **no colour of its own** — §8),
 `editor_shared.py` (**FQ-032, SHIPPED `b0c42da`** — `SharedEditorMixin`, the family-agnostic editor layer:
 **ONE** hint/refusal path (`show_hint` / `report_refusal`, with the `hint_shown` / `expansion_refused`
 signals moved intact so every existing host connection is unchanged) and **ONE** line-wrap toggle
@@ -1647,14 +1738,18 @@ only by `SqlConsolePanel` as the console's bottom half, so it is reachable trans
 `229dc11` — the controller owns **location** (`snippets_path(base_dir=None)` over
 `QStandardPaths.AppDataLocation`, overridden by the injected `config_dir`) and **every modal** in the
 export/import lane; `EditSnippetsDialog` emits `export_requested`/`import_requested` and opens no file
-chooser of its own. Reached from `Settings ▸ Edit Snippets…`, the Maintenance-only menu, §7/§26),
+chooser of its own. Reached as the **Snippets pane** of `Settings ▸ Software settings…` since `19c14c5`, via `SnippetController.build_editor` — §7; the standalone `Settings ▸ Edit Snippets…` entry is gone),
+`software_settings_dialog.py` (§7 — the two-pane settings host: `SoftwareSettingsDialog`, `SettingsPane`,
+`SETTINGS_PANES`, `MENU_LABEL`, `COMMAND_ID`. It **imports four pane builders and owns none of them**, and
+its only button is `Close`),
 `format_settings.py` / `autoformat_settings_dialog.py` (FQ-033 part D, `061e973` — the `autoformatter`
 QSettings group and its bounded editor; `format_settings.py` is the **only** module that reads or writes
 that group, and it is where the `sql/` and `xmlfmt/` engines' Qt-free configs are constructed, so neither
 engine ever sees `QSettings`. Hosts call `current_sql_config()` / `current_xml_config()` **at gesture
-time**, which is why a save needs no notification plumbing. `open_autoformat_settings` is reached from
-`Settings ▸ Autoformatter settings…` (`81bf658`), whose label `main_window.py` **imports** from the dialog
-module as `AUTOFORMAT_MENU_LABEL` rather than re-typing — §18.4 part D),
+time**, which is why a save needs no notification plumbing. The dialog is reached as the **Autoformatter
+pane** of `Settings ▸ Software settings…` since `19c14c5`, via `build_autoformat_settings_pane` — §7; the
+standalone `Settings ▸ Autoformatter settings…` entry is gone and that module's `MENU_LABEL` is now
+imported by nothing — §18.4 part D),
 `manual_panel.py`, `about.py`, `icons.py` (the vendored-Breeze icon catalog + recolor/render
 pipeline, §7 — the string helpers are Qt-free, only `themed_icon` touches Qt), plus the two off-GUI-thread helpers
 `async_task.py` (`run_async(fn, on_result, on_error=None, pool=None)` — the executor behind MainWindow's
@@ -1825,14 +1920,13 @@ contract is *The three audit surfaces* below).
 **The Audit prefixes still exist and are still reserved against one another — but a prefix now
 names a DESTINATION, not a share of one panel.** No feature may quietly annex another's prefix, and no
 fourth SQL-ish prefix may be added. *(FQ-028 wrote a nine-prefix table; `[Sandbox]` made ten, and FQ-033's
-`[XML]` makes **eleven** when it is registered — the engine ships, the prefix constant does not yet exist,
-see §7's disposition table. The count is not the rule — the **anti-annexation** rule is, which
-is why this sentence no longer quotes a number.)*
+`[XML]` makes **eleven** — **registered, verified 2026-08-12**. The count is not the rule — the
+**anti-annexation** rule is, which is why this sentence no longer quotes a number as a target.)*
 
 | Prefix | Owner | Reports | State |
 |---|---|---|---|
 | `[SQL]` | §18.4's **SQL** formatter, hosted by §18.5's DDL object tab and §18.5 D4's console | **Format Selection refusals** — layout only, no DB involved | **wired** (non-clickable, no line role) |
-| `[XML]` | §18.4's **XML** indentation formatter (FQ-033) | **Format Selection refusals on an XML surface** — a split/unterminated construct, or mis-nesting *inside* the selection | **NOT YET BUILT** (target design, §18.4). Same treatment as `[SQL]`: Activity Log, non-clickable, no line role. **A new prefix rather than a reuse:** an `[SQL]` row saying *"this XML selection is mis-nested"* is a lie to the user, and §16 owns `[Validate]` — annexation is forbidden. The *no fourth SQL-ish prefix* rule below does not bite, an XML reindenter not being SQL-ish (the reasoning `[Bookmark]` already carries) |
+| `[XML]` | §18.4's **XML** indentation formatter (FQ-033) | **Format Selection refusals on an XML surface** — a split/unterminated construct, or mis-nesting *inside* the selection | **WIRED** (verified 2026-08-12): `audit_router.XML_PREFIX = "[XML]"` with `DESTINATIONS[XML_PREFIX] = TO_ACTIVITY`, and `MainWindow._report_xml_format_refusal` connected to **all three** `XmlEditor` hosts (the draft fragment through `center_stage.py`). *(This cell read **"NOT YET BUILT (target design, §18.4)"** — a banner over shipped code, carried in four places; ledger §28.)* Same treatment as `[SQL]`: Activity Log, non-clickable, no line role. **A new prefix rather than a reuse:** an `[SQL]` row saying *"this XML selection is mis-nested"* is a lie to the user, and §16 owns `[Validate]` — annexation is forbidden. The *no fourth SQL-ish prefix* rule below does not bite, an XML reindenter not being SQL-ish (the reasoning `[Bookmark]` already carries) |
 | `[Check]` | §18.5 sandbox validation ladder | **SQL/plpgsql validation findings** (`db/ddl_check.py`) on **two channels** — narrative lines (per-tier outcome, caveats, apply/cancel notices; non-clickable) and **findings** (`[Check] SEVERITY line N: message`, line on `UserRole`, the object's `DdlObjectRef.key` on `UserRole+1`, click-to-navigate). A finding whose line could not be mapped (§18.5 D3's mandatory `None`) is rendered **without** a line and **without** roles — never a guessed line | **wired, both channels** (verified 2026-08-09): `DdlObjectEditorPanel.check_reported` carries the narrative channel and `check_findings` the clickable one, rendered by `MainWindow._report_check_findings` with the roles and the inert unmapped-line case (§18.5 D3a) |
 | `[Bookmark]` | §8's `List All Bookmarks` (FQ-014, 2026-08-07) | **The active editor's bookmarks** as clickable rows — `[Bookmark] line N: <preview>`, **1-based** line on `UserRole`, the active editor's existing click-target discriminator on `UserRole+1`, **and — for a PHP file tab only — that tab's `CenterStage` key on `UserRole+2`**, because the router's `"php"` branch reads the tab key from that slot and a row without it is inert (see §8). Plus a roles-less trailing count row and a roles-less empty-case row; an editor with **no** router branch at all (the read-only DDL Explorer buffer, an FQ-006 draft tab) gets **roles-less, inert** rows. Not SQL-ish, so the no-fourth-SQL-prefix rule below does not block it. **A module constant** (`_BOOKMARK_PREFIX` in `ui/find_controller.py`) beside `_FIND_RESULT_PREFIX`/`_VALIDATION_PREFIX` — never the literal typed inline | **wired** (`FindValidateController.list_all_bookmarks`, 2026-08-07) |
 | `[Lint]` | §22 | **PHP** linting only (`php -l` / `phpcs`) | **fully wired** (re-audited 2026-08-10): `pgtp_editor/lint/` and the tab-side emission ship (`PhpFileTab.lint_reported` carries already-`[Lint]`-prefixed `LintAuditLine`s), the **three Tools-menu entries** exist, and the append host is **`ui/lint_controller.py::LintController`**, which subscribes each opened PHP tab. *(Supersedes "the MainWindow append host is the remaining gap".)* Rows carry the PHP tab key on `UserRole+2` — the contract `[Bookmark]`'s PHP branch reuses |
@@ -2487,7 +2581,7 @@ per-tab entry of the Editor bar's `Deployment` menu** (§26): `Save pgtp` / `Sav
   tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to pick which "close" it means —
   and the one it meant was **the rarest**, closing the whole project. Like `Ctrl+O` and unlike `Ctrl+S`, the
   chord is left **free** rather than reserved, so a user may bind it to whichever close they actually mean
-  through `View ▸ Customize Shortcuts…`. Behaviour is unchanged: if dirty, 3-way Save/Discard/Cancel
+  through the **Keyboard shortcuts** pane of `Settings ▸ Software settings…` (§7/§27). Behaviour is unchanged: if dirty, 3-way Save/Discard/Cancel
   (`_confirm_close()`, test-seam `confirm=`); clears editor+tree, resets state.
 - **File ▸ Discard Changes** (was `Revert`, renamed and re-specified by FQ-020; ledger §28): **reload the
   document from disk**, discarding edits since the last save. **Gated on the dirty flag**, never on a
@@ -2547,7 +2641,7 @@ Windows "Edit with PGTP Editor" verb, which the repo also never created, stops w
   |---|---|---|
   | **Standalone** | *Open pgtp* · *Open files* | `file.open` · `file.open-php-file` |
   | **Project** | *New project* · *Open project* | `file.new-project` · `file.open-project` |
-  | **Maintenance** | *Edit XSD* · *Import XSD* | `schema.edit-xsd` · `schema.import-xsd` |
+  | **Maintenance** | *Edit XSD* · *Import XSD* · **`Software settings…`** | `schema.edit-xsd` · `schema.import-xsd` · **`settings.software-settings`** |
 
   - **Standalone merges FQ-010's former groups 1 and 3** (the `.pgtp` lane and the PHP-file lane): both are
     projectless editing of a file on disk, which is one mode, not two. It is the lane that carries XML
@@ -2556,7 +2650,13 @@ Windows "Edit with PGTP Editor" verb, which the repo also never created, stops w
     and §21's custom PHP editing.
   - **Project is FQ-010's former group 2, unchanged** — it covers both project workflows
     (sandbox/checkout, §18.2/§18.5; and `.pgtp` diff/merge versioning, §12/§18.3).
-  - **Maintenance is narrowed to exactly two Schema actions.** The former group 4's `Edit AutoXSD`,
+  - **Maintenance grew a THIRD button, `Software settings…`, 2026-08-12 (`19c14c5`)** — third in the tuple,
+    with the id **imported** from `ui/software_settings_dialog.py::COMMAND_ID` rather than typed into
+    `LAUNCHER_GROUPS`. It is the answer to a real mismatch rather than an addition: **a launcher button is
+    one command, and the app's settings were a whole menu plus two `View` entries**, so no single id existed
+    to put here. One command hosting a multi-pane dialog is simultaneously a legal launcher button and a
+    legal single menu entry — see §7's Software settings block.
+  - **Maintenance was narrowed to exactly two Schema actions.** The former group 4's `Edit AutoXSD`,
     `Verify XSD`, `Export XSD` and the four **§20 re_phpgen** Generation entries (`Locate panGen
     Runtime…`, `panGen (Generate Own PHP)`, `rePHPgen (Analyze Gap)`, `Save reJSON…`) **leave the
     launcher**; they remain on their menus, and inside Maintenance mode the whole `Schema` menu is
@@ -2723,6 +2823,43 @@ credits QDarkStyleSheet (Colin Duquesnoy, MIT).
 > `sql_results_panel.py` measure **2.96:1** (`#d02020` on the dark chrome) and **2.74:1** (`#d08a1a` on the
 > light chrome) — each failing even 3:1 in one theme, which is why §18.7's *"the value lives in
 > `mode_colors`' per-theme table"* rule is a legibility requirement and not tidiness.
+
+##### KEYBOARD FOCUS IS VISIBLE, and the app owns that — the theme's one appended rule set (`BUG-260812002838` + `BUG-260812004649`, fixed `7703eba`)
+
+**This document previously carried NO focus-visibility statement at all**, which is how the defect survived:
+the bundled QDarkStyle sheet styles `QPushButton:hover` but declares **no `:focus` rule**, and its
+`outline: none` suppresses Qt's native focus ring — so a `Tab`-traversing user could not see where focus
+was, on a button or on a tab bar. **A keyboard user who cannot see focus has no way to know what `Return`
+will press**, which is the *"never a silent wrong result"* invariant on the input side rather than the
+output side. Both halves are one mechanism and are specified together:
+
+- **`ui/theme.py` is the sole owner** — the only `:focus` declaration anywhere in `pgtp_editor/`. Two
+  emitters, `_focus_visible_qss(pal)` and `_focus_visible_tab_qss(pal)`, over
+  `FOCUS_RULE_SELECTOR = "QPushButton:focus, QToolButton:focus"` and `focus_tab_selector(edge)` /
+  `FOCUS_TAB_EDGES` for the four `QTabBar::tab:<edge>:selected:focus` cases (each with a
+  `QDockWidget QTabBar::tab…` arm, since dock tab bars are styled separately).
+- **Appended to the cached per-theme string, never applied separately:**
+  `_qss_cache[light] = qdarkstyle.load_stylesheet(…) + _focus_visible_qss(pal)`. Appending is load-bearing
+  — the rules tie with qdarkstyle's own `:selected` / `:checked` selectors on specificity, and **CSS order
+  breaks a tie** — and folding it into the cache keeps `apply_theme` at exactly **one** `setStyleSheet`.
+- **The colour is `pal.COLOR_TEXT_1`, and there is NO second colour table.** It is read off the same
+  qdarkstyle palette object the sheet was generated from, so it **inverts with the theme for free** —
+  which is precisely the mistake `mode_indicator.py` records (a hardcoded value that reads wrong in one
+  theme). `COLOR_ACCENT_3` was measured and **rejected**: 1.56:1 dark / 1.06:1 light on buttons, 1.15:1 /
+  1.08:1 on tabs. What ships measures **5.98:1 dark / 9.07:1 light** on buttons and **4.40:1 / 7.97:1** on
+  the selected tab.
+- **Symmetric across themes by construction, not by a matching pair** — one tail function, `pal` its only
+  variable. *This is the strongest form of the per-theme rule above: instead of two literals that can drift,
+  there is one expression that cannot.*
+- **The box math is preserved, not merely overridden:** the button rule is `border: 2px solid …;
+  padding: 0px;` against qdarkstyle's `padding: 2px; border: none`, so a focused button does not resize; and
+  the tab rules **recolour the single 3px pane-facing border the `:selected` state already draws** rather
+  than adding a border of their own.
+- **This is a THEME rule, not a widget one**, and that is the placement decision: focus visibility is a
+  property of the app's chrome, so it must not be re-solved per panel. **A second `:focus` declaration
+  anywhere in `pgtp_editor/` is a defect** — it would inherit the per-widget-vs-app-sheet trap this block
+  spends its length on.
+
 Persisted as QSettings bool `"lightTheme"` in
 `QSettings("MDS","PGTP Editor")`; `MainWindow._restore_theme` applies the persisted theme
 **unconditionally at startup for both states** (no startup capture of a default palette/style key
@@ -3157,15 +3294,52 @@ why it shows the `Schema` menu and gets everything else out of the way.
   that action's contract above). Standalone and Project leave the menu bar entirely alone, so re-entering
   the app through either of those columns is also a way out.
 
-**Membership — the filter, stated once.** Scope is the **window menu bar only**. In Maintenance mode:
+**Membership — the filter, stated once.** ~~Scope is the **window menu bar only**.~~ **Scope is the window
+menu bar AND, since `1ff2b11`, the CENTER STAGE — two surfaces, one entry point** (`BUG-260812001640`;
+ledger §28, and the prune's own block below). In Maintenance mode:
 
 | Window-bar menu | In Maintenance mode |
 |---|---|
 | **File** | **VISIBLE, trimmed** — `New Session` plus the save entries the File menu carries. Every other item (`Open…`, `Open PHP File…`, the four §18.2 project actions, `Discard Changes`, `Close`) is hidden; `Exit` stays. |
 | **Schema** | **VISIBLE, whole** — all five items (§11). It is the mode's entire point. |
-| **Settings** | **VISIBLE — AND VISIBLE IN NO OTHER MODE** (FQ-030 final slice, `229dc11`). The inverse rule, below. |
+| **Settings** | **VISIBLE — AND VISIBLE IN NO OTHER MODE** (FQ-030 final slice, `229dc11`). Since `19c14c5` its one entry is **`Software settings…`**. The inverse rule, below. |
 | **Help** | **VISIBLE, whole** — `Manual` (F1) may never be filtered out of any mode. |
 | **View · Database · Tools · Generation** | **HIDDEN.** |
+
+##### Entering the mode also PRUNES THE CENTER STAGE to the XSD surface (`BUG-260812001640`, fixed `1ff2b11`)
+
+**The reported defect was that a Project session's DDL Explorer stayed on screen after picking Maintenance
+— but the cause was broader than the report: entering a workflow mode had NO center-stage step at all.**
+The mode was a menu-bar filter and nothing else, so a mode whose whole purpose is administrative work on the
+app's own schema landed the user in front of a project's browsers.
+
+- **Hosted on `MainWindow.set_workflow_mode`, NOT on `new_session`, and the placement is the fix.**
+  `set_workflow_mode` is where the column is actually picked and is the **only** production path into a
+  mode; `new_session` runs *before* the pick and would prune the same set whichever column follows.
+  Consequence, stated because it settles the report's own narrower reading: **the prune fires on EVERY entry
+  into Maintenance**, not only when coming from Project — from Standalone the set is normally already empty,
+  so a guard on the *source* would buy a branch and nothing else.
+- **What it prunes**, through `_prune_non_xsd_surfaces_for_maintenance`: both **DDL Explorer** tabs
+  (`hide_ddl_explorer(role)` per role), and every **dynamic editor tab** — DDL-object panels and §21 PHP
+  tabs — through `_close_dynamic_editor_tabs`, **factored out of `new_session` so both callers share one
+  definition of *"dynamic"***. Edit XSD, the Manual and the structural tabs are left alone.
+- **The hide is guarded on `isTabVisible`**, because `hide_ddl_explorer` emits
+  `ddl_explorer_visibility_changed` unconditionally and a spurious hide-of-a-hidden-tab would tell every
+  subscriber the tree just closed.
+- **It reuses the ONE canonical close route and adds no dialog** — `tabCloseRequested`, so each kind's own
+  unsaved-changes prompt runs, and the Quality SQL Console's uncommitted-transaction **veto**
+  (`DEC-260811023646`) is honoured for free because a vetoed tab simply survives the loop.
+- **⚠ A Cancel keeps that tab and the mode STILL CHANGES**, and this is a recorded judgement rather than an
+  oversight: by the time the prompt appears the mode is assigned and the menu bar refreshed, so the prompt
+  means *"keep this document"*, not *"undo the mode I picked"*. Making the transition cancellable would have
+  changed `set_workflow_mode`'s unconditional contract and would have had to abort the launcher's trigger
+  too. *(`new_session`'s own Cancel still aborts the whole gesture — the two differ because one runs before
+  the pick and one after it.)*
+- **Leaving the mode restores NOTHING — closed is closed**, exactly as if the user had closed the tabs. A
+  restore would mean remembering a stage layout across a mode the app deliberately persists nothing about.
+- **This does not blur the two hiding rules.** The prune is still **rule B (intent)**: the tabs work
+  perfectly well and the app is deciding the user did not mean them. What it changes is the rule's *surface
+  list*, which is why the scope sentence above is amended rather than the rule.
 
 ##### The inverse rule — a maintenance-ONLY menu, in the same loop (FQ-030 final slice, `229dc11`)
 
@@ -3232,7 +3406,7 @@ scattered across the `_build_*_menu` methods.
 |---|---|---|
 | **Trigger** | A fact about what the app *can do right now*: `has_session`, `_configured_sandbox_params()`, `bool(sandbox_params.host)`, `self._ddl_project_folder is None`, the active tab kind, `hasattr(editor, "select_parent_block")` | A fact about what the user *said they were doing*: they picked the launcher's **Maintenance** column this session |
 | **Justification** | **No dead controls.** A command that cannot run is noise, and clicking it could only produce a refusal | **Focus.** A one-off administrative task on the app's own schema should not be surrounded by the whole application |
-| **Applies to** | Every gated affordance in the app (§18.5 carve-out 2, §18.7, §26's *absent, not disabled* statements, `Select ▸ Select Parent Block`, `Parsing`'s tab-kind gate, `Database ▸ Sandbox SQL Console…`) | The window menu bar's **View · Database · Tools · Generation**, the non-`New Session` items of **File**, and — since 2026-08-10, from the additive side — **`Settings`, which exists only inside the mode** (`_MAINTENANCE_ONLY_MENU_TITLES`). Nothing else, in no other mode |
+| **Applies to** | Every gated affordance in the app (§18.5 carve-out 2, §18.7, §26's *absent, not disabled* statements, `Select ▸ Select Parent Block`, `Parsing`'s tab-kind gate, `Select`'s two sticky toggles on a read-only editor, `Database ▸ Sandbox SQL Console…`) | The window menu bar's **View · Database · Tools · Generation**, the non-`New Session` items of **File**, — since 2026-08-10, from the additive side — **`Settings`, which exists only inside the mode** (`_MAINTENANCE_ONLY_MENU_TITLES`), and — since 2026-08-12 — **the CENTER STAGE's non-XSD tabs** (`BUG-260812001640`). Nothing else, in no other mode |
 | **Does the command work if you could click it?** | **No** — that is precisely why it is hidden | **Yes** — the hidden commands run perfectly well; the app is deciding the user did not mean them |
 | **May it "state a reason" instead of vanishing?** | **Yes, and since FQ-023 it must** when the capability is *one click from applicable*: **present-and-reporting** rather than absent (§18.5 carve-out 2) | **No — there is nothing to report.** A refusal message would have to say "this works, but you said you were doing something else". The answer to a rule-B hide is `File ▸ New Session`, not a refusal string |
 | **Escape** | Acquire the capability (open a project, configure a sandbox, switch tabs) | `File ▸ New Session` — always visible, in every mode, by construction |
@@ -3242,7 +3416,11 @@ scattered across the `_build_*_menu` methods.
 would it do the thing it names?"* **No → Rule A** (absent, or present-and-reporting when it is one click
 from applicable). **Yes, and it is still hidden → Rule B**, which today means Maintenance mode and nothing
 else. **Extending Rule B to a second mode, a second surface, or a single further command is an owner
-ruling, not an implementation detail.**
+ruling, not an implementation detail.** *(That requirement has been exercised exactly once, and correctly:
+Rule B's extension to the **center stage** came from the owner's own report — *"it should close all editor
+tabs and all browser tabs that isn't xsd related"* — so the ruling and the bug report are the same act.
+Nothing may extend it further on that precedent alone; the precedent is that an owner asked, not that a
+sweep noticed.)*
 
 > **THE OBJECTION, RECORDED VERBATIM FROM FQ-011 AND DELIBERATELY NOT SOFTENED. It survives FQ-011's
 > supersession and applies to FQ-027 unchanged.** Raised at triage, **overridden by the owner — which is
@@ -3276,10 +3454,13 @@ ruling, not an implementation detail.**
   `Settings` menu is shortcut-free by rule.
 - **A hidden action is still enumerated by `ToolbarController._walk_menu_actions`** (it never tests
   `isVisible()`), so Customize Toolbar keeps offering every Maintenance-hidden command and **a pinned
-  toolbar button for one keeps working**. **FQ-027 relies on this deliberately**: scope is the menu bar
-  only, the toolbar is left alone (owner ruling), and a button that still runs a command that still works
-  is correct behaviour, not a leak. Buttons that go *empty or inert* for other reasons are the accepted
-  cost recorded per instance below.
+  toolbar button for one keeps working**. **FQ-027 relies on this deliberately**: **the TOOLBAR is left
+  alone** (owner ruling) — that is the half of the original *"menu bar only"* scoping that survives
+  `BUG-260812001640`'s center-stage extension unchanged — and a button that still runs a command that still
+  works is correct behaviour, not a leak. Buttons that go *empty or inert* for other reasons are the
+  accepted cost recorded per instance below. **Since `19c14c5` this is also the only non-Maintenance path to
+  toolbar and shortcut customization at all** (§7's Software settings block; `DEC-260812004358`, OPEN),
+  which is why the trade is recorded there rather than assumed here.
 - **Hide, delete, or report — the three are chosen by different questions, and the precedents only look
   contradictory.** Set beside BUG-040, which **deleted** `Open`/`Close Sandbox Session` *precisely
   because* a hidden action stays pinnable and clickable from the toolbar:
@@ -3298,10 +3479,153 @@ ruling, not an implementation detail.**
   visible and unchanged, and a button whose backing menu action is hidden may render empty. This is the
   **fifth** accepted action-hide instance in the app (after `Select ▸ Select Parent Block`, `Parsing`'s
   two sides, and BUG-039's default-button blink) — the first driven by **intent** rather than capability,
-  and the first that hides a whole *class* of actions at once rather than a named few.
+  and the first that hides a whole *class* of actions at once rather than a named few. *(A **sixth** has
+  since landed and is ordinary rule A: `Select`'s two sticky-selection toggles on a read-only editor,
+  `de75617` — §26.)*
 - **Visibility-only keeps this independent of command *relocation*.** Hiding changes no command id;
   *moving* or *renaming* one does (`toolbar_registry.command_id_for` derives ids from menu label **and**
-  menu path), so the filter and any future menu reorganisation can land in either order.
+  menu path), so the filter and any future menu reorganisation can land in either order. *(That
+  reorganisation has since happened — the Software settings consolidation below moved four commands and
+  deleted four ids — and it did land independently of the filter, exactly as this bullet predicted.)*
+
+### The Software settings dialog — the app's ONE configuration home (`FQ-260812002827`, settled and SHIPPED `19c14c5`)
+
+> **Status: SHIPPED. `ui/software_settings_dialog.py::SoftwareSettingsDialog`, `MENU_LABEL =
+> "Software settings…"`, `COMMAND_ID = "settings.software-settings"`, `SettingsPane`, `SETTINGS_PANES`;
+> `MainWindow.open_software_settings_dialog` / `_software_settings_dialog` / `_forget_software_settings` /
+> `build_customize_shortcuts_pane`; `ToolbarController.build_customize_pane`;
+> `SnippetController.build_editor`; `autoformat_settings_dialog.build_autoformat_settings_pane`. Verified by
+> name 2026-08-12.**
+>
+> **Three owner decisions are OPEN and shipped with defaults. Read the relevant paragraphs as
+> DEFAULTS-PENDING-ANSWER, not as settled design:** `DEC-260812004358` (Maintenance-only reachability),
+> `DEC-260812004359` (non-modal), `DEC-260812004400` (four panes, not six). Each is isolated to one place,
+> which is why the feature shipped rather than waiting.
+
+**The problem it solves is structural, and naming it is what makes the shape non-arbitrary: a launcher
+button is ONE command, and the app's settings were a whole menu plus two `View` entries.** No single command
+id existed to put in the Maintenance column. Rather than growing that column ad hoc — or inventing a
+launcher fly-out, which would have broken `LAUNCHER_GROUPS`' uniform `(title, (command-ids…))` contract —
+**one command hosting a multi-pane dialog is simultaneously a legal launcher button and a legal single menu
+entry.** That is the whole design, and every other property follows from it.
+
+**Owner-settled and NOT re-litigated here: relocating means MOVING.** The four absorbed surfaces are
+**removed from where they were**; the dialog is their **sole** entry point.
+
+| Pane (in order) | Key | Was reached at | Widget, and who builds it |
+|---|---|---|---|
+| Snippets | `snippets` | `Settings ▸ Edit Snippets…` (FQ-030, §18.9) | `EditSnippetsDialog`, via `SnippetController.build_editor` |
+| Toolbar | `toolbar` | `View ▸ Customize Toolbar…` (FQ-004) | `CustomizeToolbarDialog`, via `ToolbarController.build_customize_pane` |
+| Autoformatter | `autoformatter` | `Settings ▸ Autoformatter settings…` (FQ-033, §18.4 part D) | `AutoformatSettingsDialog`, via `build_autoformat_settings_pane` |
+| Keyboard shortcuts | `shortcuts` | `View ▸ Customize Shortcuts…` (FQ-012, §27) | `CustomizeShortcutsDialog`, via `MainWindow.build_customize_shortcuts_pane` |
+
+**The host: a `QSplitter` over a `QListWidget` of category titles and a `QStackedWidget` of panes**, titled
+`Software settings` (no ellipsis — the ellipsis belongs to the *menu label*, which promises a dialog, not to
+the dialog itself), 960×640, `currentRowChanged` → `setCurrentIndex`. The pane table is data
+(`SettingsPane(key, title, blurb, build)`), so a fifth pane is one tuple entry and cannot half-exist.
+
+#### The panes keep the apply/OK contract they already had, and the HOST ADDS NONE
+
+**The dialog's only button is `Close`.** There is no host-level OK, Apply or Cancel, and this is a decision
+rather than an omission:
+
+- **A host OK would have to invent a FIFTH apply semantics over four that already disagree.** The four panes
+  differ: snippets writes `snippets.json` on OK; toolbar calls `apply_and_save(...)` on `accepted`;
+  autoformatter owns its own `QSettings` write and additionally offers `RestoreDefaults`; shortcuts hands a
+  copied override map back to the host. **None applies live.** A single OK spanning them would either have
+  to re-implement four commits or fan out to four — and a partial failure in the middle of a fan-out has no
+  honest report.
+- **And it would give a NON-MODAL window a body of unsaved state.** A non-modal dialog can be left open
+  indefinitely behind the main window; unsaved edits sitting in it, with the app changing underneath, is the
+  shape that produces a wrong result on the eventual OK.
+- **Consequence, stated plainly: each pane is committed by its OWN Ok, and `Close` discards nothing that a
+  pane has not already been told to keep.** That is what the panes already meant, and re-hosting them did
+  not change it.
+
+#### The load-bearing mechanic: an embedded `QDialog` still calls `done()`, so the host WATCHES `finished` and REBUILDS
+
+Each pane is a real `QDialog`, reparented into the stack with `setWindowFlags(Qt.WindowType.Widget)`. **A
+`QDialog` turned into a child widget still runs its own `accept()`/`reject()`, which calls `done()` — and
+`done()` HIDES it.** So a pane clicked Ok would simply vanish from the stack, leaving an empty page.
+
+- **The fix is not to suppress `done()` but to use it as a signal:** `_install_pane` connects
+  `dialog.finished` to `_on_pane_finished(key)`, which removes and `deleteLater()`s the finished dialog and
+  **rebuilds that pane from now-current state**. Deletion is deferred deliberately, because the handler runs
+  *inside* the old dialog's own `finished` emission.
+- **The payoff is the property that makes the whole re-hosting safe: a pane is NEVER a stale scratch copy.**
+  Ok, then reopening the category, shows what was saved; Cancel, then reopening it, shows the live state and
+  not the abandoned edits. **This is what lets four independently-written dialogs be re-hosted with no
+  changes to their own contracts** — the host does not synchronise them, it re-reads them.
+- **It works because Qt emits `accepted`/`rejected` BEFORE `finished`** — the same ordering
+  `SnippetController` already relied on, so the pane's own save has completed by the time the host rebuilds.
+  *An ordering an existing consumer already depended on is a safer thing to build on than one nothing had
+  tested.*
+- **Every builder returns an unshown dialog and is safe to call repeatedly, re-reading state each time.**
+  That is the contract the rebuild requires, and it is stated as a requirement on the builders rather than
+  discovered per pane.
+
+#### Non-modal, single-instance (`DEC-260812004359` — DEFAULT, pending)
+
+`open_software_settings_dialog` keeps one handle (`self._software_settings_dialog`), raises and activates an
+existing instance rather than spawning a second, `show()`s rather than `exec()`s, and clears the handle on
+`finished`. **Nothing sets `WA_DeleteOnClose`.** The default was chosen because it is the option that
+changes **nothing** about a shipped surface: `CustomizeShortcutsDialog` was already non-modal, and a
+non-modal shortcut editor is what lets a user try a chord against the live app instead of
+edit → close → test → reopen. **Reversal is one `setModal(True)` plus dropping the raise-and-focus logic.**
+
+#### FOUR panes, not six (`DEC-260812004400` — DEFAULT, pending)
+
+The owner's own list named six categories; panes 5 (**syntax highlight colors**, `FQ-260812002828`) and 6
+(**color scheme**, `FQ-260812002829`) are blocked on owner descriptions and **do not exist in the code at
+all — absent, not stubbed**. The default ships four. The competing precedent is real and was weighed:
+FQ-023's *state your reason rather than vanish* would argue for six with two disabled — but that principle
+governs a gesture whose **siblings are present**, and a settings category nobody has ever been told about
+carries no expectation for its absence to contradict. **Reversal is two list rows.**
+
+#### ⚠ The reachability cost, stated because it is a WITHDRAWAL (`DEC-260812004358` — DEFAULT, pending)
+
+**Toolbar customization and shortcut rebinding were reachable at ANY time, from `View`. They are now
+Maintenance-only.** This is consistent with FQ-027's design — the `Settings` menu is Maintenance-gated for
+exactly the reason that the app is *configured* in Maintenance mode — but it is a real reduction, and it is
+recorded as one rather than as a tidy-up.
+
+- **The escape hatch is partial at best, and saying so is the point.** DEC-006 established that Maintenance
+  mode **hides rather than prevents**, so an existing chord still fires — but these dialogs have **no chord
+  of their own**, so there is genuinely no non-Maintenance path to them except pinning the command to the
+  toolbar. *A guardrail that is normally leaky is not leaky here, which is exactly when a reachability
+  change stops being cosmetic.*
+- **Reversal, if the owner declines the trade, is two `View` actions opening the same dialog on a named
+  pane** — `select_pane(key)` exists for it — plus a spec sentence saying why those two categories are
+  exempt. It is additive, which is why shipping the smaller surface first was the cheaper bet.
+
+#### The four absorbed command ids get NO alias rows, and that is deliberate
+
+`view.customize-toolbar`, `view.customize-shortcuts`, `settings.edit-snippets` and
+`settings.autoformatter-settings` **no longer exist**, and **no `RENAMED_ID_ALIASES` row is added for any of
+them.** `resolve_ids` therefore **drops** them silently from a stored `toolbarIds` / `toolbarIconIds` — the
+FQ-020 `save` precedent and BUG-040's `Open Sandbox Session` precedent, applied a third time.
+
+> **The reason is the distinction the alias table exists to draw: these commands were ABSORBED, not
+> renamed.** A rename has a successor that **means the same thing** — `bookmarks.*` → `navigation.*`,
+> `select.select-parent-block` → `select.expand-selection`. Here there is **no successor id meaning
+> *"customize the toolbar"***; there is one id meaning *"open the settings dialog"*, which is a different
+> command that happens to contain the old one. Aliasing four ids onto `settings.software-settings` would
+> make a toolbar button that used to open the toolbar editor open a six-category dialog on whatever pane
+> happened to be first — *a plausible-looking wrong result, which is worse than a button that disappears.*
+>
+> **§7's toolbar-id machinery documents alias behaviour and does NOT cover this case; this block is where it
+> is covered.** The rule stated once: **alias when the successor answers the same request; drop when it does
+> not.** A pinned button silently disappearing is the honest encoding of *"the command you pinned is gone"*.
+
+#### Keyboard — no new chord anywhere in this feature
+
+`Software settings…` **has** a command form (a menu entry **and** a launcher button), so under **DEC-012**
+it has exactly one keyboard host, its `QAction` — and per the `Settings` menu's rule (DEC-006, §26/§27) that
+`QAction` carries **no `setShortcut`**. **Nothing joins `RESERVED_SEQUENCES`, no `docs/KEYBINDINGS.md` row
+changes, and no ledger row is owed for a binding.** The four panes' own internal buttons and fields are
+widget-scoped and are not window chords; the shortcuts pane's *behaviour* (enumerating commands, assigning,
+stealing, refusing) is untouched by the re-hosting — only its host window changed, which is
+`DEC-260812004359`'s subject and nothing else's.
 
 ---
 
@@ -3661,7 +3985,7 @@ first fought out over `Ctrl+Shift+B`. It governs every editor gesture in the app
   the second host's missing selection gate had **no user-visible effect**. It is not §18.5 carve-out 4's
   refusal path (that is for unformattable SQL), so nothing here reopens the *"state the reason"* rule.
 - **Being widget-hosted has a stated price, and the manual must keep stating it:** a widget-hosted gesture
-  is **not rebindable** through `View ▸ Customize Shortcuts…`, which only walks menu QActions (§27).
+  is **not rebindable** through the *Keyboard shortcuts* pane (§7/§27), which only walks menu QActions.
 - **Where a code comment cites the test harness for one of these gestures, the comment is wrong** — the
   harness is never the reason (BUG-052 rewrote the three that did, `f533350`). A defensible design
   justified by a false reason reads to the next maintainer as exactly the defect DEC-004 ruled against.
@@ -3832,7 +4156,7 @@ This is the subtlest thing in the feature. Two facts have to hold at once:
 
 > **The stated price, recorded because the owner should know it and because it will otherwise be
 > re-discovered as a bug: the pair is not symmetrically rebindable.** Grow can be moved through
-> `View ▸ Customize Shortcuts…`; **shrink cannot**, and `Ctrl+Shift+Z` cannot be handed to anything else
+> the *Keyboard shortcuts* pane of `Settings ▸ Software settings…` (§7/§27); **shrink cannot**, and `Ctrl+Shift+Z` cannot be handed to anything else
 > either. That is a direct consequence of the owner's choice of chord — Qt claims `Ctrl+Shift+Z` natively on
 > both schemes, so the app can only *intercept* it, and an intercepted chord is unreachable from a dialog
 > that only walks menu `QAction`s (§27). A chord Qt does not claim would have left both halves rebindable;
@@ -4182,8 +4506,32 @@ could not see how many bookmarks existed, what was at them, or jump to the fourt
   | Edit XSD / AutoXSD | 1-based line | `"xsd"` | **omitted deliberately** — a mode-less `"xsd"` row targets whatever the tab already shows (`_xsd_ui.reveal_line(line, None)`), which is correct for a bookmark in the open schema | `Edit XSD` |
   | DDL object tab (§18.5) | 1-based line | `panel.ref.key` (**a tuple**) | — | `panel.ref.qualified` |
   | **PHP file tab (§21)** | 1-based line | `LINT_AUDIT_TARGET` (`"php"`) | **REQUIRED — the tab's `CenterStage` key**, which is exactly what `_php_tabs.navigate_to(key, line)` is given | `tab.tab_title()` |
-  | DDL Explorer buffer (read-only) | — | `_NO_AUDIT_ROUTE` → **no roles set** | — | `the DDL Explorer` |
+  | **DDL Explorer buffer (read-only)** | 1-based line | **`DDL_EXPLORER_AUDIT_TARGET` (`"ddl-explorer"`)** | **REQUIRED — the Explorer ROLE** (`DDL_EXPLORER_SANDBOX` / `DDL_EXPLORER_TARGET`) | `the DDL Explorer (Quality)` / `the DDL Explorer (Sandbox)` |
   | FQ-006 draft fragment tab | — | `_NO_AUDIT_ROUTE` → **no roles set** | — | `the draft fragment` |
+
+  > **⚠ THE READ-ONLY EXPLORER ROW IS NEW AND REVERSES A SHIPPED DECISION** (`BUG-260811232724`, fixed
+  > `1ff2b11`; ledger §28). It read `_NO_AUDIT_ROUTE` → **no roles set**, and a shipped test asserted the
+  > rows were *deliberately* inert — so **Find All findings and bookmarks were unclickable in the one tab
+  > whose whole purpose is browsing a buffer**, while Raw XML and the editable DDL object tab both worked.
+  > The inertness was never the design; it was the **honest encoding of a missing route**, taken because the
+  > router's fallback navigates **Raw XML** and a bare line would have landed the caret in the wrong
+  > document. **Both halves are now supplied and the row becomes ordinary:** a real discriminator here, and a
+  > branch in `_on_audit_item_clicked` delegating to the **existing** `_on_ddl_navigate_requested(line,
+  > role)` — the same focus + caret + scroll route a tree leaf click already used. *No navigation mechanism
+  > was built; what was missing was a name for the destination.*
+  >
+  > **The ROLE is carried, never inferred from the current tab**, because §18.7's two Explorer buffers are
+  > **different documents with independent line numbering** — resolving *"which Explorer"* at click time
+  > would jump the wrong buffer whenever a finding was clicked while the other tab was front. It rides
+  > `UserRole+2`, which **both emitters already propagated whenever `extra is not None`**, so neither emitter
+  > changed: giving the route a non-`_NO_AUDIT_ROUTE` target with a non-`None` extra was the entire fix on
+  > that side.
+  >
+  > **`_NO_AUDIT_ROUTE` survives, and its remaining scope is now exactly two cases** — the **FQ-006 draft
+  > fragment** (genuinely has no navigable home tab), and Find All's demotion of an editor **no stage table
+  > knows** (a not-yet-registered tab kind, deliberately kept: it is the guard against a *future* surface
+  > silently inheriting the Raw XML fallback). *The sentinel was right; what was wrong was how many surfaces
+  > it covered.*
 
   `MainWindow._on_audit_item_clicked`'s `"php"` branch reads the tab key off `UserRole + 2` (the same slot
   the `"xsd"` branch uses for its mode, read only on that branch, so the two never collide) — so a
@@ -4385,6 +4733,31 @@ for either chord (§7/§27); never `.exec()` in tests.
 > **This block supersedes `docs/FEATURE_QUEUE.md`'s FQ-032 wherever the two differ**, and the entry's own
 > errors — including one that changed what should be built — are listed in the restatement at the end.
 
+> **⚠ A SECOND INCREMENT SHIPPED 2026-08-12 (`e60e0d0`, `de75617`) AND IT REVERSED FOUR OF THIS BLOCK'S
+> STATEMENTS, INCLUDING ONE ITS OWN DESIGN LEANED ON.** Ledger §28. What changed, in the order it bites:
+>
+> 1. **Text objects are no longer deferred: `aw` / `iw` ship** — and they ship **without touching `sql/`**,
+>    which falsifies this block's *"the chain's FQ-032 caller is the deferred text objects … they are
+>    SQL-only"* prediction outright. `pgtp_editor/vim/words.py::a_word_span` / `inner_word_span` are
+>    character-class arithmetic, line-local, family-agnostic — so the vim package's purity test is
+>    **unchanged** and there is no per-surface unavailability to state.
+> 2. **The operators gained a SELECTION target**, so `d`/`c`/`y` can act on a selection made any way at all
+>    and `x` resolves to `d`. The pure layer's whole notion of selection is **one boolean**,
+>    `VimGrammar.set_selection_active(active)`, restated before every keystroke by the Qt half — which is
+>    what keeps `pgtp_editor/vim/` Qt-free while the grammar answers a question about a `QTextCursor`.
+> 3. **`v` / `V` gained a side effect: STICKY SELECTION** — a real, shipped Edit-mode selection mechanic
+>    (`STICKY_CHARACTER` / `STICKY_LINE`, `Select ▸ Sticky Selection` / `Line Selection`). **There is still
+>    no visual mode**, and that part of this block stands; what is false is the *inference* this block drew
+>    from its absence — *"the select-with-`v`-then-`d` reflex does not exist here"* and *"a `d` pressed after
+>    a Windows-style selection is a Command-mode `d` waiting for a motion"*. Both are now **wrong**.
+> 4. **The Command-mode caret is ON a character**, painted as a block in a `paintEvent`, and clamped there —
+>    **except after `c`**, which lands in Edit mode where the caret legitimately rests past the last
+>    character. `$` and `l` therefore no longer leave the Command-mode caret on the newline offset.
+>
+> Also retired here: this block's *"it adds no menu entry, no toolbar button and no setting"* trap — the
+> feature now has **two menu entries**, and the reason that is not a breach of the trap is stated where they
+> are specified.
+
 **Why this feature exists, stated first because it is the only thing that makes the scope defensible.** The
 editors need advanced editing **operations** regardless: absolute go-to-line, **relative count-motions**,
 delete/change/yank by word, by line, by motion. Today none of them exists and none has a menu equivalent. The
@@ -4466,7 +4839,7 @@ the phrase per-menu gating must be written in — are unaffected.)*
 | Transition | Trigger | Notes |
 |---|---|---|
 | Edit → Command | `Esc`, in a **focused, editable** editor, with no completion popup open | `enter_command_mode()`; see the `Esc` precedence table below |
-| Command → Edit | an insert-entry command: `i a I A o O s S cc C`, **and `v` / `V`** | `d{motion}` / `c{motion}` also land in Edit mode when the operator is `c`. The grammar's `INSERT_ENTRY_ACTIONS` holds `i a I A o O v V`; `s S C` and the doubled `cc` reach the same place as `c`-operator **shorthands** resolved in `vim/grammar.py::_SHORTHANDS`, so the widget has one code path per operator rather than seven |
+| Command → Edit | an insert-entry command: `i a I A o O s S cc C`, **and `v` / `V`** | `d{motion}` / `c{motion}` also land in Edit mode when the operator is `c`. The grammar's `INSERT_ENTRY_ACTIONS` holds `i a I A o O v V`; `s S C` and the doubled `cc` reach the same place as `c`-operator **shorthands** resolved in `vim/grammar.py::_SHORTHANDS`, so the widget has one code path per operator rather than seven. **`v` / `V` additionally turn STICKY SELECTION on** (below) — they are the only insert-entry commands with a second effect, and the mode drop is what makes that effect usable |
 | Command → Edit | **focus loss** — `focusOutEvent` on the editor | tab switch, click into another widget, a `:` command that opens a dialog, **and the completion popup taking focus**: all one mechanism, none of them special-cased |
 | Command → Edit | the editor **becomes read-only** while Command mode holds | Caption Mode / Compare/Merge entry, through §8's `_set_raw_xml_read_only(reason)` seam — reached by the mixin's own `setReadOnly` override, so **no calling mode has to remember**. A mode that turns the buffer read-only under a Command-mode caret must not leave the layer live with nothing it may do |
 | Command → Edit | **document swap** — the mixin's `setPlainText` | the same moment that resets bookmarks, fold state, the FQ-031 gutter anchor and FQ-034's expansion stack. Pending command state (a half-typed `42d`) describes a document that no longer exists |
@@ -4775,21 +5148,64 @@ of `Esc`-to-cancel, and the owner has now weighed the second cost separately.
 **Enter Edit mode from Command mode** (and `Esc` re-enters Command mode): `i a I A o O s S cc C` — **and
 `v` / `V`**.
 
-> **There is NO vim visual mode.** `v` and `V` are **insert-entry aliases**: they drop to Edit mode so the
-> user selects **the Windows-native way**, with the mouse or `Shift`+motion. Owner: selection is a Windows
-> method.
+> **There is STILL NO vim visual mode, and that has not changed** — no third editing-mode value, no third
+> indicator label, no `visual` identifier anywhere in the package (a test greps for it). `v` and `V` remain
+> **insert-entry actions**: they drop to Edit mode, because the owner's rule is that **selection is a
+> Windows method**.
+>
+> **⚠ WHAT DID CHANGE (`e60e0d0`/`de75617`, ledger §28): they now ALSO turn on STICKY SELECTION, and the
+> conclusion this block drew from "no visual mode" is WITHDRAWN.** This block said, in bold, that *"the
+> select-with-`v`-then-`d` reflex does not exist here"* and that *"a `d` pressed after a Windows-style
+> selection is a Command-mode `d` **waiting for a motion**"*. **Both are now false.** *The absence of visual
+> mode was a fact about MODES; the inference drawn from it was a claim about OPERATORS, and the two do not
+> follow from one another — an operator can take a selection as its target without there being a mode whose
+> job is to make one.*
 
-**The contract consequence, stated because a vim user will otherwise hit it as a bug:** the
-**select-with-`v`-then-`d` reflex does not exist here.** There are exactly two ways to operate on a range —
-**operator + motion in Command mode**, or **select Windows-style and use `Ctrl+C`/`Ctrl+X`/`Delete` in Edit
-mode.** A `d` pressed after a Windows-style selection is a Command-mode `d` **waiting for a motion**, not
-*"delete the selection"*.
+###### Sticky selection — how `v` / `V` make a selection without a visual mode (`FQ-260812000331`, shipped `e60e0d0` + `de75617`)
+
+**Sticky selection is an EDIT-MODE mechanic with a Command-mode trigger, and that split is the design.**
+`v` (character-wise) and `V` (line-wise) set it and drop to Edit mode; from there **ordinary movement keys
+extend the selection** instead of collapsing it. That is what *"select the Windows way"* now means in
+practice — the user gets the reflex without the app growing a mode.
+
+- **One piece of per-editor state with ONE writer.** `VimModeMixin.sticky_selection_mode` returns
+  `STICKY_CHARACTER` (`"character"`), `STICKY_LINE` (`"line"`) or `None`, and **`set_sticky_selection(kind)`
+  is the only thing that assigns it** — the `v`/`V` keys, the two menu commands and every teardown all land
+  there. *Two paths toggling one state can disagree, and the user then sees a caret that selects for no
+  reason they can name.*
+- **The anchor is FRESH at the caret.** Turning sticky on starts a new selection rather than adopting
+  whatever happened to be selected, so the gesture means the same thing every time.
+- **`V` is a granularity of the same state, not a second state** — `toggle_line_selection` turning on turns
+  character-wise off, and `_vim_extend_selection_to_lines()` re-rounds the selection out to whole lines
+  after every extension.
+- **The extension keys are Qt's own moves, never invented ones** — `_STICKY_MOVES` is
+  `Left`/`Right`/`Up`/`Down`/`Home`/`End`/`PageUp`/`PageDown`, and a chord carrying `Ctrl`/`Alt`/`Meta` is
+  **not** answered, so nothing in the app's chord table is shadowed. `PageUp`/`PageDown` step by the
+  viewport's own line count.
+- **It ends the way transient editor state must, and the endings are the point:** a **printable keystroke**
+  ends it (typing replaces the selection and resumes ordinary typing — *the gesture is over, so the state
+  that made it goes with it*); a **mouse click** ends it (*a click that silently kept extending would be a
+  caret nobody asked for* — and the mouse still never changes the editing **mode**); **focus loss** and a
+  **document swap** end it, beside the Command-mode reset they already trigger; and **consuming it with an
+  operator** ends it.
+- **A read-only editor has no sticky selection either**, guarded at the keystroke (`isReadOnly()`) exactly
+  as Command mode is — so the rule *"vim ⊆ editable editors"* holds for this half too. This is what makes
+  the two menu entries **hidden**, not greyed, there (§26).
+- **The two command forms are `Select ▸ Sticky Selection` and `Select ▸ Line Selection`** — checkable,
+  keyless, state re-derived from the editor. Specified in §26; the DEC-012 reasoning for the keylessness is
+  there.
+
+**So there are now THREE ways to operate on a range, not two:** operator + motion in Command mode; operator
++ **text object** (`aw`/`iw`, below); or **a selection made any way at all** — sticky, `Shift`+motion, or
+the mouse — followed by `d` / `c` / `y` / `x` in Command mode, or `Ctrl+C`/`Ctrl+X`/`Delete` in Edit mode.
 
 | Group | v1 members (all shipped `b0c42da`) | Notes |
 |---|---|---|
 | **Motions** | `h j k l` · `w b e` · `0 ^ $` · `gg G` · `NG` · `f t F T` · `%` · `{ }` | live in Command mode **and** operator-pending. The grammar's `SIMPLE_MOTIONS` / `CHAR_MOTIONS` are the two shapes: one keystroke, or one plus the character to search for |
 | **Counts** | `N{motion}` — `5j`, `3w`, `42G` | **LOAD-BEARING.** `42j` is the whole motivating case and has no alternative anywhere in the app, and it has a test named for it. **`Command.has_count` is CARRIED, never inferred** — `G` and `42G` are different commands (last line vs line 42) and `count == 1` cannot tell them apart |
-| **Operators — MOTION-ONLY** | `d{motion}` `c{motion}` `y{motion}`; doubled `dd yy cc`; `x` `X`; `D` `Y`; `p` `P`; `r{char}` | no visual-selection target, because there is no visual mode. `c` lands in Edit mode. **`OPERATORS` is exactly `d c y`**; `x X D C Y s S` are resolved to `(operator, motion)` pairs in the grammar's `_SHORTHANDS`, so the widget has **one code path per operator** rather than seven. `INCLUSIVE_MOTIONS` is `e f t %` — **`$` is deliberately absent**, because it resolves to the position *after* the last character and is therefore already an exclusive end |
+| **Operators** | `d{motion}` `c{motion}` `y{motion}`; doubled `dd yy cc`; `x` `X`; `D` `Y`; `p` `P`; `r{char}` | `c` lands in Edit mode. **`OPERATORS` is exactly `d c y`**; `x X D C Y s S` are resolved to `(operator, motion)` pairs in the grammar's `_SHORTHANDS`, so the widget has **one code path per operator** rather than seven. `INCLUSIVE_MOTIONS` is `e f t %` — **`$` is deliberately absent**, because it resolves to the position *after* the last character and is therefore already an exclusive end. *(This row read **"Operators — MOTION-ONLY … no visual-selection target, because there is no visual mode"**; the second half shipped, see the two rows below. Ledger §28.)* |
+| **Operator target — a SELECTION** (`e60e0d0`) | `d` `c` `y` with a selection active; `x` with a selection active | **The pure layer's entire notion of selection is one boolean.** `VimGrammar.set_selection_active(active)` is restated by the Qt half from `textCursor().hasSelection()` **before every keystroke**, and with it set `d`/`c`/`y` **resolve immediately** — no operator-pending wait — to `Command(operator=…, motion=SELECTION)`, and `x` resolves to the same thing with `operator="d"`. `SELECTION` is the sentinel `"@"`, a spelling no user keystroke can produce, exactly as `LINEWISE` is `"_"` and `REDO_KEY` is `"<C-r>"`. **A boolean is why `pgtp_editor/vim/` stays Qt-free while answering a question about a `QTextCursor`:** the grammar is told *that* there is a selection and never *what* it is; the span comes from `_vim_selection_span()` on the Qt side. Consuming the range **clears sticky selection** — the gesture is finished. `set_selection_active` is deliberately **not** cleared by `reset()`: it describes the document, not the pending command |
+| **Text objects — `aw` / `iw`** (`e60e0d0`) | `daw` `diw` `caw` `ciw` `yaw` `yiw`, with counts | **Promoted out of "deferred", and built WITHOUT `sql/`** — see the corrected boundary note below. `pgtp_editor/vim/words.py::a_word_span` / `inner_word_span` over the same `char_class` runs `w`/`b`/`e` already use, so this is one word rule and not a second. **Three properties, each a decision:** (1) **line-local** — the span never crosses a `\n`, *because a `daw` that swallowed the newline would silently join two lines*; (2) **counts multiply across the operator** — `2d3iw` takes six words, from `_count()`'s `pre * post`, which is vim's own rule and the only one under which `2d3iw` and `6diw` agree; (3) **overshoot is REFUSED, never clamped** — a count running past the last run on the line returns `None` and the gesture states `vim_mode.NO_TEXT_OBJECT` (**`"there is no word here to take"`**), the same rule the count-motions already follow and for the same reason. Scopes live in `TEXT_OBJECT_SCOPES = frozenset("ai")` and objects in `TEXT_OBJECTS = frozenset("w")` — **`w` alone**, so `di"` and `ci(` are still deferred; a scope key is only read **after** an operator, which is why **`di` now PENDS instead of being discarded** *(a shipped test asserting the discard was rewritten with the reversal in its docstring; ledger §28)* |
 | **Undo / redo** | `u` · **`Ctrl+R`** · and the app's own `Ctrl+Y` | routed to the surface's existing undo answer through `vim_undo` / `vim_redo` (above). **`Ctrl+R` is redo in Command mode ONLY** (`DEC-260810193638`) — the app's first mode-conditional chord; in Edit mode it keeps focusing the Replace field. The grammar sees it as the multi-character token **`REDO_KEY = "<C-r>"`**, spelled that way so it can never collide with a bare letter the user typed |
 | **Search** | `/` `n` `N` | `/` **opens and drives the app's EXISTING Find bar** — `FindReplaceBar.focus_find` / `find_next`. **No second search engine**, and no second results surface. **Two refusals are the shipped consequence of having no engine of its own, and both STATE their reason** (verbatim): `N` answers **`"the Find bar searches forwards only — there is no backwards search to run"`** (`vim_mode.NO_BACKWARD_SEARCH`) rather than inventing a backwards search, and on a surface with no bar at all `/` and `n` answer **`"this editor has no Find bar to search with"`** (`NO_FIND_BAR`). *Reusing the app's search means inheriting its limits, and the honest move is to name them* |
 | **Palette** | `:` | below |
@@ -4828,13 +5244,24 @@ This is the boundary an implementer will otherwise cross by reflex, so it is sta
   > stated reason for sequencing FQ-032 behind FQ-034; **the coordinator has withdrawn it** (ledger §28), and it
   > is recorded here so it does not survive in the record. The vim layer serves **XML, PHP and JS** buffers as well as SQL, and
   > vim's `w`/`b`/`e` are defined by **character class**, not by SQL tokens — so a v1 motion that consulted a
-  > SQL span model would be wrong on four of the six surfaces and unavailable on the rest. The chain's FQ-032
+  > SQL span model would be wrong on four of the six surfaces and unavailable on the rest. ~~The chain's FQ-032
   > caller is the **deferred text objects** (`ciw`, `di"`, `ci(`), explicitly out of v1. **When they are built
   > they are the only part of this feature that touches `sql/`, they are SQL-only, and every other surface must
-  > STATE that they are unavailable there** rather than falling back to a character guess. §5's *"`sql/` never
+  > STATE that they are unavailable there** rather than falling back to a character guess.~~ §5's *"`sql/` never
   > learns about Qt and `ui/` never parses SQL"* arrow is unchanged by FQ-032. *(Recorded because the framing
   > handed to this pass was that FQ-032's motions consume `structure_chain`; they must not, for the reason
   > above. Flagged rather than silently adopted, and the flag was upheld.)*
+  >
+  > **⚠ THE STRUCK SENTENCE WAS A PREDICTION AND THE IMPLEMENTATION FALSIFIED IT (`e60e0d0`; ledger §28).**
+  > The **word** text objects shipped, and they consume **nothing** from `sql/`: `aw`/`iw` are
+  > `pgtp_editor/vim/words.py`'s own character-class arithmetic over the runs `w`/`b`/`e` already walk, so
+  > they are **family-agnostic like every other v1 gesture** — live on XML, PHP and JS buffers as well as
+  > SQL, with **no per-surface unavailability to state and no refusal to write**. The purity test's four legs
+  > did not move, which is the check that proves it rather than the claim. **What survives of the prediction
+  > is the part about the OTHER text objects:** `di"` and `ci(` are still deferred, and a *quoted-* or
+  > *bracket-*delimited object is where a language model would genuinely be needed — so if they are ever
+  > built, the struck rule applies to **them**. *The prediction was wrong because it reasoned from the hardest
+  > member of a set to the whole set; `iw` needed no more than the word rule the feature already had.*
   >
   > **AS SHIPPED (`b0c42da`) THE BOUNDARY IS ENFORCED FOUR WAYS, and the fourth is the one that matters most
   > here.** `tests/vim/test_package_purity.py` checks: **(1)** no forbidden import statement anywhere in the
@@ -4846,6 +5273,37 @@ This is the boundary an implementer will otherwise cross by reflex, so it is sta
   > static scan cannot see. *A boundary rule that only forbids the `import` line is a boundary rule an
   > `import` inside a function walks straight through* — and this particular boundary is the one the design
   > argues from hardest, so it is the one that had to be checked at runtime.
+
+##### The Command-mode caret is ON a character, and it is PAINTED (`de75617`)
+
+**The two editing modes have different caret models, deliberately, and neither may be harmonised into the
+other.** Edit mode's caret sits **between** characters and must be able to rest **after** the last one —
+that is where `a`, `A` and ordinary typing put it. Command mode's caret sits **on** a character, which is
+what makes `%` match the bracket the user can see under it and what gives `y%` both brackets.
+
+- **The clamp is `_vim_clamp_caret_to_character()`**, and it runs at exactly three points: **entering**
+  Command mode (a caret Edit mode legitimately parked past the last character is pulled back), after
+  **every** resolved command, and after an **operator** — **except when the operator is `c`**, which lands
+  in Edit mode by definition and where the trailing position is correct. It preserves an active selection
+  (`KeepAnchor` when one exists), so clamping never silently shrinks a range.
+- **⚠ THREE SHIPPED ASSERTIONS ARE REVERSED HERE (ledger §28): `$` and `l` no longer rest past the last
+  character in Command mode.** The reversal is in the **caret**, not in the motions: `l` still computes
+  `min(line_end, position + count)` and `$` still resolves to `line_end` — the newline offset — so
+  **`d$`, `D` and `x` still take the newline exactly as before**. What changed is that the clamp then pulls
+  the *resting* caret back one. *A motion's endpoint and a caret's resting place are two different
+  questions, and merging them would have made `d$` stop deleting the line ending.* Edit mode is untouched,
+  and a test pins each half against the other.
+- **It is painted, not configured** — `VimModeMixin.paintEvent` over `_vim_block_caret_rect` /
+  `_vim_paint_block_caret`, suppressed when the editor is not in Command mode or is read-only. **Not
+  `setCursorWidth`** (a fixed width is wrong on any glyph that is not one space wide — and `setCursorWidth`
+  appears nowhere in the package) and **not an `ExtraSelection`**, because `XmlEditor` funnels *every* extra
+  selection through **one** `_refresh_extra_selections` → `setExtraSelections` call and a second writer
+  would fight it. *A paint pass owns nothing and clobbers nothing*, which is why it is the only mechanism
+  that composes with a funnel it does not control.
+- **The colours are `theme.py`'s, never the mixin's** — `command_caret_colors(light)` over
+  `_COMMAND_CARET_LIGHT` / `_COMMAND_CARET_DARK`, a per-theme (block, text) pair beside the app's other
+  theme values, with a test asserting **`vim_mode.py` declares no caret colour of its own**. This is §18.7's
+  *no second colour table* rule applied a third time.
 
 ##### The clipboard — ONE shared SYSTEM clipboard, no vim registers
 
@@ -4939,8 +5397,9 @@ This is the boundary an implementer will otherwise cross by reflex, so it is sta
 | Excluded | Why, in one line |
 |---|---|
 | **ALL file/buffer/window operations** — `:w :q :wq ZZ :e :bn :bp`, `Ctrl-W` splits, tab commands | Save/close/tab-switch stay 100% the app's own mechanisms. **`Ctrl+S` is deliberately dead app-wide** (FQ-020) and **`Ctrl+W` is deliberately unbound** (§27's third chord category) — a `:w` reflex would reinstate by the side door precisely the wrong-target save FQ-020 deleted. Save is reachable through the `:` palette as the app's own `Deployment ▸` action. **This also removes `Ctrl-W` from the collision map entirely** |
-| vim **visual mode** and blockwise `Ctrl-V` | selection is Windows-native (above); and `Ctrl+V` is paste, reserved |
-| **text objects** (`ciw`, `di"`), registers, macros, `.` repeat, marks, `:s///` | deferred. Text objects are the one deferred item with a shipped-dependency story: FQ-034's `structure_chain` (above) |
+| vim **visual mode** and blockwise `Ctrl-V` | **STILL EXCLUDED, and still for the original reason** — selection is Windows-native, and `Ctrl+V` is paste, reserved. *What changed is that the Windows-native way is now the app's own **sticky selection** rather than only `Shift`+motion and the mouse (above); the operators reaching a selection is NOT a visual mode and must not be described as one.* |
+| ~~**text objects** (`ciw`, `di"`)~~ **— the WORD objects are IN** (`e60e0d0`) | **`aw` / `iw` ship** (above), on `vim/words.py`'s own character-class rule. **`di"` / `ci(` and every other delimiter object stay deferred.** *(This row read "**text objects** (`ciw`, `di"`) … deferred. Text objects are the one deferred item with a shipped-dependency story: FQ-034's `structure_chain`" — that dependency story turned out to be **wrong for the word objects**, which needed nothing from `sql/`; ledger §28.)* |
+| registers, macros, `.` repeat, marks, `:s///` | deferred, unchanged |
 | ~~`Ctrl-R`~~ | **NO LONGER EXCLUDED** — `DEC-260810193638` rules it **in**, as Command-mode-only redo. *(This row read "restated below — not merely deferred; it should not be built as specified".)* |
 
 ##### Architecture — one engine, one mixin, and the two things it must NOT do
@@ -5050,7 +5509,16 @@ be given a private copy of something one family already implements.*
   Shortcuts…`. Consequence, stated so it is not filed as a bug: **the vim keys are not rebindable**, for the
   same structural reason `Ctrl+Alt+F` and `Ctrl+Alt+E` are not — and, unlike those, the whole point is that
   they are a *standard* vocabulary, so rebinding them would defeat the feature's own rationale.
-- **It adds no menu entry, no toolbar button and no setting.** There is nothing to pin and nothing to persist.
+- ~~**It adds no menu entry, no toolbar button and no setting.** There is nothing to pin and nothing to
+  persist.~~ **AMENDED (`de75617`; ledger §28): it adds TWO menu entries — `Select ▸ Sticky Selection` and
+  `Select ▸ Line Selection` — and the trap the bullet was guarding is still honoured.** What the bullet was
+  protecting against was a **parallel keymap** and **persisted state**, and neither arrived: the two entries
+  carry **no `setShortcut`** (the bare `v`/`V` in the grammar are the one keyboard host, DEC-012), they
+  persist **nothing**, and their checked state is **re-derived from the active editor** rather than stored —
+  so there is still no *"which editor was in which mode"* map anywhere. *A command form for a gesture that
+  already exists is discoverability; a second binding for it would have been the duplication.* The two are
+  pinnable and rebindable for free through the ordinary menu walk, which is the same accepted trade every
+  keyless entry in the app carries (§27).
 - **It ships no new chord row and no new reservation** — every chord it claims (`Esc`, `Ctrl+R`, `Ctrl+D`,
   `Ctrl+K`, `Ctrl+U`) was **already reserved**, so `RESERVED_SEQUENCES` gained nothing and the ledger test's set
   equality did not move; **a test asserts the reserved set gained no member**, which is the honest way to claim
@@ -5450,10 +5918,11 @@ Schema · Database · Tools · Bookmarks · Generation · Help; see consolidated
 **The Schema menu is Maintenance mode's home menu** (FQ-027, 2026-08-09; §7/§26). Maintenance mode exists
 for *one-off administrative/setup tasks on the app's own schema*, so it is the **only** window-bar menu
 besides the trimmed `File` and `Help` that stays visible there — **whole, all five items**, unchanged in
-behaviour. The launcher's Maintenance column presents just the two **entry** gestures, **`Edit XSD`
-(`schema.edit-xsd`)** and **`Import XSD` (`schema.import-xsd`)**; `Edit AutoXSD`, `Verify XSD` and
-`Export XSD` are reached from the menu once the mode has landed. Nothing about these five actions is
-gated by the mode — the filter hides other menus, it does not alter Schema. *(`Go To XSD` remains a
+behaviour. The launcher's Maintenance column presents the two **Schema entry** gestures, **`Edit XSD`
+(`schema.edit-xsd`)** and **`Import XSD` (`schema.import-xsd`)**, plus — since `19c14c5` — a **third button
+that is not a Schema gesture at all**, `Software settings…` (`settings.software-settings`, §7); `Edit
+AutoXSD`, `Verify XSD` and `Export XSD` are reached from the menu once the mode has landed. Nothing about
+these five actions is gated by the mode — the filter hides other menus, it does not alter Schema. *(`Go To XSD` remains a
 menu-less `Ctrl+L` window action and so cannot be presented by menu path in the launcher.)*
 
 **Editor integration** (mechanics unchanged; source now exclusively `curated.xsd`):
@@ -6225,7 +6694,7 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > | 18.1 Browsing (DDL Explorer) | **Implemented**, including FQ-002 object *creation*. XML cross-refs: the pure layer (`db/routine_refs.py`) shipped; its UI consumer is the remaining gap. |
 > | 18.2 Projects, checkout, markers | **Implemented** (git remains an explicit TBD placeholder). |
 > | 18.3 Deploy workflow & schema diff | **Pieces implemented, flow absent.** `db/schema_diff.py`, `db/migration_gen.py`, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py` all exist and are tested; **nothing reaches any of them** — no menu entries, no caller. |
-> | 18.4 Selection formatter | **SQL engine implemented, core + TWO consumers** (`Ctrl+Alt+F` in the §18.5 tab — with a context-menu item — and in §18.5 D4's console; `[SQL]` Audit refusals wired). **FQ-033's configurable ruleset, keyword casing, `xmlfmt/` XML engine and settings dialog: ALL SHIPPED `061e973`, the `Settings ▸ Autoformatter settings…` menu line `81bf658`** — with ONE seam unwired, the `[XML]` refusal handler. |
+> | 18.4 Selection formatter | **SQL engine implemented, core + TWO consumers** (`Ctrl+Alt+F` in the §18.5 tab — with a context-menu item — and in §18.5 D4's console; `[SQL]` Audit refusals wired). **FQ-033's configurable ruleset, keyword casing, `xmlfmt/` XML engine and settings dialog: ALL SHIPPED `061e973`, the menu line `81bf658`, RE-HOMED as the *Autoformatter* pane of `Settings ▸ Software settings…` `19c14c5`** — and the last seam, the `[XML]` refusal handler, is **WIRED** (`audit_router.XML_PREFIX` → `TO_ACTIVITY`, `MainWindow._report_xml_format_refusal` on all three hosts; verified 2026-08-12). **§18.4 has no unwired seam.** |
 > | 18.5 DDL object editor / apply / sandbox | **Partly implemented.** The editable tab ships, and so do the tab's three destination gestures — since FQ-020 (2026-08-08) surfaced as **`Deployment ▸ Save in Project` / `Run on sandbox` / `Run on quality`** **beside** the *"Deploy this edit…"* picker, which also still ships on three surfaces (`ui/ddl_object_editor.py`, all four Apply-to-Target preconditions enforced), the complete Qt-free sandbox layer (`db/sandbox.py`) and its lifecycle host (`ui/sandbox_controller.py`). **The validate/execute lane ships and is reachable too** (audited 2026-08-09): `db/apply.py`, `db/ddl_check.py`'s ladder **with** the clickable `[Check]` findings channel (D3a), `db/sandbox_query.py` + the D4 SQL console, and the MainWindow wiring (`_wire_ddl_object_apply_seams`). Still absent: the **deployment-script generation** (`Generate Deployment SQL`), and the unwired `sql/statements.py`. |
 > | 18.6 Ctrl+Space completion | **Implemented.** |
 > | 18.7 Two DDL Explorer instances | **Not implemented yet, but being implemented** (FQ-022, 2026-08-08) — still exactly one `BrowserPanel`, one dock tab, one connection today; the design's three open points (menu wording, the session question, reset behaviour) are now settled/recommended in §18.7. |
@@ -6275,10 +6744,14 @@ golden "freshly-added table" oracle; defaults are corpus-derived and **not yet f
 > (`MainWindow`'s `[SQL]` handler). **FQ-033's four parts ALL SHIPPED (`061e973`)** — configurable keyword
 > casing and a bounded break/indent rule set (`sql/format_config.py`), a separate Qt-free `xmlfmt/` XML
 > engine behind the same gesture on the **three** `XmlEditor` surfaces, and the
-> `Settings ▸ Autoformatter settings…` dialog with its `autoformatter` QSettings group
-> (`ui/format_settings.py`, `ui/autoformat_settings_dialog.py`), **reached from `Settings ▸ Autoformatter
-> settings…` since `81bf658`**. **ONE seam is still unwired and is named as pending in §18.4's status banner:
-> the `[XML]` refusal handler, so an XML format refusal underlines its span and files no Audit row** — held
+> autoformatter-settings dialog with its `autoformatter` QSettings group
+> (`ui/format_settings.py`, `ui/autoformat_settings_dialog.py`), **reached from the *Autoformatter* pane of
+> `Settings ▸ Software settings…` since `19c14c5`** *(it was `Settings ▸ Autoformatter settings…` from
+> `81bf658` until then — §7)*. ~~**ONE seam is still unwired and is named as pending in §18.4's status banner:
+> the `[XML]` refusal handler, so an XML format refusal underlines its span and files no Audit row**~~ —
+> **✅ THAT SEAM IS WIRED (verified 2026-08-12): `audit_router.XML_PREFIX` → `TO_ACTIVITY`, and
+> `MainWindow._report_xml_format_refusal` connected to all three `XmlEditor` hosts. §18.4 has NO unwired
+> seam.** *(The struck text was carried in four places; ledger §28.)* It had been held
 > on `audit_router.py`, which the in-flight BUG-060/062 work holds. *(Supersedes the same-day "TARGET DESIGN
 > and NOT YET BUILT" claim and the later "two unwired seams"; ledger §28.)*
 >
@@ -8772,19 +9245,21 @@ whose working copies have pending changes:
 >
 > | Seam | State in the tree | Consequence today |
 > |---|---|---|
-> | `XmlEditor.format_refused(list)` → a `[XML]` Audit handler | **signal defined (`ui/xml_editor.py:461`) and emitted (`:1391`), connected by nothing in `pgtp_editor/`.** `ui/audit_router.py` defines **ten** prefixes and **no `XML_PREFIX`** | an XML format refusal produces the wave underline on the first offending span and **no row anywhere**. The three SQL-side connections exist (`main_window.py:4208`, `:5050`, `:5347` → `_report_ddl_format_refusal`, `_SQL_REFUSAL_PREFIX`); the XML one does not. **Held deliberately, not forgotten:** registering the prefix is a routing decision inside `audit_router.DESTINATIONS`, and that file is held by the in-flight BUG-060/062 work — waiting is cheaper than a dict conflict. §7 describes it as *reserved but not registered*; the feature-tester's xfail for it stands |
+> | `XmlEditor.format_refused(list)` → a `[XML]` Audit handler | **✅ CLOSED (verified by name 2026-08-12).** `ui/audit_router.py` defines **`XML_PREFIX = "[XML]"`** with the `DESTINATIONS` entry `XML_PREFIX: TO_ACTIVITY` — **eleven** prefixes — and `MainWindow._report_xml_format_refusal` is connected to **all three** `XmlEditor` hosts, the draft fragment reaching it through `center_stage.py` | an XML format refusal now underlines the first offending span **and** files an `[XML]` Activity Log row. *(This row read: signal **"connected by nothing in `pgtp_editor/`"**, `audit_router.py` defines **"ten** prefixes and **no `XML_PREFIX`"**, held deliberately while BUG-060/062 were in flight. That wait ended; the row is retired — ledger §28.)* |
 >
-> Do not read that row as a design change: parts C and D below are the design, unchanged, and this is the
-> last wiring step of it.
+> Do not read that row as a design change: parts C and D below are the design, unchanged, and this **was**
+> the last wiring step of it — **§18.4 now has no unwired seam.**
 >
-> ✅ **The other seam is CLOSED (`81bf658`): `Settings ▸ Autoformatter settings…` EXISTS and reaches the
-> dialog.** `_build_settings_menu` adds it as `menu.addAction(AUTOFORMAT_MENU_LABEL)` — the label imported
-> from `ui/autoformat_settings_dialog.py` as `MENU_LABEL`, so the string is not re-typed — wired to
-> `open_autoformat_settings(self, settings=self._settings)`, held as `self._autoformat_settings_action`, with
-> **no shortcut** (DEC-006, the menu's own rule) and **deliberately not in `DEFAULT_TOOLBAR_IDS`**. The menu
-> itself is now held as `self._settings_menu` so the mode filter and the tests reach it by name rather than
-> hunting `menuBar().actions()`, matching `_file_menu`; both new names were added to `EXPECTED_HOST_SURFACE`
-> on purpose, and the feature-tester's xfail was **removed rather than left to xpass silently**. **So the
+> ✅ **The other seam is CLOSED, and its DOOR has since MOVED.** It closed at `81bf658` as
+> `Settings ▸ Autoformatter settings…` — a `_build_settings_menu` entry whose label was imported from
+> `ui/autoformat_settings_dialog.py::MENU_LABEL` — and **`19c14c5` replaced that entry with the
+> *Autoformatter* pane of `Settings ▸ Software settings…`** (`FQ-260812002827`, §7; ledger §28). So
+> `self._autoformat_settings_action` and the id `settings.autoformatter-settings` are **gone**, and
+> `MENU_LABEL` in that module is now imported by nothing. **What is unchanged is everything that made the
+> seam closed:** the dialog is reachable, carries **no shortcut** (DEC-006, now as the one `Settings`
+> entry's rule), and is **not in `DEFAULT_TOOLBAR_IDS`**. The menu is still held as `self._settings_menu` so
+> the mode filter and the tests reach it by name rather than hunting `menuBar().actions()`, matching
+> `_file_menu`, and the feature-tester's xfail was **removed rather than left to xpass silently**. **So the
 > configurable surface is live in the product**: `Settings` is Maintenance-only, so *reaching* the dialog
 > means entering Maintenance mode or pinning the command, but a saved config then applies in every mode,
 > because the engines read `QSettings` at gesture time and know nothing about workflow modes.
@@ -9346,16 +9821,22 @@ row saying *"this XML selection is mis-nested"* is a lie to the user**, and rath
 SQL-ish prefix"* rule does not bite: an XML reindenter is not SQL-ish — the same reasoning §7 already
 records for `[Bookmark]`.
 
-> **⏳ THIS HALF IS NOT WIRED YET, and the gap is user-visible: an XML format refusal is SILENT.**
-> `XmlEditor.format_refused(list)` is defined (`ui/xml_editor.py:461`) and emitted (`:1391`), the editor's
-> own comment already names the `[XML]` treatment, and the panel underlines the **first** offending span —
-> but **no production connection exists** and `ui/audit_router.py` carries **no `XML_PREFIX` and no
-> `DESTINATIONS` entry for it** (ten prefixes ship; `[XML]` would be the eleventh). Two steps close it, and
-> they are one commit: register the prefix constant beside `SQL_PREFIX` with `TO_ACTIVITY`, and connect the
-> signal at each of the three `XmlEditor` construction sites in `ui/center_stage.py` the way
-> `main_window.py:4208/:5050/:5347` already connect the two SQL panels to `_report_ddl_format_refusal`.
-> **Do not "solve" it by routing XML refusals through `_SQL_REFUSAL_PREFIX`** — that is precisely the lie
-> the paragraph above rules out.
+> **✅ WIRED — the seam is CLOSED, and this banner is retired (verified by name 2026-08-12).**
+> `ui/audit_router.py` carries **`XML_PREFIX = "[XML]"`** and its `DESTINATIONS` entry
+> **`XML_PREFIX: TO_ACTIVITY`** — the eleventh prefix, exactly as specified; `MainWindow` defines
+> `_report_xml_format_refusal` and connects **all three** `XmlEditor` hosts to it (Raw XML, Edit XSD and the
+> `CenterStage` aggregator, with the FQ-006 draft fragment reaching it through `center_stage.py`'s
+> connection). **It was closed in the two steps and the one shape this block asked for, and it did NOT route
+> through `_SQL_REFUSAL_PREFIX`** — the lie the paragraph above rules out was not committed.
+>
+> *(⚠ This banner read **"⏳ THIS HALF IS NOT WIRED YET, and the gap is user-visible: an XML format refusal
+> is SILENT … no production connection exists and `ui/audit_router.py` carries no `XML_PREFIX`"**, and it was
+> carried in FOUR places — here, §18.4's status banner's seam table, §18's status table and the TOC. **This
+> is the ELEVENTH consecutive pass to find a "not yet built" claim over shipped work, and the first found by
+> a re-verification the pass ran on a claim it was merely INHERITING rather than writing.** The lesson is
+> narrower than the previous ten and worth stating: *an absence you did not write is not an absence you may
+> repeat — a banner is a claim about the tree the moment it is read, not the moment it was authored.*
+> Ledger §28.)*
 
 **A read-only XML buffer is not a refusal — it reuses the mechanism that already exists.** Raw XML is
 read-only under Caption Mode (§13) and Compare/Merge mode (§12), and since FQ-021 those reasons are a
@@ -9365,9 +9846,20 @@ refusal channel and no `[XML]` row**: the app already has one answer to *"you ca
 and the reasons are already on screen. Selection-less `Ctrl+Alt+F` stays a **silent no-op**, matching both
 SQL hosts.
 
-##### D. `Settings ▸ Autoformatter settings…` — the one place all of this is configured
+##### D. The **Autoformatter** pane of `Settings ▸ Software settings…` — the one place all of this is configured
 
-> **FULLY SHIPPED AND REACHABLE (`061e973` + `81bf658`).** The dialog and its persistence
+> **⚠ RE-HOMED 2026-08-12 (`FQ-260812002827`, `19c14c5`; ledger §28). The standalone
+> `Settings ▸ Autoformatter settings…` MENU ENTRY IS GONE**, and with it the command id
+> `settings.autoformatter-settings`. The dialog itself is unchanged and is now the **Autoformatter pane** of
+> the consolidated Software settings dialog (§7), built by
+> `autoformat_settings_dialog.build_autoformat_settings_pane`. **Everything below about what it configures,
+> how it persists, and the DEC-001 boundary is unchanged and still current** — what moved is the door.
+> Rules 1–3 below survive verbatim in substance: the entry still carries **no shortcut** (now as a property
+> of the one `Settings` entry, so the rule is enforced on strictly fewer actions), and the pinnability and
+> rebindability trades now attach to `settings.software-settings`. *(Housekeeping owed elsewhere:
+> `ui/autoformat_settings_dialog.py::MENU_LABEL` is now imported by nothing — see the pass report.)*
+>
+> *(Previous banner:)* **FULLY SHIPPED AND REACHABLE (`061e973` + `81bf658`).** The dialog and its persistence
 > (`ui/autoformat_settings_dialog.py`, `ui/format_settings.py`; tested by
 > `tests/ui/test_autoformat_settings_dialog.py`, `tests/ui/test_format_settings.py`,
 > `tests/ui/test_autoformat_host_wiring.py`) landed first, and the menu line landed in `81bf658` —
@@ -9385,7 +9877,12 @@ SQL hosts.
 A dialog reached from the window bar's **`Settings`** menu, which **ships** (`_build_settings_menu`,
 `229dc11`) and was built as a menu rather than a lone action **precisely so this could be its second
 tenant** (§18.9 says so explicitly, and `_build_settings_menu`'s docstring names *"a formatter ruleset"*).
-Adding it is one `addAction` line; nothing about it is entangled with the snippet lane.
+~~Adding it is one `addAction` line; nothing about it is entangled with the snippet lane.~~ **Since
+`19c14c5` the door is one step further in — the `Settings` menu's single `Software settings…` entry, whose
+`Autoformatter` pane is this dialog (§7). The "second tenant" reasoning is not retracted:** it is why the
+container existed at all, and the same shape then absorbed four tenants for one `addAction`'s worth of
+change. **It is still not entangled with the snippet lane** — the two are sibling entries in one `SETTINGS_PANES`
+table and neither knows about the other.
 
 **It inherits the whole `Settings` contract, and both halves are load-bearing. State them here so the
 implementer does not rediscover them:**
@@ -9568,10 +10065,15 @@ design was right in substance, wrong in three names):**
 9. **`indent_unit_for(width, use_tab)` and the four MIN/MAX constants are part of the shipped surface** —
    the bounds the dialog's spin boxes read, so the UI and the loader cannot disagree about the domain.
    Part C's XML indent width **shares the same 1–8 pair** while its default lives in `xmlfmt/config.py`.
-10. **Two seams shipped unwired** — the `Settings` menu line and the `[XML]` refusal handler. They are
-    stated in this subsection's status banner and in part C/D's own blocks rather than being written as if
-    they were done, because a spec that describes an unreachable dialog as reachable is worse than one that
-    omits it: the omission gets found, the false claim gets trusted.
+10. **Two seams shipped unwired — and BOTH ARE NOW CLOSED** (the `Settings` menu line at `81bf658`, its
+    door re-homed at `19c14c5`; the `[XML]` refusal handler verified wired 2026-08-12). They were stated in
+    this subsection's status banner and in part C/D's own blocks rather than being written as if they were
+    done, because a spec that describes an unreachable dialog as reachable is worse than one that omits it:
+    the omission gets found, the false claim gets trusted. **The practice worked and its cost is now
+    visible too: an honest "not wired" banner becomes a dead assertion the moment the wiring lands, and the
+    `[XML]` one survived in FOUR places for longer than it was true** (ledger §28). *State an absence
+    precisely, and re-check it every pass — the same discipline that makes it worth writing makes it
+    expensive to leave.*
 
 ### 18.5 The DDL object editor, apply & sandbox validation
 
@@ -13424,7 +13926,19 @@ one snippet and must collide rather than shadow each other.
 **`CodeEditor.set_snippets(snippets)` is the seam it attaches to, unchanged** (`None` restores the
 defaults) — the store is a producer for a seam that already existed, not a new path into the editor.
 
-##### Where it is invoked from: `Settings ▸ Edit Snippets…`, the app's first Maintenance-only menu
+##### Where it is invoked from: the **Snippets** pane of `Settings ▸ Software settings…`
+
+> **⚠ RE-HOMED 2026-08-12 (`FQ-260812002827`, `19c14c5`; ledger §28). The standalone
+> `Settings ▸ Edit Snippets…` MENU ENTRY IS GONE**, and with it the command id `settings.edit-snippets`. The
+> editor widget is unchanged and is now the **Snippets pane** of the consolidated Software settings dialog
+> (§7), built by `SnippetController.build_editor` — whose **Ok-writes / Cancel-writes-nothing scratch-copy
+> contract is exactly what the host relies on**, and whose dependence on Qt emitting `accepted` before
+> `finished` is the ordering the host's rebuild-on-`finished` mechanic was designed around. Everything below
+> about the store, DEC-001, the no-shortcut rule and the pinnability/rebindability trades stands; the trades
+> now attach to `settings.software-settings`.
+>
+> *(Previous heading: **`Settings ▸ Edit Snippets…`, the app's first Maintenance-only menu**. The menu is
+> still the app's first Maintenance-only menu and still holds exactly one entry — a different one.)*
 
 **A new top-level window-bar menu, `Settings`, visible ONLY in Maintenance mode** — see §7's Maintenance
 block and §26 for the mechanism, which is the **inverse** of the existing filter applied by the **same
@@ -13442,6 +13956,14 @@ rather than a property of one entry.** Hiding a top-level `QMenu` does **not** d
 "prevented"*), so a chord on a Maintenance-only entry would open the dialog from outside the mode — the
 one place the mode's own framing would actually be false. Two tests pin it, one of them recursively over
 submenus (`tests/ui/test_edit_snippets_menu.py`).
+> **Naming note, so a reader is not sent looking for a file that describes something else:
+> `tests/ui/test_edit_snippets_menu.py` KEPT ITS NAME and CHANGED ITS SUBJECT** (`19c14c5`). It now owns the
+> **one-entry `Settings` menu** — `test_settings_is_a_top_level_menu_holding_ONE_entry`, the two recursive
+> no-shortcut guards (`test_no_settings_command_carries_a_keyboard_shortcut` /
+> `…_at_any_depth_carries_a_shortcut`), `test_the_command_is_enumerated_and_therefore_pinnable`,
+> `test_nothing_else_reaches_the_editor`, and
+> `test_triggering_the_entry_opens_the_editor_as_a_settings_PANE`. **Every guarantee this section and §18.4
+> part D cite is still pinned there**; what moved is which command the guarantees are about.
 
 **The accepted trade, recorded so it is not re-discovered as a defect: the hidden action is still
 PINNABLE.** `ToolbarController._walk_menu_actions` never tests `isVisible()` (§7), so `Edit Snippets…`
@@ -13890,11 +14412,17 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   non-checkable focus entries, `Activity Log` and `Messages`**, each revealing the dock and selecting its tab (a tab is either
   in view or not; there is no third posture to check), ☑ Raw XML Panel (checked by
   default), — , Expand All, Collapse All, — ,
-  ☐ Light Theme, — , Customize Toolbar… (opens the toolbar customization dialog, §7),
-  **Customize Shortcuts…** (FQ-012, 2026-08-09 — the rebinding dialog, §27; deliberately a **second
-  single-purpose customization dialog** here rather than the start of a general Preferences container, and
-  **not** the dead `Edit ▸ Preferences…` stub, which the Edit menu's dissolution deleted). The **dock**
-  checkboxes (Project Tree / Properties Panel / the bottom findings-journal dock) are bidirectional — closing a dock
+  ☐ Light Theme. **The menu ENDS THERE since `19c14c5`.**
+  > **~~Customize Toolbar…~~ and ~~Customize Shortcuts…~~ ARE GONE FROM THIS MENU** (`FQ-260812002827`,
+  > 2026-08-12; ledger §28). Both are now **panes of `Settings ▸ Software settings…`** — see §7's Software
+  > settings block for the relocation, its cost (both were reachable at **any** time and are now
+  > **Maintenance-only**), and why the four absorbed command ids get **no `RENAMED_ID_ALIASES` rows**.
+  > *(The 2026-08-09 note calling `Customize Shortcuts…` "deliberately a **second** single-purpose
+  > customization dialog here rather than the start of a general Preferences container" is superseded in
+  > substance: the container arrived, by owner ruling, and it is not `Preferences` — the dead
+  > `Edit ▸ Preferences…` stub the Edit menu's dissolution deleted is still deleted and was never its
+  > ancestor.)*
+  The **dock** checkboxes (Project Tree / Properties Panel / the bottom findings-journal dock) are bidirectional — closing a dock
   by its title-bar ✕ unchecks the menu item (BUG-007, §7). **The former ☐ "Find table reference" checkable
   is gone** (FQ-003, 2026-08-06) — table references are a sub-branch of the Database ▸ Database/XML
   Coherence view (§17), not an independently toggleable panel.
@@ -14082,19 +14610,25 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   exists to fix.
 - **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
   Own PHP), rePHPgen (Analyze Gap), Save reJSON…, Locate panGen Runtime….
-- **Settings — NEW, and MAINTENANCE-MODE ONLY** (FQ-030 final slice, `229dc11`; `_build_settings_menu`,
-  built between `Generation` and `Help`): **`Edit Snippets…`** and, since `81bf658`,
-  **`Autoformatter settings…`** — **two entries**, which is the menu vindicated: it was built as a menu
-  rather than a lone action precisely because FQ-033 was anticipated as a second tenant, and the second
-  tenant cost exactly the one `addAction` line predicted. Its label is **imported** from
-  `ui/autoformat_settings_dialog.py::MENU_LABEL` (aliased `AUTOFORMAT_MENU_LABEL`) rather than re-typed here,
-  so the menu row, the derived id `settings.autoformatter-settings` and the dialog cannot drift apart. The
-  menu is held as `self._settings_menu` and both actions as `self._edit_snippets_action` /
-  `self._autoformat_settings_action`. It is the app's first **maintenance-only** menu,
-  carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list **inside the
-  same visibility loop** (§7). **No entry on this menu carries a shortcut**, by rule, because hiding a
-  `QMenu` leaves its children's chords live (DEC-006) — see §18.9 for the store, the dialog, and the
-  accepted **pinnability *and* rebindability** trades.
+- **Settings — MAINTENANCE-MODE ONLY, and since `19c14c5` it holds EXACTLY ONE ENTRY:
+  `Software settings…`** (`_build_settings_menu`, built between `Generation` and `Help`; held as
+  `self._settings_menu`, the action as `self._software_settings_action`). The label is **imported** from
+  `ui/software_settings_dialog.py::MENU_LABEL` rather than re-typed here, so the menu row, the derived id
+  and the dialog cannot drift apart; the ellipsis is **U+2026**, which is why `command_id_for` — whose
+  `normalize_label` strips a trailing `…` or `...` — derives **`settings.software-settings`**. It is the
+  app's first **maintenance-only** menu, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the
+  existing survivor list **inside the same visibility loop** (§7). **No entry on this menu carries a
+  shortcut**, by rule, because hiding a `QMenu` leaves its children's chords live (DEC-006).
+  > **~~`Edit Snippets…`~~ and ~~`Autoformatter settings…`~~ ARE NO LONGER STANDALONE ENTRIES**
+  > (`FQ-260812002827`, 2026-08-12; ledger §28) — they are **panes** of the one dialog, together with the two
+  > surfaces that left `View`. *(This bullet read **"two entries, which is the menu vindicated: it was built
+  > as a menu rather than a lone action precisely because FQ-033 was anticipated as a second tenant"**. The
+  > menu is back to one action — but that vindication is **not** retracted, it is **strengthened**: the shape
+  > that let a second tenant cost one `addAction` line is the same shape that let four tenants collapse into
+  > one entry without touching the mode filter, the walk, or DEC-006's rule. A `QMenu` with one child is a
+  > container that can take a fifth.)* The command id **`settings.autoformatter-settings` no longer exists**,
+  > and neither do `settings.edit-snippets`, `view.customize-toolbar` or `view.customize-shortcuts` — see
+  > §7's Software settings block for why **none of the four gets an alias row**.
 - **Help:** Manual (F1), Open Log Folder, About. **`Manual` (F1) must never be filtered out of any launch
   mode** (§7) — otherwise the app can hide the only documentation explaining why commands are missing.
   The whole `Help` menu is therefore visible in Maintenance mode (below).
@@ -14190,6 +14724,27 @@ pair by active tab kind.
   the per-*instance* predicate `supports_structural_expansion()`, so it is live on the SQL editors and
   **hidden — never greyed — on PHP/JS tabs**, which is still what kills `Ctrl+Shift+A` there. The full
   contract, including why the two halves are hosted by different mechanisms, is in **§8**.
+  **SIX ENTRIES SINCE `de75617` — a second separator and the two sticky-selection toggles** (`FQ-260812000331`,
+  §8; ledger §28). Real build order in `_build_select_menu`: `Select All` · ⎯ · `Select Enclosing Block` ·
+  `Expand Selection` · `Shrink Selection` · ⎯ · ☑ **`Sticky Selection`** · ☑ **`Line Selection`**. Pinnable
+  ids `select.sticky-selection` / `select.line-selection`, derived like every other.
+  - **Neither carries a `setShortcut`, and that is a rule rather than an omission.** Both gestures are
+    already answered as the bare **`v` / `V`** keys inside the Command-mode grammar, and **DEC-012 gives a
+    command with a command form exactly ONE keyboard host** — that host is the `v`/`V` answer. A chord here
+    would be a second one, with the usual consequence that the two can disagree about which is *the*
+    binding. **Nothing joins `RESERVED_SEQUENCES` and no `docs/KEYBINDINGS.md` row is owed**, for the reason
+    that register already states for `u`: a **bare letter** inside the vim grammar is not a chord, is
+    invisible to `classify_editor_chord`, and has nothing to reserve. *(A test asserts both shortcuts are
+    empty **and** that `"V"` is not in `RESERVED_SEQUENCES`, which is the honest way to claim the absence.)*
+  - **Checkable, with the check mark NEVER authoritative.** They toggle one piece of per-editor state
+    (`VimModeMixin.sticky_selection_mode`) that `v`/`V` also write, so `_refresh_sticky_selection_actions`
+    **re-derives** both check marks from `active_selection_editor()` on `menu.aboutToShow` — and `triggered`
+    rather than `toggled` is connected, so re-deriving can never itself fire the command. *A checkbox that
+    stores its own copy of a state something else writes is a checkbox that lies.*
+  - **Both are HIDDEN — never greyed — on a read-only editor**, because the mixin refuses sticky keys there
+    (§8's *vim ⊆ editable editors*). This is §7's rule A, and `aboutToShow` is the refresh trigger rather
+    than `currentChanged` **because read-only-ness flips at runtime without a tab change** (Caption Mode,
+    Compare/Merge), which the tab-driven `_refresh_editor_menu_affordances` would miss.
 - **Parsing — FOUR members, gated by ACTIVE TAB KIND** (BUG-039, settled 2026-08-09; ledger §28). Built
   once in `_build_parsing_menu`, only `setVisible`-toggled:
 
@@ -14280,16 +14835,21 @@ pair by active tab kind.
 shows **nothing — the whole bar widget is hidden** (`_refresh_editor_menu_affordances`), which is exactly
 the recorded recommendation and what the visibility refresh gives for free. Hiding the *widget* rather than
 its actions is deliberate: a pinned toolbar button is the menu's own QAction and would otherwise vanish with
-it. **Actions — rather than the widget — are hidden in exactly four places on this bar**
-(status-corrected 2026-08-10): `Select ▸ Select Parent Block` (FQ-015), the **`Deployment` menu's per-tab
+it. **Actions — rather than the widget — are hidden in exactly FIVE places on this bar**
+(status-corrected 2026-08-12): `Select ▸ Select Parent Block` (FQ-015), the **`Deployment` menu's per-tab
 members** (FQ-020), **all four `Parsing` members** (BUG-039) — which *is* a default button and was accepted
-by owner ruling (§7) — and **`Navigation`'s three mode-only Compare/Merge members** (FQ-021 third leg,
-`1ccfe9d`), none of which is a default button. *(Supersedes "exactly three places … `Navigation`'s three
-mode-only members are NOT among them: that FQ-021 leg did not ship".)* `Navigation`'s **five bookmark
-members remain unconditionally visible** — they are per-editor, not per-mode.
+by owner ruling (§7) — **`Navigation`'s three mode-only Compare/Merge members** (FQ-021 third leg,
+`1ccfe9d`), and **`Select`'s two sticky-selection toggles on a read-only editor** (`FQ-260812000331`,
+`de75617`), none of which is a default button. *(Supersedes "exactly three places …" and then "exactly four
+places …".)* **The fifth is the only one refreshed on `aboutToShow` rather than on a tab change**, and the
+reason is stated where it is specified: its gate (`isReadOnly()`) flips without a tab change.
+`Navigation`'s **five bookmark members remain unconditionally visible** — they are per-editor, not per-mode.
 
-> **FQ-012 is FOLDED IN and SHIPPED** (2026-08-09, ledger §28): *Customize Shortcuts…* is a real View-menu
-> entry (above) and §27's table now reads as **rebindable defaults**, not fixed bindings. The FQ-016 ruling
+> **FQ-012 is FOLDED IN and SHIPPED** (2026-08-09, ledger §28): the rebinding surface is real and §27's
+> table now reads as **rebindable defaults**, not fixed bindings. *(It was a `View`-menu entry until
+> `19c14c5`; it is now the **Keyboard shortcuts** pane of `Settings ▸ Software settings…` — §7. The
+> reconciliation below is unaffected: it turns on `collect_menu_commands()`'s enumeration, which is the
+> dialog's input and has nothing to do with where the dialog is opened from.)* The FQ-016 ruling
 > it had to be reconciled against held exactly as predicted: `F3` — like `Ctrl+L`, `Ctrl+Alt+F`,
 > `Ctrl+Return`, `Ctrl+Space` and `Ctrl+G` — is a bare window-level shortcut with **no menu entry**, so it
 > falls outside `collect_menu_commands()`'s enumeration and into the dialog's reserved-rows carve-out.
@@ -14495,7 +15055,7 @@ has no other document to mean (ledger §28). **Window-level, NOT bar-local:** th
 | *(no shortcut, deliberately)* | **Next Difference** / **Previous Difference** / **Apply Changes to Target** | **Editor menu bar ▸ `Navigation`, MODE-ONLY** — visible only inside Compare/Merge mode, hidden by `set_diff_mode_members_visible` otherwise (FQ-021 third leg, shipped `1ccfe9d`; status-corrected 2026-08-10). Off `Tools` entirely. `Prev Difference` is **relabelled `Previous Difference`**, and because the label is the id's last segment the ids are `navigation.next-difference` / `navigation.previous-difference` / `navigation.apply-changes-to-target`, reached from the old `tools.*` ids through `RENAMED_ID_ALIASES` |
 | ~~*(no shortcut — and NO GESTURE AT ALL)*~~ | ~~**Apply Changes to Target** is unreachable~~ | **ROW RETIRED — the regression is CLOSED.** It was real, lasted from FQ-020 until `1ccfe9d`, and was found by spec harmonization rather than by a test, which is why the fact is kept rather than deleted. FQ-021's third leg shipped and rehomed the command onto the mode-only `Navigation` menu — see the row **above**, which is now the live one. *(This row directly contradicted its own neighbour for a day; that is what a status-accuracy pass looks like when only half of it lands.)* |
 | *(no shortcut, deliberately)* | **Add Trigger…** / **New Function/Procedure…** / the **twelve `Alter Table ▸`** operations (eight column + four constraint) | DDL Explorer tree context menus (table node / "Functions & Procedures" root / a **column leaf**) and, for the routine one, **Database ▸ New Function/Procedure…** (§18.1 — FQ-002 **implemented** 2026-08-06; FQ-025 slices 1 and 2 **implemented** 2026-08-09; slice 3's six further operations are **not yet on any menu**, so they have no row here). All of them are dialog-gated and write **nothing** to a database — they only open a §18.5 editor tab on generated text — so the reason for withholding a shortcut is menu-hygiene, not the irreversible-outward-effect rule above. **None of the `Alter Table ▸` entries is a menu-bar action**, so like `F3`/`Ctrl+L` they fall outside `collect_menu_commands()` and are neither pinnable nor rebindable (below). |
-| *(no shortcut, deliberately — as a RULE, not per entry)* | **Every entry on the `Settings` menu** — **both** of them: `Edit Snippets…` and **`Autoformatter settings…`** (`81bf658`, §18.4 part D). The rule was applied to the new entry at the point it landed, which is the whole reason it is written as a property of the menu rather than of one action | The window bar's **Maintenance-only** `Settings` menu (FQ-030 final slice, `229dc11`; §18.9/§26). The reason is structural rather than stylistic: **hiding a `QMenu` does not disable its children** (DEC-006), so a chord on a maintenance-only entry would open its dialog from **outside** the mode the entry exists inside. This applies to every future entry on this menu and to any future maintenance-only menu. Two tests pin it, one recursively over submenus — so a new entry is covered automatically. **It is a rule about what the app SHIPS, not an enforcement guarantee:** the same `collect_menu_commands()` walk that makes these entries pinnable also lists them in `Customize Shortcuts…` with an empty default, so a user may bind one deliberately (§18.9, §18.4 part D rule 3) |
+| *(no shortcut, deliberately — as a RULE, not per entry)* | **Every entry on the `Settings` menu** — since `19c14c5` that is **exactly one**, **`Software settings…`** (§7). *(This cell read "**both** of them: `Edit Snippets…` and `Autoformatter settings…`"; both are now panes of that one dialog and their ids no longer exist — ledger §28. **The rule did not weaken by shrinking**: it is still a property of the menu, so it covers a second tenant the day one arrives.)* | The window bar's **Maintenance-only** `Settings` menu (FQ-030 final slice, `229dc11`; §7/§26). The reason is structural rather than stylistic: **hiding a `QMenu` does not disable its children** (DEC-006), so a chord on a maintenance-only entry would open its dialog from **outside** the mode the entry exists inside. This applies to every future entry on this menu and to any future maintenance-only menu. Two tests pin it, one recursively over submenus — so a new entry is covered automatically. **It is a rule about what the app SHIPS, not an enforcement guarantee:** the same `collect_menu_commands()` walk that makes the entry pinnable also lists it in the *Keyboard shortcuts* pane with an empty default, so a user may bind it deliberately (§18.9, §18.4 part D rule 3) |
 | *(no shortcut, deliberately)* | **Database/XML Coherence** (checkable) | Database menu (§17/§26, FQ-003, **implemented** 2026-08-06). It replaces three previously unshortcut entry points — Check: XML→Database, Check: Database→XML and View ▸ Find table reference — none of which carried a shortcut either, so nothing is lost; the merged view is read-only and reached by toggle, not by keystroke |
 | Escape | **SIX meanings, in ONE stated precedence order — §8 owns the table** | The order, verified by name 2026-08-10, **all of it shipped (`b0c42da`)**: **(1)** the **completion popup** is open → dismiss it (`_CompletionPopup.keyPressEvent`); **(2)** focus is in a `FindReplaceBar` → **return focus to the document, never hide** (FQ-016/FQ-017 — both bars used to hide, both are now permanent), and the caption bar's twin returns focus to the **grid**; **(3)** the editor is in **tab-stop mode** → abandon the walk (§18.9); **(4)** an **editable** editor in **Edit mode** → **enter Command mode** (FQ-032, §8); **(4′)** in Command mode → discard any pending count/operator and **stay**; **(5)** a **read-only** editor → **nothing at all**, because FQ-032's layer is inactive there; **(6)** a `QDialog` with no narrower answer → Qt's **cancel** (the launcher **swallows** it when undismissable). **Rows 1 and 2 need no arbitration against row 4 — that is a fact about focus, not a rule:** `_popup_at_caret` calls `popup.setFocus()`, so the editor never sees the key while the popup is up, and a bar field is a different widget. **The order is enforced by WHERE each host CALLS `handle_command_mode_key`, not by a dispatcher** (§8's ⚑ deviation). **Row 6 versus row 4 was the one real collision and it is RULED, not flagged:** `DEC-260810193639` gave `CodeEditorDialog` Command mode, and the **two-press escape** ruling (owner, 2026-08-10, **built**) gives that dialog **row 6 on the second press** — `Esc` in Command mode **with nothing pending** rejects it, through the mixin's one opt-in `set_command_mode_escape_fallback` hook. *(This cell read **"is the one real collision and is FLAGGED (§29) … recommended answer, the vim layer is **inactive in that dialog**"** — a dead assertion **contradicting the `Return`/`Escape` row two rows below it**, which stated the ruling. Ledger §28.)* |
 | Ctrl+G | Go to line in XML | Caption grid |
@@ -14510,13 +15070,24 @@ needs joins the **existing** per-tab dispatchers rather than adding shortcuts: `
 `active_bookmark_editor()` each gain one branch. *(The third dispatcher it used to extend,
 `_save_active_tab()`, is **deleted** — FQ-020, §7.)*
 
-### User-rebindable shortcuts — *Customize Shortcuts…* (FQ-012, 2026-08-09, ledger §28)
+### User-rebindable shortcuts — the **Keyboard shortcuts** pane of `Settings ▸ Software settings…` (FQ-012, 2026-08-09; re-homed 2026-08-12, ledger §28)
 
 **The bindings above are DEFAULTS, not fixed bindings.** Every shortcut carried by a **menu-bar QAction** may
-be rebound, cleared, reset or restored-to-default by the user through **`View ▸ Customize Shortcuts…`**,
-sibling to *Customize Toolbar…* (§26). What is *unrebindable* is enumerated below and is a short, reasoned
-list — not the whole table. (Superseded: *"Every binding in this table is FIXED — set inline as a literal
-string at each action's construction site, with no central registry and no user-facing rebinding."*)
+be rebound, cleared, reset or restored-to-default by the user. What is *unrebindable* is enumerated below and
+is a short, reasoned list — not the whole table. (Superseded: *"Every binding in this table is FIXED — set
+inline as a literal string at each action's construction site, with no central registry and no user-facing
+rebinding."*)
+
+> **⚠ WHERE IT LIVES CHANGED 2026-08-12 (`FQ-260812002827`, `19c14c5`; ledger §28): ~~`View ▸ Customize
+> Shortcuts…`~~ is GONE from `View` and is now the *Keyboard shortcuts* pane of `Settings ▸ Software
+> settings…`**, beside the *Toolbar* pane it used to be a sibling of (§7). The command id
+> `view.customize-shortcuts` **no longer exists and gets no alias row** — §7 states why. **Nothing about the
+> three-layer split, the command universe, the conflict policy or the persistence below changed**; the
+> dialog is the same `CustomizeShortcutsDialog`, built by `MainWindow.build_customize_shortcuts_pane`.
+> **Two consequences worth naming because they are user-visible:** rebinding is now reachable **only in
+> Maintenance mode** (`DEC-260812004358`, OPEN — §7), and the pane's **non-modality is now the host's
+> property** rather than its own (`DEC-260812004359`, OPEN — the default preserves it, because trying a
+> chord against the live app while the editor is open is what non-modal buys).
 
 **Three layers, and the split is the design.**
 
@@ -14636,8 +15207,13 @@ narrowed. And the register's *Gate* vocabulary still has **no token** for this t
 `dead` and says the rest in its Notes); whether to add one is a separate, smaller call and is **not** decided
 here.
 
-`Customize Shortcuts…` is itself an ordinary menu action, so it enumerates into the walk and is both
-pinnable and rebindable. Being **new**, it needs no `RENAMED_ID_ALIASES` row — that table is for moves.
+~~`Customize Shortcuts…` is itself an ordinary menu action, so it enumerates into the walk and is both
+pinnable and rebindable. Being **new**, it needs no `RENAMED_ID_ALIASES` row — that table is for moves.~~
+**SUPERSEDED 2026-08-12 (`19c14c5`; ledger §28): it is no longer a menu action at all, so it enumerates into
+nothing.** What enumerates is **`settings.software-settings`**, the one command that opens it — pinnable and
+rebindable in its place, with an empty default. And the old id **`view.customize-shortcuts` gets NO
+`RENAMED_ID_ALIASES` row either**, for the reason §7 states: *that table is for moves, and this was an
+absorption* — there is no successor id meaning *"customize the shortcuts"*, so `resolve_ids` drops it.
 
 ---
 
@@ -14865,10 +15441,48 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-12 *(status pass — ⚠ AN **ANSWERED** OWNER DECISION NAMED AN UNBUILDABLE MECHANISM)* | **`DEC-260811023646`'s own letter, and this document repeating it in FOUR places**: §18.5 D4b's commit-semantics opening (*"A Run goes through `db/apply.py::apply_ddl(..., commit=False)`"*), D4b's four-rulings table, D4's *two commit policies* point 2, and D4b's reuse map row (*"`apply_ddl(..., commit=False)` — already spans statements, already takes any `ConnectionParams`, already rolls back"*, with `run_quality_query` *"wrapping it"*) | **THE MECHANISM IS IMPOSSIBLE AND `db/apply.py` WAS NEVER TOUCHED; THE RULING'S OUTCOME SHIPPED EXACTLY AS RULED.** `apply_ddl` **commits or rolls back before returning** — a fact the decision entry itself states two paragraphs after naming it — so it can never hold a transaction open *between* a Run and a later commit gesture, which is the entire content of the ruling. What shipped (`6258349`) is **`db/quality_query.py::QualitySession` over a held-open `QualityConnection`**: one connection, one transaction, N statements, committed only when asked, psycopg 3 out of autocommit so the first `execute` opens a transaction that survives across calls. **No owner return is needed and that judgement is itself the record**: the owner ruled an OUTCOME — run uncommitted, inspect, commit explicitly, taking the strong guard deliberately over the inherited one — and that outcome is what exists. **The durable rule: a decision entry names an OUTCOME authoritatively and a MECHANISM only provisionally; when the two part company, the outcome is the ruling and the mechanism is corrected in the spec.** It is written as a ledger row rather than a quiet edit because *"the decision said `apply_ddl`"* is exactly the shape of half-remembered fact that gets re-implemented — a future reader would go looking in `db/apply.py`, find nothing, and either doubt the spec or "restore" the wrapper. **Also folded from the same commit: the seam's first parameter is a `QualitySession` (the previous pass caught this one itself), and the `isinstance` refusal on both lanes means *"which database can this reach?"* is answerable from one object on each.** |
 | 2026-08-12 *(status pass — the tenth consecutive "not yet built" retirement, and the FEATURE this time, not a detail)* | **§18.5 D4b's entire block as ⏳ target design** — its heading (*"settled 2026-08-11, ⏳ NOT YET BUILT"*), its status banner (*"THE `db/` HALF HAS LANDED; the UI half is in flight … what is not yet in the tree is the menu entry and its presence predicate"*), roughly **twenty ⏳ marks** under it, §18.5 invariant 1's *"three seams … never a fourth"* heading with its ⏳ fourth bullet, §26's *"⏳ A SECOND CONSOLE ENTRY IS COMING"* note, §27's `Ctrl+Return` row (*"the Sandbox tab today; ⏳ the Quality tab too … not yet built"*) and its two ⏳ code-site rows, and §18.7's open question 4 (*"Settled: the tree only"*) | **`FQ-260811020328` SHIPPED IN FULL (`6258349`, 7585 passed / 51 skipped) AND EVERY ONE OF THOSE IS RETIRED.** Verified by name, layer by layer, at the close of this pass rather than its start. **Five things shipped differently or beyond the letter and are folded as the design.** **(1) A FOURTH LIFECYCLE EDGE EXISTS THAT NO RULING NAMED** — the quality target ceasing to resolve (`DISCARD_TARGET_GONE`, `_refresh_quality_console_affordances`), which discards **without asking**, deliberately: *the user did not initiate it and there is no database left to commit to*, so a Yes/No would offer a choice that does not exist. **The rule the four edges share is not "always ask" but NEVER DISCARD SILENTLY** — asking is only how two of them honour it. **(2) The close question got its OWN `confirm_discard` seam**, kept apart from the object-change `confirm` because that one carries a **"don't ask again this session"** checkbox — *an option that must never exist for discarding an uncommitted production transaction, since a remembered Yes would throw work away on every later close.* Two questions with two answer shapes are two seams. **(3) `ui/sql_results_panel.py::run_status_lines(report, *, transactional=False)` splits a sentence that was TRUE ON THE SANDBOX AND FALSE ON PRODUCTION** — *"N earlier statements already ran and COMMITTED (each statement of a Run is its own transaction). Reset Sandbox re-establishes a known state."* — into that and *"…ran inside this Run's transaction and were rolled back with it: NOTHING was committed."* **The failure sentence is a property of the COMMIT POLICY, not of the panel**, and the sandbox version does not merely mislead on quality, it *reassures*. **(4) The danger marking shipped as a BANNER STRIP above the console**, answering D4b's open question 5 (*"editor, results panel, or both"*) with **neither** — the editor would fight the highlighter for pixels, the results panel marks the output one gesture too late, and a strip is read on the way **in** and can carry a *sentence* (`DANGER_BANNER_TEXT`, which spends its second half on the commit model). Painted from §18.7's `danger_selection_colors` **imported, not re-derived**, so still **no second red and no new colour** — and §18.7's *"the tree only"* answer is corrected to be scope-limited, since *an answer of the form "X is the only surface that does Y" is a claim about the whole app that one section cannot settle.* **(5) The console is parameterized by ONE `ConsoleFlavour` VALUE**, not by a scatter of constructor keywords, so *"what does the quality console do differently?"* has one answer a reader can hold, a third flavour cannot half-exist, and `target_label` makes it structurally impossible for a sentence in the class to name the wrong database — with the only behavioural fork being one `commit_model` tag, which is what keeps `if quality:` out of every method. **Open questions 3 and 4 were also answered by the implementation** (sterner quality confirmations as separate constants, not a template; two single-instance tabs open at once). **⚠ And this pass's own closing re-verification caught it AGAIN — the TENTH consecutive time.** Written mid-pass: *"one removal-sweep survivor is outstanding and it is the user-visible one — `manual.md` still says the Sandbox SQL Console can never reach the target"*. **False by the time the report was written:** `manual-maintainer` had already shipped *The Quality SQL Console* as a chapter with a side-by-side console comparison, the corrected drop instruction, and a `Ctrl+Return` row stating that the Quality Run *"never commits"*. **The new wrinkle is worth the row: the stale claim was about ANOTHER agent's file, which is the harder case** — a grep result minutes old is not a fact, and a parallel agent's output goes stale faster than a merge does. *Re-verify the specific claim immediately before writing the closing report, including — especially — the ones that let you file a finding against someone else.* |
 | 2026-08-12 *(status pass — a MECHANISM correction to a fold made the day before)* | **The 2026-08-11 fold of `DEC-260811025733`, recorded in three places as *"enforcing it is THE DIALOG'S"***: §18.1's Add-Trigger bullet, its field table (*"`TRIGGER_TIMINGS` FILTERED BY RELATION KIND"*), and the emitter contract table (*"the emitter still validates only against this tuple; the view-vs-table restriction is the DIALOG'S … the disclaimer becomes true rather than aspirational once that caller exists"*) — plus `trigger_skeleton`'s documented signature, which omitted the new parameter | **RIGHT IN OUTCOME, WRONG IN MECHANISM — IT SHIPPED IN THE EMITTER, WITH THE DIALOG DERIVING FROM IT.** `db/ddl_skeleton.py` gained **`TRIGGER_TIMINGS_BY_KIND`** (`table → ("BEFORE","AFTER")`, `view → ("INSTEAD OF",)`, `matview → ()`) and **`trigger_timings_for_kind(kind)`**, and **`trigger_skeleton(..., kind="table")` enforces it**; `NewTriggerDialog` takes `kind` and *calls that function* to build its combo. **The difference is the whole point of the ruling rather than a detail of it:** enforcing in the dialog would have left the emitter still able to render `BEFORE INSERT ON a_view` for any other caller and left **two** places knowing PostgreSQL's rule — the drift the ruling was closing. Enforcing in the emitter and deriving the widget means **they cannot disagree**, and both test files parametrize over the one table so a second list cannot quietly appear. **The disclaimer was not made honest by building the caller it named — it was DELETED, and the rule moved to the thing that knows the grammar.** *The cheapest way to fix a docstring that delegates a constraint to a caller that does not exist is usually to delete the delegation, not to build the delegate.* Two shipped details folded with it: `matview`'s entry is **deliberately empty rather than absent**, so *"no trigger is possible here"* is an answer rather than a missing key; and `kind` **defaults to `"table"` because that is the RESTRICTIVE answer** — a caller that forgets to say gets `BEFORE`/`AFTER` and a refusal for `INSTEAD OF`, never a statement the server rejects. **Also corrected here: `SNAPSHOT_VERSION` is 4, not 3** (`ColumnInfo` gained `identity` and `generated` for `DEC-260811022536`), and §18.1 now folds the shipped **`SERIAL` ruling** — rendered as `integer … DEFAULT nextval(…)` and never the word `SERIAL`, because `SERIAL` is a *macro* for integer + sequence + ownership and emitting it would **infer** which sequence backs the column, losing the one fact an inspection pane exists to show; `pg_dump` makes the same call. The owned sequence's own `CREATE SEQUENCE` is not emitted, being a separate catalog object. |
+| 2026-08-12 *(feature fold — RELOCATION 1 of 4)* | **§26's View-menu inventory: `Customize Toolbar…` as a `View` entry, reachable in EVERY mode**, with command id `view.customize-toolbar` (FQ-004) | **MOVED into the `Toolbar` pane of `Settings ▸ Software settings…` (`FQ-260812002827`, `19c14c5`; §7).** Removed from `View`; the id **ceases to exist and gets NO alias row**. **The reachability cost is the ledger's point and is not softened: a surface reachable at ANY time is now Maintenance-only**, and unlike a merely hidden command there is no chord to reach it by — these dialogs never had one — so DEC-006's *"hiding is a guardrail, not a boundary"* leak does **not** rescue it. Pinning `settings.software-settings` is the only non-Maintenance path. **Owner-settled as a MOVE** (*"relocating means moving, so they won't be anymore where they were before"*); **the trade itself is `DEC-260812004358`, OPEN, shipped with accept-the-trade as the default**, reversible by two additive `View` actions opening the dialog on a named pane (`select_pane(key)` exists for it). |
+| 2026-08-12 *(feature fold — RELOCATION 2 of 4)* | **§26/§27: `Customize Shortcuts…` as a `View` entry (FQ-012), id `view.customize-shortcuts`, and §27's heading naming it as the place bindings are changed; plus §26's note that it was "deliberately a **second** single-purpose customization dialog … rather than the start of a general Preferences container"** | **MOVED into the `Keyboard shortcuts` pane of the Software settings dialog.** **The "not a general container" note is superseded by outcome rather than argument: the container arrived, by owner ruling — and it is NOT `Preferences`**, which matters, because the dead `Edit ▸ Preferences…` stub FQ-016 deleted is still deleted and was never this feature's ancestor; *the objection to a Preferences container was to a grab-bag with no stated membership, and a four-pane list whose members are enumerated in the spec is a different object.* **Nothing about the three-layer split, `collect_menu_commands()`'s command universe, the steal-or-refuse conflict policy or the `shortcutOverrides` persistence changed** — only the host window. **Two live consequences:** rebinding is Maintenance-only (`DEC-260812004358`), and **the pane's NON-MODALITY is now the host's property rather than its own** (`DEC-260812004359`, OPEN, default preserves it — a non-modal editor is what lets a user try a chord against the running app instead of edit → close → test → reopen). |
+| 2026-08-12 *(feature fold — RELOCATION 3 of 4)* | **§18.9: `Settings ▸ Edit Snippets…` as a standalone entry, id `settings.edit-snippets`, described as the `Settings` menu's one shipped entry and the app's first Maintenance-only command** | **MOVED into the `Snippets` pane** (built by `SnippetController.build_editor`). The store, DEC-001's ruling, the no-shortcut rule and the pinnability/rebindability trades are **unchanged**; the trades now attach to `settings.software-settings`. **One shipped property became load-bearing for the host and is recorded because it was incidental before: `SnippetController`'s reliance on Qt emitting `accepted` BEFORE `finished`** is exactly the ordering the host's rebuild-on-`finished` mechanic depends on — *an ordering an existing consumer already depended on is a safer thing to build a new mechanic on than one nothing had tested.* |
+| 2026-08-12 *(feature fold — RELOCATION 4 of 4)* | **§18.4 part D: `Settings ▸ Autoformatter settings…` as a standalone entry, id `settings.autoformatter-settings`, with §26 recording that the label is IMPORTED from `ui/autoformat_settings_dialog.py::MENU_LABEL` (aliased `AUTOFORMAT_MENU_LABEL`) so menu row, id and dialog cannot drift** | **MOVED into the `Autoformatter` pane** (`build_autoformat_settings_pane`). Everything part D says about what it configures, its `QSettings` keys, its read-at-gesture-time rule and the DEC-001 boundary is **unchanged and still current** — what moved is the door. **The import-the-label sentence is now false in fact and its principle simply changed subject:** `MENU_LABEL` there is imported by nothing, and `MENU_LABEL` in `ui/software_settings_dialog.py` is what `_build_settings_menu` imports. **§26's "two entries, which is the menu vindicated" claim is STRENGTHENED rather than retracted** — the shape that let a second tenant cost one `addAction` line is the same shape that let four tenants collapse into one entry without touching the mode filter, the menu walk, or DEC-006's rule. |
+| 2026-08-12 *(feature fold — the consolidation's own decisions)* | **Nothing in this document described a settings container, a multi-pane dialog, or what happens to a stored `toolbarIds` entry naming a command that was ABSORBED rather than renamed; §7's toolbar-id machinery documented alias behaviour and did not cover the case** | **`FQ-260812002827` FOLDED INTO §7 AS *The Software settings dialog*, SHIPPED `19c14c5`.** Four decisions worth more than their placement. **(1) The shape is forced, not chosen: a launcher button is ONE command and the app's settings were a whole menu plus two `View` entries**, so no id existed to put in the Maintenance column — a fly-out would have broken `LAUNCHER_GROUPS`' uniform `(title, ids)` contract, and one command hosting a multi-pane dialog is simultaneously a legal launcher button and a legal single menu entry. **(2) EACH PANE KEEPS ITS OWN APPLY/OK CONTRACT AND THE HOST ADDS NONE — its only button is `Close`.** A host OK was rejected because it would have to **invent a fifth apply semantics over four that already disagree** (scratch-copy-on-Ok, `apply_and_save` on `accepted`, own-`QSettings`-write-plus-`RestoreDefaults`, copied-override-map) and because it would give a **non-modal** window a body of unsaved state; a fan-out's partial failure has no honest report. **(3) The load-bearing mechanic: an embedded `QDialog` still calls `done()` on Ok/Cancel, which HIDES it** — so a pane clicked Ok would vanish from the stack. The host turns that into the guarantee: it watches `finished` and **rebuilds that pane from now-current state**, which is why *a pane is never a stale scratch copy* and why four independently-written dialogs could be re-hosted with **no change to their own contracts** — the host does not synchronise them, it re-reads them. **(4) THE FOUR ABSORBED IDS GET NO ALIAS ROWS, DELIBERATELY, and the rule is stated once: ALIAS when the successor answers the same request; DROP when it does not.** There is no successor id meaning *"customize the toolbar"* — there is one meaning *"open the settings dialog"* — so aliasing would make a pinned toolbar button open a multi-category dialog on whatever pane is first, *a plausible-looking wrong result, which is worse than a button that disappears.* `resolve_ids` drops them (the FQ-020 `save` and BUG-040 precedents, a third time). **Three owner decisions shipped with defaults and are recorded as DEFAULTS-PENDING-ANSWER, not as settled design:** `DEC-260812004358` (Maintenance-only), `DEC-260812004359` (non-modal), `DEC-260812004400` (four panes, two blocked ones **absent, not stubbed** — FQ-023's *state your reason* precedent governs a gesture whose **siblings are present**, and a category nobody was ever told about carries no expectation for its absence to contradict). **No new chord anywhere:** the command has a command form, so DEC-012 gives it one host — its `QAction` — and the `Settings` menu's DEC-006 rule leaves that `QAction` keyless. `RESERVED_SEQUENCES` and `docs/KEYBINDINGS.md` are untouched. |
+| 2026-08-12 *(feature fold — vim increment 2, 1 of 4)* | **§8's *Explicitly EXCLUDED from v1* row: "**text objects** (`ciw`, `di"`), registers, macros, `.` repeat, marks, `:s///` — deferred. Text objects are the one deferred item with a shipped-dependency story: FQ-034's `structure_chain`"; and §8's boundary note that when built they "are the only part of this feature that touches `sql/`, they are SQL-only, and every other surface must STATE that they are unavailable there"; and README's *Where it is going* bullet calling them "the one part that needs a language model"** | **`aw` / `iw` SHIP (`e60e0d0`) — AND THE DEPENDENCY STORY WAS WRONG.** They are `pgtp_editor/vim/words.py::a_word_span` / `inner_word_span` over the **same `char_class` runs `w`/`b`/`e` already walk**, so they consume **nothing** from `sql/`, are **family-agnostic** (live on XML, PHP and JS as well as SQL), have **no per-surface unavailability to state**, and the purity test's four legs did not move. **Three shipped properties, each a decision:** **line-local** (*a `daw` that swallowed the newline would silently join two lines*); **counts MULTIPLY across the operator** (`2d3iw` = six words, from `_count()`'s `pre * post` — the only rule under which `2d3iw` and `6diw` agree); and **overshoot REFUSED, never clamped** (`vim_mode.NO_TEXT_OBJECT` — **`"there is no word here to take"`**), the same call the count-motions already made and for the same reason. Scopes are `TEXT_OBJECT_SCOPES = frozenset("ai")`, objects `TEXT_OBJECTS = frozenset("w")` — **`w` alone**, so `di"`/`ci(` stay deferred and the struck rule applies to **them** if they are ever built. **A shipped test asserting `di` was DISCARDED as out-of-scope was rewritten with the reversal in its docstring** — `di` now pends, because a scope key is read only after an operator. **The durable finding: the prediction reasoned from the hardest member of a set to the whole set. `iw` needed no more than the word rule the feature already had.** |
+| 2026-08-12 *(feature fold — vim increment 2, 2 of 4)* | **§8's v1 command-set row "**Operators — MOTION-ONLY** … no visual-selection target, because there is no visual mode"** | **THE OPERATORS GAINED A SELECTION TARGET (`e60e0d0`): with a selection active, `d`/`c`/`y` resolve IMMEDIATELY (no operator-pending wait) and `x` resolves to `d`.** **The pure layer's entire notion of selection is ONE BOOLEAN** — `VimGrammar.set_selection_active(active)`, restated by the Qt half from `textCursor().hasSelection()` **before every keystroke** — resolving to `Command(motion=SELECTION)` where `SELECTION` is the sentinel `"@"`, a spelling no keystroke can produce (as `LINEWISE` is `"_"` and `REDO_KEY` is `"<C-r>"`). **A boolean is precisely what keeps `pgtp_editor/vim/` Qt-free while the grammar answers a question about a `QTextCursor`:** it is told *that* there is a selection and never *what* it is; the span comes from the Qt side's `_vim_selection_span()`. It is deliberately **not** cleared by `reset()` — it describes the document, not the pending command. Consuming the range clears sticky selection. |
+| 2026-08-12 *(feature fold — vim increment 2, 3 of 4)* | **§8's *"There is NO vim visual mode"* block and the contract consequence it drew: "the **select-with-`v`-then-`d`** reflex does not exist here … There are exactly TWO ways to operate on a range … A `d` pressed after a Windows-style selection is a Command-mode `d` **waiting for a motion**, not *delete the selection*"; and the duplication trap "**It adds no menu entry, no toolbar button and no setting**"** | **THERE IS STILL NO VISUAL MODE — AND THE INFERENCE DRAWN FROM ITS ABSENCE IS WITHDRAWN.** `v`/`V` remain insert-entry actions and there is no third editing-mode value, no third indicator label and no `visual` identifier in the package (a test greps for it). What they gained is **STICKY SELECTION** (`e60e0d0` + `de75617`): an **Edit-mode** mechanic with a Command-mode trigger, where ordinary movement keys extend the selection. *The absence of visual mode was a fact about MODES; the withdrawn sentence was a claim about OPERATORS, and the two do not follow from one another — an operator can take a selection as its target without a mode whose job is to make one.* **Shipped shape:** one per-editor state (`sticky_selection_mode` ∈ `STICKY_CHARACTER`/`STICKY_LINE`/`None`) with **one writer**, `set_sticky_selection` (*two paths toggling one state can disagree, and the user then sees a caret that selects for no reason they can name*); a **fresh anchor at the caret**, so the gesture means the same thing every time; `V` a **granularity of the same state**, not a second one; extension keys **Qt's own moves** (`_STICKY_MOVES`, no `Ctrl`/`Alt`/`Meta` chord shadowed); and endings that are the design — a **printable keystroke**, a **click**, focus loss, a document swap, or **consumption by an operator**. **No sticky selection on a read-only editor**, so *vim ⊆ editable editors* holds for this half too. **And the "adds no menu entry" trap is AMENDED, not broken:** two command forms shipped (`Select ▸ Sticky Selection` / `Line Selection`) carrying **no `setShortcut`** — the bare `v`/`V` are the one keyboard host under DEC-012 — persisting nothing, with checked state **re-derived** from the editor and `triggered` (not `toggled`) connected so re-deriving cannot fire the command. Both **hidden, never greyed**, on a read-only editor, refreshed on **`aboutToShow`** because `isReadOnly()` flips without a tab change. **Nothing joins `RESERVED_SEQUENCES` and no `docs/KEYBINDINGS.md` row is owed**, for the reason that register already states for `u`: a bare letter in the grammar is not a chord. *A command form for a gesture that already exists is discoverability; a second binding for it would have been the duplication.* |
+| 2026-08-12 *(feature fold — vim increment 2, 4 of 4)* | **§8 never described a Command-mode caret model at all, and three shipped behaviours followed from its absence: `$` and `l` left the caret PAST the last character in Command mode** | **THE COMMAND-MODE CARET IS ON A CHARACTER, AND IT IS PAINTED (`de75617`).** Edit mode's caret sits *between* characters and must rest after the last one (`a`, `A`, ordinary typing); Command mode's sits *on* one, which is what makes `%` match the bracket the user sees and gives `y%` both brackets. `_vim_clamp_caret_to_character()` runs on **entering** the mode, after **every** resolved command, and after an operator — **except `c`**, which lands in Edit mode by definition. **The reversal is in the CARET, not the motions:** `l` still computes `min(line_end, position + count)` and `$` still resolves to `line_end`, so **`d$`, `D` and `x` still take the newline** — *a motion's endpoint and a caret's resting place are two different questions, and merging them would have stopped `d$` deleting the line ending.* **Painted in a `paintEvent`, deliberately NOT `setCursorWidth`** (a fixed width is wrong on any glyph wider or narrower than a space; the call appears nowhere in the package) **and NOT an `ExtraSelection`**, because `XmlEditor` funnels *every* extra selection through one `_refresh_extra_selections` → `setExtraSelections` call and a second writer would fight it — *a paint pass owns nothing and clobbers nothing*, which is what makes it the only mechanism that composes with a funnel it does not control. Colours live in `theme.py::command_caret_colors(light)`, with a test asserting **`vim_mode.py` declares no caret colour of its own** — §18.7's *no second colour table* rule, third application. |
+| 2026-08-12 *(bugfix fold)* | **§8's `[Bookmark]`/`[Find]` audit-disposition table: the read-only DDL Explorer buffer routed as `_NO_AUDIT_ROUTE` → no roles set, emitted deliberately inert — with a SHIPPED TEST asserting the inertness as the design** | **`BUG-260811232724` (fixed `1ff2b11`): THE READ-ONLY EXPLORER GETS A REAL AUDIT ROUTE.** Find All findings *and* bookmarks now navigate there — one code path, so one fix covered both symptoms. **The inertness was never the design; it was the honest encoding of a MISSING ROUTE**, taken because the router's fallback navigates **Raw XML** and a bare line would have landed the caret in the wrong document (§7's unmapped-line rule). Both halves were supplied: `find_controller.DDL_EXPLORER_AUDIT_TARGET = "ddl-explorer"` returned with the **role**, and a branch in `_on_audit_item_clicked` delegating to the **already-existing** `_on_ddl_navigate_requested(line, role)` — *no navigation mechanism was built; what was missing was a name for the destination.* **The role is CARRIED on `UserRole+2`, never inferred from the current tab**, because §18.7's two Explorer buffers are different documents with independent line numbering; both emitters already propagated a non-`None` extra, so **neither emitter changed**. **`_NO_AUDIT_ROUTE` survives with exactly two cases** — the FQ-006 draft fragment, and Find All's demotion of an editor no stage table knows (kept deliberately as the guard against a *future* surface inheriting the Raw XML fallback). *The sentinel was right; what was wrong was how many surfaces it covered.* |
+| 2026-08-12 *(bugfix fold)* | **§7's Maintenance-mode block: *"Membership — the filter, stated once. Scope is the **window menu bar only**"*, and §29's *"Closed by scoping: a mode affects the **window menu bar only** — not docks, not left-dock tabs, not the toolbar, not the Editor menu bar"*** | **`BUG-260812001640` (fixed `1ff2b11`): ENTERING MAINTENANCE ALSO PRUNES THE CENTER STAGE to the XSD surface.** The report was that a Project session's DDL Explorer survived the mode switch; **the cause was broader — entering a workflow mode had NO center-stage step at all.** Hosted on **`set_workflow_mode`**, not `new_session`: that is where the column is actually picked and is the only production path into a mode, whereas `new_session` runs *before* the pick and would prune the same set whichever column follows — **so the prune fires on EVERY entry into Maintenance**, settling the report's own narrower *"with Project mode previously on"* reading. It hides both DDL Explorer tabs (guarded on `isTabVisible`, because `hide_ddl_explorer` emits unconditionally) and closes every dynamic editor tab through `_close_dynamic_editor_tabs`, **factored out of `new_session` so both callers share one definition of "dynamic"** — reusing the **one** `tabCloseRequested` route, so each kind's unsaved-changes prompt runs and the Quality console's uncommitted-transaction **veto** is honoured for free. **⚠ A save-prompt Cancel keeps that tab and the mode STILL CHANGES**, recorded as a judgement: by then the mode is assigned and the bar refreshed, so the prompt means *"keep this document"*, not *"undo the mode I picked"*; cancellability would have changed `set_workflow_mode`'s unconditional contract and had to abort the launcher's trigger too. **Leaving the mode restores nothing — closed is closed.** **This does not blur rule A and rule B:** the tabs work perfectly well and the app is deciding the user did not mean them, so it is still rule B — what changed is the rule's *surface list*. And §7's requirement that *"extending Rule B to a second surface is an owner ruling"* was honoured in the only way it can be: **the extension came from the owner's own report**, so the ruling and the bug report are the same act. |
+| 2026-08-12 *(bugfix fold — a gap, not an override: THE SPEC HAD NO STATEMENT AT ALL)* | **Nothing in this document said keyboard focus must be visible.** §7's theme block specified palettes, the app-level QSS, the per-widget-override trap and its measured boundary — and never once mentioned `:focus` | **`BUG-260812002838` + `BUG-260812004649` (fixed `7703eba`): KEYBOARD FOCUS IS VISIBLE, AND `ui/theme.py` OWNS IT.** The bundled QDarkStyle sheet styles `QPushButton:hover` but declares **no `:focus` rule**, and its `outline: none` suppresses Qt's native ring — so a `Tab`-traversing user could see neither which button was focused nor that focus had entered a tab bar. **A keyboard user who cannot see focus has no way to know what `Return` will press: this is *never a silent wrong result* on the INPUT side, which is why it belongs in the spec rather than in a stylesheet nobody reads.** Shipped as **two emitters appended to the cached per-theme string** (`_focus_visible_qss` / `_focus_visible_tab_qss`, over `FOCUS_RULE_SELECTOR` and `focus_tab_selector(edge)`/`FOCUS_TAB_EDGES`), so `apply_theme` still does **one** `setStyleSheet`. **Appending is load-bearing** — the rules tie with qdarkstyle's own `:selected`/`:checked` selectors on specificity and **CSS order breaks the tie**. **The colour is `pal.COLOR_TEXT_1` and there is NO second colour table**: it is read off the same palette the sheet was generated from, so it **inverts with the theme for free** — *the strongest form of the per-theme rule this block already carried: instead of two literals that can drift, one expression that cannot.* `COLOR_ACCENT_3` was measured and rejected (1.56:1 dark / 1.06:1 light on buttons); what ships measures 5.98:1 / 9.07:1 on buttons and 4.40:1 / 7.97:1 on tabs. **The box math is preserved rather than merely overridden** (2px border against qdarkstyle's 2px padding; the tab rules recolour the 3px pane-facing border `:selected` already draws). **Placement rule stated so it is not re-solved per panel: focus visibility is a property of the app's CHROME, and a second `:focus` declaration anywhere in `pgtp_editor/` is a defect.** |
+| 2026-08-12 *(status pass — the ELEVENTH "not yet built" retirement, and the first the pass INHERITED rather than wrote)* | **§18.4's `[XML]` refusal seam as UNWIRED, in FOUR places:** part C's ⏳ block (*"THIS HALF IS NOT WIRED YET, and the gap is user-visible: an XML format refusal is SILENT … no production connection exists and `ui/audit_router.py` carries no `XML_PREFIX` and no `DESTINATIONS` entry for it (ten prefixes ship; `[XML]` would be the eleventh)"*), §18.4's status-banner seam table, §18's status table row, §7's prefix table cell (*"NOT YET BUILT (target design, §18.4)"*), the §29 formatter item and the TOC — plus §18.4's *"two seams shipped unwired"* retrospective | **THE SEAM IS WIRED, AND IT WAS CLOSED IN EXACTLY THE TWO STEPS AND THE ONE SHAPE THE BANNER ASKED FOR.** `ui/audit_router.py` carries **`XML_PREFIX = "[XML]"`** and **`DESTINATIONS[XML_PREFIX] = TO_ACTIVITY`** — the eleventh prefix — and `MainWindow._report_xml_format_refusal` is connected to **all three** `XmlEditor` hosts, the FQ-006 draft fragment reaching it through `center_stage.py`. **It did NOT route through `_SQL_REFUSAL_PREFIX`**, the shortcut the banner explicitly forbade, so *an `[SQL]` row saying "this XML selection is mis-nested"* was never shipped. The banner's stated reason for waiting — `audit_router.py` was held by in-flight BUG-060/062 work, *"waiting is cheaper than a dict conflict"* — was **correct and is now spent**. **Recorded as a row because the count is still the argument, and the wrinkle is new: this is the ELEVENTH consecutive pass to find an absence claim over shipped work, and the FIRST where the pass had not written the claim itself — it was inheriting it, in four places, from three earlier passes.** *An absence you did not write is not an absence you may repeat: a banner is a claim about the tree at the moment it is READ, not the moment it was authored.* **And the practice that produced it is still right** — §18.4 stated the gap honestly rather than describing an unreachable dialog as reachable — **so the cost is recorded beside the benefit rather than instead of it: an honest "not wired" note becomes a dead assertion the instant the wiring lands, which makes re-checking every stated absence part of what it costs to state one.** |
 
 ---
 
 ## 29. Open questions
+
+**From `FQ-260812002827` (2026-08-12) — THREE OWNER DECISIONS ARE OPEN AND THE FEATURE SHIPPED WITH DEFAULTS.**
+Listed here because §7's Software settings block states them as *defaults-pending-answer* and a reader must
+be able to find them from this section too. **None of them blocks anything**, and each is isolated to one
+place, which is why the feature shipped rather than waiting:
+
+- **`DEC-260812004358` — confirm the trade: toolbar and shortcut customization become Maintenance-only.**
+  Default shipped: accept it. **This is a reachability WITHDRAWAL of two surfaces that were available at any
+  time**, and DEC-006's *hiding-is-not-preventing* leak does not rescue them because they never had a chord.
+  Reversal is two additive `View` actions opening the dialog on a named pane.
+- **`DEC-260812004359` — is the dialog modal?** Default shipped: **non-modal, single-instance**, because it
+  is the only option that changes nothing about a shipped surface — a non-modal shortcut editor lets a user
+  try a chord against the live app. Reversal is one `setModal(True)` plus dropping the raise-and-focus logic.
+- **`DEC-260812004400` — do the two unbuilt panes appear disabled, or not at all?** Default shipped: **four
+  panes; `FQ-260812002828` / `FQ-260812002829` are absent, not stubbed.** Reversal is two list rows.
+
+**From `BUG-260812002307` — parts B and C are NOT built, and the entry stays OPEN.** Part A shipped
+(`pgtp_editor/__main__.py` exists, delegating to `pgtp_editor.main.main`, so `python -m pgtp_editor` works).
+**What does not ship, verified by name 2026-08-12:** `XsdController.load_curated` still returns `False`
+**silently** when `curated.xsd` is absent — the *parse-failure* leg does report (`[Schema] Curated XSD has
+XML errors: … — keeping last good schema`), so the gap is narrower than "silent failure", but every caller
+discards the bool either way; and **there is no Schema-menu restore/reset command** — the menu is exactly
+`Edit XSD` · `Edit AutoXSD` · `Verify XSD` · `Export XSD` · `Import XSD` (`XsdController.build_menu`; note
+there is **no `_build_schema_menu`** in the tree, a name worth not citing). Nothing here is designed; the
+queue entry owns it.
 
 **~~From FQ-032 (2026-08-10) — THREE items flagged rather than decided~~ — ALL THREE ANSWERED BY THE OWNER
 2026-08-10, AND ALL THREE WENT AGAINST THE RECOMMENDATION. Nothing about FQ-032 is open.** Struck here rather
@@ -14960,15 +15574,31 @@ unrecorded — nothing below was invented in the body above:
   command the app shows **only inside** the mode, which reads differently from a pinned button for a
   command the mode merely got out of the way of. Recorded as the same open question with a concrete case,
   **not** resolved here — §18.9 accepts the trade on FQ-027's precedent, and the chord half of it *is*
-  settled (nothing on the menu carries a shortcut, DEC-006). **Closed by scoping:** a mode affects the **window
-  menu bar only** — not docks, not left-dock tabs, not the toolbar, not the Editor menu bar.
+  settled (nothing on the menu carries a shortcut, DEC-006). ~~**Closed by scoping:** a mode affects the
+  **window menu bar only** — not docks, not left-dock tabs, not the toolbar, not the Editor menu bar.~~
+  **THE SCOPING CLOSURE IS AMENDED 2026-08-12** (`BUG-260812001640`, §7): a mode affects the **window menu
+  bar and the CENTER STAGE**. Docks, left-dock tabs, the toolbar and the Editor menu bar are still untouched,
+  so the *"the toolbar is left alone"* half this sub-question turns on is intact — **the open question is
+  unaffected in substance and is re-stated only so the scoping sentence it leans on is not quoted stale.**
+  **Sharpened again 2026-08-12 by the Software settings consolidation (§7):** the case is no longer one
+  maintenance-only command but a **single command carrying four formerly-anywhere capabilities**, two of
+  which (`Customize Toolbar`, `Customize Shortcuts`) a user could reach at any time before — so a pinned
+  button for `settings.software-settings` is now the *only* non-Maintenance path to them. That is
+  `DEC-260812004358`'s subject and is filed; this item stays open for the general question.
 - **~~The launcher's "Maintenance mode" group membership is explicitly open~~ — RESOLVED 2026-08-09
-  (FQ-027):** the Maintenance **column** is exactly **`Edit XSD` + `Import XSD`**. The former group's
+  (FQ-027), REOPENED-AND-ANSWERED ONCE 2026-08-12:** the Maintenance **column** was exactly **`Edit XSD` +
+  `Import XSD`**, and is now those two **plus `Software settings…`** (`19c14c5`, §7). The former group's
   `Edit AutoXSD` / `Verify XSD` / `Export XSD` and the four §20 re_phpgen entries **leave the launcher**
   (they stay on their menus, and the whole `Schema` menu is visible inside the mode). The candidates once
-  raised and never ruled on — `Help ▸ Open Log Folder`, `View ▸ Customize Toolbar…`, `Tools ▸ Locate PHP
-  Linter…`, `Tools ▸ Start MCP Server` — are **out**: the column names the mode's two *entry* gestures,
-  not its capabilities, and three of those four sit on menus the mode hides.
+  raised and never ruled on — `Help ▸ Open Log Folder`, `Tools ▸ Locate PHP Linter…`,
+  `Tools ▸ Start MCP Server` — are **out**: the column names the mode's *entry* gestures, not its
+  capabilities, and those sit on menus the mode hides. **The fourth candidate, `View ▸ Customize Toolbar…`,
+  is the one that came back — and it came back the RIGHT way rather than as a fourth button.** The stated
+  reason it was out ("the column names entry gestures, not capabilities") was never withdrawn: what changed
+  is that **a settings home became an entry gesture in its own right**, and toolbar customization reached
+  the launcher as one *pane* of it. *A rejected launcher entry is not a rejected capability; it is a
+  statement about what a launcher button is for, and the way past it is to build the thing the button can
+  legitimately name.*
 - **What `File ▸ Save` / `Save All` mean in Maintenance mode is UNRESOLVED** (FQ-027, §7). The owner's
   answer trimmed the mode's File menu to *"New Session + Save + Save All — nothing else"*, but **neither
   names an action that exists**: FQ-020 deleted `File ▸ Save`/`Save As…` (with `Ctrl+S`) on 2026-08-08,
@@ -15104,8 +15734,9 @@ unrecorded — nothing below was invented in the body above:
   **two** — the DDL object editor tab (`DdlObjectEditorPanel`, chord **and** context item) and §18.5 D4's
   Sandbox SQL Console (`SqlConsolePanel`, chord only) — and **FQ-033 widened it to five surfaces with a
   second engine, SHIPPED `061e973`** (§18.4). §26/§27 carry the binding; the SQL half is built and wired,
-  and the XML half is built with its `[XML]` audit reporting still unwired. **Still not open:** whether an auto-format mode exists — it does **not**, by explicit
-  decision (§18.4), and FQ-033 does not reopen it.
+  and **the XML half is built AND its `[XML]` audit reporting is wired too** (verified 2026-08-12 —
+  *this read "still unwired"*; ledger §28). **Still not open:** whether an auto-format mode exists — it does
+  **not**, by explicit decision (§18.4), and FQ-033 does not reopen it.
 - **~~What "Apply" writes to in a project-less v1 (§18.5)~~ — RESOLVED 2026-08-02:** **both** the
   sandbox and the target database, each its own explicit, confirm-gated gesture, through the new
   `db/apply.py` write seam; Save and Apply are separate gestures; §18.3's reviewed batch deploy stays
@@ -15186,6 +15817,14 @@ unrecorded — nothing below was invented in the body above:
   deliberately outside the bookmark/selection surface, in which case `_bookmark_audit_route`'s
   `_NO_AUDIT_ROUTE` posture and an explicit *no fallback* branch are the honest encoding, not the
   current silent Raw XML fallback. **Not designed here; no fix is implied.**
+  > **Update 2026-08-12 — this item is UNCHANGED but its neighbour moved, and the direction it points is
+  > now the better-evidenced one.** `BUG-260811232724` gave the **read-only DDL Explorer** a real route
+  > (§8's disposition table), which is direction **(a)** applied to the adjacent surface — and it cost one
+  > constant, one route return and one router branch, reusing a navigation path that already existed.
+  > `_NO_AUDIT_ROUTE` now covers exactly two cases, so choosing (b) here would be *adding* a surface to a
+  > shrinking set rather than joining an established posture. **Still an owner call, and still not designed
+  > here** — but the *"(b) is cheaper"* half of the trade-off, which was never stated explicitly, has been
+  > measured false.
 - **~~§18.5 / §18.2 / §26 — PROVISIONING HAS NO REACHABLE HOME IN PROJECT MODE~~ — RESOLVED 2026-08-09
   (owner ruling) and SHIPPED; verified in the tree 2026-08-10. Direction (b) was taken.** The
   provisioning gestures **migrated into `File ▸ Project Settings… ▸ Connections`** (a `Sandbox
