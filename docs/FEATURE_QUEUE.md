@@ -4933,7 +4933,16 @@ Open question the entry left and shipping settled: the danger marking is a **ban
 ---
 
 ## FQ-260812000331: Sticky / line selection in Edit mode, with selection-aware Command-mode operators — a middle-ground for `v`/`V` muscle memory (NO vim Visual sub-mode)
-**Status:** QUEUED
+**Status:** PROCESSED (`vim/grammar.py` + `ui/vim_mode.py`, commit e60e0d0; menu half in 19c14c5; 7816 passed / 51 skipped)
+**Closing note:** the design constraint that mattered was keeping `pgtp_editor/vim/` **Qt-free**, and it held: the entire selection notion in the pure layer is **one boolean** (`set_selection_active`). With it set, `d`/`c`/`y` resolve immediately against the selection and `x` resolves to `d`; everything needing a `QTextCursor` stays in `ui/vim_mode.py`. The purity test — which imports the package in a fresh interpreter — still passes.
+
+The arrow-key extension lives on the **mixin**, so both editor families reach it through their own `super()` and no per-editor copy exists; a per-surface copy is what produced BUG-048/049/053/056. Selection ends on a consuming operator, printable typing, a mouse click, focus loss or a document swap, and is inert when read-only.
+
+`Select ▸ Sticky Selection` and `Select ▸ Line Selection` shipped in the settings-dialog batch (`19c14c5`) because `main_window.py` was owned by another agent at the time. Both are **keyless** — under DEC-012 the one keyboard host is `v`/`V` in the grammar — **checkable but driven by `triggered`**, with the check state *re-derived* from the editor rather than held by the action, because `v`/`V` write the same state without passing through the actions and the state is per-editor. They are **hidden** on a read-only editor: that is a real gate, not caution, since the mixin refuses sticky keys when read-only and the toggle would otherwise set a flag nothing reads. Re-derived on the menu's `aboutToShow` as well as on tab change, because read-only flips at runtime under Caption Mode and Compare/Merge with no tab change.
+
+**Still no visual mode**, as the entry insisted: `v`/`V` toggle the selection and return to Edit mode. One inference in §8 is now false, though — the absence of a visual mode no longer implies operators cannot act on a selection.
+
+The mode-indicator suffix the entry *recommended* (`Edit mode · Sticky`) was **not** implemented; the entry lists it as owner-to-confirm.
 **Requested:** 2026-08-12
 **Idea (verbatim/summarized):** Owner started from "add `v` and `V` from vim mode" (muscle memory) — which would have REVERSED FQ-032's shipped, command-by-command decision that there is NO visual mode and `v`/`V` are pure insert-entry aliases. After challenge, the owner deliberately chose a **middle-ground** instead of a true vim Visual sub-mode: two new Edit-mode selection primitives (sticky character selection, sticky line selection) reachable as menu commands, with `v`/`V` toggling them on their way to Edit mode, and the Command-mode operators `y`/`c`/`d`/`x` gaining the ability to act on an existing selection. The middle-ground-vs-real-visual-mode choice is **owner-settled and NOT re-opened here.**
 
@@ -4977,7 +4986,16 @@ Open question the entry left and shipping settled: the danger marking is a **ban
 ---
 
 ## FQ-260812002827: Consolidated two-pane "Software settings" dialog — one command hosting six setting panes (four reused, two placeholder), surfaced as a single Maintenance launcher button and a single Settings-menu entry
-**Status:** QUEUED
+**Status:** PROCESSED (`ui/software_settings_dialog.py`, commit 19c14c5; 7816 passed / 51 skipped)
+**Closing note:** **the apply/OK contract went the opposite way from the obvious, and that is the decision worth keeping.** Each pane keeps exactly the contract it already had; the host adds none, and its only button is `Close`. A host-level OK buffering four panes was rejected on two grounds: it would have to invent a **fifth** apply semantics over four that already disagree (the autoformatter owns its persistence, the shortcuts dialog's host owns its, the snippet controller owns its), and it would give a **non-modal** window a body of unsaved state — precisely what gets silently discarded when the user closes it or a change lands mid-edit.
+
+**The load-bearing mechanic nobody anticipated:** an embedded `QDialog` still calls `done()` on OK/Cancel, which *hides* it. The host therefore watches `finished` and **rebuilds that pane from now-current state**, so a pane is never left a stale scratch copy. Qt emits `accepted`/`rejected` **before** `finished` — which happens to be the ordering `SnippetController` already relied on — so the rebuild can never pre-empt a save.
+
+**The four absorbed command ids get NO alias rows, deliberately.** They were absorbed, not renamed, and there is no successor id meaning *"customize the toolbar"* for a stored `toolbarIds` entry to resolve onto, so `resolve_ids` drops them. That is the honest degradation, but note the user-visible consequence: **a customized toolbar containing those buttons quietly loses them.**
+
+Two entry claims corrected by building it: the proposed id `settings.software` is **unachievable**, because ids are *derived* from the label by `command_id_for`, so `Software settings…` yields **`settings.software-settings`**; and embedding the shortcuts dialog does **not** by itself change its non-modality — the host is non-modal, so its live-chord behaviour is unchanged, and the real change is that it is no longer independently movable or closable.
+
+Three owner decisions shipped with **defaults, not settled design**, each isolated to one place so an answer drops in: `DEC-260812004358` (Maintenance-only reachability — toolbar and shortcut customization, reachable at any time before, are now Maintenance-only), `DEC-260812004359` (non-modal, single-instance), `DEC-260812004400` (four panes; the two blocked placeholders `FQ-260812002828`/`FQ-260812002829` are absent, not stubbed — adding one later is a single row in `SETTINGS_PANES`, proved by a test that injects a fifth).
 **Requested:** 2026-08-12
 **Idea (verbatim/summarized):** Owner asked that the Maintenance-mode launcher — which today offers only Edit XSD / Import XSD — ALSO offer a **Software settings** button. After it was laid out that each launcher button maps to exactly ONE menu command while the app's settings are spread across a multi-entry `Settings` menu (plus two `View`-menu customize items), the owner chose a single consolidated surface. Owner's verbatim shape: *"two panes, left the different settings. 1. Snippet settings 2. move Customize toolbar in there 3. sql/plpgsql formatter settings 4. keyboard shortcuts 5. syntax highlight colors 6. color scheme. Whatever is not implemented yet of these, create an empty feature queue entry with the warning that it must be skipped, because needs owner description to implement."* **This shape is owner-settled and is NOT re-challenged here.**
 

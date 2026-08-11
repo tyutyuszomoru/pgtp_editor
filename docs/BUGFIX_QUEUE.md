@@ -7526,7 +7526,7 @@ not yet carry: (i) the executor **clamps up to the floor** as defence in depth w
 ---
 
 ## BUG-260811232724: audit-item click (Find All finding OR bookmark) navigates everywhere EXCEPT the DDL Explorer read-only viewing pane (`EditorPanel`) — that one buffer alone is routed as `_NO_AUDIT_ROUTE` and has no navigation route, while raw XML and the editable DDL object editor both work
-**Status:** OPEN
+**Status:** RESOLVED (`1ff2b11`) — see **Resolution** at the end of this entry.
 **Reported:** 2026-08-11
 **Report (verbatim):** "in ddl explorer find all -> findings / clicking the list is not jumping to the point in the code (EditorPane)" — plus the owner's follow-up: "all bookmarks have the same limitation."
 
@@ -7576,10 +7576,12 @@ Why it was left inert (and why the naïve fix is wrong): the router's **fallback
 
 **Spec impact:** The current inert behavior is an intentional decision recorded in shipped code and reflected in `CONSOLIDATED_SPEC.md` §18.5 (BUG-060's Find-All-generalization work) and §7's unmapped-line rule — the DDL Explorer/draft buffers were named as "no route." The fix narrows that: the DDL Explorer buffer **now has a route** (it gains a role-tagged discriminator), while the draft fragment stays unrouted. This diverges from the as-shipped §18.5/§7 statement that the read-only DDL Explorer emits inert audit rows. **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here. (BUG-061 — Findings tab missing from the View menu — is a separate concern; mentioned only because it is the same surface's discoverability, and is worth resolving alongside so the navigation fix is manually verifiable.)
 
+**Resolution (`1ff2b11`)** — verified in the tree 2026-08-12. Both symptoms were one path exactly as triaged, so one fix covered both. `pgtp_editor/ui/find_controller.py:160` gained `DDL_EXPLORER_AUDIT_TARGET = "ddl-explorer"`, and the Explorer branch of `_bookmark_audit_route` now returns `DDL_EXPLORER_AUDIT_TARGET, label, role` (`:841`) instead of `_NO_AUDIT_ROUTE`. The role rides `UserRole+2`, which **both emitters already propagated**, so neither emitter changed. `main_window._on_audit_item_clicked` (`:2556`) delegates to the existing `_on_ddl_navigate_requested`. **No new navigation mechanism was built** — the tree's leaf-click route already did caret + scroll, as the entry predicted. The shipped test asserting the rows are deliberately inert was rewritten with the supersession recorded in its docstring (`tests/ui/test_find_all_surfaces.py:34`, `:141`, `:161`), and a two-role case proves a Sandbox finding navigates Sandbox while Quality is current; `tests/ui/test_list_all_bookmarks.py:206` covers the bookmark half. `_NO_AUDIT_ROUTE` survives for the draft fragment (`find_controller.py:857`), per the entry's scoping. The spec flag above still stands for `spec-maintainer`.
+
 ---
 
 ## BUG-260811234853: Vim mode has no `a`/`i` text objects — `caw`/`daw`/`yaw` (and `iw`) do nothing
-**Status:** OPEN
+**Status:** RESOLVED (`e60e0d0`) — see **Resolution** at the end of this entry.
 **Reported:** 2026-08-11
 **Report (verbatim):** "in vim mode the following combinations don't work:
 1. caw / daw / yaw  (cw  dw yw yes)"
@@ -7613,10 +7615,12 @@ Concrete changes:
 
 **Spec impact:** Diverges from `CONSOLIDATED_SPEC.md` §8 / FQ-032, which record text objects as **deferred** (`:493` "FQ-032's deferred vim text objects"; `vim_mode.py:145-147`). Implementing `aw`/`iw` promotes part of that deferred scope into shipped behavior, so §8's vim vocabulary list and the deferral note must be updated. **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here.
 
+**Resolution (`e60e0d0`)** — verified in the tree 2026-08-12. Shipped at the settled scope, `aw`/`iw` only. The range functions live in `pgtp_editor/vim/words.py` (`:85` `iw`, `:110` `aw`) as pure character-class run arithmetic and are **line-local** by construction — a `daw` that swallowed the newline would silently join two lines (`:96`). `a`/`i` are intercepted **only** when an operator is pending, so bare `a`/`i` stay their insert-entry actions. Counts compose both ways and multiply across the operator (`2d3iw` = 6). An overshooting count returns `None` and is **refused, never clamped**. `pgtp_editor/vim/` stays Qt-free — the purity test passes. The spec flag above still stands for `spec-maintainer`.
+
 ---
 
 ## BUG-260812001031: Vim Command mode uses a thin between-chars caret — should be a colored block caret, which also fixes `%`/`y%` bracket semantics
-**Status:** OPEN
+**Status:** RESOLVED (`e60e0d0`; colours relocated in `de75617`) — see **Resolution** at the end of this entry, which corrects two claims in the body below.
 **Reported:** 2026-08-12
 **Report (verbatim):** "in vim mode the caret should be (as in vim) a whole character wide, so % jumps when under the caret.
 also would resolve the bug that y% now excludes one of the brackets, because caret must stand before or behind (within the brackets) to find bracket.
@@ -7654,6 +7658,14 @@ please color the new wide caret so it also instantly identifies visually when we
 **Test impact:** `tests/ui/test_vim_mode.py` owns this area. The existing `test_percent_matches_brackets_at_the_character_level` (`:648-653`) encodes the between-chars convention (`place(editor, 1)`) and will need REVISING to the on-char model — after the fix, placing the caret ON the `(` (its own index) must match, and the case where the caret sits where a user visually reads "on the bracket" must jump. Add: (a) `%` jumps when the caret is on the opening bracket and when on the closing bracket (both directions); (b) `y%` yanks INCLUDING both brackets from either endpoint (the reported drop); (c) `d%`/`c%` span both brackets; (d) the Command-mode caret cannot rest on the newline offset (`l`/`$` clamp to last real char) while Edit mode still can; (e) entering Command mode with the caret at end-of-line pulls it back one (if that is the chosen rule). `tests/vim/test_words.py`/`test_grammar.py` are unaffected (no grammar/word-class change). No new test file.
 
 **Spec impact:** Touches `CONSOLIDATED_SPEC.md` §8 / FQ-032 (the vim Edit-mode/Command-mode block; `%` is described there as "a character-level bracket scan, the same family as `code_editor.enclosing_bracket_span`", `vim_mode.py:143-144`). Introducing an on-character Command-mode cursor model, a block caret, and a colored mode cue are new design that the shipped FQ-032 did not specify (it shipped a thin caret and the between-chars `%` convention). **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here. If the owner considers the on-character clamp a behavior change with a right/wrong answer (it reverses the shipped `%` convention encoded in a test), that is a candidate for an `owner-decision`, but the vim-authenticity intent in the report is clear enough to implement against.
+
+**Resolution (`e60e0d0`; colours relocated in `de75617`)** — verified in the tree 2026-08-12. The caret is a `paintEvent` pass over the viewport (`pgtp_editor/ui/vim_mode.py:816`), width taken from the **actual glyph advance** (`metrics.horizontalAdvance`, `:854`) — deliberately **not** `setCursorWidth` (wrong on non-space glyphs) and **not** an `ExtraSelection` (XmlEditor funnels all extra selections through one `setExtraSelections`, so a second writer would fight it). Command mode only, never read-only. The caret is clamped on a character **except after `c`**, which lands in Edit mode where the caret belongs at the deletion point; motions still resolve past the last character so `d$`/`D`/`x` still take it.
+
+**Two corrections to the body above, recorded so neither is repeated:**
+1. The "Gotcha" claiming caret painting/colour is *"hard to unit-test … treat the visual color as manual-verify"* is **wrong**. `viewport().grab().toImage()` asserts the rendered pixel fine offscreen, in both themes (`tests/ui/test_vim_mode.py:1272`). This is the same offscreen folklore that was wrong about `QShortcut` — do not repeat it in future triage.
+2. The instruction to put the colours in `theme.py` was **not** done in the same commit; it landed as the follow-up `de75617`. `theme.command_caret_colors(light)` (`pgtp_editor/ui/theme.py:115`, with `_COMMAND_CARET_LIGHT`/`_COMMAND_CARET_DARK` at `:111-112`) is now the single home, and a test asserts `vim_mode.py` declares **no** `#rrggbb` literal at all.
+
+The spec flag above still stands for `spec-maintainer`.
 
 ---
 
@@ -7713,7 +7725,7 @@ self.restore_button.clicked.connect(lambda: self.restore_missing_defaults())
 ---
 
 ## BUG-260812001640: Entering Maintenance mode via New Session leaves Project-mode DDL Explorer ("browser") tabs open — only the menu bar is filtered, tabs are never pruned to the XSD-only surface
-**Status:** OPEN
+**Status:** RESOLVED (`1ff2b11`) — see **Resolution** at the end of this entry.
 **Reported:** 2026-08-12
 **Report (verbatim):** "When I start a new session in Maintenance mode with Project mode previously on, it should close all editor tabs and all browser tabs that isn't xsd related"
 
@@ -7751,10 +7763,16 @@ The helper should:
 
 **Spec impact:** Diverges from `CONSOLIDATED_SPEC.md`'s Maintenance-mode section (`:3038-3106`), which states the mode's scope as **"the window menu bar only"** and lists only menu-bar membership. Pruning center-stage tabs is a NEW, tab-scoped behavior the spec explicitly does not currently grant the mode. This needs a spec statement — flag for `spec-maintainer` after the fix lands (do not edit the spec here): add that entering Maintenance mode reduces the center stage to the XSD-only surface (keep Edit XSD, close editor + DDL Explorer browser tabs, reusing the existing per-kind unsaved-changes route), and reconcile it with the "menu bar only" scope sentence. **Two points may warrant an `owner-decision` if the implementer cannot resolve them from the spec:** (1) whether entering Maintenance should be *cancellable* by a dirty-tab prompt (affects whether `set_workflow_mode` gains a return value / abort path); (2) whether the prune fires on *every* entry into Maintenance or only when coming *from* Project (the report says "with Project mode previously on"; the coherent reading is every entry, since from Standalone the set is already empty). Neither is a keyboard chord — no `docs/KEYBINDINGS.md` impact.
 
+**Resolution (`1ff2b11`)** — verified in the tree 2026-08-12. **Fixed at the cause, not the symptom:** entering a workflow mode had no center-stage step *at all*, because Maintenance was a menu-bar filter only. The prune is hosted on `MainWindow.set_workflow_mode` (`pgtp_editor/ui/main_window.py:6576`, calling `_prune_non_xsd_surfaces_for_maintenance` at `:6609`, defined `:6611`) — where the mode is actually picked — **not** on `new_session`, which runs before the pick and would prune the same set whichever column follows. That placement covers every entry path rather than only the reported one, which also settles open question (2) above: the prune fires on every entry into Maintenance, not only when coming from Project. The dynamic-tab close loop was factored out of `new_session` so both callers share one definition of "dynamic", and hiding is guarded on `isTabVisible` so no spurious visibility signal fires. Leaving the mode restores nothing — closed is closed (`:6581`).
+
+**One judgement call to record, answering open question (1) above:** a per-tab save-prompt **Cancel keeps that tab and the mode still switches**. By then the mode is assigned and the menu bar refreshed, so the prompt means *"keep this document"*, not *"undo the mode I picked"*; making the transition cancellable would change `set_workflow_mode`'s unconditional contract and would have to abort the launcher's trigger too. No `owner-decision` was filed — the alternative was strictly worse.
+
+The spec flag above still stands for `spec-maintainer`: the mode's scope sentence still says "the window menu bar only".
+
 ---
 
 ## BUG-260812002307: `python -m pgtp_editor` fails to launch (no `__main__.py`); the actual XSD-not-loaded symptom is a stale user-owned `curated.xsd` in app-data that the bootstrap never overwrites and that `load_curated` may reject silently
-**Status:** OPEN
+**Status:** OPEN — **NARROWED, part A only has shipped (`1ff2b11`).** `pgtp_editor/__main__.py` now exists, so the entry title's "no `__main__.py`" is no longer true; **parts B and C, the optional `[project.gui-scripts]`, and the README command are all still unimplemented and are what keeps this entry OPEN.** See **Partial resolution** at the end of this entry before implementing anything here.
 **Reported:** 2026-08-12
 **Report (verbatim):** "it appears that xsd is not loaded when running the app from command line python -m pgtp_editor. Don't know if this is a packaging issue or something went wrong with my curated xsd"
 
@@ -7792,6 +7810,18 @@ Minimum viable fix for the reported symptom is **B** (tell the user their app-da
 **Test impact:** `tests/schema_learning/test_storage.py` (bundled-resource resolution) and the xsd-controller tests under `tests/ui/` (grep for `test_xsd_controller`/`ensure_bootstrap`/`load_curated`) own this area — extend, do not duplicate. New cases the fix needs: (1) **a resolver-finds-curated test** — `bundled_curated_xsd_text()` returns non-None and its length is the on-disk size, guarding against the resource dropping out of the package (the check the resolver "should run" that would have caught a packaging regression); (2) **a curated-xsd-parses test** — `load_curated(bundled_curated_xsd_text())` succeeds, guarding the bundled file against becoming malformed; (3) for **B**, a `load_curated` call with a missing app-data file and with a deliberately-broken app-data file each produces the visible cue (assert the audit item / patched message box), covering the previously-silent branch; (4) for **A**, a smoke test that `pgtp_editor.__main__` imports and exposes `main` (do not actually spin the event loop — assert the delegation, monkeypatch `main`); (5) for **C**, the restore action overwrites the app-data path with the bundled text and reloads. Offscreen note: these are model/controller-level and run headless; never let the **B**/**C** message box reach an un-patched modal — monkeypatch `QMessageBox.*`.
 
 **Spec impact:** Touches `CONSOLIDATED_SPEC.md` §11 (curated schema / XSD — bootstrap, the "hand-owned, never overwritten" rule, and the bundled-vs-app-data split). Part C (an in-app overwrite/restore from bundled) is a deliberate exception to §11's "never overwrites an existing curated.xsd" and part B changes the mode's observability — both are new design that §11 does not currently state. **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here. The README command correction (`python -m pgtp_editor.main` → also `python -m pgtp_editor`) is README-owned by `spec-maintainer` as well. No `owner-decision` is required to start: A and B have obviously-right shapes; only the exact wording/placement of the C restore action and any shortcut for it may warrant a ruling, and the shortcut specifically must clear `docs/KEYBINDINGS.md` first.
+
+**Partial resolution — read this before picking the entry up.** Verified in the tree 2026-08-12.
+
+**SHIPPED (part A, `1ff2b11`):** `pgtp_editor/__main__.py` exists and is **pure delegation** — `from pgtp_editor.main import main`, no argument parsing, no Qt setup of its own; `main` reads `sys.argv[1:]` itself when given none (`__main__.py:21`). It is guarded by a source test asserting the module contains no `argparse`, `PySide6`, `QApplication` or `debuglog`, so the two entry points cannot drift into two different startups. `python -m pgtp_editor` was verified live.
+
+**NOT SHIPPED — this is the remaining work:**
+- **Part B** — `XsdController.load_curated` (`pgtp_editor/ui/xsd_controller.py:217`) still returns `False` **silently** on a missing app-data file (`:222-223`); only the XML-error branch (`:226`) emits an audit item. The user-visible cue for "your app-data curated.xsd is not there / not loading, and here is its path" is still absent.
+- **Part C** — no Schema-menu restore command exists; `grep -ri "restore bundled\|restore_bundled" pgtp_editor/` is empty. `ensure_bootstrap` (`:238`) still returns early whenever the file exists, so a corrupted app-data curated.xsd still has no in-app recovery.
+- **The optional `[project.gui-scripts]`** — `pyproject.toml` has no `gui-scripts` table.
+- **The README command** — still `python -m pgtp_editor.main` (now at **`README.md:77`**, not `:73`; the file has since moved on). README is `spec-maintainer`'s to edit, not this entry's implementer's.
+
+The spec flag above still stands for `spec-maintainer`, and stands for parts B/C specifically — part A raised no §11 question.
 
 ---
 
@@ -7834,7 +7864,7 @@ Minimum viable fix for the reported symptom is **B** (tell the user their app-da
 ---
 
 ## BUG-260812004649: `QTabBar::tab` has no `:focus` rule either — Tab-traversing INTO a tab bar changes nothing on screen, so a keyboard user cannot tell that the arrow keys now switch tabs
-**Status:** OPEN
+**Status:** RESOLVED (`7798acd`) — see **Resolution** at the end of this entry, which corrects two claims in the body below.
 **Reported:** 2026-08-12
 **Report (verbatim):** "`QTabBar::tab` has the same missing-`:focus` defect and was deliberately left out of `7703eba`'s fix. qdarkstyle gives `QTabBar::tab` a `:hover` and a `:selected` rule but no `:focus`, so a tab that has keyboard focus but is **not** the selected tab is visually indistinguishable from any other unselected tab. A user tabbing through the tab bar cannot see where they are."
 
@@ -7938,5 +7968,13 @@ New cases, all sampling **rendered pixels on the tab's pane-facing edge** — ne
 **Sampling trap, stated because it already bit once:** the ring colour and the tab **label** colour are both `COLOR_TEXT_1`, so a whole-image count of that colour is not a clean signal (in the probe it happened to move 27 → 132, which is exactly the kind of number that reads as a pass for the wrong reason). Sample the specific edge pixel of a specific tab, at `tabRect(i).bottom() - 1`, inset a few px from the left/right so the 4px corner radius is not in the sample. `tests/ui/test_theme.py:293-301` already records this lesson for buttons — extend that comment rather than rediscovering it.
 
 **Spec impact:** `CONSOLIDATED_SPEC.md` still has **no** theming/accessibility section covering focus visibility (grep for `focus ring` / `keyboard focus` / `COLOR_TEXT_1` / `:focus` returns nothing), so BUG-260812002838's flag for `spec-maintainer` is still outstanding — this entry rides the same flag rather than raising a second one. The fact to record, once, covering both: *keyboard focus must be visible on every focusable chrome surface, in both themes, with the indicator colour taken from the qdarkstyle palette (`COLOR_TEXT_1`) and measured for contrast against the actual resting background, and the indicator must never change the widget's geometry.* Do not edit the spec here. No `owner-decision` needed — the shape is measured, not chosen. **No `docs/KEYBINDINGS.md` impact:** this is pure QSS; no chord is added, moved, or removed, and the arrow-key/Tab behaviour on `QTabBar` is Qt's own, untouched.
+
+**Resolution (`7798acd`)** — verified in the tree 2026-08-12. Implemented as proposed: recolour the 3px border qdarkstyle already draws on each edge's pane-facing side, via four `:<edge>:selected:focus` rules (`pgtp_editor/ui/theme.py:155-156`, with the reasoning at `:170-200`). `tabRect` is identical focused vs unfocused in both themes — no geometry change. Indicator colour is `COLOR_TEXT_1`, with `COLOR_ACCENT_3` asserted to *fail* contrast so the choice is measured rather than asserted. It is `:selected:focus`, **not** `:focus`, and that is measured too: `:selected:focus` vs `:!selected:focus` gives 617px and 0px (`theme.py:173`); it is disjoint from the existing `:!selected:hover` rule.
+
+**Two corrections to the body above, both of which would otherwise have shipped a false green:**
+1. **The "unfocused" baseline is *focused unless you clear it*.** Showing a `QTabWidget` whose only focusable child is its bar hands the bar focus immediately, which produced an identical 23/23 pixel count that reads as "the rule always applies". The fixture now calls `clearFocus()` and asserts the cleared state — `tests/ui/test_theme.py:559` records why that is not tidiness, `:578` is the call.
+2. **`tabRect().bottom() - 1` is not a safe sample row across a theme flip.** `QTabBar` recomputes tab layout one pass behind its widget geometry (light 27px vs dark 25px) and the two never re-converge, so forcing a relayout only alternates which one is stale; the sampler clamps to the render instead. This is a **pre-existing Qt quirk, not introduced by this fix** — do not re-file it as a regression.
+
+Also: the body's 28-ring-px figure was measured on 37px tabs; the shipped fixture's 40px tabs give 23. The shared spec flag above (with BUG-260812002838) still stands for `spec-maintainer`.
 
 ---
