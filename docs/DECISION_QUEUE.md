@@ -2610,3 +2610,66 @@ dispatched `owner-decision`. The previous pass had just written a rule against a
 this is an *answer believed recorded*, and it happened immediately after. **Both failures have one shape: a
 queue state inferred from work done elsewhere.** The queue is the record — a ruling that lives only in the
 spec is a ruling this file will re-ask, and a sweep would have re-put all three to the owner as open.
+
+---
+
+## DEC-260811022536 — Is the synthesized `CREATE TABLE`'s four-gap incompleteness permanent, or a v1 stopgap to be closed?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-11, by the main session, from `FQ-260810183812` (shipped today, spec §18.1, merge
+  commit `9d93fd8`)
+- **Blocks:** **nothing today.** The feature is shipped, tested (7357 passed / 51 skipped) and states its own
+  limits to the user. This is a **direction call**, and it hardens: every future feature that treats the
+  read-only DDL pane as a source of truth raises the cost of closing the gaps later.
+
+**Context.** `FQ-260810183812` gave the **Quality DDL Explorer's read-only pane** a `CREATE TABLE` for every
+table (plus views and matviews), so every tree item jumps to its own DDL. The statement is **synthesized from
+`pg_catalog`**, not fetched — Postgres does not hand back a `CREATE TABLE` for an existing table — and the
+reconstruction covers columns, types, defaults, constraints, indexes and comments.
+
+It has **four known blind spots**, stated in the module docstring at `pgtp_editor/db/table_ddl.py:30-38`:
+**identity / `SERIAL` sequences, `GENERATED` columns, table inheritance, and partitioning.** A table using any
+of them renders a `CREATE TABLE` missing that clause.
+
+**This is not hidden, and nothing is guessed.** Every table's buffer opens with two SQL-comment lines naming
+all four gaps (`table_ddl.py:65-73`, verbatim: *"this is NOT the original CREATE statement. NOT reconstructed:
+identity/SERIAL, GENERATED columns, inheritance, partitioning."*). A partitioned or inherited table renders as
+the plain table it resembles — no invented `PARTITION BY`, no invented `INHERITS`. The pane is **read-only and
+explicitly not a deployment artifact**, so an incomplete statement cannot silently deploy anything wrong.
+
+**Options.**
+
+- **Accept the four gaps permanently.** The buffer's job is *"show me this object"*, the omission is disclosed
+  at the top of every buffer, and the read-only boundary means an incomplete statement cannot cause a wrong
+  deployment. *Cost:* it caps what the pane can ever be trusted for. The project's stated direction is
+  `.pgtp` ↔ database synchronization; if this buffer ever feeds a generated migration, a `CREATE TABLE` that
+  cannot round-trip a partitioned or identity-column table stops being cosmetic and becomes a correctness
+  bug — and the notice, which reads as temporary today, would have to be rewritten to state the boundary as
+  intentional.
+- **Close all four.** The pane round-trips any table, and the notice goes away. *Cost:* inheritance and
+  partitioning need **additional catalog queries** and **change the statement's structure** (partition key,
+  partition-of clauses, per-partition rendering, `INHERITS` with the inherited columns suppressed) — this is
+  materially more than the per-column work, and it multiplies the shapes the tests must pin.
+- **Close only the per-column two (identity/`SERIAL` and `GENERATED`).** These are **column attributes
+  adjacent to what is already fetched**, so they extend the existing column rendering rather than restructure
+  the statement — the cheapest correctness-per-effort, and they are also the two most common in ordinary
+  schemas (nearly every table has a surrogate key). *Cost:* the notice stays, now naming two gaps instead of
+  four, and the harder two remain a standing ceiling; a reader may reasonably read a two-gap notice as an
+  unfinished job rather than a boundary.
+
+**Recommendation: close the per-column two now, and rule on inheritance/partitioning separately once
+something actually needs them.** Identity and `GENERATED` are the gaps a user will hit on an ordinary schema,
+they are cheap because the column data is already in hand, and closing them shrinks the notice to the two
+genuinely structural cases — which is the honest place to draw a permanent boundary if one is to be drawn.
+Committing now to all four means paying for partitioning support before any feature consumes it; committing
+to none means the pane's first impression on a routine table is *"this is incomplete"*.
+
+**What the answer converts into.**
+- *"Acceptable permanently"* → no follow-up FQ; the banner text at `table_ddl.py:65-73` is reworded from a
+  list of missing things into a **stated intentional boundary**, and `spec-maintainer` records that boundary
+  in §18.1 so nobody re-files it as a bug.
+- *"Close them"* (all four, or the per-column two) → the main session dispatches **`feature-triage`** to place
+  a follow-up against §18.1 in `docs/FEATURE_QUEUE.md`, and the banner becomes explicitly temporary until it
+  lands.
+- Either way it settles **how much weight future features may put on this buffer**, which is the reason to
+  answer it before more is built on it rather than after.
