@@ -22,7 +22,7 @@ keyword casing) or refuses and returns the selection untouched with fatal
 `Issue`s carrying precise spans.
 
 `FormatConfig` / `DEFAULT_FORMAT_CONFIG` are on the façade because both hosts and
-the `Settings ▸ Autoformatter settings…` dialog construct a config and this is
+the Autoformatter pane of `Settings ▸ Software settings…` construct a config and this is
 where they should read it from (FQ-033). The per-rule record types
 (`KeywordCase`, `ClauseRule`) stay in `sql/format_config.py` -- reachable, but
 not part of the pinned surface, the same way `tokenize`/`Token` are reached

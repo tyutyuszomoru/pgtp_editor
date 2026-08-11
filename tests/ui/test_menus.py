@@ -454,27 +454,32 @@ def test_view_menu_contents(qtbot):
         "Expand All", "Collapse All",
         "―",
         "Light Theme",
-        "―",
-        "Customize Toolbar…",
-        # FQ-012: beside its sibling -- the same command universe, customized
-        # on its other axis.
-        "Customize Shortcuts…",
+        # FQ-260812002827 ENDS the menu here. `Customize Toolbar…` and
+        # `Customize Shortcuts…` were the last two entries; both were MOVED into
+        # `Settings ▸ Software settings…` and removed from `View`, so the
+        # trailing separator went with them.
     ]
 
 
-def test_customize_shortcuts_entry_opens_a_non_modal_dialog(qtbot):
-    """FQ-012's entry point. Triggering it must not reach a modal (§30): the
-    dialog is `show()`n and the window keeps running."""
+def test_the_two_customize_entries_are_GONE_from_the_view_menu(qtbot):
+    """Relocating means moving (owner-settled, FQ-260812002827): both surfaces
+    live in the Software settings dialog now, and leaving a second door here
+    would defeat the consolidation."""
     window = MainWindow()
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
-    action = find_action(view_menu, "Customize Shortcuts…")
-    assert action is not None
-    action.trigger()
-    dialog = window._customize_shortcuts_dialog
-    assert dialog is not None
+    assert find_action(view_menu, "Customize Toolbar…") is None
+    assert find_action(view_menu, "Customize Shortcuts…") is None
+
+
+def test_the_shortcuts_pane_is_offered_the_whole_command_universe(qtbot):
+    """FQ-012's contract, unchanged by the re-hosting: the pane is fed the SAME
+    menu walk Customize Toolbar uses, never a second one."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    dialog = window.build_customize_shortcuts_pane()
+    qtbot.addWidget(dialog)
     assert dialog.isModal() is False
-    # The dialog is offered the SAME command universe Customize Toolbar walks.
     assert dialog.command_ids() == [
         command_id for command_id, _label in window._toolbar_ui.all_menu_commands()
     ]

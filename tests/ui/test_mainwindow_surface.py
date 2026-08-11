@@ -163,13 +163,22 @@ EXPECTED_HOST_SURFACE = {
     "_doc_ui",
     "_edit_ddl_checked_out",
     "_edit_ddl_live",
-    "_edit_snippets_action",
-    # FQ-033's Settings entry and the menu itself. Both belong to the host on
-    # purpose: `Settings` is the maintenance-only menu the mode filter toggles,
-    # so the host must hold the QMenu to show/hide it, and the action is kept
-    # (not rebuilt) so it stays enumerable for Customize Toolbar even while
-    # hidden -- the same reason `_edit_snippets_action` is here.
-    "_autoformat_settings_action",
+    # FQ-260812002827 REMOVED `_edit_snippets_action` and
+    # `_autoformat_settings_action`: those two `Settings` entries (with the two
+    # `View` customize entries) were absorbed into ONE `Software settings…`
+    # command hosting a two-pane dialog, so there is one action where there were
+    # four. The remaining names belong to the host on purpose: `Settings` is the
+    # maintenance-only menu the mode filter toggles, so the host must hold the
+    # QMenu to show/hide it, and the action is kept (not rebuilt) so it stays
+    # enumerable for Customize Toolbar even while hidden.
+    "_software_settings_action",
+    # The ONE live settings window, and the slot that forgets it. Both are here
+    # because the dialog is NON-MODAL and therefore single-instance: something
+    # has to hold the handle that a second request raises instead of duplicating,
+    # and it must be dropped on `finished` so the next open re-reads every store.
+    "_software_settings_dialog",
+    "_forget_software_settings",
+    "open_software_settings_dialog",
     "_settings_menu",
     # FQ-033 part C's refusal sink. Belongs to the host because the Audit panel
     # does: an editor must not reach it, which is exactly why the draft tabs
@@ -384,6 +393,15 @@ EXPECTED_HOST_SURFACE = {
     "_expand_structural_selection",
     "_shrink_selection_action",
     "_shrink_structural_selection",
+    # FQ-260812000331's two `Select` menu command forms and their per-editor
+    # refresh. On the host for the same reason every other `Select` entry is:
+    # they resolve their editor at TRIGGER time through the find lane, so the
+    # actions cannot live on any one editor.
+    "_sticky_selection_action",
+    "_line_selection_action",
+    "_toggle_sticky_selection",
+    "_toggle_line_selection",
+    "_refresh_sticky_selection_actions",
     "_session_target_passwords",
     "_set_left_panel_visible",
     "_settings",
@@ -400,7 +418,11 @@ EXPECTED_HOST_SURFACE = {
     "_apply_shortcut_bindings",
     "_restore_shortcut_overrides",
     "apply_and_save_shortcut_overrides",
-    "open_customize_shortcuts_dialog",
+    # Was `open_customize_shortcuts_dialog`. FQ-260812002827 re-hosted the
+    # dialog as the Software settings *Keyboard shortcuts* pane, so the host
+    # builds and wires it (the override map and the command walk are the host's)
+    # and the settings dialog embeds it -- hence "build", not "open".
+    "build_customize_shortcuts_pane",
     "_customize_shortcuts_dialog",
     "_show_audit_dock",
     "_show_left_dock",

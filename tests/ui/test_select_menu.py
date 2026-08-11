@@ -126,6 +126,9 @@ def test_select_menu_contents_and_order(qtbot):
         "Select Enclosing Block",
         "Expand Selection",
         "Shrink Selection",
+        "―",
+        "Sticky Selection",
+        "Line Selection",
     ]
 
 
@@ -688,3 +691,111 @@ def test_caret_lands_at_the_start_of_every_structural_selection(qtbot):
     cursor = editor.textCursor()
     assert cursor.position() == cursor.selectionStart()
     assert isinstance(cursor, QTextCursor)
+
+
+# -- FQ-260812000331: the two sticky-selection command forms ------------------
+
+
+def test_the_sticky_entries_carry_NO_shortcut_because_v_and_V_are_the_host(qtbot):
+    """DEC-012: a command with a command form has exactly ONE keyboard host, and
+    for these two it is the bare `v` / `V` inside the Command-mode grammar. A
+    chord here would be a second host, so both actions must be keyless — and
+    nothing goes into `RESERVED_SEQUENCES`, because no new chord exists."""
+    from pgtp_editor.ui.shortcut_registry import RESERVED_SEQUENCES
+
+    window = _window(qtbot)
+    menu = _select_menu(window)
+    for label in ("Sticky Selection", "Line Selection"):
+        assert find_action(menu, label).shortcut().toString() == ""
+    assert "V" not in RESERVED_SEQUENCES
+
+
+def test_the_sticky_entries_are_checkable_toggles(qtbot):
+    window = _window(qtbot)
+    assert window._sticky_selection_action.isCheckable()
+    assert window._line_selection_action.isCheckable()
+
+
+def test_sticky_selection_acts_on_the_editor_resolved_at_TRIGGER_time(
+    qtbot, tmp_path
+):
+    """The whole point of this menu's dispatch: a PHP tab in front means the PHP
+    editor gets the sticky state and the Raw XML buffer is untouched."""
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot, tmp_path)
+    tab = _php_tab(window, tmp_path)
+    before = _raw_xml_state(window)
+
+    window._sticky_selection_action.trigger()
+
+    assert tab.editor.sticky_selection_mode == vim_mode.STICKY_CHARACTER
+    assert window.center_stage.xml_editor.sticky_selection_mode is None
+    assert _raw_xml_state(window) == before
+
+
+def test_line_selection_acts_on_the_editor_resolved_at_TRIGGER_time(qtbot):
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot)
+    panel = _ddl_object_tab(window)
+    before = _raw_xml_state(window)
+
+    window._line_selection_action.trigger()
+
+    assert panel.editor.sticky_selection_mode == vim_mode.STICKY_LINE
+    assert window.center_stage.xml_editor.sticky_selection_mode is None
+    assert _raw_xml_state(window) == before
+
+
+def test_triggering_twice_toggles_the_state_back_off(qtbot):
+    window = _window(qtbot)
+    window._sticky_selection_action.trigger()
+    assert window.center_stage.xml_editor.sticky_selection_mode is not None
+    window._sticky_selection_action.trigger()
+    assert window.center_stage.xml_editor.sticky_selection_mode is None
+
+
+def test_the_menu_command_and_v_share_ONE_state(qtbot):
+    """`v` writes the same flag the menu entry does, so the check marks must
+    follow a keystroke nothing on the menu knows about."""
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot)
+    window.center_stage.xml_editor.set_sticky_selection(vim_mode.STICKY_LINE)
+
+    window._refresh_sticky_selection_actions()
+
+    assert window._line_selection_action.isChecked()
+    assert not window._sticky_selection_action.isChecked()
+
+
+def test_both_entries_are_HIDDEN_on_a_read_only_editor(qtbot):
+    """§8: on a read-only editor the whole editing-mode layer is inactive, so
+    the sticky key handling refuses to answer. An entry that toggles a flag
+    nothing reads is worse than an absent one — hidden, never greyed."""
+    window = _window(qtbot)
+    window.center_stage.xml_editor.setReadOnly(True)
+
+    window._refresh_sticky_selection_actions()
+
+    assert not window._sticky_selection_action.isVisible()
+    assert not window._line_selection_action.isVisible()
+
+    window.center_stage.xml_editor.setReadOnly(False)
+    window._refresh_sticky_selection_actions()
+    assert window._sticky_selection_action.isVisible()
+
+
+def test_the_slot_refuses_on_a_read_only_editor_even_when_triggered_directly(
+    qtbot,
+):
+    """The second belt, for a pinned toolbar button or a programmatic trigger
+    that never consults `isVisible()`."""
+    window = _window(qtbot)
+    window.center_stage.xml_editor.setReadOnly(True)
+
+    window._sticky_selection_action.trigger()
+    window._line_selection_action.trigger()
+
+    assert window.center_stage.xml_editor.sticky_selection_mode is None

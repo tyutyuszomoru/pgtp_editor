@@ -114,10 +114,18 @@ def test_column_membership_is_the_owners_taxonomy():
     # files" -- both are "open something, with no project behind it".
     assert groups["Standalone"] == ("file.open", "file.open-php-file")
     assert groups["Project"] == ("file.new-project", "file.open-project")
-    # Edit XSD + Import XSD only: the owner's verbatim "Open XSD" names the
-    # read-only viewer that was deleted in favour of the editable tab, and the
-    # §20 re_phpgen/panGen entries left the launcher with FQ-027.
-    assert groups["Maintenance"] == ("schema.edit-xsd", "schema.import-xsd")
+    # Edit XSD + Import XSD, plus Software settings since FQ-260812002827: the
+    # owner's verbatim "Open XSD" names the read-only viewer that was deleted in
+    # favour of the editable tab, and the §20 re_phpgen/panGen entries left the
+    # launcher with FQ-027. `settings.software-settings` is the reason the app's
+    # four configuration surfaces were consolidated into one command -- a
+    # launcher button is one command id, so a whole `Settings` menu could never
+    # have become a button.
+    assert groups["Maintenance"] == (
+        "schema.edit-xsd",
+        "schema.import-xsd",
+        "settings.software-settings",
+    )
 
 
 def test_every_column_names_a_workflow_mode():
@@ -656,9 +664,9 @@ def test_a_hidden_WHOLE_MENUS_shortcuts_still_fire_KNOWN_GAP(qtbot, tmp_path):
     **This pins a known gap, not a desired behaviour.** The two halves of the
     filter disagree: `File` is trimmed member-by-member, so a hidden File
     command genuinely loses its key (the test above), while a command inside a
-    hidden menu keeps one. A user who assigns a key to `View ▸ Customize
-    Toolbar…` can still fire it in Maintenance mode, which is the "filters what
-    you can SEE but not what you can DO" case the mode is supposed to avoid.
+    hidden menu keeps one. A user who assigns a key to `View ▸ Expand All` can
+    still fire it in Maintenance mode, which is the "filters what you can SEE
+    but not what you can DO" case the mode is supposed to avoid.
 
     It is NOT fixed here because the obvious fix collides with an owner ruling:
     hiding the child actions would also strip any pinned TOOLBAR button for
@@ -667,8 +675,8 @@ def test_a_hidden_WHOLE_MENUS_shortcuts_still_fire_KNOWN_GAP(qtbot, tmp_path):
     """
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window.apply_and_save_shortcut_overrides({"view.customize-toolbar": "Ctrl+Alt+T"})
-    action = window._toolbar_ui.menu_commands["view.customize-toolbar"]
+    window.apply_and_save_shortcut_overrides({"view.expand-all": "Ctrl+Alt+T"})
+    action = window._toolbar_ui.menu_commands["view.expand-all"]
 
     window.set_workflow_mode(MODE_MAINTENANCE)
 

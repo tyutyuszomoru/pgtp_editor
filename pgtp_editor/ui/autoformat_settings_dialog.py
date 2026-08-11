@@ -14,7 +14,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/ui/autoformat_settings_dialog.py
-"""The "Autoformatter settings…" dialog — `Settings` menu (§18.4 part D).
+"""The Autoformatter settings surface — the **Autoformatter** pane of
+`Settings ▸ Software settings…` (§18.4 part D; relocated there from its own
+`Settings ▸ Autoformatter settings…` entry by FQ-260812002827).
 
 Configures **exactly** the settable surface of §18.4's parts A, B and C and
 nothing that is not in those tables: the keyword-casing choice, the SQL indent
@@ -26,8 +28,13 @@ checkbox. There is no free-text rule entry anywhere, which is how §18.4's bound
 config space is enforced at the UI as well as in the loader: a user cannot even
 express a rule the engine could not prove idempotent.
 
-WHAT THIS DIALOG INHERITS FROM THE `Settings` MENU (do not "fix" either half)
-----------------------------------------------------------------------------
+WHAT THIS PANE INHERITS FROM THE `Settings` MENU (do not "fix" either half)
+--------------------------------------------------------------------------
+The three rules below were written about this surface's own menu entry. That
+entry is gone: the ONE command is now `Settings ▸ Software settings…`, and the
+rules apply to it unchanged, because they were always rules of the menu rather
+than of this dialog.
+
 1. **No keyboard shortcut**, as a rule of the menu rather than a choice about
    this entry. Hiding a top-level `QMenu` does not disable its child actions
    (DEC-006), so a chord would open a Maintenance-only dialog from outside
@@ -36,13 +43,13 @@ WHAT THIS DIALOG INHERITS FROM THE `Settings` MENU (do not "fix" either half)
    never tests `isVisible()`), so a pinned button reaches it outside Maintenance
    mode. That is FQ-027 Q2's recorded trade taken deliberately, not a leak. It
    must not be added to `DEFAULT_TOOLBAR_IDS`.
-3. The same walk also makes the command **rebindable** through
-   `Customize Shortcuts…`. Rule 1 constrains what the app *ships*, not what a
-   user may choose.
+3. The same walk also makes the command **rebindable** through the keyboard
+   shortcuts pane. Rule 1 constrains what the app *ships*, not what a user may
+   choose.
 
 House style carried from `customize_shortcuts_dialog.py` /
-`edit_snippets_dialog.py`: shown **non-modally** (`show()`, never `.exec()`, so
-no test ever meets a live modal), and every mutation has a programmatic seam
+`edit_snippets_dialog.py`: **never `.exec()`**, so no test ever meets a live
+modal, and every mutation has a programmatic seam
 (`load_configs`, `set_clause_rule`, `restore_defaults`, `save`) so tests drive it
 without synthesising clicks.
 
@@ -85,9 +92,13 @@ from ..sql.format_config import (
 from ..xmlfmt import DEFAULT_XML_FORMAT_CONFIG, XmlFormatConfig
 from . import format_settings
 
-#: The `Settings` menu's label for this command, and the id the toolbar walk
-#: derives from it (`settings.autoformatter-settings`). Kept here so the menu
-#: line in `main_window.py` is one `addAction` with no string of its own.
+#: What this surface is CALLED. It was the `Settings` menu row (deriving the id
+#: `settings.autoformatter-settings`) until FQ-260812002827 absorbed it into
+#: `Settings ▸ Software settings…`, where the pane is listed as "Autoformatter".
+#: There is no menu row any more, so nothing in the product reads this — it is
+#: kept as the surface's canonical name for the manual and the spec to quote and
+#: for a future settings pane to reuse, not as live wiring. **The name is a
+#: leftover; the constant is not the id's source any more.**
 MENU_LABEL = "Autoformatter settings…"
 
 #: Combo entries: (label, KeywordCase). `as-is` is FIRST because it is the
@@ -299,21 +310,26 @@ class AutoformatSettingsDialog(QDialog):
         self.accept()
 
 
-def open_autoformat_settings(
+def build_autoformat_settings_pane(
     parent=None, *, settings: QSettings | None = None
 ) -> AutoformatSettingsDialog:
-    """Open the Autoformatter settings dialog — THE entry point the
-    `Settings ▸ Autoformatter settings…` menu action calls.
+    """Build the Autoformatter settings widget — THE one construction site.
 
-    Non-modal (`show()`), and parented so Qt owns it: the caller may drop the
-    returned reference. Saving happens on OK, into `ui/format_settings.py`'s
-    store; both hosts of the gesture re-read that store on the next
-    `Ctrl+Alt+F`, so there is nothing further to apply.
+    Since FQ-260812002827 this is not a window of its own: it is the
+    **Autoformatter** pane of `Settings ▸ Software settings…`, which embeds the
+    returned dialog as a plain widget. `Settings ▸ Autoformatter settings…` is
+    gone, not duplicated. So this RETURNS rather than shows, and `parent` is the
+    pane's container.
+
+    Saving happens on the pane's own OK, into `ui/format_settings.py`'s store;
+    both hosts of the gesture re-read that store on the next `Ctrl+Alt+F`, so
+    accepting here is the whole of "apply" and the settings host adds no OK of
+    its own. The host rebuilds the pane when it finishes, so this is called
+    repeatedly and reloads from the store each time.
 
     Pass `settings=` to honour an injected `QSettings` (`MainWindow._settings`);
     omitted, the app's own IniFormat/UserScope store is used.
     """
     dialog = AutoformatSettingsDialog(parent, settings=settings)
     dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
-    dialog.show()
     return dialog

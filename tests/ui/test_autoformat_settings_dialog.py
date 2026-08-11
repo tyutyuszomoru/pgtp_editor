@@ -24,7 +24,7 @@ from pgtp_editor.ui import format_settings
 from pgtp_editor.ui.autoformat_settings_dialog import (
     MENU_LABEL,
     AutoformatSettingsDialog,
-    open_autoformat_settings,
+    build_autoformat_settings_pane,
 )
 from pgtp_editor.xmlfmt import DEFAULT_XML_FORMAT_CONFIG, XmlFormatConfig
 
@@ -152,18 +152,21 @@ def test_choosing_tab_disables_the_width_spin_box(qtbot, store):
     assert dialog._indent_width.isEnabled() is True
 
 
-def test_the_public_entry_point_shows_it_non_modally(qtbot, store):
-    dialog = open_autoformat_settings(None, settings=store)
+def test_the_public_entry_point_builds_but_does_not_show(qtbot, store):
+    """FQ-260812002827: this is a PANE now, so its builder returns an unshown
+    widget for the settings host to embed. Showing it here would put a stray
+    window on screen behind the settings dialog."""
+    dialog = build_autoformat_settings_pane(None, settings=store)
     qtbot.addWidget(dialog)
     assert isinstance(dialog, AutoformatSettingsDialog)
-    assert dialog.isVisible() is True
+    assert dialog.isVisible() is False
     assert dialog.isModal() is False
 
 
 def test_the_entry_point_defaults_to_the_apps_own_store(qtbot):
     # No `settings=`: the module's default store (redirected per test by
     # conftest's `_isolated_qsettings`), so the menu wiring can be one line.
-    dialog = open_autoformat_settings(None)
+    dialog = build_autoformat_settings_pane(None)
     qtbot.addWidget(dialog)
     assert dialog.sql_config() == DEFAULT_FORMAT_CONFIG
     dialog.close()

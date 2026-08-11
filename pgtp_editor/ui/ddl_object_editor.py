@@ -1073,7 +1073,7 @@ class DdlObjectEditorPanel(
         # separator), never "\n" -- the tokenizer expects real newlines.
         selected = cursor.selectedText().replace(" ", "\n")
         # FQ-033: the ruleset is read AT GESTURE TIME, so a change made in
-        # `Settings ▸ Autoformatter settings…` applies to the very next
+        # the Autoformatter settings pane applies to the very next
         # Ctrl+Alt+F with no notification plumbing between the dialog and every
         # open tab. The default config is byte-identical to the pre-FQ-033
         # behaviour, so an untouched install formats exactly as before.

@@ -249,9 +249,14 @@ def test_the_gesture_is_ABSENT_not_refusing_on_a_php_tab(qtbot, tmp_path, store)
 # --------------------------------------------------------------------------
 
 
-def test_the_settings_menu_reaches_the_autoformatter_dialog(qtbot, tmp_path):
+def test_the_settings_menu_reaches_the_autoformatter_pane(qtbot, tmp_path):
+    """FQ-260812002827 moved this surface: `Settings ▸ Autoformatter settings…`
+    is gone and the dialog is the *Autoformatter* pane of
+    `Settings ▸ Software settings…`. The wiring assertion is the same one — the
+    menu reaches the real widget — one host further along."""
     from PySide6.QtCore import QSettings as _QSettings
 
+    from pgtp_editor.ui.autoformat_settings_dialog import AutoformatSettingsDialog
     from pgtp_editor.ui.main_window import MainWindow
 
     settings = _QSettings(str(tmp_path / "app.ini"), _QSettings.Format.IniFormat)
@@ -262,7 +267,12 @@ def test_the_settings_menu_reaches_the_autoformatter_dialog(qtbot, tmp_path):
         for action in window._settings_menu.actions()
         if not action.isSeparator()
     ]
-    assert "Autoformatter settings…" in labels
+    assert labels == ["Software settings…"]
+
+    window._software_settings_action.trigger()
+    pane = window._software_settings_dialog.pane_widget("autoformatter")
+    assert isinstance(pane, AutoformatSettingsDialog)
+    window._software_settings_dialog.reject()
 
 
 def test_an_xml_refusal_reaches_the_xml_activity_log_prefix(qtbot, tmp_path):

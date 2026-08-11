@@ -227,9 +227,9 @@ from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.audit_router import AuditRouter
-from pgtp_editor.ui.autoformat_settings_dialog import (
-    MENU_LABEL as AUTOFORMAT_MENU_LABEL,
-    open_autoformat_settings,
+from pgtp_editor.ui.software_settings_dialog import (
+    MENU_LABEL as SOFTWARE_SETTINGS_MENU_LABEL,
+    SoftwareSettingsDialog,
 )
 from pgtp_editor.ui.connectivity import (
     QUALITY_LABEL,
@@ -251,7 +251,11 @@ from pgtp_editor.ui.mode_indicator import (
 )
 from pgtp_editor.ui.project_status_model import quality_state
 from pgtp_editor.ui.status_bar import StaticStatusBar
-from pgtp_editor.ui.vim_mode import add_editing_mode_observer
+from pgtp_editor.ui.vim_mode import (
+    STICKY_CHARACTER,
+    STICKY_LINE,
+    add_editing_mode_observer,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -635,6 +639,27 @@ def _supports_structural_expansion(editor) -> bool:
     return bool(predicate()) if callable(predicate) else False
 
 
+def _supports_sticky_selection(editor) -> bool:
+    """Whether `editor` can answer `Select ▸ Sticky Selection` (FQ-260812000331).
+
+    Two conditions, and the second is the interesting one:
+
+    1. the editor carries `VimModeMixin` at all (the Manual and Caption panes,
+       and any future non-vim editor tab, do not), and
+    2. it is **not read-only** — §8's ruling is that on a read-only editor the
+       whole editing-mode layer is *inactive entirely*, and `VimModeMixin`'s
+       sticky key handling honours that by asking `isReadOnly()` at the
+       keystroke. Toggling the state there would set a flag nothing reads.
+
+    Asked at trigger/refresh time rather than cached, because Caption Mode and
+    Compare/Merge flip `setReadOnly` at runtime under a live tab.
+    """
+    if not callable(getattr(editor, "toggle_sticky_selection", None)):
+        return False
+    is_read_only = getattr(editor, "isReadOnly", None)
+    return not (callable(is_read_only) and is_read_only())
+
+
 class MainWindow(QMainWindow):
     #: The ONE sanctioned bridge while a lane is mid-extraction: legacy host
     #: attribute name -> dotted path to resolve on the host instead
@@ -724,8 +749,14 @@ class MainWindow(QMainWindow):
         #: command_id -> the user's chosen sequence (`""` == deliberately
         #: cleared). Absent means "use the captured default".
         self._shortcut_overrides: dict[str, str] = {}
-        # Held so the non-modal Customize Shortcuts dialog is not GC'd while shown.
+        # The last-built Customize Shortcuts surface. Since FQ-260812002827 the
+        # Software settings dialog owns it as a pane, so this is a handle for the
+        # host and the tests rather than a GC pin.
         self._customize_shortcuts_dialog = None
+        #: The ONE live `Settings ▸ Software settings…` window, or None. Non-modal,
+        #: so `open_software_settings_dialog` uses this to raise rather than to
+        #: build a second one.
+        self._software_settings_dialog = None
         # Schema-aware Ctrl+Space completion (§18.6): the Qt-free lookup index
         # built once per DDL Explorer connect/refresh from the (now widened,
         # §18.6) fetch's `DatabaseSchema`, and handed to every open/newly
@@ -2766,12 +2797,46 @@ class MainWindow(QMainWindow):
         # per-surface claim, which now delegates to one
         # `apply_shrink_structural_selection`; this action is the *command* form
         # only. The stated price (§8): the pair is not symmetrically rebindable --
-        # grow can be moved through `View ▸ Customize Shortcuts…`, shrink cannot,
+        # grow can be moved through the Software settings keyboard-shortcuts
+        # pane, shrink cannot,
         # and `Ctrl+Shift+Z` cannot be handed to anything else either because it
         # stays in `RESERVED_SEQUENCES`.
         shrink_action = menu.addAction("Shrink Selection")
         shrink_action.triggered.connect(self._shrink_structural_selection)
         self._shrink_selection_action = shrink_action
+
+        # FQ-260812000331's two command forms. The editor behaviour shipped in
+        # `e60e0d0`; these entries are the menu half, held back only because
+        # this file was owned elsewhere at the time.
+        #
+        # **NEITHER carries a `setShortcut`, and that is a rule rather than an
+        # omission.** Both gestures are already answered as the bare `v` / `V`
+        # keys inside the Command-mode grammar, and under DEC-012 a command with
+        # a command form has EXACTLY ONE keyboard host. The `v` / `V` answer is
+        # that host, so a chord here would be a second one — with the usual
+        # consequence that the two could then disagree about which is "the"
+        # binding. Nothing is added to `RESERVED_SEQUENCES` or the ledger for the
+        # same reason: no new chord exists.
+        #
+        # Checkable, because they are toggles over ONE piece of per-editor state
+        # (`VimModeMixin.sticky_selection_mode`) that `v` / `V` also write. The
+        # check marks are therefore never authoritative — they are re-derived
+        # from the active editor by `_refresh_sticky_selection_actions`, and
+        # `triggered` (not `toggled`) is connected so that re-deriving cannot
+        # itself fire the command.
+        menu.addSeparator()
+        sticky_action = menu.addAction("Sticky Selection")
+        sticky_action.setCheckable(True)
+        sticky_action.triggered.connect(self._toggle_sticky_selection)
+        self._sticky_selection_action = sticky_action
+        line_action = menu.addAction("Line Selection")
+        line_action.setCheckable(True)
+        line_action.triggered.connect(self._toggle_line_selection)
+        self._line_selection_action = line_action
+        # Read-only-ness flips at runtime (Caption Mode, Compare/Merge) without a
+        # tab change, so the tab-driven `_refresh_editor_menu_affordances` is not
+        # enough on its own: the menu re-derives both entries as it opens.
+        menu.aboutToShow.connect(self._refresh_sticky_selection_actions)
 
     def _select_all_in_active_editor(self) -> None:
         """`Select All` — the one member every editor family supports, since
@@ -2797,7 +2862,8 @@ class MainWindow(QMainWindow):
         (owner ruling, 2026-08-10 — BUG-046, superseding FQ-015's "duplicate
         handler, measured then KEPT"). `CodeEditor.keyPressEvent` no longer
         handles the chord, so it is hosted the same way every other shortcut is
-        and it is genuinely rebindable through `Customize Shortcuts…`. The one
+        and it is genuinely rebindable through the Software settings
+        keyboard-shortcuts pane. The one
         other host is `CodeEditorDialog`'s own `QShortcut`, because that dialog
         has no menu bar for this action to live in.
 
@@ -2871,6 +2937,60 @@ class MainWindow(QMainWindow):
         shrink = getattr(editor, "shrink_structural_selection", None)
         if shrink is not None:
             shrink()
+
+    # -- FQ-260812000331: the two sticky-selection command forms --------------
+
+    def _toggle_sticky_selection(self) -> None:
+        """`Sticky Selection` — character-wise sticky selection on/off.
+
+        Resolved at TRIGGER time through `active_selection_editor`, like every
+        other entry on this menu: connecting to a bound method of one editor at
+        build time is the exact bug FQ-015 fixed here, and re-introducing it
+        would toggle sticky selection on the Raw XML buffer no matter which tab
+        is in front.
+
+        The slot re-checks the gate itself rather than trusting the entry to be
+        hidden — the second belt for a toolbar button or a programmatic trigger,
+        the same shape `_expand_structural_selection` uses.
+        """
+        editor = self._find_ui.active_selection_editor()
+        if not _supports_sticky_selection(editor):
+            return
+        editor.toggle_sticky_selection()
+        self._refresh_sticky_selection_actions()
+
+    def _toggle_line_selection(self) -> None:
+        """`Line Selection` — line-wise sticky selection on/off. See
+        `_toggle_sticky_selection`; the two are one state at two
+        granularities, so turning either on turns the other off."""
+        editor = self._find_ui.active_selection_editor()
+        if not _supports_sticky_selection(editor):
+            return
+        editor.toggle_line_selection()
+        self._refresh_sticky_selection_actions()
+
+    def _refresh_sticky_selection_actions(self) -> None:
+        """Re-derive both entries from the active editor: present only where the
+        feature can do anything, checked exactly when it is on.
+
+        **Hidden, never greyed** (the app's two-posture rule), and the predicate
+        is a real one: on a **read-only** editor the whole vim layer is inactive
+        — `VimModeMixin.keyPressEvent` refuses to answer a sticky key when
+        `isReadOnly()` — so the command would toggle a state that changes
+        nothing. An entry that no-ops is worse than an absent one.
+
+        The check state is re-derived rather than remembered because `v` / `V`
+        write the same state without going through these actions, and because it
+        is PER EDITOR: the same action stands for a different editor on every
+        tab.
+        """
+        editor = self._find_ui.active_selection_editor()
+        supported = _supports_sticky_selection(editor)
+        kind = getattr(editor, "sticky_selection_mode", None) if supported else None
+        self._sticky_selection_action.setVisible(supported)
+        self._sticky_selection_action.setChecked(kind == STICKY_CHARACTER)
+        self._line_selection_action.setVisible(supported)
+        self._line_selection_action.setChecked(kind == STICKY_LINE)
 
     def _build_parsing_menu(self):
         """Parsing ▸ Auto Parse XML · Validate Project (FQ-016).
@@ -3176,6 +3296,10 @@ class MainWindow(QMainWindow):
         self._shrink_selection_action.setVisible(
             supports_expansion and hasattr(editor, "shrink_structural_selection")
         )
+        # Case 2 again, on a different capability (FQ-260812000331). Also driven
+        # by the menu's own `aboutToShow`, because read-only-ness — half of that
+        # capability — moves without a tab change.
+        self._refresh_sticky_selection_actions()
         group = self._active_deployment_group()
         for name, actions in self._deployment_actions.items():
             for action in actions:
@@ -3523,19 +3647,27 @@ class MainWindow(QMainWindow):
         self._light_theme_action.setChecked(False)
         self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
 
-        menu.addSeparator()
-        customize_toolbar_action = menu.addAction("Customize Toolbar…")
-        customize_toolbar_action.triggered.connect(
-            lambda: self._toolbar_ui.open_customize_dialog()
-        )
-        # FQ-012, beside its sibling: the same command universe, customized on
-        # its other axis. Being a menu action it enumerates into the walk and is
-        # itself pinnable and rebindable, which is intended -- a brand-new
-        # command needs no `RENAMED_ID_ALIASES` row, that table is for moves.
-        customize_shortcuts_action = menu.addAction("Customize Shortcuts…")
-        customize_shortcuts_action.triggered.connect(
-            lambda: self.open_customize_shortcuts_dialog()
-        )
+        # `Customize Toolbar…` and `Customize Shortcuts…` USED TO BE HERE, and
+        # FQ-260812002827 MOVED them — they are not duplicated into the settings
+        # dialog, they are gone from this menu. Both are now panes of
+        # `Settings ▸ Software settings…`, which is the app's one settings home
+        # and the third Maintenance launcher button.
+        #
+        # The price, named because it is a real one: `Settings` is
+        # Maintenance-only, so the toolbar and the key bindings can no longer be
+        # customized from an ordinary session. That follows FQ-027's design that
+        # the app is *configured* in Maintenance mode — the reason `Settings` was
+        # Maintenance-only to begin with — and it is what lets one launcher
+        # button stand for the whole of "settings". DEC-260812004358 is the
+        # owner's confirmation of the trade; this ships until answered otherwise.
+        #
+        # No `RENAMED_ID_ALIASES` rows for `view.customize-toolbar` /
+        # `view.customize-shortcuts`: the commands were not renamed, they were
+        # ABSORBED, and there is no successor id that means "customize the
+        # toolbar" for a stored `toolbarIds` entry or a stored override to map
+        # onto. `resolve_ids` drops them, which is the correct outcome — a
+        # pinned button for a command that no longer exists must not resolve to
+        # a dialog that does five other things as well.
 
     # -- FQ-012: user-rebindable keyboard shortcuts --------------------------
     #
@@ -3643,13 +3775,27 @@ class MainWindow(QMainWindow):
         )
         self._apply_shortcut_bindings()
 
-    def open_customize_shortcuts_dialog(self) -> None:
-        """Open the (non-modal) Customize Shortcuts dialog; on OK, apply and
-        persist the chosen overrides. Cancel writes nothing -- the dialog copies
-        the map it is handed, so a rejected dialog leaves the window's bindings
-        and the settings file untouched."""
+    def build_customize_shortcuts_pane(self, parent=None) -> CustomizeShortcutsDialog:
+        """Build and wire the Customize Shortcuts dialog. **The one place it is
+        constructed.**
+
+        Since FQ-260812002827 it is not a window of its own: it is the
+        **Keyboard shortcuts** pane of `Settings ▸ Software settings…`, which
+        embeds the returned dialog as a plain widget (`View ▸ Customize
+        Shortcuts…` is gone, not duplicated). So this RETURNS rather than shows,
+        and `parent` is the pane's container.
+
+        On OK it applies and persists the chosen overrides. Cancel writes
+        nothing -- the dialog copies the map it is handed, so a rejected dialog
+        leaves the window's bindings and the settings file untouched. That is
+        why the settings host adds no OK of its own, and why it can rebuild this
+        pane after either outcome: the command list and the override map are
+        re-read here on every call.
+        """
         dialog = CustomizeShortcutsDialog(
-            self._shortcut_commands(), self._shortcut_overrides, self
+            self._shortcut_commands(),
+            self._shortcut_overrides,
+            parent if parent is not None else self,
         )
         dialog.accepted.connect(
             lambda: self.apply_and_save_shortcut_overrides(
@@ -3657,7 +3803,39 @@ class MainWindow(QMainWindow):
             )
         )
         self._customize_shortcuts_dialog = dialog
+        return dialog
+
+    # -- FQ-260812002827: the one settings home -------------------------------
+
+    def open_software_settings_dialog(self) -> SoftwareSettingsDialog:
+        """`Settings ▸ Software settings…` — the two-pane settings host.
+
+        **Single-instance and non-modal**, and the two are one decision. It is
+        non-modal (DEC-260812004359's shipped default) because the surfaces it
+        absorbed were non-modal, and because the keyboard-shortcuts pane wants to
+        stay up while the user tries a key. A non-modal window that can be opened
+        twice is two windows editing the same stores, so a second request raises
+        the first instead of building a rival — the same rule
+        `SnippetController` already applied to the dialog that is now its pane.
+
+        The handle is dropped when the dialog finishes, so the next call builds a
+        fresh one: every pane re-reads its store at construction, and a settings
+        window kept alive across a whole session would otherwise be the one place
+        showing yesterday's values.
+        """
+        dialog = self._software_settings_dialog
+        if dialog is not None:
+            dialog.raise_()
+            dialog.activateWindow()
+            return dialog
+        dialog = SoftwareSettingsDialog(self, self)
+        dialog.finished.connect(lambda _result: self._forget_software_settings())
+        self._software_settings_dialog = dialog
         dialog.show()
+        return dialog
+
+    def _forget_software_settings(self) -> None:
+        self._software_settings_dialog = None
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
@@ -3878,29 +4056,39 @@ class MainWindow(QMainWindow):
         `_MAINTENANCE_ONLY_MENU_TITLES` exists beside `_MAINTENANCE_MENU_TITLES`
         instead of the filter growing a special case per entry.
 
-        **This is a HOST for settings commands, not a wrapper around one.** It
-        was built as a menu rather than as an entry appended to `Schema` (where
-        FQ-030's plan put `Edit Snippets…`) precisely because more than one
-        feature wants it: a snippet is a typing shortcut and a formatter
-        ruleset is a formatting preference, and neither is schema work. Adding
-        the next entry is one `addAction` line here — nothing about this method
-        is entangled with the snippet lane.
+        **It holds EXACTLY ONE entry, and that is the point (FQ-260812002827).**
+        It used to hold `Edit Snippets…` and `Autoformatter settings…` as
+        separate commands, and `View` held `Customize Toolbar…` and
+        `Customize Shortcuts…`. All four are **absorbed** into
+        `Software settings…`, a two-pane dialog whose left list names the
+        categories — the four surfaces are re-hosted, not reimplemented, and
+        their old menu entries are removed rather than kept as second doors.
+
+        The forcing constraint was the launcher: a launcher button is ONE menu
+        command (`launcher_dialog.LAUNCHER_GROUPS` is `(title, (command-ids…))`),
+        so "offer settings from the Maintenance column" is only expressible if
+        settings IS one command. Consolidating is what makes the button possible
+        and, incidentally, gives the app a single answer to "where do I configure
+        this?" instead of four scattered ones.
 
         **No shortcuts on anything in here** (DEC-006). Hiding a QMenu does not
         disable its children, so a shortcut on a maintenance-only command would
         still fire outside Maintenance mode and make nonsense of the placement.
         These are rare, deliberate gestures reached through the menu; if one
         ever genuinely needs a key, the enable-vs-hide question goes to the
-        owner rather than being settled here.
+        owner rather than being settled here. **This change adds no chord**: the
+        one command has a command form (this entry and a launcher button), so
+        under DEC-012 it gets exactly one keyboard host, its `QAction` — which
+        carries nothing.
 
-        **KNOWN AND ACCEPTED: these commands are PINNABLE.**
+        **KNOWN AND ACCEPTED: this command is PINNABLE.**
         `ToolbarController._walk_menu_actions` never tests `isVisible()`, so
-        `settings.edit-snippets` appears in Customize Toolbar's Available list
-        and a user who pins it can open the dialog outside Maintenance mode.
+        `settings.software-settings` appears in Customize Toolbar's Available
+        list and a user who pins it can open the dialog outside Maintenance mode.
         That is FQ-027 Q2's recorded trade (the toolbar is deliberately outside
         the mode filter's blast radius) and it is consistent with DEC-006 --
         hiding means "not in your way", never "prevented". It is also the very
-        reason the actions are built once and only toggled: an action that did
+        reason the action is built once and only toggled: an action that did
         not exist while unfiltered would drop out of the enumeration and take
         saved `toolbarIds` with it.
         """
@@ -3908,17 +4096,15 @@ class MainWindow(QMainWindow):
         #: Held so the mode filter and tests can reach the menu by name rather
         #: than hunting it out of `menuBar().actions()`, matching `_file_menu`.
         self._settings_menu = menu
-        edit_snippets = menu.addAction("Edit Snippets…")
-        edit_snippets.triggered.connect(lambda: self._snippet_ui.open_editor())
-        self._edit_snippets_action = edit_snippets
-        # FQ-033's second tenant -- the menu was built as a host for exactly
-        # this. No shortcut, per the rule above, and deliberately not in
-        # `DEFAULT_TOOLBAR_IDS`.
-        autoformat = menu.addAction(AUTOFORMAT_MENU_LABEL)
-        autoformat.triggered.connect(
-            lambda: open_autoformat_settings(self, settings=self._settings)
+        # The label is IMPORTED, never re-typed here, so the menu row, the id the
+        # walk derives from it (`settings.software-settings`) and
+        # `launcher_dialog`'s Maintenance tuple cannot drift apart -- the
+        # arrangement `AUTOFORMAT_MENU_LABEL` established.
+        software_settings = menu.addAction(SOFTWARE_SETTINGS_MENU_LABEL)
+        software_settings.triggered.connect(
+            lambda: self.open_software_settings_dialog()
         )
-        self._autoformat_settings_action = autoformat
+        self._software_settings_action = software_settings
         # A window is always constructed unfiltered (`_workflow_mode` is None),
         # so hidden is the correct starting state and matches what a later
         # refresh computes for the same mode.

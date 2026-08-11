@@ -80,7 +80,15 @@ def _rows(audit):
 
 
 def _open(qtbot, controller):
-    dialog = controller.open_editor()
+    """Build the editor the way its host does.
+
+    FQ-260812002827 made it the *Snippets* pane of
+    `Settings ▸ Software settings…`, so the controller BUILDS and wires it and
+    the settings dialog embeds it. Everything the controller owns — the scratch
+    copy, save-on-OK, export/import, the read-only refusal — is unchanged; only
+    who shows the widget moved.
+    """
+    dialog = controller.build_editor()
     qtbot.addWidget(dialog)
     return dialog
 
@@ -182,15 +190,28 @@ def test_the_editor_opens_read_only_over_a_corrupt_store(qtbot, lane):
     assert SNIPPETS_FILENAME in dialog.note()
 
 
-# -- the editor is single-instance --------------------------------------------
+# -- who owns "only one of these" ---------------------------------------------
 
 
-def test_reopening_focuses_the_open_editor(qtbot, lane):
+def test_single_instance_moved_to_the_HOST_and_the_controller_just_builds(
+    qtbot, lane
+):
+    """The controller used to be the single-instance gate, because the editor
+    was its own window. It is a PANE now, and the window that owns the pane is
+    the single-instance one (`MainWindow.open_software_settings_dialog`), so
+    `build_editor` is an honest builder: every call returns a freshly wired
+    dialog reading current state. The settings host relies on exactly that to
+    rebuild a pane after OK or Cancel.
+
+    `dialog()` still tracks the LIVE one, which is what export/import act on.
+    """
     controller, _shell, _audit, _messages, _cfg = lane
     controller.load()
     first = _open(qtbot, controller)
-    assert controller.open_editor() is first
-    first.reject()
+    second = _open(qtbot, controller)
+    assert second is not first
+    assert controller.dialog() is second
+    second.reject()
     assert controller.dialog() is None
 
 

@@ -317,18 +317,25 @@ def test_legacy_comma_string_still_restores(qtbot, tmp_path):
     assert _toolbar_labels(window) == ["Validate Project", "Generate PHP..."]
 
 
-def test_customize_toolbar_action_in_view_menu(qtbot, tmp_path):
+def test_customize_toolbar_is_GONE_from_the_view_menu(qtbot, tmp_path):
+    """FQ-260812002827 RELOCATED it: `View ▸ Customize Toolbar…` no longer
+    exists, and the surface is the Toolbar pane of
+    `Settings ▸ Software settings…`. Relocating means moving, so a second door
+    here would be the bug."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
-    action = find_action(view_menu, "Customize Toolbar…")
-    assert action is not None
+    assert find_action(view_menu, "Customize Toolbar…") is None
+    assert "view.customize-toolbar" not in window._toolbar_ui.menu_commands
 
 
-def test_opening_customize_toolbar_does_not_block(qtbot, tmp_path):
+def test_building_the_customize_toolbar_pane_does_not_block(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.open_customize_dialog()  # non-modal show(), must not raise/block
+    # Returns rather than shows -- the settings host embeds it.
+    pane = window._toolbar_ui.build_customize_pane()
+    qtbot.addWidget(pane)
+    assert pane.isVisible() is False
     assert window._toolbar_ui.customize_dialog is not None
     assert window._toolbar_ui.customize_dialog.selected_ids() == window._toolbar_ui.command_ids
 
@@ -336,7 +343,7 @@ def test_opening_customize_toolbar_does_not_block(qtbot, tmp_path):
 def test_customize_dialog_is_offered_every_menu_command(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.open_customize_dialog()
+    qtbot.addWidget(window._toolbar_ui.build_customize_pane())
     dialog = window._toolbar_ui.customize_dialog
     offered = dialog._available_ids()
     assert offered == [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
@@ -487,8 +494,9 @@ def test_duplicate_menu_labels_get_a_numeric_suffix(qtbot, tmp_path):
 
 
 def test_customize_dialog_reenumerates_commands_added_after_startup(qtbot, tmp_path):
-    """`open_customize_dialog` re-walks the menus, so a command the app grew
-    since startup is offered without a restart."""
+    """`build_customize_pane` re-walks the menus, so a command the app grew
+    since startup is offered without a restart -- which matters more now that
+    the settings host rebuilds the pane after every OK/Cancel."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     before = [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
@@ -496,7 +504,7 @@ def test_customize_dialog_reenumerates_commands_added_after_startup(qtbot, tmp_p
 
     tools = find_top_menu(window, "Tools")
     fresh = tools.addAction("Brand New Command")
-    window._toolbar_ui.open_customize_dialog()
+    qtbot.addWidget(window._toolbar_ui.build_customize_pane())
     offered = window._toolbar_ui.customize_dialog._available_ids()
     assert "tools.brand-new-command" in offered
     assert window._toolbar_ui.menu_commands["tools.brand-new-command"] is fresh
@@ -1056,8 +1064,7 @@ def test_hidden_commands_still_enumerate_into_the_shortcut_list(qtbot, tmp_path)
     ]
     assert hidden, "expected at least one tab-gated menu command to be hidden"
 
-    window.open_customize_shortcuts_dialog()
-    dialog = window._customize_shortcuts_dialog
+    dialog = window.build_customize_shortcuts_pane()
     qtbot.addWidget(dialog)
     assert set(hidden) <= set(dialog.command_ids())
 
@@ -1068,8 +1075,7 @@ def test_cancelling_the_customize_shortcuts_dialog_persists_nothing(
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window.open_customize_shortcuts_dialog()
-    dialog = window._customize_shortcuts_dialog
+    dialog = window.build_customize_shortcuts_pane()
     qtbot.addWidget(dialog)
 
     dialog.set_binding("file.close", "Ctrl+Alt+W")

@@ -22,8 +22,10 @@ Three jobs, and nothing else:
    resolving that path is the one part that needs app knowledge, so it is here.
 2. **Loading it at startup and pushing the result into the editors**, so a
    saved snippet is live in every SQL editor without a restart.
-3. **`Settings ▸ Edit Snippets…` and its Export / Import**, including the
-   collision question, which is the only modal in this lane.
+3. **The Snippets pane of `Settings ▸ Software settings…` and its Export /
+   Import**, including the collision question, which is the only modal in this
+   lane. (It was `Settings ▸ Edit Snippets…` until FQ-260812002827 relocated it
+   into the consolidated settings dialog; only the host changed.)
 
 WHERE THE STORE LIVES, AND WHY THAT DIRECTORY
 ---------------------------------------------
@@ -93,7 +95,7 @@ def snippets_path(base_dir: Path | None = None) -> Path:
 
 
 class SnippetController(QObject):
-    """Owns the snippet set in force and the `Settings ▸ Edit Snippets…` gesture."""
+    """Owns the snippet set in force and the Snippets settings pane."""
 
     def __init__(
         self,
@@ -126,7 +128,7 @@ class SnippetController(QObject):
         return self._load_error
 
     def dialog(self) -> EditSnippetsDialog | None:
-        """The open editor, or None (tests drive it through this)."""
+        """The live editor widget, or None (tests drive it through this)."""
         return self._dialog
 
     # -- startup -------------------------------------------------------------
@@ -162,20 +164,25 @@ class SnippetController(QObject):
         if callable(setter):
             setter(self._snippets)
 
-    # -- Settings ▸ Edit Snippets… ---------------------------------------------
+    # -- the Snippets settings pane -------------------------------------------
 
-    def open_editor(self) -> EditSnippetsDialog:
-        """Show the editor (single-instance, non-modal, house style).
+    def build_editor(self, parent=None) -> EditSnippetsDialog:
+        """Build and wire the editor. **The one place it is constructed.**
 
-        Non-modal because the user's reason for opening it is usually a snippet
-        they just wanted while writing SQL, and a modal would hide the very
-        code they are copying the body out of.
+        Since FQ-260812002827 the editor is not a window of its own: it is the
+        Snippets pane of `Settings ▸ Software settings…`, which embeds the
+        returned dialog as a plain widget. So this returns rather than shows,
+        and `parent` is the pane's container rather than the main window.
+
+        It is called **again** every time the dialog finishes, because the
+        settings host rebuilds a finished pane — which is why the whole of the
+        wiring is here and nothing is cached across calls. The read-only note is
+        re-derived each time for the same reason.
+
+        The dialog still edits a **scratch copy**: OK reaches `_on_accepted` ->
+        `save`, Cancel writes nothing at all. That contract is unchanged by the
+        re-hosting and is the reason the host adds no OK of its own.
         """
-        if self._dialog is not None:
-            self._dialog.raise_()
-            self._dialog.activateWindow()
-            return self._dialog
-
         note = ""
         if self._load_error:
             note = (
@@ -185,7 +192,7 @@ class SnippetController(QObject):
             )
         dialog = EditSnippetsDialog(
             self._snippets,
-            self._shell.window,
+            parent if parent is not None else self._shell.window,
             read_only=bool(self._load_error),
             note=note,
         )
@@ -194,7 +201,6 @@ class SnippetController(QObject):
         dialog.export_requested.connect(self._on_export)
         dialog.import_requested.connect(self._on_import)
         self._dialog = dialog
-        dialog.show()
         return dialog
 
     def _on_finished(self, _result) -> None:

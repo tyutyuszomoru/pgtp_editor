@@ -12,9 +12,15 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""The `Settings` menu and `Settings ▸ Edit Snippets…` on the real window
-(FQ-030): where they live, when they are visible, and that the store the entry
-edits is the injected one.
+"""The `Settings` menu and the snippet editor on the real window (FQ-030, then
+FQ-260812002827): where they live, when they are visible, and that the store the
+editor edits is the injected one.
+
+**The entry is no longer `Settings ▸ Edit Snippets…`.** FQ-260812002827 absorbed
+it — with Autoformatter settings, Customize Toolbar and Customize Shortcuts —
+into `Settings ▸ Software settings…`, a two-pane dialog whose *Snippets* pane IS
+this editor. `Settings` therefore holds exactly one entry, and the route in is
+that entry's dialog.
 
 Two invariants here are not behaviour checks but rules with recorded reasons:
 
@@ -62,7 +68,7 @@ def _settings_menu(win):
     return None
 
 
-def _entry(win, label="Edit Snippets…"):
+def _entry(win, label="Software settings…"):
     menu = _settings_menu(win)
     for action in menu.actions():
         if action.text() == label:
@@ -73,9 +79,15 @@ def _entry(win, label="Edit Snippets…"):
 # -- the menu ------------------------------------------------------------------
 
 
-def test_settings_is_a_top_level_menu_holding_edit_snippets(window):
+def test_settings_is_a_top_level_menu_holding_ONE_entry(window):
+    """FQ-260812002827: the four scattered settings commands became one. A
+    launcher button is one menu command, so "settings" had to become one
+    command before the Maintenance column could offer it."""
     win = window()
     assert _settings_menu(win) is not None
+    assert [a.text() for a in _settings_menu(win).actions()] == [
+        "Software settings…"
+    ]
     assert _entry(win) is not None
 
 
@@ -152,14 +164,19 @@ def test_the_command_is_enumerated_and_therefore_pinnable(window):
     """KNOWN AND ACCEPTED, pinned here so it cannot change unnoticed.
 
     `ToolbarController._walk_menu_actions` does not test `isVisible()`, so
-    `settings.edit-snippets` is offered by Customize Toolbar and a pinned
+    `settings.software-settings` is offered by Customize Toolbar and a pinned
     button reaches the dialog outside Maintenance mode. That is FQ-027 Q2's
     recorded trade and DEC-006's ruling (hiding is "not in your way", never
     "prevented"), and it is what keeps the command's id stable across modes.
+
+    The absorbed ids are GONE, not aliased: there is no successor that means
+    "edit snippets" for a stored `toolbarIds` entry to resolve onto.
     """
     win = window()
     commands = dict(win._toolbar_ui.all_menu_commands())
-    assert commands.get("settings.edit-snippets") == "Settings › Edit Snippets"
+    assert commands.get("settings.software-settings") == "Settings › Software settings"
+    assert "settings.edit-snippets" not in commands
+    assert "settings.autoformatter-settings" not in commands
 
 
 def test_nothing_else_reaches_the_editor(window):
@@ -201,11 +218,15 @@ def test_without_a_store_the_shipped_defaults_stay_in_force(window):
     )
 
 
-def test_triggering_the_entry_opens_the_editor(window):
+def test_triggering_the_entry_opens_the_editor_as_a_settings_PANE(window):
     win = window()
     win.set_workflow_mode(MODE_MAINTENANCE)
     _entry(win).trigger()
-    dialog = win._snippet_ui.dialog()
-    assert dialog is not None
-    assert dialog.result_snippets() == DEFAULT_SNIPPETS
-    dialog.reject()
+    settings_dialog = win._software_settings_dialog
+    assert settings_dialog is not None
+    pane = settings_dialog.pane_widget("snippets")
+    # The pane IS the editor -- the same widget, not a reimplementation -- and
+    # it is the controller's live dialog.
+    assert pane is win._snippet_ui.dialog()
+    assert pane.result_snippets() == DEFAULT_SNIPPETS
+    settings_dialog.reject()

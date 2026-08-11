@@ -14,8 +14,11 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # pgtp_editor/ui/customize_shortcuts_dialog.py
-"""The "Customize Shortcuts…" dialog (FQ-012) — View menu, sibling to
-"Customize Toolbar…".
+"""The Customize Shortcuts surface (FQ-012) — since FQ-260812002827 the
+**Keyboard shortcuts** pane of `Settings ▸ Software settings…`, sibling to the
+Toolbar pane. It was `View ▸ Customize Shortcuts…`; that entry is gone, not
+duplicated, and `MainWindow.build_customize_shortcuts_pane` is the one place
+this dialog is now constructed.
 
 One table row per menu command, showing where the command lives
 (`menu_path_label()`'s `"File › Discard Changes"`), its current key and its
@@ -31,8 +34,10 @@ Four rules carried from the current house style
   `_walk_menu_actions`) and hands the result in as plain
   `shortcut_registry.CommandBinding` data, which is what lets the whole thing
   be tested with stub rows and no window.
-- **Shown non-modally** (`show()`, never `.exec()`), with the caller reading
-  `result_overrides()` back after `accepted` fires and doing the
+- **Never `.exec()`** — it was shown non-modally and is now embedded as a plain
+  widget in a non-modal host, which is the same promise from the test suite's
+  side: no test can meet a live modal here. The caller reads
+  `result_overrides()` back after `accepted` fires and does the
   `QAction.setShortcut()` pass itself. Nothing here writes QSettings, and
   nothing here holds a QAction.
 - **Every mutation has a programmatic seam** — `set_binding`, `clear_binding`,

@@ -119,6 +119,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pgtp_editor.ui.software_settings_dialog import (
+    COMMAND_ID as SOFTWARE_SETTINGS_COMMAND_ID,
+)
+
 #: The three major workflow modes (FQ-027). Plain strings, not an enum, because
 #: they cross a lazy import boundary (`MainWindow` imports this module only
 #: inside the two methods that need it) and are compared, never arithmetic.
@@ -138,12 +142,20 @@ MODE_MAINTENANCE = "maintenance"
 #: * **Standalone** merges FQ-010's *Open a pgtp for editing* and *Open other
 #:   files* — both are "open something without a project".
 #: * **Project** is FQ-010's project group, unchanged.
-#: * **Maintenance** is **Edit XSD + Import XSD** only. The owner's verbatim
-#:   "Open XSD" does NOT map to a live command — the read-only
-#:   `SchemaViewerWindow` / `Schema ▸ Open XSD` was deleted 2026-07-24 in favour
-#:   of the editable Edit XSD tab — and the §20 re_phpgen/panGen entries that
-#:   FQ-010 put in this group LEFT the launcher: they are a generation loop, not
-#:   an administrative task on the app's own schema.
+#: * **Maintenance** is **Edit XSD + Import XSD**, plus **Software settings**
+#:   since FQ-260812002827. The owner's verbatim "Open XSD" does NOT map to a
+#:   live command — the read-only `SchemaViewerWindow` / `Schema ▸ Open XSD` was
+#:   deleted 2026-07-24 in favour of the editable Edit XSD tab — and the §20
+#:   re_phpgen/panGen entries that FQ-010 put in this group LEFT the launcher:
+#:   they are a generation loop, not an administrative task on the app's own
+#:   schema.
+#:
+#:   `settings.software-settings` is the reason the app's four scattered
+#:   configuration surfaces were consolidated into one two-pane dialog: a button
+#:   here is ONE command id resolved through the menu walk, so a whole `Settings`
+#:   menu could never have become a button. The id is imported from the dialog
+#:   that owns the label it is derived from, so this table and the menu row
+#:   cannot drift.
 LAUNCHER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "Standalone",
@@ -155,7 +167,7 @@ LAUNCHER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "Maintenance",
-        ("schema.edit-xsd", "schema.import-xsd"),
+        ("schema.edit-xsd", "schema.import-xsd", SOFTWARE_SETTINGS_COMMAND_ID),
     ),
 )
 
@@ -182,8 +194,9 @@ _GROUP_HINTS: dict[str, str] = {
         "deployable .pgtp by diff/merge."
     ),
     "Maintenance": (
-        "One-off administrative work on the app's own schema. Trims the menu "
-        "bar to Schema, Help and a short File menu for this session."
+        "One-off administrative work on the app's own schema, and where the "
+        "app itself is configured. Trims the menu bar to Schema, Settings, "
+        "Help and a short File menu for this session."
     ),
 }
 
