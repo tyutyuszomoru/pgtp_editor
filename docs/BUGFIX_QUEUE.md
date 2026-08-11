@@ -6912,7 +6912,30 @@ Measured after the merge, at `9c65a4c`: `BEGIN TRANSACTION;\nUPDATE t SET a = 1;
 ---
 
 ## BUG-260811021804: SQL Results panel's error/warning colours are never painted — a failed query reads in ordinary text
-**Status:** OPEN
+**Status:** RESOLVED (8b980f3)
+
+**Resolution notes (2026-08-11).** Both sites fixed with widget-level stylesheets, following
+`ui/connectivity.py`'s working precedent. In `sql_results_panel.py`, `_ERROR_COLOR`/`_WARN_COLOR` became
+`STATUS_ERROR`/`STATUS_WARNING` *kinds* plus a pure `status_colour(kind, light)`; the error red is
+imported from `mode_colors(light)[MODE_MAINTENANCE][1]` so no second red literal exists, and the warning
+pair (`#8a5a00` light / `#e0a83a` dark) is new and local. All seven call sites converted and the
+`setPalette` is gone. In `project_status_panel.py`, `_dim` became `_apply_dim()` using `rgba(...)` at
+`DIM_ALPHA = 165`, reading its base colour from **the node, not the label**, so re-applying cannot
+compound the fade. Both re-apply on theme flip via `changeEvent`, idempotently.
+
+Measured on rendered pixels (error status): dark 0 reddish → 35; light 0 reddish → 240; clearing restores
+the theme colour. Both pairs clear 4.5:1 on their chrome. The dim now renders `#81878c` dark / `#83898e`
+light where it was previously pixel-identical to undimmed.
+
+The false-green test this entry named (`tests/ui/test_sql_results_panel.py:163-168`, asserting the two
+palettes differ) was **deleted** and replaced by pixel-sampling tests. 119 passed across the two files.
+
+Two corrections to this entry, both material for whoever writes the next pixel test:
+- The class in `project_status_panel.py` is **`_DiagramNode`** (`project_status_panel.py:342`), not
+  `StatusNode` — the name used above matches nothing in the file.
+- `mode_colors` stores **upper-case** colour literals while `QImage.pixelColor().name()` returns
+  **lower-case**, so a naive dict lookup on a colour name reads 0 forever — the same false-negative class
+  as the bug itself.
 **Reported:** 2026-08-11
 **Report (verbatim):** "Suspected defect: the SQL Results panel's error/warning status colours are very likely never painted, so a failed query's message reads in ordinary text instead of red. Mechanism, verified as far as a read-only sweep can take it: (1) `pgtp_editor/ui/sql_results_panel.py` defines `_ERROR_COLOR = QColor("#d02020")` and `_WARN_COLOR = QColor("#d08a1a")` (around lines 98-99) and applies them through `_set_status`, a QPalette override on a QLabel. (2) `pgtp_editor/ui/theme.py::apply_theme` ends with `app.setStyleSheet(_qdarkstyle_stylesheet(light))` — an application-wide stylesheet, set unconditionally for both themes. (3) That generated stylesheet contains a universal `QWidget` rule that sets `color`. Qt resolves a stylesheet-declared property over the widget's palette. If that holds for this QLabel, `_set_status`'s colour argument is inert and the red/amber never appears. Verify empirically, offscreen, on both themes; check whether any other place colours text through a palette override under the same app-wide QSS; if it IS inert propose the fix; if it is NOT inert say so plainly and close as not-a-bug."
 
@@ -7098,7 +7121,24 @@ not gate the fix.
 ---
 
 ## BUG-260811021816: Two Apply-to-quality strings send the user to `Database ▸ Compare Schemas…`, a command that has never been built
-**Status:** OPEN
+**Status:** RESOLVED (d162607)
+
+**Resolution notes (2026-08-11).** A new `_drop_statement(ref)` (`ddl_object_editor.py:491`) renders
+`DROP FUNCTION pr.recalc(integer);`, with a separate trigger branch emitting
+`DROP TRIGGER name ON schema.table;`. Site 1 now points at the sandbox gesture that actually exists;
+site 2 hands the user the DROP statement and states that the editor has no gesture that drops it, and
+why. The `_precondition_signature` docstring's dead path was replaced by a note naming this bug id and
+`db/schema_snapshot.py:81` so it is not re-added (`ddl_object_editor.py:1374-1377`).
+`tests/ui/test_ddl_object_editor.py:1107` passed **unchanged** — the refusal substring was preserved as
+the proposal intended. 110 passed, 5 new.
+
+One deliberate divergence from the proposal, worth recording: proposed test (a) asked for a raw
+**source** scan for `Compare Schemas`, which is incompatible with proposal item 3 (a docstring that
+deliberately names the command). The guard instead parses the module with `ast` and scans
+**non-docstring string constants only** — strictly stronger, because `ast` joins implicitly concatenated
+fragments itself, so the split-across-two-source-lines form that hid site 2 from `grep` is caught
+structurally rather than by regex. Verified to have teeth by temporarily reinserting a wrapped literal
+and watching it fail.
 **Reported:** 2026-08-11
 **Report (verbatim):** "Two user-facing strings in `pgtp_editor/ui/ddl_object_editor.py` direct the user to a menu command **that does not exist**: `Database ▸ Compare Schemas…`. Both sites are in the Apply-to-quality signature-check path: (1) line ~1383, the refusal when the buffer's identity cannot be parsed — `"refused: could not determine the object's signature from the buffer, so a changed signature cannot be ruled out. Use the deployment-script path (Database ▸ Compare Schemas…)."`; (2) line ~1423, the consequence text in the signature-mismatch confirmation (split across two source lines as `"Database ▸ Compare "` + `"Schemas… produces a reviewable script)."`), telling the user how to drop the object left behind — `"Dropping the old one is up to you (Database ▸ Compare Schemas… produces a reviewable script)."` Note the line-wrapping: a naive `grep "Compare Schemas"` finds only the first site. Search for `Compare` alone."
 
