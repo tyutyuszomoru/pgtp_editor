@@ -21,13 +21,16 @@ involved.
 """
 import pytest
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
 
 from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode, determine_project_tier
 from pgtp_editor.ui import project_status_model as psm
 from pgtp_editor.ui import project_status_panel
 from pgtp_editor.ui.project_status_model import NodeFamily, QualityState, build_diagram
+from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.project_status_panel import (
+    NODE_WIDTH,
     ProjectStatusPanel,
     _boxed_pixmap,
     _logical_size,
@@ -542,3 +545,104 @@ def test_the_whole_node_diagram_fits_at_the_opening_size():
     assert needed.height() <= viewport.height()
     assert not panel.scroll_area.horizontalScrollBar().isVisible()
     assert not panel.scroll_area.verticalScrollBar().isVisible()
+
+
+# ---------------------------------------------------------------------------
+# the dimmed state caption -- PIXELS, never the palette (BUG-260811021804)
+# ---------------------------------------------------------------------------
+# `_DiagramNode` faded its state caption with a `setPalette` alpha, which the
+# app-wide qdarkstyle sheet `theme.py::apply_theme` installs silently overrides:
+# QSS beats QPalette for every property it declares, and it declares `color` on
+# a universal `QWidget` rule. Measured, the fade produced a **pixel-identical**
+# label in both themes -- the captions were not dimmed at all. So these tests
+# grab and compare rendered images; a palette read-back would pass either way.
+
+
+def _dim_probe(qapp, qtbot, light: bool):
+    """A shown node under a real theme, plus a same-font undimmed control."""
+    apply_theme(qapp, light)
+    node = project_status_panel._DiagramNode(
+        NodeFamily.QUALITY, "Quality", "some state caption"
+    )
+    qtbot.addWidget(node)
+    node.resize(NODE_WIDTH, 120)
+    # Shown, and shown as a top level: the app-wide QSS is only resolved on a
+    # polished widget, so an unshown grab is not evidence of anything.
+    node.show()
+    qapp.processEvents()
+    return node
+
+
+def _image_of(widget):
+    return widget.grab().toImage()
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_state_caption_is_actually_dimmed_in_pixels(qapp, qtbot, light):
+    node = _dim_probe(qapp, qtbot, light)
+    dimmed = _image_of(node.state_label)
+
+    # Same label, same text, same font -- fade removed. If the fade were inert
+    # (the bug) these two images would be identical.
+    node.state_label.setStyleSheet("")
+    qapp.processEvents()
+    undimmed = _image_of(node.state_label)
+
+    assert dimmed != undimmed
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_dim_is_a_stylesheet_carrying_the_alpha(qapp, qtbot, light):
+    node = _dim_probe(qapp, qtbot, light)
+    sheet = node.state_label.styleSheet()
+    assert f"{project_status_panel.DIM_ALPHA})" in sheet
+    assert "rgba(" in sheet
+
+
+def test_the_dim_follows_a_theme_flip(qapp, qtbot):
+    """The base colour is re-read from the node on every palette change, so the
+    caption fades the *current* theme's text colour rather than the previous
+    one. Settled with `processEvents` on purpose: the event fires several times
+    per flip and the first ones still report the old lightness, so the handler
+    is idempotent and last-write-wins."""
+    node = _dim_probe(qapp, qtbot, False)
+    dark_sheet = node.state_label.styleSheet()
+
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    light_sheet = node.state_label.styleSheet()
+    assert light_sheet != dark_sheet
+
+    apply_theme(qapp, False)
+    qapp.processEvents()
+    assert node.state_label.styleSheet() == dark_sheet
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_dim_does_not_compound_when_re_applied(qapp, qtbot, light):
+    """`_apply_dim` reads its base colour from the node, which carries no
+    stylesheet of ours -- re-reading the *label* would fade the already-faded
+    colour a little more on every theme change until the caption vanished."""
+    node = _dim_probe(qapp, qtbot, light)
+    once = node.state_label.styleSheet()
+    for _ in range(5):
+        node._apply_dim()
+    assert node.state_label.styleSheet() == once
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_dimmed_caption_stays_legible_on_its_chrome(qapp, qtbot, light):
+    """Dimmer than the title, never unreadable: the blended result must still
+    clear 4.5:1 against the chrome it is drawn on."""
+    from tests.ui.test_sql_results_panel import CHROME, contrast_ratio
+
+    node = _dim_probe(qapp, qtbot, light)
+    base = node.palette().color(node.foregroundRole())
+    chrome = QColor(CHROME[light])
+    alpha = project_status_panel.DIM_ALPHA / 255
+    blended = QColor(
+        round(base.red() * alpha + chrome.red() * (1 - alpha)),
+        round(base.green() * alpha + chrome.green() * (1 - alpha)),
+        round(base.blue() * alpha + chrome.blue() * (1 - alpha)),
+    )
+    assert contrast_ratio(blended.name(), CHROME[light]) >= 4.5

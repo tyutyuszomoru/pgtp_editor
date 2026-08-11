@@ -19,20 +19,28 @@
 Hand-built ``QueryResult``s only -- the panel owns no session and opens no
 connection, so nothing here needs a database, a MainWindow or a modal.
 """
+from collections import Counter
+
 import pytest
+from PySide6.QtGui import QColor
 
 from pgtp_editor.db.sandbox_query import QueryOutcome, QueryResult
+from pgtp_editor.ui.mode_indicator import MODE_MAINTENANCE, mode_colors
 from pgtp_editor.ui.sql_results_panel import (
     EMPTY_SQL_TEXT,
     IDLE_TEXT,
     NULL_TEXT,
+    STATUS_ERROR,
+    STATUS_WARNING,
     RunReport,
     SqlResultsPanel,
     StatementRun,
     render_value,
     run_status_lines,
     statement_status,
+    status_colour,
 )
+from pgtp_editor.ui.theme import apply_theme
 
 
 @pytest.fixture
@@ -160,12 +168,211 @@ def test_truncation_is_visible(panel):
     assert "1" in text
 
 
-def test_truncation_is_coloured_differently_from_a_plain_result(panel):
+# -- the status strip's colours: PIXELS, never the palette -----------------
+#
+# BUG-260811021804. Everything below deliberately samples `grab().toImage()`
+# rather than reading `status_label.palette()`, and that is not belt-and-braces:
+# the palette read is the assertion that let this bug ship. The panel used to
+# colour the strip with `setPalette`, which the app-wide qdarkstyle sheet
+# `theme.py::apply_theme` installs overrides for every property it declares --
+# `color` among them. The palette faithfully reported `#d02020` while **zero**
+# red pixels were drawn, in both themes, so a failed query, a TRUNCATED result
+# and an ordinary `SELECT` were pixel-for-pixel identical.
+#
+# The test this replaced (`test_truncation_is_coloured_differently_from_a_plain
+# _result`) compared two palette read-backs and passed the entire time.
+#
+# `tests/ui/test_theme.py` and `test_main_window_theme.py` deliberately assert
+# palette roles rather than pixels (§7); this file is the documented boundary of
+# that policy -- for anything the app-level QSS declares, only pixels are
+# evidence.
+
+
+#: The live qdarkstyle chrome the strip is read against, per theme. Colours are
+#: judged for contrast against these, not against an idealised white/black.
+CHROME = {True: "#fafafa", False: "#19232d"}
+
+
+def rendered(name: str) -> str:
+    """A colour spelled the way `QImage.pixelColor().name()` spells it (lower
+    case `#rrggbb`). `mode_colors` stores upper-case literals, so a raw string
+    comparison against a pixel name silently never matches -- which is exactly
+    the class of false negative this whole block exists to avoid."""
+    return QColor(name).name()
+
+
+def status_pixels(widget, kind, light) -> int:
+    """How many pixels of `widget` are painted in the status colour for `kind`."""
+    return pixel_counts(widget)[rendered(status_colour(kind, light))]
+
+
+def pixel_counts(widget) -> Counter:
+    """`{'#rrggbb': how many pixels}` for what the widget actually renders."""
+    image = widget.grab().toImage()
+    counts: Counter = Counter()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            counts[image.pixelColor(x, y).name()] += 1
+    return counts
+
+
+@pytest.fixture
+def themed_panel(qtbot, qapp):
+    """Build a *shown* panel under a real theme. Showing is not optional --
+    an unshown widget's grab is not evidence of what the user sees, and the
+    app-wide QSS is only resolved once the widget is polished."""
+
+    def build(light: bool) -> SqlResultsPanel:
+        apply_theme(qapp, light)
+        widget = SqlResultsPanel(on_execute=lambda _sql: None)
+        qtbot.addWidget(widget)
+        # Generous, and deliberately so: the strip word-wraps, and at the
+        # default size it is squeezed to ~8px, where a long status renders as
+        # almost nothing but antialiasing and an exact-colour count is a
+        # coin-flip. Give it room and the assertions measure colour, not layout.
+        widget.resize(760, 560)
+        widget.show()
+        qapp.processEvents()
+        return widget
+
+    return build
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_an_error_status_is_actually_painted_in_the_error_colour(themed_panel, light):
+    panel = themed_panel(light)
+    panel.show_result(QueryResult.failed("SELECT 1", "ERROR: boom"))
+    assert status_pixels(panel.status_label, STATUS_ERROR, light) > 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_truncated_result_is_actually_painted_in_the_warning_colour(
+    themed_panel, light
+):
+    """The TRUNCATED warning is the one this module's docstring calls this
+    project's worst failure class, and it was indistinguishable from success."""
+    panel = themed_panel(light)
+    panel.show_result(rows_result(truncated=True, max_rows=1, rows=((1, "alpha"),)))
+    assert "TRUNCATED" in panel.status_label.text()
+    assert status_pixels(panel.status_label, STATUS_WARNING, light) > 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_refusal_is_actually_painted_in_the_warning_colour(themed_panel, light):
+    panel = themed_panel(light)
+    panel.sql_edit.setPlainText("   ")
+    panel.run()
+    assert panel.status_label.text() == EMPTY_SQL_TEXT
+    assert status_pixels(panel.status_label, STATUS_WARNING, light) > 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_plain_result_carries_neither_attention_colour(themed_panel, light):
+    panel = themed_panel(light)
     panel.show_result(rows_result())
-    plain = panel.status_label.palette().color(panel.status_label.foregroundRole())
+    assert status_pixels(panel.status_label, STATUS_ERROR, light) == 0
+    assert status_pixels(panel.status_label, STATUS_WARNING, light) == 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_truncation_renders_differently_from_a_plain_result(themed_panel, light):
+    """The rewritten form of the false-green test this replaces: the two states
+    must differ in *pixels*, which is what the old palette comparison never
+    established."""
+    panel = themed_panel(light)
+    panel.show_result(rows_result())
+    plain = pixel_counts(panel.status_label)
     panel.show_result(rows_result(truncated=True))
-    warned = panel.status_label.palette().color(panel.status_label.foregroundRole())
+    warned = pixel_counts(panel.status_label)
+    warning = rendered(status_colour(STATUS_WARNING, light))
     assert plain != warned
+    assert warned[warning] > 0
+    assert plain[warning] == 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_clearing_the_status_restores_the_theme_colour(themed_panel, light):
+    panel = themed_panel(light)
+    panel.show_result(QueryResult.failed("SELECT 1", "ERROR: boom"))
+    assert status_pixels(panel.status_label, STATUS_ERROR, light) > 0
+    panel.clear()
+    counts = pixel_counts(panel.status_label)
+    assert counts[rendered(status_colour(STATUS_ERROR, light))] == 0
+    # And the strip is not left invisible: the theme's own text colour is back.
+    assert panel.status_label.styleSheet() == ""
+    assert len(counts) > 1
+
+
+def test_the_error_colour_follows_a_theme_flip(themed_panel, qapp):
+    """The panel remembers the status *kind*, not a resolved colour, so a flip
+    repaints in the new theme's value.
+
+    The flip is settled with `processEvents` before asserting on purpose: the
+    palette-change event fires four times per flip on one widget and the first
+    two still report the OLD lightness, so the handler is idempotent and
+    last-write-wins rather than correct on the first event.
+    """
+    panel = themed_panel(False)
+    panel.show_result(QueryResult.failed("SELECT 1", "ERROR: boom"))
+    dark_red = rendered(status_colour(STATUS_ERROR, False))
+    light_red = rendered(status_colour(STATUS_ERROR, True))
+    assert dark_red != light_red
+    assert pixel_counts(panel.status_label)[dark_red] > 0
+
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    counts = pixel_counts(panel.status_label)
+    assert counts[light_red] > 0
+    assert counts[dark_red] == 0
+
+    apply_theme(qapp, False)
+    qapp.processEvents()
+    counts = pixel_counts(panel.status_label)
+    assert counts[dark_red] > 0
+    assert counts[light_red] == 0
+
+
+def _relative_luminance(name: str) -> float:
+    color = QColor(name)
+    channels = []
+    for raw in (color.redF(), color.greenF(), color.blueF()):
+        channels.append(
+            raw / 12.92 if raw <= 0.03928 else ((raw + 0.055) / 1.055) ** 2.4
+        )
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def contrast_ratio(one: str, other: str) -> float:
+    first, second = _relative_luminance(one), _relative_luminance(other)
+    lighter, darker = max(first, second), min(first, second)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+@pytest.mark.parametrize("kind", [STATUS_ERROR, STATUS_WARNING])
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_every_status_colour_is_legible_on_its_own_chrome(kind, light):
+    """Both pairs clear 4.5:1 against the chrome they are drawn on, so a later
+    "tidy" back to one value per kind fails loudly here.
+
+    The single values this replaced each failed in one theme: `#d02020` scored
+    2.96:1 on the dark chrome and `#d08a1a` scored 2.74:1 on the light one --
+    below even 3:1.
+    """
+    assert contrast_ratio(status_colour(kind, light), CHROME[light]) >= 4.5
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_error_colour_is_the_one_red_the_app_already_owns(light):
+    """No second red beside `mode_colors` (§18.7) -- the error colour IS the
+    maintenance-mode foreground, imported rather than re-typed."""
+    assert rendered(status_colour(STATUS_ERROR, light)) == rendered(
+        mode_colors(light)[MODE_MAINTENANCE][1]
+    )
+
+
+def test_the_ordinary_status_has_no_colour_of_its_own():
+    assert status_colour(None, True) is None
+    assert status_colour(None, False) is None
 
 
 # -- the execute seam ------------------------------------------------------

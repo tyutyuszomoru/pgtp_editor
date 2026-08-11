@@ -52,9 +52,16 @@ result set is a wrong answer, which is this project's worst failure class.
 an empty cell. Getting these two to look alike is the classic grid bug, and it
 makes the reader draw the wrong conclusion about their data.
 
-Values are monospaced (digits and identifiers line up column-wise), every
-colour is palette-derived so both the dark QSS and the light theme work, and no
+Values are monospaced (digits and identifiers line up column-wise), and no
 `.exec()` is reachable from any path a test drives.
+
+**The status strip's colours go on a widget stylesheet, not a palette.** The
+app-wide qdarkstyle sheet declares `color` on a universal `QWidget` rule, and
+QSS beats QPalette for every property it declares -- so the `setPalette` this
+panel used until BUG-260811021804 painted nothing at all, in either theme. Grid
+cells are different: `QTableWidgetItem.setForeground` **is** honoured under the
+same sheet, because item views paint from item data, so `_make_item`'s
+palette-derived NULL brush stays as it was.
 """
 from __future__ import annotations
 
@@ -62,8 +69,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QBrush, QFont, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
@@ -79,6 +86,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..db.sandbox_query import QueryOutcome, QueryResult, error_text, status_line
+from .mode_indicator import MODE_MAINTENANCE, mode_colors
 
 #: How a NULL prints. Upper-case, and additionally italic + dimmed below, so it
 #: can never be mistaken for the four-character string `'NULL'` either.
@@ -92,11 +100,46 @@ IDLE_TEXT = "Nothing run yet — statements run against this project's sandbox d
 #: a query, and sending it would produce a confusing driver-level error.
 EMPTY_SQL_TEXT = "Nothing to run — type a statement first."
 
-#: The DbCheckPanel/CoherencePanel palette, kept verbatim so a failure looks the
-#: same everywhere in the app. Foregrounds chosen to read against both themes;
-#: every other colour here comes from `self.palette()`.
-_ERROR_COLOR = QColor("#d02020")
-_WARN_COLOR = QColor("#d08a1a")
+#: The status strip's two attention colours, named as **kinds** rather than as
+#: resolved `QColor`s. Two things force that (BUG-260811021804):
+#:
+#: 1. A per-widget `setPalette` is INERT under the app-wide qdarkstyle sheet
+#:    `theme.py::apply_theme` installs — its universal `QWidget` rule declares
+#:    `color`, and QSS beats QPalette for every property it declares. Measured:
+#:    the palette faithfully reported `#d02020` while **zero** red pixels were
+#:    drawn, in both themes. The colour must therefore go on a *widget-level*
+#:    stylesheet, exactly as `ui/connectivity.py::ConnectivityIndicator._render`
+#:    has always done.
+#: 2. The old single values were each unreadable in one theme: `#d02020` scored
+#:    2.96:1 on the dark chrome `#19232D` and `#d08a1a` scored 2.74:1 on the
+#:    light chrome `#FAFAFA` — both below even 3:1. So each kind is a per-theme
+#:    pair, resolved at paint time from the live palette's lightness. Storing a
+#:    resolved colour would re-apply the OLD theme's value after a flip.
+#:
+#: The error pair is **not a new red**: it is `mode_indicator.mode_colors`'
+#: `MODE_MAINTENANCE` foreground in each theme, imported rather than re-typed, so
+#: the app keeps one red (§18.7). Warning has no existing pair anywhere; these
+#: two clear 4.5:1 against both chrome backgrounds (5.68 light / 7.45 dark).
+STATUS_ERROR = "error"
+STATUS_WARNING = "warning"
+
+_WARNING_COLORS = {True: "#8a5a00", False: "#e0a83a"}
+
+
+def status_colour(kind: str | None, light: bool) -> str | None:
+    """The status strip's colour for `kind` under the light/dark theme, or None
+    for the ordinary status (which must render in the theme's own text colour,
+    i.e. with **no** widget stylesheet at all).
+
+    Pure, and the single place a status kind becomes a colour — a test can pin
+    the contrast of every pair without touching a widget.
+    """
+    if kind == STATUS_ERROR:
+        return mode_colors(light)[MODE_MAINTENANCE][1]
+    if kind == STATUS_WARNING:
+        return _WARNING_COLORS[light]
+    return None
+
 
 #: No column is allowed to hog the panel just because one cell holds a 4 kB
 #: `text` value -- content-sized up to here, then clamped (the full value stays
@@ -304,6 +347,9 @@ class SqlResultsPanel(QWidget):
         self._sql_provider = sql_provider
         self._result: QueryResult | None = None
         self._run_report: RunReport | None = None
+        #: `None` / `STATUS_ERROR` / `STATUS_WARNING` -- the *kind* of the status
+        #: currently shown, re-resolved to a colour on every theme flip.
+        self._status_kind: str | None = None
 
         self.sql_edit = QPlainTextEdit()
         self.sql_edit.setPlaceholderText("SELECT … — runs against the sandbox")
@@ -397,7 +443,7 @@ class SqlResultsPanel(QWidget):
         never unexplained."""
         self.run_button.setEnabled(enabled and self._on_execute is not None)
         if reason:
-            self._set_status(reason, _WARN_COLOR if not enabled else None)
+            self._set_status(reason, STATUS_WARNING if not enabled else None)
 
     # -- running -------------------------------------------------------------
 
@@ -407,12 +453,12 @@ class SqlResultsPanel(QWidget):
         never blocks and never touches a database itself."""
         if self._on_execute is None:
             self._set_status(
-                "This panel has no sandbox to run against.", _WARN_COLOR
+                "This panel has no sandbox to run against.", STATUS_WARNING
             )
             return
         sql = self.sql_text
         if not sql:
-            self._set_status(EMPTY_SQL_TEXT, _WARN_COLOR)
+            self._set_status(EMPTY_SQL_TEXT, STATUS_WARNING)
             return
         self._set_status("Running…")
         self.execute_requested.emit(sql)
@@ -430,7 +476,7 @@ class SqlResultsPanel(QWidget):
         if result.outcome is QueryOutcome.ERROR:
             self._clear_table()
             self.table.setVisible(False)
-            self._set_status(status_line(result), _ERROR_COLOR)
+            self._set_status(status_line(result), STATUS_ERROR)
             return
         if result.outcome is QueryOutcome.NO_ROWS:
             self._clear_table()
@@ -441,7 +487,7 @@ class SqlResultsPanel(QWidget):
         self._fill_table(result)
         self.table.setVisible(True)
         self._set_status(
-            status_line(result), _WARN_COLOR if result.truncated else None
+            status_line(result), STATUS_WARNING if result.truncated else None
         )
 
     def show_run(self, report: RunReport) -> None:
@@ -468,12 +514,12 @@ class SqlResultsPanel(QWidget):
         else:
             self._fill_table(grid_run.result)
             self.table.setVisible(True)
-        colour = None
+        kind = None
         if failure is not None:
-            colour = _ERROR_COLOR
+            kind = STATUS_ERROR
         elif grid_run is not None and grid_run.result.truncated:
-            colour = _WARN_COLOR
-        self._set_status(text, colour)
+            kind = STATUS_WARNING
+        self._set_status(text, kind)
 
     def report_notice(self, text: str, *, warning: bool = True) -> None:
         """Show one stated sentence with **no** result -- a refusal (a declined
@@ -484,7 +530,7 @@ class SqlResultsPanel(QWidget):
         self._run_report = None
         self._clear_table()
         self.table.setVisible(False)
-        self._set_status(text, _WARN_COLOR if warning else None)
+        self._set_status(text, STATUS_WARNING if warning else None)
 
     def clear(self) -> None:
         """Back to the "nothing run yet" state (project closed, sandbox
@@ -540,11 +586,49 @@ class SqlResultsPanel(QWidget):
             if self.table.columnWidth(index) > _MAX_COLUMN_WIDTH:
                 self.table.setColumnWidth(index, _MAX_COLUMN_WIDTH)
 
-    def _set_status(self, text: str, colour: QColor | None = None) -> None:
+    def _set_status(self, text: str, kind: str | None = None) -> None:
+        """Show `text` in the status strip, in the colour for `kind`
+        (`STATUS_ERROR` / `STATUS_WARNING` / None for the ordinary status).
+
+        The **kind** is remembered, never a resolved colour: the pair is
+        theme-dependent, so re-applying a stored `QColor` after a theme flip
+        would paint the previous theme's value (BUG-260811021804 step 4).
+        """
         self.status_label.setText(text)
-        palette = self.status_label.palette()
-        palette.setColor(
-            self.status_label.foregroundRole(),
-            colour if colour is not None else self.palette().windowText().color(),
+        self._status_kind = kind
+        self._apply_status_colour()
+
+    def _palette_is_light(self) -> bool:
+        return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+
+    def _apply_status_colour(self) -> None:
+        """Paint the remembered status kind. Idempotent and last-write-wins --
+        `changeEvent` fires several times per theme flip and the first ones
+        still report the OLD palette, so only recomputing from the live palette
+        every time is safe."""
+        colour = status_colour(self._status_kind, self._palette_is_light())
+        # The neutral case must clear the sheet entirely rather than name a
+        # colour: an empty sheet returns the label to the app-wide QSS colour,
+        # which is the right neutral in both themes.
+        self.status_label.setStyleSheet(
+            f"QLabel {{ color: {colour}; }}" if colour is not None else ""
         )
-        self.status_label.setPalette(palette)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Re-derive the status colour when the theme flips.
+
+        Self-detection rather than host wiring, following
+        `ui/code_editor.py:655-666`: there is no generic theme broadcast, and
+        this panel is nested inside `SqlConsolePanel` inside a tab that may not
+        exist when the flip happens. Both event types are kept because only
+        `PaletteChange` was measured to reach a nested child under
+        `theme.py::apply_theme`.
+        """
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.PaletteChange,
+        ):
+            # Can fire during construction, before the strip exists.
+            if hasattr(self, "status_label"):
+                self._apply_status_colour()
