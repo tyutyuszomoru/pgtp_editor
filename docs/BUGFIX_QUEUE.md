@@ -6910,3 +6910,349 @@ Measured after the merge, at `9c65a4c`: `BEGIN TRANSACTION;\nUPDATE t SET a = 1;
 2. `docs/TEST_LOG.md` has **no entry for any of 2026-08-10's later work** — BUG-260810174459, BUG-260810174919 and BUG-260810194657 all landed without one. That append is `feature-tester`'s to make, not this queue's.
 
 ---
+
+## BUG-260811021804: SQL Results panel's error/warning colours are never painted — a failed query reads in ordinary text
+**Status:** OPEN
+**Reported:** 2026-08-11
+**Report (verbatim):** "Suspected defect: the SQL Results panel's error/warning status colours are very likely never painted, so a failed query's message reads in ordinary text instead of red. Mechanism, verified as far as a read-only sweep can take it: (1) `pgtp_editor/ui/sql_results_panel.py` defines `_ERROR_COLOR = QColor("#d02020")` and `_WARN_COLOR = QColor("#d08a1a")` (around lines 98-99) and applies them through `_set_status`, a QPalette override on a QLabel. (2) `pgtp_editor/ui/theme.py::apply_theme` ends with `app.setStyleSheet(_qdarkstyle_stylesheet(light))` — an application-wide stylesheet, set unconditionally for both themes. (3) That generated stylesheet contains a universal `QWidget` rule that sets `color`. Qt resolves a stylesheet-declared property over the widget's palette. If that holds for this QLabel, `_set_status`'s colour argument is inert and the red/amber never appears. Verify empirically, offscreen, on both themes; check whether any other place colours text through a palette override under the same app-wide QSS; if it IS inert propose the fix; if it is NOT inert say so plainly and close as not-a-bug."
+
+**CONFIRMED — the suspicion is correct, and it was measured, not inferred.** Rendered the real
+`SqlResultsPanel` offscreen under `apply_theme(app, light)` for both themes, drove
+`panel.show_result(QueryResult.failed("select 1", "boom: syntax error"))`, then sampled every pixel of
+`panel.status_label.grab().toImage()`:
+
+| theme | `label.palette().color(foregroundRole())` says | pixels exactly `#d02020` | pixels merely reddish (`r>150, g<100, b<100`) | colour the text is ACTUALLY painted in |
+|---|---|---|---|---|
+| dark  | `#d02020` | **0** | **0** | `#dfe1e2` (the QSS `QWidget` colour) |
+| light | `#d02020` | **0** | **0** | `#19232d` (the QSS `QWidget` colour) |
+
+The palette faithfully reports the red in both themes while **not one red pixel is drawn**. The same
+measurement confirms the fix mechanism works: `status_label.setStyleSheet("color: #d02020;")` on the
+same label produces 20 exact-`#d02020` and 210 reddish pixels in **both** themes, and
+`setStyleSheet("")` returns it to 0 — so a widget-level sheet outranks the app sheet, and clearing it
+cleanly restores the theme colour.
+
+**Root cause:** `pgtp_editor/ui/sql_results_panel.py:543-550`, `SqlResultsPanel._set_status` —
+
+```python
+def _set_status(self, text: str, colour: QColor | None = None) -> None:
+    self.status_label.setText(text)
+    palette = self.status_label.palette()
+    palette.setColor(
+        self.status_label.foregroundRole(),
+        colour if colour is not None else self.palette().windowText().color(),
+    )
+    self.status_label.setPalette(palette)
+```
+
+`theme.py:142` (`apply_theme`) applies `app.setStyleSheet(_qdarkstyle_stylesheet(light))` unconditionally
+for **both** themes, and the generated qdarkstyle sheet declares `color` on a universal `QWidget` rule
+(`#DFE1E2` dark / `#19232D` light). QSS wins over QPalette for every property it declares, so the
+`setPalette` in `_set_status` sets a value nothing ever reads. Every colour argument at every call site
+is inert: `_ERROR_COLOR` at `:433` (query failed) and `:473` (a statement of a Run failed), `_WARN_COLOR`
+at `:400` (Run disabled with a reason), `:410` (no sandbox to run against), `:415` (`EMPTY_SQL_TEXT`),
+`:444` (result **TRUNCATED** — the "silently short result set" case the module docstring at `:46-48`
+calls this project's worst failure class), and `:487` (`report_notice`). A failed query, a truncated
+result and an ordinary successful `SELECT` are today pixel-for-pixel the same colour.
+
+**The precedent cited in the spec is the bug.** `CONSOLIDATED_SPEC` §18.7 cites
+`sql_results_panel.py:543-550` as the pattern `FQ-260810165518` should reuse. It must not be reused as
+written; §7's invariant (*"for anything the app-level QSS declares, a per-widget `setPalette` is
+INERT"*) is now confirmed on a second, independent site.
+
+**One sibling site, same defect, same mechanism — and the rest of the family is FINE.** Grepped
+`setPalette(` / `setColor(` / `foregroundRole()` across `pgtp_editor/ui/`. Only two non-`theme.py` hits:
+
+- `pgtp_editor/ui/project_status_panel.py:384-391`, `StatusNode._dim` — fades a caption by setting the
+  label palette's foreground to the same colour at alpha 165. **Measured inert too:** replicating it on
+  a `QLabel` under `apply_theme` gives a *pixel-identical* grab before and after, in both themes. The
+  state captions under the status nodes are not dimmed at all today.
+- `pgtp_editor/ui/sql_results_panel.py:543-550` — this bug.
+
+Everything else that colours already uses a mechanism the QSS does not intercept, and needs **no**
+change: `activity_panel.py:199`, `coherence_panel.py:423/513/516` colour through
+`QTreeWidgetItem.setForeground(QBrush(...))`, which **does** paint (measured: 0 reddish pixels before
+`setForeground(0, QBrush(QColor("#d02020")))`, 200 after, in both themes — item views paint from item
+data, not the widget QSS `color`). `connectivity.py:113-117`
+(`self.setStyleSheet(f"QLabel {{ color: {colour}; padding: 1px 6px; }}")`) is the in-repo **working**
+precedent for exactly this problem on exactly this kind of status label.
+
+**Proposed fix** — all in `pgtp_editor/ui/sql_results_panel.py`; nothing outside it is required.
+
+1. **Rewrite `_set_status` to use a widget-level stylesheet instead of a palette override.** Shape,
+   following `connectivity.py::ConnectivityIndicator._render`:
+
+   ```python
+   def _set_status(self, text: str, colour: QColor | None = None) -> None:
+       self.status_label.setText(text)
+       self._status_colour = colour          # remembered, for the theme flip (step 3)
+       self.status_label.setStyleSheet(
+           f"QLabel {{ color: {colour.name()}; }}" if colour is not None else ""
+       )
+   ```
+
+   The `None` branch must set the **empty** sheet, not the palette's `windowText()` — measured, the
+   empty sheet returns the label to the app QSS colour, which is the right neutral in both themes and is
+   what the current `None` branch was trying and failing to express. Delete the `setPalette` entirely;
+   leaving it alongside the sheet just leaves a second, lying source of truth.
+
+2. **The two colours must become per-theme pairs — a single value is measurably wrong in one theme
+   each.** Contrast against the live qdarkstyle chrome (`#19232D` dark panel, `#FAFAFA` light panel),
+   which is the surface §7 already requires colours to be judged against:
+
+   | colour | on dark `#19232D` | on light `#FAFAFA` |
+   |---|---|---|
+   | `#d02020` (today's error) | **2.96 : 1** — fails even 3:1 | 5.15 : 1 ✓ |
+   | `#d08a1a` (today's warn)  | 5.56 : 1 ✓ | **2.74 : 1** — fails even 3:1 |
+
+   So today's error red is unreadable on the dark theme and today's amber is unreadable on the light
+   one — which is precisely the *"the DEBUG chip's hardcoded red that reads wrong in one theme"* defect
+   `ui/mode_indicator.py::mode_colors`' docstring already records. Measured candidates that clear 4.5:1
+   on both sides: error `#8B1E1E` light (8.74) / `#F2B8AE` dark (9.28) — these are exactly
+   `mode_colors`' `MODE_MAINTENANCE` **foregrounds**, so reusing them adds **no new red**, satisfying
+   §18.7's *"no second red beside `mode_colors`"* rule. Warning has no existing pair anywhere in the
+   app; measured candidates are `#8a5a00` light (5.68) / `#e0a83a` dark (7.45).
+
+   **Where the pairs live is a placement question, not a mechanism question, and the fix should not be
+   blocked on it.** Two defensible homes: (a) extend `ui/mode_indicator.py`'s `_LIGHT_COLORS` /
+   `_DARK_COLORS` + `mode_colors(light)` — but that table is keyed by *major mode* and its values are
+   `(background, foreground)` **chip** pairs, so a status **foreground** is a different kind of thing;
+   (b) a small local `_STATUS_COLORS: dict[bool, tuple[str, str]]` in `sql_results_panel.py` that
+   **imports** the maintenance foregrounds from `mode_indicator` for the red rather than re-typing them.
+   (b) is the smaller, honest change and keeps the "one red" rule; flag (a)-vs-(b) to
+   `spec-maintainer` after the fix lands. Do **not** reuse the maintenance *background* `#FDECEA` — it is
+   near-white and useless here.
+
+3. **Re-apply on a theme flip, via `changeEvent` on the panel — do NOT add host wiring.** There is no
+   generic theme broadcast in this app (`main_window.py::_on_light_theme_toggled` at `:1992-1999` calls
+   out to each affected widget by hand, and the panel is nested inside `SqlConsolePanel` inside a tab
+   that may not exist at flip time). Use the existing self-detection precedent,
+   `ui/code_editor.py:655-666`:
+
+   ```python
+   def _palette_is_light(self) -> bool:
+       return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+
+   def changeEvent(self, event) -> None:
+       super().changeEvent(event)
+       if event.type() in (QEvent.Type.ApplicationPaletteChange, QEvent.Type.PaletteChange):
+           if hasattr(self, "status_label"):
+               self._reapply_status_colour()   # re-derive from the remembered kind
+   ```
+
+   **Two measured gotchas here.** (i) Only `PaletteChange` was observed to reach a nested child widget
+   under `apply_theme` — `ApplicationPaletteChange` did not — so keep **both** in the tuple exactly as
+   `code_editor.py` does. (ii) The event fires **four times per flip on one widget, and the first two
+   report the OLD lightness**; only the last carries the new palette. The handler must therefore be
+   **idempotent and last-write-wins** (just recompute and re-set), and a test must let the flip settle
+   (`processEvents`) before asserting rather than checking after the first event.
+
+4. **Remember the *kind*, not the resolved QColor.** Because the value is now theme-dependent, storing
+   `self._status_colour = QColor(...)` and re-applying it on a flip would re-apply the *old theme's*
+   colour. Store an enum/str kind (`None` / `"error"` / `"warning"`) on the panel and resolve it to a
+   colour at paint time from `_palette_is_light()`. This is the single easiest thing to get wrong in
+   this fix. Adjust the `_set_status` signature accordingly (it is private; the seven call sites listed
+   above are all in this file — `:400`, `:410`, `:415`, `:433`, `:444`, `:473`, `:487`).
+
+5. **Optionally fix `project_status_panel.py:384-391::StatusNode._dim` in the same pass** — same
+   mechanism, same one-line shape (`label.setStyleSheet(f"QLabel {{ color: rgba(...) }}")`, or drop the
+   alpha idea and use an explicit dim colour). Separable; if it is split out, it deserves its own queue
+   entry rather than being forgotten.
+
+**Test impact:** `tests/ui/test_sql_results_panel.py` (364 lines) is the file to extend.
+
+- **One existing test is a false green and must be rewritten, not merely extended:**
+  `test_truncation_is_coloured_differently_from_a_plain_result` at `:163-168` reads
+  `panel.status_label.palette().color(panel.status_label.foregroundRole())` before and after and asserts
+  they differ. That assertion passes today while the two states render **pixel-identically** — it is the
+  reason this bug shipped. Re-point it at the effective colour.
+- New cases needed: (a) an error status renders red **pixels** — grab the label and assert the error
+  colour is present, in **both** themes (the palette read is not evidence; this entry's whole finding is
+  that the palette lies); (b) a plain result renders **no** error/warning colour; (c) truncation renders
+  the warning colour and differs from a plain result *in pixels*; (d) a theme flip while an error is
+  displayed re-colours it to the other theme's value (`apply_theme(app, True)` → `processEvents()` →
+  assert, per gotcha 3ii); (e) a pure assertion that both pairs clear 4.5:1 against the two chrome
+  backgrounds, so a later "tidy" to one value fails loudly. A reusable pixel helper (grab → count
+  matching pixels) belongs in this file or in `tests/ui/` conftest — `tests/ui/test_theme.py` and
+  `tests/ui/test_main_window_theme.py` deliberately *"assert palette roles rather than pixels"* (§7), and
+  this bug is the documented boundary of that policy: for anything the app QSS declares, only pixels are
+  evidence.
+- `tests/ui/test_project_status_panel.py` has **no** palette/dim assertions today; if step 5 is done here
+  it needs a first one.
+
+**Spec impact:** The current behaviour is **not** an intentional decision — it is the exact trap
+`CONSOLIDATED_SPEC` §7's Theme block already names (*"for anything the app-level QSS declares, a
+per-widget `setPalette` is INERT"*, measured 2026-08-11 under `FQ-260810165518`), and this is that
+invariant's **second confirmed instance**, now with rendered-pixel evidence rather than a stylesheet
+read. Two things for `spec-maintainer` **after the fix lands**, neither of them mine to write:
+(1) **§18.7 cites `sql_results_panel.py:543-550` as the precedent to reuse** — that citation points at
+the bug and must be re-pointed (at the fixed `_set_status`, or at
+`ui/connectivity.py::ConnectivityIndicator._render`, which was already correct); (2) §7's invariant can
+be strengthened from a caution to a settled rule with its complement stated —
+`QTreeWidgetItem.setForeground` **is** honoured under the same app QSS (measured), so the rule is
+specifically about *widget* palettes, not item brushes, and §18.5/§18.7's item-colouring code is not
+implicated. The per-theme-pair question in step 2 (extend `mode_colors`' table vs. a local
+`_STATUS_COLORS`) is a placement call for `spec-maintainer` under §18.7's colour-vocabulary rule; it does
+not gate the fix.
+
+---
+
+## BUG-260811021816: Two Apply-to-quality strings send the user to `Database ▸ Compare Schemas…`, a command that has never been built
+**Status:** OPEN
+**Reported:** 2026-08-11
+**Report (verbatim):** "Two user-facing strings in `pgtp_editor/ui/ddl_object_editor.py` direct the user to a menu command **that does not exist**: `Database ▸ Compare Schemas…`. Both sites are in the Apply-to-quality signature-check path: (1) line ~1383, the refusal when the buffer's identity cannot be parsed — `"refused: could not determine the object's signature from the buffer, so a changed signature cannot be ruled out. Use the deployment-script path (Database ▸ Compare Schemas…)."`; (2) line ~1423, the consequence text in the signature-mismatch confirmation (split across two source lines as `"Database ▸ Compare "` + `"Schemas… produces a reviewable script)."`), telling the user how to drop the object left behind — `"Dropping the old one is up to you (Database ▸ Compare Schemas… produces a reviewable script)."` Note the line-wrapping: a naive `grep "Compare Schemas"` finds only the first site. Search for `Compare` alone."
+
+**Root cause:** Not a stale reference to a *renamed* feature and not a cut feature — the text was
+**aspirational**, written against `CONSOLIDATED_SPEC.md` §18.3's design rather than against the app.
+Established by reading, not assumed:
+
+- **The menu entry has never existed.** `main_window.py::_build_database_menu` (line 2917's sibling
+  builder region) offers `Connection Setup…`, `Database/XML Coherence`, `DDL Explorer (Quality)`,
+  `DDL Explorer (Sandbox)`, `Reload DDL`, `New Function/Procedure…`, `Sandbox SQL Console…`. A repo-wide
+  `grep "Compare Schemas"` over `pgtp_editor/` returns **only the two report sites** — zero
+  `addAction` anywhere.
+- **The capability is NOT merely renamed.** The only shipped command whose label contains "Compare" is
+  `Deployment ▸ Compare/Merge pgtp` (`main_window.py:2957`, `compare_action.triggered → self._diff_ui.compare_two_files()`),
+  which diffs two **`.pgtp` XML files** via `diff/differ.py`. It is a different lane entirely from schema
+  comparison and produces no SQL. `Database/XML Coherence` (§17) compares the database against the
+  `.pgtp`'s pages/details; it also emits no deployment script.
+- **A real schema-compare feature is BUILT but UNREACHABLE.** `pgtp_editor/ui/schema_compare_panel.py`
+  (490 lines: grouped diff, default-unchecked review discipline, `Save Migration As…`) over
+  `db/schema_diff.py::diff_schemas` + `db/migration_gen.py::generate_migration` + `db/schema_snapshot.py`.
+  `SchemaComparePanel` appears outside its own module **only** in `tests/ui/test_schema_compare_panel.py` —
+  nothing in `pgtp_editor/` instantiates it. `db/schema_snapshot.py:81,96` says so in as many words:
+  *"`Save Schema Snapshot…` has never been built."* This is exactly `docs/UX_REVIEW.md` C5 (the string
+  bug) and D1 (the unreachable panel).
+- **So the promised escape route is genuinely unavailable today**, and site 2 is the worse of the two:
+  the user is standing in front of a duplicate object PostgreSQL just created for them (the accepted
+  consequence of the BUG-260810193333 owner ruling, *"trust the user … run the sql"*) and the one
+  sentence that tells them how to clean it up names nothing. **The app has no gesture that drops a
+  routine in the target at all** — `Sandbox SQL Console` is structurally sandbox-only
+  (`ui/sql_console_panel.py:21-30`: *"can never target the production/target database — not behind a
+  confirmation"*), the DDL Explorer's `Drop …` entries (`ui/ddl_buffer_panel.py:148-166`) are
+  table/column/index/constraint ALTER-generators with no routine-drop, and an ad-hoc
+  `DROP FUNCTION …` typed into a DDL object buffer would be refused by **this very precondition**
+  (`parse_buffer_identity` returns `None` for a buffer with no `CREATE` header). So site 2 must state an
+  honest out-of-app remedy, not a menu path.
+- A **third, non-user-facing** site carries the same dead path: the `_precondition_signature` docstring,
+  `ddl_object_editor.py:1360-1361` (*"the deployment-script path, Database ▸ Compare Schemas…, is still
+  the reviewable way to do it"*). Fix it in the same edit or it becomes the next reader's source of the
+  same wrong string.
+
+**Proposed fix:** Rewrite the two strings (plus the docstring) so they name only things that exist.
+**Do not wire `SchemaComparePanel` as part of this fix** — that is a feature (`UX_REVIEW` D1 /
+§18.3's `Compare Schemas…`), it needs an owner-level placement call, and shipping it inside a
+string-correction bug fix would hide it. All edits are in
+`pgtp_editor/ui/ddl_object_editor.py::_ApplyMixin._precondition_signature` (the method beginning at
+line 1348 — one method, three literals).
+
+1. **Site 1** (lines 1379-1385, the unparseable-buffer refusal). Replace with — note the first clause is
+   preserved verbatim because an existing test greps it:
+
+   ```python
+   self._report(
+       [
+           "refused: could not determine the object's signature from the "
+           "buffer, so a changed signature cannot be ruled out. Nothing was "
+           "applied. Apply to quality needs a single CREATE [OR REPLACE] "
+           "FUNCTION/PROCEDURE or CREATE TRIGGER header with a complete "
+           "argument list; an ALTER or a bare statement has no signature to "
+           "compare. Use Deployment ▸ Check and commit to sandbox to run this "
+           "buffer where trying things is free."
+       ]
+   )
+   ```
+
+   Why that remedy: it is the route `manual.md` **already** documents for exactly this refusal on ALTER
+   buffers (*"The intended run path for an ALTER is Deployment ▸ Check and commit to sandbox"*), the
+   label is `GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]` and the entry really exists
+   (`main_window.py:2985`). Ending with "Nothing was applied." also matches the sibling refusal three
+   branches down (line 1400-1403), which currently reads more completely than this one.
+
+2. **Site 2** (lines 1419-1425, the mismatch confirmation's `consequence`). This is the one that
+   matters — keep the diagnosis, replace only the parenthetical, and say plainly that the app cannot do
+   the cleanup:
+
+   ```python
+   consequence = (
+       "PostgreSQL identifies a routine by (schema, name, argument "
+       "types), so this does NOT replace the object you checked out: "
+       f"it CREATES A SECOND OBJECT and leaves {live_ref.qualified} "
+       "live. This editor has no gesture that drops it — the Sandbox "
+       "SQL Console can never reach the target database — so you must "
+       "drop it yourself against the target, with:\n\n"
+       f"    {_drop_statement(live_ref)}"
+   )
+   ```
+
+   and add one small module-level helper beside `_comparable` (line 491), so the sentence hands over a
+   statement rather than a chore:
+
+   ```python
+   def _drop_statement(ref: DdlObjectRef) -> str:
+       """The DROP the user must run themselves to remove the object a renamed
+       buffer left behind. TEXT ONLY -- nothing in this app executes it; there
+       is no target-database ad-hoc execution path (sql_console_panel.py:21-30)."""
+       if ref.is_trigger:
+           return f"DROP TRIGGER {ref.name} ON {ref.schema}.{ref.table};"
+       return f"DROP {ref.kind.upper()} {ref.qualified};"
+   ```
+
+   `DdlObjectRef.qualified` (line 276-282) already renders a routine as `pr.recalc(integer)` — the exact
+   argument form `DROP FUNCTION` wants — and `kind` is `"function"`/`"procedure"`/`"trigger"`
+   (`parse_buffer_identity` lowercases it at line 484), so `DROP FUNCTION`/`DROP PROCEDURE` fall out
+   without a lookup table. **Gotchas:** (a) use `live_ref`, never `buffer_ref` — the object to drop is
+   the one that was already there; (b) the trigger branch must not use `qualified`, which renders
+   `schema.table.name`, not `name ON schema.table`; (c) this string is fed to `self._confirm(...)` inside
+   an f-string at line 1429 (`f"{mismatch}\n\n{consequence}\n\n{gesture} anyway?"`) — a `QMessageBox`
+   body, so the embedded newlines render, but do not let a stray `<` in a type name make Qt guess rich
+   text; the current text has none and the helper introduces none.
+
+3. **Docstring** (lines 1359-1361): replace *"the deployment-script path, Database ▸ Compare Schemas…,
+   is still the reviewable way to do it"* with a statement of the truth the fix encodes — that the app
+   has **no** drop gesture for the target, so the confirmation hands the user the `DROP` statement to run
+   themselves, and that §18.3's `Compare Schemas…` is designed but unbuilt (`db/schema_snapshot.py:81`).
+   That note is what stops the aspirational path from being re-added.
+
+4. **Search discipline for the implementer:** grep `Compare` (not `Compare Schemas`) across
+   `pgtp_editor/` before and after, since site 2 is line-wrapped mid-phrase. After the fix the only
+   remaining `Compare` hits in `pgtp_editor/ui/` should be `Compare/Merge pgtp` and its comments.
+
+**Test impact:** `tests/ui/test_ddl_object_editor.py` already owns this path — extend it, do not add a
+new file.
+- `test_precondition_1_refuses_a_buffer_whose_signature_cannot_be_parsed` (line 1098) asserts only
+  `"could not determine the object's signature"` (line 1107), so it **passes unchanged** with the
+  proposed site-1 text. That is deliberate in the wording above; keep that substring intact.
+- `test_precondition_1_declining_the_mismatch_aborts_and_says_so` (line 1083) and the confirming
+  sibling above it exercise site 2 via `_Seams(confirm=[...])` but assert on the **Audit** lines, not on
+  the confirmation body, so they also pass unchanged.
+- **New cases needed:** (a) no user-facing string in the module names a menu entry that
+  `_build_database_menu` does not build — cheapest as a targeted regression assert that the module's
+  source contains no `"Compare Schemas"`, since a wrapped literal is exactly what the naive grep missed;
+  (b) the mismatch confirmation body handed to `_confirm` contains the literal
+  `DROP FUNCTION pr.recalc(integer);` for the existing `_LIVE_OTHER` routine fixture — the `_Seams` stub
+  must record the message text, so check whether it currently keeps it and widen it if not;
+  (c) `_drop_statement` unit cases for `function`, `procedure` and `trigger`
+  (`DROP TRIGGER trg_audit ON pr.orders;`), the trigger one being the branch most likely to be got
+  wrong; (d) the site-1 refusal names `Check and commit to sandbox`.
+
+**Spec impact:** The dead menu path is **not** a divergence introduced by code — `CONSOLIDATED_SPEC.md`
+§18.3 genuinely specifies `Database ▸ "Compare Schemas…"` and `"Save Schema Snapshot…"`, and the spec
+already records them as unbuilt in three places (§18.3's status table: *"**Absent.**
+`MainWindow._build_database_menu` has no such actions"*; §18.5's *"what genuinely does not ship is
+exactly three things"* list; and the §29-side note). So the spec is right and the **code's prose was
+ahead of it**. Two things to flag for `spec-maintainer` **after the fix lands**, neither of them mine to
+write: (1) §18.5 precondition 1's narrative should state the *current* remedy (hand the user the `DROP`;
+no in-app target-drop exists) with `Compare Schemas…` named as the future replacement, so the next
+implementer does not restore the aspirational sentence; (2) the built-but-unreachable
+`ui/schema_compare_panel.py` + `db/schema_snapshot.py` deserve an explicit "shipped module, no entry
+point" row rather than living only in `docs/UX_REVIEW.md` D1 — and wiring `Compare Schemas…` is a
+**feature** for `feature-triage`/`FQ`, not part of this bug.
+
+**Manual impact:** none required — `manual-maintainer` correctly declined to write the nonexistent path,
+so `manual.md` is already consistent. One optional courtesy cross-check when the fix lands: the ALTER
+bullet at `pgtp_editor/resources/manual.md:2541` says the refusal *"point[s] at the reviewable
+deployment-script path"*, which after this fix points at `Check and commit to sandbox` instead — a
+one-clause rewording, and that bullet already names `Check and commit to sandbox` in its next sentence.
+
+---
