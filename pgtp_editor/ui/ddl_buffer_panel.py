@@ -25,6 +25,18 @@ Table References panel's precedent (§15, `TableUsage.references`) of showing
 one object from multiple relationship angles rather than forcing a single
 parent.
 
+Two panel-level affordances ride above the tree and survive a rebuild:
+
+* the **name filter** (`FQ-260810180336`, §18.1) -- an input, a five-way match
+  mode, `Filter` and `Clear Filter` -- which HIDES non-matching object rows and
+  changes nothing else. It is the tab's SECOND find-shaped control, and it is
+  deliberately not `FindReplaceBar`: that one searches the DDL *text* of the
+  centre pane and moves a caret; this one matches tree *names* and hides rows.
+  The two are never wired to each other.
+* the **danger selection colour** (`FQ-260810165518`, §18.7) -- the quality
+  instance paints its selected row in the app's existing maintenance red, so
+  the dangerous Explorer is recognisable at a glance from the disposable one.
+
 Grouping/matching is re-derived from scratch on every `set_schema` call --
 this panel holds no cache of its own, matching this app's "recompute fresh,
 never trust prior state" posture for DB-sourced data (§18's truth model).
@@ -33,9 +45,15 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
     QMenu,
+    QPushButton,
     QTreeWidget,
     QTreeWidgetItem,
     QTreeWidgetItemIterator,
@@ -53,6 +71,7 @@ from pgtp_editor.ui.alter_column_dialogs import (
     OP_SET_NOT_NULL,
 )
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+from pgtp_editor.ui.mode_indicator import MODE_MAINTENANCE, mode_colors
 from pgtp_editor.ui.table_dialogs import OP_COLUMN_COMMENT, OP_TABLE_COMMENT
 
 _SPAN_ROLE = Qt.ItemDataRole.UserRole
@@ -80,6 +99,24 @@ _LABEL_ROLE = Qt.ItemDataRole.UserRole + 4
 #: table row: it carries the click context an "Alter Table ▸" dialog defaults
 #: its column dropdown to, which a table row has nothing to say about.
 _COLUMN_ROLE = Qt.ItemDataRole.UserRole + 5
+#: An object row's BARE, marker-free NAME -- `schema.table`, `schema.name`,
+#: `schema.table.trigname` -- and the ONLY thing the name filter
+#: (`FQ-260810180336`) ever matches against. Carried by exactly the three row
+#: kinds §18.1 calls object rows; every other row (branch roots, the
+#: `Columns  (N)` / `Constraints  (N)` / `Indexes  (N)` groups, column leaves,
+#: constraint/index leaves and routine-argument leaves) leaves it unset and is
+#: therefore not a match target.
+#:
+#: **It is a role of its own rather than a read of `_LABEL_ROLE`, and that is a
+#: correction to the spec, not a shortcut.** §18.1's filter block says to match
+#: against "the stored base label" on the ground that the rendered text carries
+#: `*`/`!` drift markers -- true, but the base label carries the *other*
+#: markers: `[F]`/`[P]`/`[T]` on a routine, `[B][D]` on a trigger, and the
+#: `  (N)` trigger count on a table. Matching that base is the exact defect the
+#: spec was trying to avoid, one bracket further in: `f` would match every
+#: function and `d` every DELETE trigger. The name is what the user is looking
+#: for, so the name is what is stored.
+_FILTER_NAME_ROLE = Qt.ItemDataRole.UserRole + 6
 
 #: The refusal a non-editable span states rather than silently offering
 #: nothing (`FQ-260810183812` / FQ-023). Tables, views and matviews are in the
@@ -426,6 +463,165 @@ def resolve_edit_target(
     return ref, routine.source
 
 
+#: The name filter's five match modes (`FQ-260810180336`, §18.1).
+#:
+#: A NEW predicate enum, deliberately NOT
+#: `caption_management_panel.MODE_LABELS`: that one answers *how the search
+#: STRING is interpreted* (plain / escapes / regex), this one answers *WHERE in
+#: the name the match must sit*. The two questions are orthogonal, and one enum
+#: expressing both can express neither -- there would be no way to ask for a
+#: regex that must START a name, and every addition to either list would
+#: silently grow the other. Only the SHAPE is reused: a module-level
+#: `(label, value)` tuple fed to `QComboBox.addItem(label, value)`.
+FILTER_MODE_CONTAINS = "contains"
+FILTER_MODE_STARTS_WITH = "starts_with"
+FILTER_MODE_NOT_CONTAINS = "not_contains"
+FILTER_MODE_NOT_STARTS_WITH = "not_starts_with"
+FILTER_MODE_ENDS_WITH = "ends_with"
+
+FILTER_MODE_LABELS: tuple[tuple[str, str], ...] = (
+    ("Contains", FILTER_MODE_CONTAINS),
+    ("Starts with", FILTER_MODE_STARTS_WITH),
+    ("Doesn't contain", FILTER_MODE_NOT_CONTAINS),
+    ("Doesn't start with", FILTER_MODE_NOT_STARTS_WITH),
+    ("Ends with", FILTER_MODE_ENDS_WITH),
+)
+
+#: Open question 3, settled: `Contains` -- the mode that needs the least
+#: knowledge of the name being hunted, which is the state a search aid is used
+#: from.
+FILTER_MODE_DEFAULT = FILTER_MODE_CONTAINS
+
+#: Open question 1, settled: matching is CASE-INSENSITIVE, with **no** exposed
+#: `Match case` toggle. Insensitive because this is a search aid over
+#: lower-case-by-convention Postgres identifiers; no toggle because the owner's
+#: stated control set is exactly four (input, mode, Filter, Clear Filter) and a
+#: fifth control that is right 99% of the time when left alone is cost without
+#: a question it answers.
+FILTER_CASE_SENSITIVE = False
+
+
+def filter_matches(name: str, term: str, mode: str) -> bool:
+    """Does the object called `name` survive `term` under `mode`?
+
+    Pure and Qt-free, so every one of the five predicates is testable without a
+    tree. An empty `term` matches everything, in every mode -- including the two
+    negative ones, where "doesn't contain nothing" would otherwise hide the
+    whole tree for a user who pressed `Filter` on an empty box.
+    """
+    if not term:
+        return True
+    if not FILTER_CASE_SENSITIVE:
+        name = name.lower()
+        term = term.lower()
+    if mode == FILTER_MODE_STARTS_WITH:
+        return name.startswith(term)
+    if mode == FILTER_MODE_ENDS_WITH:
+        return name.endswith(term)
+    if mode == FILTER_MODE_NOT_CONTAINS:
+        return term not in name
+    if mode == FILTER_MODE_NOT_STARTS_WITH:
+        return not name.startswith(term)
+    return term in name
+
+
+def filter_mode_label(mode: str) -> str:
+    """The dropdown label for `mode` -- read by the banner, so the banner can
+    never name a mode differently from the control that set it."""
+    for label, value in FILTER_MODE_LABELS:
+        if value == mode:
+            return label
+    return mode
+
+
+#: Open question 2, settled: an active filter ANNOUNCES itself, and an
+#: all-hidden tree says why. The `ui/coherence_panel.py` precedent, applied for
+#: the reason §18.1 gives for it being stronger here than there -- this tree can
+#: be left filtered while the user works in another tab, and a tree silently
+#: missing objects is the shape of a silent wrong result. The Clear button is
+#: NOT repeated in the banner (coherence has one because it has no other): this
+#: bar's own `Clear Filter` is always on screen, and two buttons doing one thing
+#: is a worse answer than one.
+NO_FILTER_MATCHES_TEXT = (
+    "No objects match the active filter — use “Clear Filter” to see everything."
+)
+
+#: The input's placeholder. Load-bearing rather than decorative: this panel's
+#: tab now sits beside `EditorPanel`'s `FindReplaceBar`, so the placeholder is
+#: one of the four things that tell a user which of the two inputs they are in
+#: (the others: this bar lives in the LEFT DOCK above the tree while Find sits
+#: in the CENTER tab below the editor, its buttons say `Filter`/`Clear Filter`
+#: rather than `Find Next`/`Replace`, and it carries a mode dropdown Find has
+#: no equivalent of).
+FILTER_PLACEHOLDER = "Filter object names…"
+
+FILTER_BUTTON_LABEL = "Filter"
+CLEAR_FILTER_BUTTON_LABEL = "Clear Filter"
+
+
+def danger_selection_colors(light: bool) -> tuple[str, str]:
+    """`(selection background, selected text)` for the QUALITY tree
+    (`FQ-260810165518`, §18.7).
+
+    **Reuses `mode_indicator.mode_colors(light)[MODE_MAINTENANCE]` and derives
+    NOTHING** -- no second red lives in this module, which is the trap
+    `mode_indicator.py`'s own docstring records (*"never the DEBUG chip's
+    hardcoded red that reads wrong in one theme"*).
+
+    **The pair is used SWAPPED, and that is the answer to §18.7's open question
+    1.** `MODE_MAINTENANCE` is a CHIP pair -- a pale wash behind strong text --
+    and §18.7 flags exactly why it cannot be used as-is: its light background
+    `#FDECEA` measures **1.10:1** against the tree's light chrome, so a
+    selection painted in it would be invisible *as a selection*. Reading the
+    pair the other way round -- the strong colour as the BAND, the pale one as
+    the TEXT on it -- keeps both halves of a pair that was already tuned to be
+    legible against each other (measured **7.98:1** light, **8.50:1** dark,
+    against qdarkstyle's own **9.44:1** / **4.57:1**), while the band itself
+    reads **8.74:1** / **9.28:1** against the chrome. So the answer is *reuse the
+    pair*, not *add a sibling entry*: no new colour enters the app, which is
+    what trap 3 ("this feature adds ONE colour, not a palette") asks for.
+    """
+    chip_background, chip_foreground = mode_colors(light)[MODE_MAINTENANCE]
+    return chip_foreground, chip_background
+
+
+def danger_selection_stylesheet(light: bool) -> str:
+    """The widget-level QSS that paints `danger_selection_colors` on a tree.
+
+    **A stylesheet and not a `setPalette`, because a palette override here is
+    INERT** (§7, measured 2026-08-11): the app-level qdarkstyle sheet declares
+    `QTreeView::item:selected:active` / `:!active` and a universal
+    `QWidget { selection-background-color; selection-color }`, and QSS wins over
+    QPalette on every property it sets. `BUG-260811021804` is the same mistake
+    already shipped elsewhere. A widget-level sheet merges with, and outranks,
+    the application one.
+
+    **Both the active and the inactive selection redden** (open question 2,
+    settled): the tree loses focus the instant the user clicks into the DDL
+    pane, which is the state a quality Explorer is looked at from most of the
+    time -- a danger marking that vanishes exactly then marks nothing.
+    **Hover does NOT redden**: hover is where the pointer is, not where the
+    user is acting, and reddening it would make moving the mouse look
+    dangerous.
+
+    **Three selectors, and the third was found by looking at pixels rather than
+    by reading the app sheet.** Overriding only the two `::item` rules left the
+    selected row's INDENT/branch column still painting the app-wide blue -- a
+    measured 653 blue pixels inside a 5594-pixel red band -- because that strip
+    is drawn from the universal `QWidget` rule's `selection-background-color`,
+    not from `::item`. So the widget sheet restates that pair too, scoped to
+    this one tree.
+    """
+    background, text = danger_selection_colors(light)
+    return (
+        f"QTreeWidget {{ selection-background-color: {background};"
+        f" selection-color: {text}; }}"
+        f" QTreeWidget::item:selected:active,"
+        f" QTreeWidget::item:selected:!active"
+        f" {{ background-color: {background}; color: {text}; }}"
+    )
+
+
 class BrowserPanel(QWidget):
     navigate_requested = Signal(int)  # 1-based line in the EditorPanel buffer
 
@@ -593,9 +789,70 @@ class BrowserPanel(QWidget):
         #: other derivation here.
         self._span_by_detail: dict[tuple[str, str, str, str], DdlObjectSpan] = {}
 
+        #: The APPLIED filter -- `(mode, term)`, or `None` when nothing is
+        #: filtering. Deliberately NOT read back off the two controls when the
+        #: filter is re-applied: the controls hold what the user is *typing*,
+        #: this holds what they *pressed Filter on*, and conflating the two
+        #: would make an abandoned edit in the input take effect on the next
+        #: `set_schema`.
+        #:
+        #: Held on the PANEL, exactly as `_dirty_keys` is and for the identical
+        #: reason (open question 4, settled: **re-apply**): the tree is rebuilt
+        #: wholesale by every `set_schema`, so anything keyed on an item would
+        #: go stale -- and a filter that silently stopped filtering after a
+        #: `Reload DDL` would leave the user reading a tree they believe is
+        #: narrowed. The banner is what keeps the re-application from being
+        #: silent, which is why the two open questions had one answer.
+        self._filter: tuple[str, str] | None = None
+
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText(FILTER_PLACEHOLDER)
+        # A text input beside a button that ignores Return is its own small
+        # defect -- but nothing filters on a keystroke (§18.1: apply on the
+        # button, not live-as-you-type).
+        self.filter_input.returnPressed.connect(self.apply_filter)
+        self.filter_mode_combo = QComboBox()
+        for label, mode in FILTER_MODE_LABELS:
+            self.filter_mode_combo.addItem(label, mode)
+        self.filter_mode_combo.setCurrentIndex(
+            [mode for _, mode in FILTER_MODE_LABELS].index(FILTER_MODE_DEFAULT)
+        )
+        self.filter_button = QPushButton(FILTER_BUTTON_LABEL)
+        self.filter_button.clicked.connect(self.apply_filter)
+        self.clear_filter_button = QPushButton(CLEAR_FILTER_BUTTON_LABEL)
+        self.clear_filter_button.clicked.connect(self.clear_filter)
+
+        self.filter_bar = QWidget()
+        filter_row = QHBoxLayout(self.filter_bar)
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.addWidget(self.filter_input, 1)
+        filter_row.addWidget(self.filter_mode_combo)
+        filter_row.addWidget(self.filter_button)
+        filter_row.addWidget(self.clear_filter_button)
+
+        self.filter_banner_label = QLabel("")
+        self.filter_banner_label.setWordWrap(True)
+        self.filter_banner_label.setVisible(False)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.filter_bar)
+        layout.addWidget(self.filter_banner_label)
         layout.addWidget(self.tree)
+
+        #: `FQ-260810165518`: the QUALITY tree's selection band is the danger
+        #: colour; the sandbox tree keeps the ordinary one, because the
+        #: DIFFERENCE is the feature.
+        #:
+        #: Defaulted from `browse_only` rather than taking a parameter of its
+        #: own, so no caller changes: the two instances §18.7 creates are
+        #: exactly `BrowserPanel()` (quality) and `BrowserPanel(browse_only=True)`
+        #: (sandbox). The two facts are not the same fact -- "may not edit" and
+        #: "is the dangerous lane" merely coincide today -- so
+        #: `set_danger_highlight` exists to state it independently the moment
+        #: they stop coinciding.
+        self._danger_highlight = not browse_only
+        self._apply_danger_highlight()
 
     def set_checked_out_predicate(
         self, predicate: "Callable[[Any], bool] | None"
@@ -656,6 +913,188 @@ class BrowserPanel(QWidget):
         # just rebuilt (BUG-033): a refresh must not drop the `*` of a tab
         # that is still open and still dirty.
         self._apply_dirty_markers()
+        # ...and the surviving FILTER, for the same reason and by the same
+        # mechanism (`FQ-260810180336`, open question 4). A tree rebuilt under a
+        # live filter that came back unfiltered would be a box the user believes
+        # is narrowed and is not.
+        self._apply_filter_to_tree()
+
+    # -- name filter (`FQ-260810180336`) --------------------------------------
+
+    def apply_filter(self) -> None:
+        """Apply what the bar currently holds (the `Filter` button, and Return
+        in the input).
+
+        An empty term is not a filter -- pressing `Filter` on an empty box
+        clears rather than hiding everything under the two negative modes.
+        """
+        term = self.filter_input.text().strip()
+        mode = self.filter_mode_combo.currentData() or FILTER_MODE_DEFAULT
+        self._filter = (mode, term) if term else None
+        self._apply_filter_to_tree()
+
+    def clear_filter(self) -> None:
+        """Restore every row and empty the input (the `Clear Filter` button)."""
+        self._filter = None
+        self.filter_input.clear()
+        self._apply_filter_to_tree()
+
+    def active_filter(self) -> tuple[str, str] | None:
+        """The applied `(mode, term)`, or `None`. What is *typed* is not what is
+        *applied*; this reports the latter."""
+        return self._filter
+
+    def filter_description(self) -> str:
+        """The active filter in words, or `""` -- the banner's text, and the
+        one place the mode is named, so the banner can never disagree with the
+        dropdown that set it."""
+        if self._filter is None:
+            return ""
+        mode, term = self._filter
+        return f"name {filter_mode_label(mode).lower()} “{term}”"
+
+    def _filter_predicate(self) -> "Callable[[str], bool] | None":
+        if self._filter is None:
+            return None
+        mode, term = self._filter
+        return lambda name: filter_matches(name, term, mode)
+
+    def _apply_filter_to_tree(self) -> None:
+        """Hide every object row that does not match, keep the ANCESTORS of the
+        ones that do, and say so in the banner.
+
+        `item.setHidden(...)`, walked recursively -- the shipped precedent is
+        `ui/caption_management_panel.py`'s value-list filter. A
+        `QSortFilterProxyModel` is not an option here: `self.tree` is an
+        item-based `QTreeWidget`, so a proxy means converting the whole panel to
+        model/view, and ancestor visibility is harder to express through a proxy
+        than through the walk.
+
+        **A hidden row is ONLY hidden.** Nothing here touches a span, a role, a
+        selection or a signal, so a row that survives the filter behaves exactly
+        as it did before there was one.
+        """
+        predicate = self._filter_predicate()
+        matches = 0
+        for index in range(self.tree.topLevelItemCount()):
+            matches += self._filter_item(self.tree.topLevelItem(index), predicate)
+        self._refresh_filter_banner(matches)
+
+    def _filter_item(self, item: QTreeWidgetItem, predicate) -> int:
+        """Apply `predicate` to `item`'s subtree; return how many object rows in
+        it matched, and leave `item` hidden iff that count is zero.
+
+        With no predicate every row is shown, which is what makes this one
+        method both "filter" and "clear".
+        """
+        if predicate is None:
+            self._show_subtree(item)
+            return 0
+        name = item.data(0, _FILTER_NAME_ROLE)
+        if name is not None and predicate(name):
+            # A matched object shows its whole subtree: its columns, its
+            # constraints, its triggers. Hiding them would answer a different
+            # question than the one asked.
+            self._show_subtree(item)
+            return 1 + sum(
+                self._count_matches(item.child(i), predicate)
+                for i in range(item.childCount())
+            )
+        matched = 0
+        for index in range(item.childCount()):
+            matched += self._filter_item(item.child(index), predicate)
+        item.setHidden(matched == 0)
+        if matched:
+            # Only ancestors are auto-expanded, and only while filtering: a hit
+            # buried under a collapsed branch root is a hit the user cannot see.
+            item.setExpanded(True)
+        return matched
+
+    def _count_matches(self, item: QTreeWidgetItem, predicate) -> int:
+        """Matches inside an already-shown subtree, counted without touching
+        visibility -- the banner's number must include rows that rode along
+        under a matched parent."""
+        name = item.data(0, _FILTER_NAME_ROLE)
+        matched = 1 if name is not None and predicate(name) else 0
+        for index in range(item.childCount()):
+            matched += self._count_matches(item.child(index), predicate)
+        return matched
+
+    @staticmethod
+    def _show_subtree(item: QTreeWidgetItem) -> None:
+        item.setHidden(False)
+        for index in range(item.childCount()):
+            BrowserPanel._show_subtree(item.child(index))
+
+    def _object_row_count(self) -> int:
+        total = 0
+        iterator = QTreeWidgetItemIterator(self.tree)
+        while iterator.value() is not None:
+            if iterator.value().data(0, _FILTER_NAME_ROLE) is not None:
+                total += 1
+            iterator += 1
+        return total
+
+    def _refresh_filter_banner(self, matches: int) -> None:
+        description = self.filter_description()
+        if not description:
+            self.filter_banner_label.setVisible(False)
+            self.filter_banner_label.setText("")
+            return
+        if matches:
+            total = self._object_row_count()
+            text = f"Filtered: {description} — {matches} of {total} objects"
+        else:
+            text = NO_FILTER_MATCHES_TEXT
+        self.filter_banner_label.setText(text)
+        self.filter_banner_label.setVisible(True)
+
+    # -- danger selection colour (`FQ-260810165518`) --------------------------
+
+    def set_danger_highlight(self, enabled: bool) -> None:
+        """Turn the quality tree's danger selection band on or off.
+
+        Public so the target-vs-sandbox distinction can one day be stated by
+        the host directly rather than inferred from `browse_only` -- see
+        `_danger_highlight`.
+        """
+        self._danger_highlight = bool(enabled)
+        self._apply_danger_highlight()
+
+    def has_danger_highlight(self) -> bool:
+        return self._danger_highlight
+
+    def _palette_is_light(self) -> bool:
+        return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+
+    def _apply_danger_highlight(self) -> None:
+        """(Re-)paint the selection band for the current theme.
+
+        Idempotent and last-write-wins by construction -- it reads the live
+        palette and assigns the whole sheet -- which is what makes it safe under
+        the measured theme-flip mechanics: `PaletteChange` fires **four times**
+        per flip and the first two still report the OLD lightness, so the only
+        handler that can be right is one whose last call decides.
+        """
+        if not self._danger_highlight:
+            self.tree.setStyleSheet("")
+            return
+        self.tree.setStyleSheet(danger_selection_stylesheet(self._palette_is_light()))
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Re-apply the danger colour on a theme flip.
+
+        `PaletteChange` is the event that matters: `ApplicationPaletteChange`
+        was measured NOT to reach a nested child, which is the trap the two
+        other theme-aware panels in this app record. It is listened for anyway,
+        harmlessly, because a re-apply is idempotent.
+        """
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.PaletteChange,
+        ):
+            self._apply_danger_highlight()
 
     # -- unsaved-edit overlay (BUG-033) ---------------------------------------
 
@@ -749,6 +1188,10 @@ class BrowserPanel(QWidget):
                 label = f"{schema_name}.{table_name}"
             table_item = QTreeWidgetItem([label])
             qualified = f"{schema_name}.{table_name}"
+            # The filter matches the NAME, never the label: `label` may carry a
+            # `  (N)` trigger count, and `(2)` is not something anyone searches
+            # a table by.
+            table_item.setData(0, _FILTER_NAME_ROLE, qualified)
             table_info = schema.tables.get(qualified)
             if table_info is not None:
                 table_item.setData(0, _TABLE_ROLE, table_info)
@@ -920,6 +1363,10 @@ class BrowserPanel(QWidget):
             # overlay by `_apply_dirty_markers`, which `set_schema` runs once
             # the whole tree is built. One place composes markers.
             routine_item = QTreeWidgetItem([label])
+            # `schema.name`, without the `[F]`/`[P]`/`[T]` marker and without
+            # the zero-arg `()`: matching the label would make `f` hit every
+            # function in the database.
+            routine_item.setData(0, _FILTER_NAME_ROLE, qualified)
             self._remember_label(
                 routine_item,
                 label,
@@ -962,6 +1409,13 @@ class BrowserPanel(QWidget):
             relpath = trigger_ddl_path(trigger.schema, trigger.table, trigger.name)
             drift = markers.get(relpath)
         leaf = QTreeWidgetItem([label])
+        # `schema.table.name`, without the `[B][D]` timing/event letters -- the
+        # exact case §18.1 names, where matching the rendered text would make
+        # `d` match every DELETE trigger. Both of a trigger's two occurrences
+        # carry it, so one object is never half-hidden.
+        leaf.setData(
+            0, _FILTER_NAME_ROLE, f"{trigger.schema}.{trigger.table}.{trigger.name}"
+        )
         # A trigger renders as TWO leaves (Tables branch + under its function,
         # §18.1); both carry the same key, so the overlay marks both -- one
         # object, consistently marked wherever it is shown.

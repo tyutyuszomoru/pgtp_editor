@@ -2140,3 +2140,536 @@ def test_a_browse_only_tree_gains_the_navigation_but_no_creation_entries(qtbot):
 
     constraints = _group_named(table_item, "Constraints")
     assert _clicked_line(panel, constraints.child(0))
+
+
+# ---------------------------------------------------------------------------
+# The tree NAME FILTER (`FQ-260810180336`, §18.1) and the QUALITY tree's DANGER
+# selection colour (`FQ-260810165518`, §18.7).
+#
+# Everything colour-related below asserts RENDERED PIXELS, never a palette or a
+# stylesheet string. `BUG-260811021804` is the standing proof that a read-back
+# assertion here is a false green: `sql_results_panel.py`'s palette faithfully
+# reports a red that is painted zero times.
+# ---------------------------------------------------------------------------
+from collections import Counter  # noqa: E402
+
+import pytest  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
+
+from pgtp_editor.ui.ddl_buffer_panel import (  # noqa: E402
+    CLEAR_FILTER_BUTTON_LABEL,
+    FILTER_BUTTON_LABEL,
+    FILTER_MODE_CONTAINS,
+    FILTER_MODE_DEFAULT,
+    FILTER_MODE_ENDS_WITH,
+    FILTER_MODE_LABELS,
+    FILTER_MODE_NOT_CONTAINS,
+    FILTER_MODE_NOT_STARTS_WITH,
+    FILTER_MODE_STARTS_WITH,
+    FILTER_PLACEHOLDER,
+    NO_FILTER_MATCHES_TEXT,
+    danger_selection_colors,
+    danger_selection_stylesheet,
+    filter_matches,
+    filter_mode_label,
+)
+from pgtp_editor.ui.mode_indicator import MODE_MAINTENANCE, mode_colors  # noqa: E402
+from pgtp_editor.ui.theme import apply_theme  # noqa: E402
+
+
+def _filtered_panel(schema=None):
+    panel = BrowserPanel()
+    schema = schema if schema is not None else _schema()
+    _, spans = build_ddl_text(schema)
+    panel.set_schema(schema, spans)
+    return panel, schema, spans
+
+
+def _visible_labels(panel):
+    """Every row the user can actually see, in tree order -- a row whose parent
+    is hidden is not visible however its own flag reads."""
+    seen: list[str] = []
+
+    def walk(item, parent_visible):
+        visible = parent_visible and not item.isHidden()
+        if visible:
+            seen.append(item.text(0))
+        for index in range(item.childCount()):
+            walk(item.child(index), visible)
+
+    for index in range(panel.tree.topLevelItemCount()):
+        walk(panel.tree.topLevelItem(index), True)
+    return seen
+
+
+def _filter_for(panel, term, mode=FILTER_MODE_CONTAINS):
+    panel.filter_input.setText(term)
+    panel.filter_mode_combo.setCurrentIndex(
+        [value for _, value in FILTER_MODE_LABELS].index(mode)
+    )
+    panel.apply_filter()
+
+
+# -- the five predicates, pure ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name,term,mode,expected",
+    [
+        ("pr.calc_total", "calc", FILTER_MODE_CONTAINS, True),
+        ("pr.calc_total", "zzz", FILTER_MODE_CONTAINS, False),
+        ("pr.calc_total", "pr.", FILTER_MODE_STARTS_WITH, True),
+        ("pr.calc_total", "calc", FILTER_MODE_STARTS_WITH, False),
+        ("pr.calc_total", "total", FILTER_MODE_ENDS_WITH, True),
+        ("pr.calc_total", "calc", FILTER_MODE_ENDS_WITH, False),
+        ("pr.calc_total", "calc", FILTER_MODE_NOT_CONTAINS, False),
+        ("pr.calc_total", "zzz", FILTER_MODE_NOT_CONTAINS, True),
+        ("pr.calc_total", "pr.", FILTER_MODE_NOT_STARTS_WITH, False),
+        ("pr.calc_total", "calc", FILTER_MODE_NOT_STARTS_WITH, True),
+    ],
+)
+def test_each_filter_mode_answers_its_own_question(name, term, mode, expected):
+    assert filter_matches(name, term, mode) is expected
+
+
+def test_matching_is_case_insensitive():
+    """Open question 1, settled: insensitive, with no `Match case` toggle."""
+    assert filter_matches("pr.Calc_Total", "CALC", FILTER_MODE_CONTAINS)
+    assert filter_matches("pr.Calc_Total", "PR.", FILTER_MODE_STARTS_WITH)
+
+
+def test_an_empty_term_matches_everything_even_in_a_negative_mode():
+    """Otherwise `Filter` on an empty box would empty the tree under
+    "Doesn't contain", which is nobody's idea of clearing a filter."""
+    for _, mode in FILTER_MODE_LABELS:
+        assert filter_matches("anything", "", mode)
+
+
+# -- the bar -----------------------------------------------------------------
+
+
+def test_the_filter_bar_offers_the_owners_four_controls(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert panel.filter_input.placeholderText() == FILTER_PLACEHOLDER
+    assert panel.filter_button.text() == FILTER_BUTTON_LABEL
+    assert panel.clear_filter_button.text() == CLEAR_FILTER_BUTTON_LABEL
+    assert [
+        panel.filter_mode_combo.itemText(i)
+        for i in range(panel.filter_mode_combo.count())
+    ] == [label for label, _ in FILTER_MODE_LABELS]
+
+
+def test_the_default_mode_is_contains(qtbot):
+    """Open question 3, settled."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert FILTER_MODE_DEFAULT == FILTER_MODE_CONTAINS
+    assert panel.filter_mode_combo.currentData() == FILTER_MODE_CONTAINS
+
+
+def test_return_in_the_input_filters_but_typing_does_not(qtbot):
+    """A text input beside a button that ignores Return is its own small
+    defect -- but nothing filters on a keystroke."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    panel.filter_input.setText("calc")
+    assert panel.active_filter() is None
+    panel.filter_input.returnPressed.emit()
+    assert panel.active_filter() == (FILTER_MODE_CONTAINS, "calc")
+
+
+def test_the_name_filter_is_not_the_find_replace_bar(qtbot):
+    """The DDL Explorer tab now carries two search inputs, and the panel-side
+    one must be distinguishable at a glance: different verbs, a mode dropdown
+    Find has no equivalent of, and a placeholder that names its subject."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert not hasattr(panel, "find_replace_bar")
+    assert "Find" not in panel.filter_button.text()
+    assert "object names" in panel.filter_input.placeholderText()
+
+
+# -- what it hides and what it keeps -----------------------------------------
+
+
+def test_filtering_hides_non_matching_routines_and_keeps_the_match(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+    visible = _visible_labels(panel)
+    assert "pr.calc_total [F]" in visible
+    assert "pr.audit_log() [T]" not in visible
+    # The branch root survives so the hit is shown in context.
+    assert "Functions & Procedures" in visible
+
+
+def test_a_group_with_a_matching_child_stays_visible(qtbot):
+    """The "function 1" case: an ancestor is visible iff it matches itself or
+    has a visible descendant."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "trg_other")
+    visible = _visible_labels(panel)
+    assert "Tables" in visible
+    assert "pr.equipment  (2)" in visible  # ancestor of the hit
+    assert "pr.equipment.trg_other [B][D]" in visible
+    assert "pr.equipment.trg_audit [A][I][U]" not in visible
+
+
+def test_a_matched_object_still_shows_its_own_children(qtbot):
+    """A matched routine keeps its argument leaves -- hiding them would answer
+    a different question than the one asked."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc_total")
+    visible = _visible_labels(panel)
+    assert "item_id (integer)" in visible
+    assert "rate (numeric)" in visible
+
+
+def test_argument_leaves_are_not_match_targets(qtbot):
+    """§18.1: column leaves and routine-argument leaves are not object rows."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "item_id")
+    assert panel.filter_banner_label.text() == NO_FILTER_MATCHES_TEXT
+    assert _visible_labels(panel) == []
+
+
+def test_column_leaves_are_not_match_targets(qtbot):
+    schema = DatabaseSchema(
+        tables={
+            "pr.equipment": TableInfo(
+                name="pr.equipment",
+                kind="table",
+                columns=[
+                    ColumnInfo(
+                        name="serial_no", data_type="text", is_pk=False,
+                        is_fk=False, is_nullable=True, default=None,
+                    ),
+                ],
+            )
+        }
+    )
+    panel, _, _ = _filtered_panel(schema)
+    qtbot.addWidget(panel)
+    _filter_for(panel, "serial_no")
+    assert _visible_labels(panel) == []
+    _filter_for(panel, "equipment")
+    assert "serial_no (text)" in _visible_labels(panel)  # rides along
+
+
+def test_the_marker_letters_are_never_matched(qtbot):
+    """The spec's own worked example, and the reason the filter reads a stored
+    NAME rather than the base label: `d` must not match every DELETE trigger,
+    and `f` must not match every function."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "[D]")
+    assert _visible_labels(panel) == []
+    _filter_for(panel, "[F]")
+    assert _visible_labels(panel) == []
+
+
+def test_a_trigger_is_hidden_in_BOTH_of_its_occurrences(qtbot):
+    """One object is never half-hidden (§18.1's dual-grouped tree)."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc_total")
+    assert not any("trg_audit" in label for label in _visible_labels(panel))
+
+
+def test_clear_filter_restores_every_row_and_empties_the_input(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    everything = _visible_labels(panel)
+    _filter_for(panel, "calc")
+    assert _visible_labels(panel) != everything
+    panel.clear_filter()
+    assert panel.active_filter() is None
+    assert panel.filter_input.text() == ""
+    assert _visible_labels(panel) == everything
+
+
+def test_pressing_filter_on_an_empty_box_clears_rather_than_hiding(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    everything = _visible_labels(panel)
+    _filter_for(panel, "calc")
+    _filter_for(panel, "   ")
+    assert panel.active_filter() is None
+    assert _visible_labels(panel) == everything
+
+
+def test_hiding_a_row_changes_nothing_about_a_visible_rows_behaviour(qtbot):
+    """A visibility operation and nothing else: same span, same signal, same
+    context menu."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc_total")
+    routines_root = panel.tree.topLevelItem(1)
+    routine_item = next(
+        routines_root.child(i)
+        for i in range(routines_root.childCount())
+        if not routines_root.child(i).isHidden()
+    )
+    with qtbot.waitSignal(panel.navigate_requested):
+        panel._on_item_clicked(routine_item, 0)
+    labels = [a.text() for a in panel.context_menu_for_item(routine_item).actions()]
+    assert "Edit DDL" in labels
+
+
+def test_the_sandbox_tree_gets_the_filter_too(qtbot):
+    """`browse_only` withholds edits, creations and mutations -- a search aid
+    is none of those."""
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    schema = _schema()
+    _, spans = build_ddl_text(schema)
+    panel.set_schema(schema, spans)
+    _filter_for(panel, "calc")
+    assert "pr.calc_total [F]" in _visible_labels(panel)
+    assert "pr.audit_log() [T]" not in _visible_labels(panel)
+
+
+# -- the banner --------------------------------------------------------------
+
+
+def test_an_active_filter_announces_itself(qtbot):
+    """Open question 2, settled: yes. A tree silently missing objects is the
+    shape of a silent wrong result."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert not panel.filter_banner_label.isVisibleTo(panel)
+    _filter_for(panel, "calc")
+    assert panel.filter_banner_label.isVisibleTo(panel)
+    text = panel.filter_banner_label.text()
+    assert filter_mode_label(FILTER_MODE_CONTAINS).lower() in text
+    assert "calc" in text
+    panel.clear_filter()
+    assert not panel.filter_banner_label.isVisibleTo(panel)
+
+
+def test_an_all_hidden_tree_says_why(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "no_such_object")
+    assert panel.filter_banner_label.text() == NO_FILTER_MATCHES_TEXT
+    assert panel.filter_banner_label.isVisibleTo(panel)
+
+
+# -- the rebuild-under-a-live-filter case, which is the real correctness risk -
+
+
+def test_a_rebuild_under_a_live_filter_re_applies_it(qtbot):
+    """Open question 4, settled: RE-APPLY, the `_dirty_keys` shape. A
+    `set_schema` that came back unfiltered would leave the user reading a tree
+    they believe is narrowed."""
+    panel, schema, spans = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+
+    panel.set_schema(schema, spans)  # a Reload DDL / re-fetch
+
+    assert panel.active_filter() == (FILTER_MODE_CONTAINS, "calc")
+    visible = _visible_labels(panel)
+    assert "pr.calc_total [F]" in visible
+    assert "pr.audit_log() [T]" not in visible
+    assert panel.filter_banner_label.isVisibleTo(panel)
+
+
+def test_a_rebuild_re_filters_the_NEW_rows_not_the_old_ones(qtbot):
+    """The filter must act on whatever the rebuild produced -- an object that
+    appears in the refresh and does not match must come back hidden."""
+    panel, schema, spans = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+
+    widened = DatabaseSchema(
+        routines={
+            **schema.routines,
+            "pr.new_helper()": RoutineInfo(
+                schema="pr", name="new_helper", arg_types=[], return_type="void",
+                language="plpgsql", source="body3", kind="function",
+            ),
+        },
+        triggers=schema.triggers,
+    )
+    _, new_spans = build_ddl_text(widened)
+    panel.set_schema(widened, new_spans)
+
+    visible = _visible_labels(panel)
+    assert "pr.new_helper() [F]" not in visible
+    assert "pr.calc_total [F]" in visible
+
+
+def test_a_rebuild_with_no_filter_hides_nothing(qtbot):
+    panel, schema, spans = _filtered_panel()
+    qtbot.addWidget(panel)
+    everything = _visible_labels(panel)
+    panel.set_schema(schema, spans)
+    assert _visible_labels(panel) == everything
+
+
+# -- the danger selection colour, asserted in PIXELS -------------------------
+
+#: The live qdarkstyle chrome the tree's rows are drawn on, per theme -- the
+#: contrast target §7 requires ("against the live QDarkStyle chrome, not the
+#: bare palette"), not `theme.py`'s `Highlight`, which a tree row never paints.
+TREE_CHROME = {True: "#fafafa", False: "#19232d"}
+
+
+def _rendered(name: str) -> str:
+    """A colour spelled the way `QImage.pixelColor().name()` spells it.
+    `mode_colors` stores upper-case literals, so a raw comparison against a
+    pixel name silently never matches."""
+    return QColor(name).name()
+
+
+def _pixel_counts(widget) -> Counter:
+    image = widget.grab().toImage()
+    counts: Counter = Counter()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            counts[image.pixelColor(x, y).name()] += 1
+    return counts
+
+
+def _relative_luminance(name: str) -> float:
+    color = QColor(name)
+    channels = [
+        raw / 12.92 if raw <= 0.03928 else ((raw + 0.055) / 1.055) ** 2.4
+        for raw in (color.redF(), color.greenF(), color.blueF())
+    ]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(one: str, other: str) -> float:
+    first, second = _relative_luminance(one), _relative_luminance(other)
+    return (max(first, second) + 0.05) / (min(first, second) + 0.05)
+
+
+@pytest.fixture
+def themed_browser(qtbot, qapp):
+    """A *shown* panel with a selected row, under a real theme. Showing is not
+    optional: an unshown widget's grab is not evidence of what the user sees,
+    and the app-wide QSS is only resolved once the widget is polished."""
+
+    def build(light: bool, browse_only: bool = False) -> BrowserPanel:
+        apply_theme(qapp, light)
+        panel = BrowserPanel(browse_only=browse_only)
+        qtbot.addWidget(panel)
+        schema = _schema()
+        _, spans = build_ddl_text(schema)
+        panel.resize(420, 320)
+        panel.show()
+        panel.set_schema(schema, spans)
+        panel.tree.expandAll()
+        routines_root = panel.tree.topLevelItem(1)
+        panel.tree.setCurrentItem(routines_root.child(0))
+        qapp.processEvents()
+        return panel
+
+    return build
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_quality_tree_actually_paints_its_selection_in_the_danger_red(
+    themed_browser, light
+):
+    """Rendered pixels, not a palette read-back: `BUG-260811021804` is the
+    standing proof that a palette can report a red nothing paints."""
+    panel = themed_browser(light)
+    background, _ = danger_selection_colors(light)
+    assert _pixel_counts(panel.tree)[_rendered(background)] > 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_sandbox_tree_keeps_the_ordinary_selection(themed_browser, light):
+    """The DIFFERENCE is the feature -- colouring both would say nothing."""
+    panel = themed_browser(light, browse_only=True)
+    background, _ = danger_selection_colors(light)
+    assert _pixel_counts(panel.tree)[_rendered(background)] == 0
+    assert panel.has_danger_highlight() is False
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_no_ordinary_blue_survives_inside_the_danger_band(themed_browser, light):
+    """Found by looking at pixels: overriding only the two `::item` selectors
+    left the selected row's indent strip painting the app-wide selection blue,
+    so the band was red with a blue notch in it."""
+    panel = themed_browser(light)
+    ordinary = _rendered("#9FCBFF" if light else "#346792")
+    assert _pixel_counts(panel.tree)[ordinary] == 0
+
+
+def test_the_danger_red_survives_a_light_dark_round_trip(themed_browser, qapp):
+    """The value is a per-theme pair, so it must be re-applied on every flip.
+
+    Settled with `processEvents` on purpose: `PaletteChange` fires four times
+    per flip and the first two still report the OLD lightness, so the handler
+    is idempotent and last-write-wins rather than right on the first event.
+    """
+    panel = themed_browser(False)
+    dark_red = _rendered(danger_selection_colors(False)[0])
+    light_red = _rendered(danger_selection_colors(True)[0])
+    assert dark_red != light_red
+    assert _pixel_counts(panel.tree)[dark_red] > 0
+
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    counts = _pixel_counts(panel.tree)
+    assert counts[light_red] > 0
+    assert counts[dark_red] == 0
+
+    apply_theme(qapp, False)
+    qapp.processEvents()
+    counts = _pixel_counts(panel.tree)
+    assert counts[dark_red] > 0
+    assert counts[light_red] == 0
+
+
+def test_turning_the_danger_highlight_off_restores_the_ordinary_selection(
+    themed_browser, qapp
+):
+    panel = themed_browser(True)
+    red = _rendered(danger_selection_colors(True)[0])
+    assert _pixel_counts(panel.tree)[red] > 0
+    panel.set_danger_highlight(False)
+    qapp.processEvents()
+    assert _pixel_counts(panel.tree)[red] == 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_danger_red_is_the_maintenance_pair_and_never_a_second_red(light):
+    """Trap 1: no colour literal enters this module. The pair is used swapped
+    -- the chip's strong colour becomes the band, the pale one the text on it --
+    because the chip background is useless as a selection band (see below)."""
+    chip_background, chip_foreground = mode_colors(light)[MODE_MAINTENANCE]
+    assert danger_selection_colors(light) == (chip_foreground, chip_background)
+    sheet = danger_selection_stylesheet(light)
+    assert chip_foreground in sheet and chip_background in sheet
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_selected_rows_text_is_legible_on_the_danger_band(light):
+    """The pair was already tuned to be legible against itself, which is what
+    reusing it buys: 7.98:1 light, 8.50:1 dark, against qdarkstyle's own
+    9.44:1 / 4.57:1 for the blue it replaces."""
+    background, text = danger_selection_colors(light)
+    assert _contrast_ratio(background, text) >= 4.5
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_danger_band_is_visible_AS_a_band_against_the_tree_chrome(light):
+    """Why the pair is swapped rather than used as-is: the chip's light
+    background `#FDECEA` measures 1.10:1 against the tree's chrome, so a
+    selection painted in it would be invisible as a selection. The swapped
+    band measures 8.74:1 / 9.28:1."""
+    background, _ = danger_selection_colors(light)
+    chrome = TREE_CHROME[light]
+    assert _contrast_ratio(background, chrome) >= 3.0
+    chip_background, _ = mode_colors(light)[MODE_MAINTENANCE]
+    if light:
+        assert _contrast_ratio(chip_background, chrome) < 3.0
