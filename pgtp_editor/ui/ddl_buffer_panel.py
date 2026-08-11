@@ -298,8 +298,8 @@ ALTER_TABLE_ACTIONS: tuple[tuple[str, str], ...] = tuple(
     action for group in ALTER_TABLE_ACTION_GROUPS for action in group
 )
 
-#: Every operation EITHER entry point can emit -- the table node's fifteen plus
-#: the column leaf's own comment entry. The host maps all sixteen in one place
+#: Every operation EITHER entry point can emit -- the table node's sixteen plus
+#: the column leaf's own comment entry. The host maps all seventeen in one place
 #: (`MainWindow._alter_column_dialog`), so it needs the union rather than one
 #: entry point's view of it.
 ALTER_TABLE_ALL_ACTIONS: tuple[tuple[str, str], ...] = (
@@ -1579,10 +1579,12 @@ class BrowserPanel(QWidget):
             column_table, column_name = column_context
             menu = QMenu(self)
             # The SAME submenu, carrying the clicked column. A column row offers
-            # nothing else, but it keeps the submenu rather than flattening the
-            # twelve entries: one shape for one action set, and the title is what
-            # tells the user these produce `ALTER TABLE` rather than acting on
-            # the column in place.
+            # nothing else, but it keeps the submenu rather than flattening its
+            # entries: one shape for one action set, and the title is what tells
+            # the user these act on the table rather than on the column in
+            # place. (The title names the commonest case, not the output -- the
+            # index, comment and drop entries emit `CREATE INDEX`/`DROP INDEX`/
+            # `COMMENT ON`/`DROP TABLE`, never `ALTER TABLE`.)
             if self._add_alter_table_submenu(menu, column_table, column=column_name) is None:
                 # A view's column: the submenu declined, and it was this menu's
                 # only content -- an empty menu under the cursor is worse than

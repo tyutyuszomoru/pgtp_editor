@@ -5066,8 +5066,11 @@ class MainWindow(QMainWindow):
 
     def _on_ddl_alter_column_requested(self, operation, table_info, column) -> None:
         """Right-click ▸ Alter Table ▸ … on a table node or a column leaf
-        (FQ-025) -- all twelve operations, columns and constraints alike, arrive
-        here on the one signal and differ only in which dialog is built.
+        (FQ-025) -- every operation in `ALTER_TABLE_ALL_ACTIONS`, columns and
+        constraints alike, arrives here on the one signal and differs only in
+        which dialog is built. Deliberately not stated as a count: the set grows
+        per slice, and the three copies of "twelve" that outlived FQ-025 cost a
+        manual pass to find.
 
         Shown NON-MODALLY and read back on `accepted`, exactly as FQ-002's
         creation dialogs are (§30's no-un-patched-modal rule): the window stays
