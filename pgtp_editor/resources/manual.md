@@ -1718,8 +1718,9 @@ Coherence** first.
 
 ## DDL Explorer
 
-The DDL Explorer shows a database's server-side code — every function,
-procedure, and trigger — inside the editor. There are **two** of them, one per
+The DDL Explorer shows a database's schema and server-side code — every table,
+view and materialized view, and every function, procedure and trigger — inside
+the editor. There are **two** of them, one per
 database you work against, and each is a checkable toggle on the **Database**
 menu:
 
@@ -1738,32 +1739,37 @@ the explorer again; with a local DDL-versioning project open, an **Activity Log*
 note points you at **Project Settings…** instead (see *Database/XML Coherence ▸
 Connecting* and *Local DDL-Versioning Projects*).
 
-Turning either one on fetches all routines and triggers from that database and
-reveals **its own** two tabs at once — both labelled with the database they show,
-so two open explorers are never confusable:
+Turning either one on fetches that database's whole object set — tables, views
+and materialized views as well as every routine and trigger — and reveals **its
+own** two tabs at once, both labelled with the database they show, so two open
+explorers are never confusable:
 
 - **Center — DDL Explorer (Quality)** / **DDL Explorer (Sandbox)**: every
-  definition in a single **read-only**,
+  object's DDL in a single **read-only**,
   SQL-highlighted buffer. Each object is preceded by a banner comment (e.g.
-  `-- FUNCTION public.foo(integer) --`) so you can always tell where you are.
-  The buffer is a live snapshot of the database and cannot be edited.
+  `-- FUNCTION public.foo(integer) --`, `-- TABLE pr.orders --`) so you can
+  always tell where you are.
+  The buffer is a live snapshot of the database and cannot be edited — see
+  *What the read-only buffer holds*, below, for what is in it and which part of
+  it is reconstructed rather than original.
 - **Left dock — DDL Objects (Quality)** / **DDL Objects (Sandbox)**: a tree of
   the same objects, grouped from two
-  angles. Under **Tables**, **every table in the connected schema is listed** —
+  angles, with a **name-filter bar above it** (*Filtering the object tree by
+  name*, below). Under **Tables**, **every table, view and materialized view in
+  the connected schema is listed** —
   tables that own a trigger list those triggers nested underneath them; tables
-  with no triggers appear as plain entries. Every table also carries a
-  **`Columns  (N)`** group listing its own columns. Under **Functions &
-  Procedures**,
+  with no triggers appear as plain entries. Every table also carries
+  **`Columns  (N)`**, **`Constraints  (N)`** and **`Indexes  (N)`** groups.
+  Under **Functions & Procedures**,
   each function or procedure lists the triggers that call it. A trigger
   therefore appears in **both** places — either entry points at the same
-  definition. **Click** a routine or trigger to jump **that explorer's own** DDL
-  buffer straight to it; **click** a table — or one of its columns — to see that
-  table's columns in Properties (see *Clicking a table: column properties*,
-  below).
+  definition. **Click any item that has DDL** — a table, a view, a column, a
+  constraint, an index, a routine, a trigger — to jump **that explorer's own**
+  DDL buffer straight to it.
 
-Everything in the next four sections describes both trees and both buffers.
-The sections after them — editing objects, creating them, and altering a table —
-belong to the Quality explorer alone.
+Everything from here up to *The Sandbox Explorer, and how it differs* describes
+both trees and both buffers. The sections after that one — editing objects,
+creating them, and altering a table — belong to the Quality explorer alone.
 
 ### Reading the DDL Objects tree
 
@@ -1771,17 +1777,37 @@ Under **Tables**, each table is listed as `schema.table`. A table with
 triggers shows a trigger count suffix, e.g. `public.orders  (2)`, with those
 triggers nested underneath it exactly as before; a table with no triggers
 shows the bare `schema.table` label (no count, since it would only ever be
-`0`) and has no children. Widening the branch to every table means it no
+`0`) and has no children. Views and materialized views are listed in the same
+branch and read the same way. Widening the branch to every relation means it no
 longer omits tables that happen to have no trigger of their own.
 
-Under each table, after its triggers, sits a **`Columns  (N)`** group holding one
-row per column, written as `name (type)` — for example `note (text)`. They are
-listed in the table's own declared column order, the same order the Properties
-panel uses, so the two surfaces show one table the same way round. The group node
-itself is only a container: it clicks nowhere and has no right-click menu. The
-column rows exist so that a right-click can carry *which column* into the **Alter
-Table ▸** dialogs (see *Altering a table's columns*, below); a table the explorer
-has no column information for simply gets no group.
+Under each table, after its triggers, sit up to three collapsible groups:
+
+- **`Columns  (N)`** — one row per column, written as `name (type)`, for example
+  `note (text)`. They are listed in the table's own declared column order, the
+  same order the Properties panel uses, so the two surfaces show one table the
+  same way round.
+- **`Constraints  (N)`** — one row per named constraint, `name [kind]`, where the
+  kind marker is **`[PK]`** primary key, **`[FK]`** foreign key, **`[U]`** unique,
+  **`[C]`** check or **`[X]`** exclusion.
+- **`Indexes  (N)`** — one row per index, `name [U|I] (method)` — **`[U]`** for a
+  unique index, **`[I]`** for an ordinary one — for example
+  `idx_orders_code [U] (btree)`.
+
+Each group node is only a container: it clicks nowhere and has no right-click
+menu, and a group with nothing in it is not shown at all rather than appearing as
+an empty `(0)` folder. The column rows also carry *which column* into the **Alter
+Table ▸** dialogs when you right-click one (see *Altering a table's columns*,
+below). Constraint and index rows are navigational only — right-clicking one
+offers nothing but **Reload DDL**.
+
+**In the Quality tree the selected row is highlighted in red** instead of the
+ordinary blue, and it stays red whether or not the tree has focus. That is a
+marking and nothing more — it changes no behaviour — but it is the tree whose
+right-click gestures reach the **real** database, so it is the one that looks
+like it. The **Sandbox** tree keeps the normal selection colour, and the
+difference between the two is the point. The red follows the Light/Dark theme
+like every other colour in the app (see *Appearance & Layout*).
 
 Routines under **Functions & Procedures** are listed by their fully-qualified
 `schema.name`, followed by a marker telling you what kind of routine it is:
@@ -1821,9 +1847,63 @@ Both markers are purely informational: they surface disagreement between the
 local file, the last deploy, and the live database, but never block anything
 by themselves. With no project open, no markers are shown.
 
-### Clicking a table: column properties
+### Filtering the object tree by name
+
+A long database's tree is long. The row of controls **above the tree**, in the
+left dock, narrows it to the objects whose **name** you are after:
+
+- the **input** (placeholder `Filter object names…`),
+- a **match-mode dropdown** — **Contains** (the default), **Starts with**,
+  **Doesn't contain**, **Doesn't start with**, **Ends with**,
+- a **`Filter`** button and a **`Clear Filter`** button.
+
+Nothing filters while you type: the tree changes when you press **`Filter`** — or
+**Return** in the input, which does exactly the same thing. **`Clear Filter`**
+empties the box and brings every row back. Pressing `Filter` on an empty box is
+not a filter either; it clears, which is why the two negative modes cannot hide
+the whole tree by accident.
+
+**Matching is case-insensitive** (there is no Match-case toggle) and it matches
+the **bare object name** — `pr.orders`, `pr.recalc`, `pr.orders.trg_audit` — never
+the decorated label. The `[F]` / `[P]` / `[T]` routine markers, a trigger's
+`[B][D]`, a table's `  (2)` trigger count and the `*` / `!` drift markers are all
+invisible to it, so typing `d` finds names containing a *d* rather than every
+DELETE trigger.
+
+Non-matching objects are **hidden**, not greyed out. The ancestors of a match
+stay visible and expand themselves, so a hit never hides under a collapsed
+branch; a matched object shows its **whole subtree** — its columns, constraints,
+indexes and triggers — because you asked for the object, not for a filtered view
+of its insides.
+
+A filter always announces itself in the banner under the bar:
+
+- `Filtered: name contains “ord” — 7 of 214 objects` while something matches;
+- `No objects match the active filter — use “Clear Filter” to see everything.`
+  when nothing does — an empty tree always says why it is empty.
+
+**The filter survives a reload.** Re-introspecting an explorer (*Reloading an
+explorer*, below) rebuilds the tree and then re-applies the active filter,
+including to rows that have only just arrived — the banner is what keeps that
+from being a surprise.
+
+> **This bar filters the TREE; the Find bar searches the TEXT.** The DDL Explorer
+> has two find-shaped affordances and they answer different questions. This one
+> lives in the **left dock above the DDL Objects tree**, says `Filter` /
+> `Clear Filter`, and hides tree rows. The **Find/Replace bar** lives in the
+> **center tab below the read-only buffer**, says `Find Next` / `Find All`, and
+> moves the caret through the DDL text (see *Working in the DDL tab*). Filtering
+> the tree never touches the buffer, and finding in the buffer never hides a row.
+>
+> **The filter has no keyboard shortcut**, deliberately: **Ctrl+F** in this tab
+> already belongs to the Find bar over the text pane, and one chord cannot mean
+> both. Return in the filter input is as close as it gets.
+
+### Clicking a table: navigation and column properties
 
 Clicking any table node under **Tables** — whether it owns triggers or not —
+does **two** things. It jumps that explorer's DDL buffer to the table's
+`CREATE TABLE` (see *What the read-only buffer holds*, below), **and** it
 populates the **Properties** panel (the same right-hand dock the Project Tree
 and the coherence view use, see *Properties*) with that table's full column
 list. Each column is shown as **two rows**: a compact identity line — the
@@ -1832,20 +1912,78 @@ followed by a detail line with its default value and comment (an unset
 default or comment shows as `—`). Subtle alternating shading pairs each
 column's two rows together so they read as one record.
 
-**Clicking one of the table's own column rows shows the same thing** — the owning
-table's full column list — so you can inspect a column without collapsing the
-group you are working in.
+**Clicking one of the table's own column rows does the same two things**, except
+that the jump lands on **that column's own line** inside the `CREATE TABLE`
+rather than on the table's banner, and Properties shows the owning table's full
+column list — so you can inspect a column without collapsing the group you are
+working in.
 
-This is **display-only**: clicking a table populates Properties but, unlike
-clicking a routine or trigger, does **not** jump or scroll the DDL buffer,
-since a whole table has no single line in that buffer to jump to. In the
-**Quality** tree, right-clicking a table node offers two things: **Add Trigger…**
-(see *Creating a new trigger, function, or procedure*, below) and the
-**Alter Table ▸** submenu (see *Altering a table's columns*, below). A column row
+A constraint row jumps to its inline `CONSTRAINT` line, and an index row to its
+`CREATE INDEX` statement; an index that only exists to back a PRIMARY KEY,
+UNIQUE or EXCLUDE constraint jumps to **that constraint's** line, because that is
+the only place it appears in the text (see *What the read-only buffer holds*).
+
+In the **Quality** tree, right-clicking a table node offers **Add Trigger…**
+(see *Creating a new trigger, function, or procedure*, below), **Create Table…**
+and the **Alter Table ▸** submenu (see *Altering a table's columns*, below). A column row
 offers the **Alter Table ▸** submenu alone. **Edit DDL** remains available only on
 routine and trigger rows, because it acts on an object's existing definition. The
 **Sandbox** tree offers none of these — its right-click menu holds **Reload DDL**
 and nothing else (see *The Sandbox Explorer, and how it differs*).
+
+### What the read-only buffer holds
+
+The DDL Explorer buffer holds **every object kind**, in the same order the tree
+is grouped: the **relations first** — tables, views and materialized views,
+by schema and name — then the **routines and triggers**. Each object is preceded
+by its banner comment (`-- TABLE pr.orders --`, `-- VIEW pr.v_open --`,
+`-- FUNCTION pr.recalc(integer) --`, `-- TRIGGER pr.trg_audit ON orders --`),
+which is what a tree click jumps to and what folding collapses.
+
+- A **table** renders as one `CREATE TABLE` with its columns and its constraints
+  **inline**, followed by the standalone `CREATE INDEX` statements and any
+  `COMMENT ON TABLE` / `COMMENT ON COLUMN`.
+- A **view** or **materialized view** renders as `CREATE VIEW` /
+  `CREATE MATERIALIZED VIEW` with the database's own definition of it, exactly as
+  PostgreSQL hands it back.
+- **No `ALTER` statement appears anywhere in the buffer.** A constraint has no
+  statement of its own here; it is a line inside its table's `CREATE TABLE`, and
+  that line is where the tree's constraint rows jump.
+- **An index that exists only to back a PRIMARY KEY, UNIQUE or EXCLUDE constraint
+  gets no `CREATE INDEX`** — PostgreSQL will not let you `DROP INDEX` such an
+  index anyway, and the constraint that owns it is already printed. Its tree row
+  therefore jumps to that constraint's line, which is the only place it exists in
+  this text.
+
+> **A `CREATE TABLE` here is RECONSTRUCTED, not the original statement.**
+> PostgreSQL keeps no stored text for a table the way it does for a function, so
+> the editor builds the statement from the catalog — columns, constraints,
+> indexes and comments — and says so in two SQL-comment lines above every table.
+> The first reads `NOTE: reconstructed by PGTP Editor from pg_catalog (columns,
+> constraints, indexes, comments)`; the second, `this is NOT the original CREATE
+> statement. NOT reconstructed: identity/SERIAL, GENERATED columns, inheritance,
+> partitioning.`
+>
+> Read that as written: **identity / `SERIAL` columns, `GENERATED` columns, table
+> inheritance and partitioning are not reproduced**, so their absence from the
+> text is not evidence of their absence from the database. Nothing is ever
+> guessed — a partitioned table renders as the columns and constraints that were
+> actually read, never with an invented `PARTITION BY`. The notice sits per
+> table rather than once at the top of the buffer, because a tree click drops you
+> into the middle of the text and a notice you scrolled past is a notice you
+> never saw.
+>
+> **Views carry no such notice**, and that is deliberate: their body comes back
+> from the database verbatim, so there is nothing incomplete to warn about.
+
+Because these objects are here to be **read**, right-clicking inside one of them
+in the **Quality** buffer does not offer **Edit DDL** — instead it shows a
+greyed-out line saying why, e.g. *"Tables are read-only here — change one with
+Alter Table ▸"*, with the matching sentence for a view, a materialized view, a
+column, a constraint or an index. A refusal you can read beats a menu entry that
+silently isn't there. In the browse-only **Sandbox** buffer neither the entry nor
+the sentence appears, since nothing there is editable in the first place (see
+*The Sandbox Explorer, and how it differs*).
 
 ### Working in the DDL tab
 
@@ -1860,10 +1998,13 @@ navigation comforts as the Raw XML editor:
   double-click the line number) to mark a line, or use **Ctrl+F2** / **F2** /
   **Shift+F2** and the **Navigation** menu —
   while this tab is active they act on its editor (see *Bookmarks*).
-- **Find:** this tab has its own always-visible Find/Replace bar, so **Ctrl+F**,
+- **Find:** this tab has its own always-visible Find/Replace bar **below the
+  buffer**, so **Ctrl+F**,
   **F3** and its **Find All** button search the DDL buffer itself instead of
   bouncing you to Raw XML. The replace half (**Ctrl+R** and the **Replace** /
-  **Replace All** buttons) is inert here, since the buffer is read-only.
+  **Replace All** buttons) is inert here, since the buffer is read-only. This is
+  the bar that searches **text**; the one above the tree in the left dock filters
+  **rows** (see *Filtering the object tree by name*).
 - **Undo says why it cannot run:** **Ctrl+Z** and **Ctrl+Y** answer here with
   *"this buffer is read only — there is nothing to undo here"*.
   They are deliberately caught by this tab, because a read-only editor that let
@@ -1976,10 +2117,20 @@ what the quality database has, and treating it as the thing you are editing
 would quietly re-base your project's idea of what has been deployed. So you
 author in the Quality explorer and read the results here.
 
-Everything that only *reads* still works: clicking a routine or trigger
-navigates the sandbox buffer, clicking a table fills the **Properties** panel
-with its columns, and the buffer's own Find bar, bookmarks, folding and
-**Ctrl+Shift+R** reload behave exactly as in the Quality one.
+Everything that only *reads* still works: clicking any object navigates the
+sandbox buffer, clicking a table also fills the **Properties** panel
+with its columns, the name-filter bar above the tree filters this tree the same
+way, and the buffer's own Find bar, bookmarks, folding and
+**Ctrl+Shift+R** reload behave exactly as in the Quality one. Its buffer holds
+the same object kinds — tables, views, matviews, routines, triggers — under the
+same reconstruction rules (see *What the read-only buffer holds*). Right-clicking
+inside a table's DDL here shows no **Edit DDL** entry **and** no read-only
+explanation: in a browse-only explorer there is no editing gesture to explain
+away.
+
+**The sandbox tree's selection stays the ordinary colour.** Only the Quality
+tree's selection band turns red, precisely because that is the tree whose
+gestures reach the real database (see *Reading the DDL Objects tree*).
 
 **The sandbox tree shows no `*` / `!` drift markers**, and that is deliberate
 too. Those markers mean *"this differs from what was last deployed to
@@ -2010,12 +2161,15 @@ explorer (see *The Sandbox Explorer, and how it differs*).
   **Edit DDL**. The row you clicked already names the object, so the entry
   doesn't repeat it. Right-clicking an argument-name child row offers no Edit
   action — only object rows open a tab.
-- In the **DDL Explorer (Quality)** tab's read-only buffer, right-click inside an
-  object's body for **Edit DDL: `<schema>.<name>(<argtypes>)`** — or **Edit
+- In the **DDL Explorer (Quality)** tab's read-only buffer, right-click inside a
+  routine's or trigger's body for **Edit DDL: `<schema>.<name>(<argtypes>)`** — or
+  **Edit
   DDL: `<schema>.<table>.<name>`** for a trigger. There your click landed
   somewhere in a wall of definitions, so the entry spells out which object it
   caught, and two overloads of one name read differently, so you can tell them
-  apart before opening either.
+  apart before opening either. A click inside a table's, view's, column's,
+  constraint's or index's DDL answers with a greyed-out reason instead (see
+  *What the read-only buffer holds*).
 
 **There is one editing gesture, and what you can do with the tab it opens comes
 from whether a project is open** — never from which words you clicked. (The
@@ -2169,18 +2323,23 @@ silently:**
    leaves the old one live**. The dialog names both identities — *"You checked out
    `x`, but the buffer creates `y`"* — says that consequence in as many words, and
    then offers to run your SQL anyway. If you say yes, **both objects exist
-   afterwards, and dropping the old one is your job** — the app will not do it for
-   you and does not offer to. Saying no cancels and applies nothing, naming both
+   afterwards, and dropping the old one is your job** — this editor has no gesture
+   that drops an object in the target, and the Sandbox SQL Console can never reach
+   it. So the dialog **hands you the statement to run yourself**, spelled out in
+   full (`DROP FUNCTION pr.recalc(integer);`), rather than pointing at a command
+   that would do it for you. Saying no cancels and applies nothing, naming both
    signatures in the `[Check]` line.
 
    This used to be a hard refusal with no way through, which was worse than it
    sounds: **Check and commit to sandbox** has no such guard and happily ran the
    renamed buffer, so the same edit worked in the sandbox and looked like it had
    succeeded against quality while doing nothing but printing one line you had no
-   reason to read. The other branches of the check *are* still hard refusals — a
-   buffer whose signature cannot be parsed at all, and a live identity that could
-   not be read because the database did not answer. An unreachable database never
-   counts as a cleared check.
+   reason to read. The other branches of the check *are* still hard refusals. A
+   buffer whose signature cannot be parsed at all — an `ALTER`, a bare statement,
+   an incomplete argument list — is refused with what it would have needed and
+   points you at **Deployment ▸ Check and commit to sandbox**, where trying things
+   is free. A live identity that could not be read because the database did not
+   answer is refused too: an unreachable database never counts as a cleared check.
 2. **The buffer must have a green sandbox validation.** Actual findings block.
    What could not be *checked* — no sandbox result for this exact text, a missing
    extension — can be overridden, but only through a dialog that **enumerates
@@ -3716,7 +3875,10 @@ knows about the sandbox session.
 - The **status strip** above the grid gives you the row count and the elapsed
   time, or the driver's own status and affected-row count for a statement that
   returns no result set, or the database's error message — an error never shows up
-  as a silently empty grid. `NULL` values in the grid are dimmed and italic, so
+  as a silently empty grid. **The strip is coloured for the two states you must
+  not miss:** a failed statement is red, and a **TRUNCATED** result — or a refusal
+  such as an empty statement — is amber. Both colours follow the Light/Dark theme.
+  `NULL` values in the grid are dimmed and italic, so
   they can't be confused with an empty string or the text `NULL`.
 - **Ctrl+Alt+F** reformats the selection, exactly as in a DDL object editor tab.
 - **The console is the second home of the schema-aware editing gestures** —
