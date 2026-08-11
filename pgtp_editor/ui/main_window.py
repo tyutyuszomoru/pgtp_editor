@@ -153,7 +153,10 @@ from pgtp_editor.ui.coherence_controller import CoherenceController
 from pgtp_editor.ui.coherence_panel import CoherencePanel
 from pgtp_editor.ui.ddl_project_controller import DdlProjectController
 from pgtp_editor.ui.diff_merge_controller import DiffMergeController
-from pgtp_editor.ui.find_controller import FindValidateController
+from pgtp_editor.ui.find_controller import (
+    DDL_EXPLORER_AUDIT_TARGET,
+    FindValidateController,
+)
 from pgtp_editor.ui.ddl_buffer_panel import (
     RELOAD_LABEL as RELOAD_DDL_LABEL,
     DISCARD_LOCAL_LABEL,
@@ -2519,6 +2522,19 @@ class MainWindow(QMainWindow):
             # nothing if that tab is gone" rule as `[Check]` below.
             self._php_tabs.navigate_to(item.data(Qt.ItemDataRole.UserRole + 2), line)
             return
+        if target == DDL_EXPLORER_AUDIT_TARGET:
+            # BUG-260811232724: a `[Find]`/`[Bookmark]` row from a read-only DDL
+            # Explorer buffer carries its Explorer ROLE on UserRole+2 (the slot
+            # the "xsd" and PHP branches use for their own extra, each read only
+            # inside its own branch). The role must come FROM the row: the two
+            # Explorer buffers are different documents with independent line
+            # numbering (§18.7), so resolving "which Explorer" from the active
+            # tab would jump the wrong buffer. `_on_ddl_navigate_requested` is
+            # the same focus+caret+scroll route a DDL tree leaf click uses.
+            self._on_ddl_navigate_requested(
+                line, item.data(Qt.ItemDataRole.UserRole + 2)
+            )
+            return
         if isinstance(target, tuple):
             # §18.5 D3a: a `[Check]` finding carries the object's
             # `DdlObjectRef.key` (a tuple) -- focus that tab and place the
@@ -3347,14 +3363,8 @@ class MainWindow(QMainWindow):
         # -> `_on_tab_close_requested` -> the per-kind prompt), so the DDL-object
         # and PHP unsaved-changes flows are reused rather than re-derived. A tab
         # still present afterwards means the user cancelled.
-        stage = self.center_stage
-        for widget in [*stage.ddl_object_panels(), *stage.php_file_tabs().values()]:
-            index = stage.indexOf(widget)
-            if index == -1:
-                continue
-            stage.tabCloseRequested.emit(index)
-            if stage.indexOf(widget) != -1:
-                return False
+        if not self._close_dynamic_editor_tabs():
+            return False
         # The `.pgtp`: `close()` runs the save/discard/cancel prompt itself, and
         # a still-dirty buffer afterwards is how a cancel reports back.
         self._doc_ui.close()
@@ -3364,6 +3374,33 @@ class MainWindow(QMainWindow):
         # *offers* a pending deploy), so it cannot abort the gesture.
         self._ddl_project_ui.close_project()
         self.show_launcher()
+        return True
+
+    def _close_dynamic_editor_tabs(self) -> bool:
+        """Close every dynamic editor tab (DDL-object panels, §21 PHP tabs)
+        through the stage's OWN close route, returning False as soon as one
+        survives — which is how a user cancel reports back.
+
+        The one implementation, shared by `new_session` and the Maintenance-mode
+        prune (BUG-260812001640), rather than two loops that could drift about
+        which kinds count as dynamic or how a cancel is detected. `emit` lands in
+        `CenterStage._on_tab_close_requested`, i.e. the per-kind unsaved-changes
+        prompt — this adds no second dialog. A tab may also VETO its own close
+        (the Quality SQL Console's uncommitted-transaction guard,
+        DEC-260811023646); that is indistinguishable from a cancel here, and
+        treated the same, deliberately: either way the tab is still open.
+
+        The two structural tabs (Raw XML, Diff/Merge, Caption), Edit XSD, the
+        Manual and the DDL Explorers are NOT dynamic and are never touched here.
+        """
+        stage = self.center_stage
+        for widget in [*stage.ddl_object_panels(), *stage.php_file_tabs().values()]:
+            index = stage.indexOf(widget)
+            if index == -1:
+                continue
+            stage.tabCloseRequested.emit(index)
+            if stage.indexOf(widget) != -1:
+                return False
         return True
 
     def _install_find_next_action(self):
@@ -6353,6 +6390,11 @@ class MainWindow(QMainWindow):
     def set_workflow_mode(self, mode) -> None:
         """Enter (or leave, with None) a workflow mode and re-apply the filter.
 
+        Entering **Maintenance** additionally prunes the center stage down to
+        its XSD-only surface (BUG-260812001640) — see
+        `_prune_non_xsd_surfaces_for_maintenance`. Leaving it does NOT restore
+        anything: closed is closed, exactly as if the user had closed the tabs.
+
         Called by `launcher_dialog.show_launcher` when a column is picked, and by
         nothing else in production. There is no separate in-app mode toggle, by
         design: picking the Maintenance column IS how the mode is entered, and
@@ -6371,6 +6413,45 @@ class MainWindow(QMainWindow):
         # re-derives the mode and never persists it, so a mode change has
         # exactly one write and two renderings.
         self._refresh_mode_indicator()
+        if self.in_maintenance_mode():
+            # BUG-260812001640: entering the mode also reduces the CENTER STAGE
+            # to its XSD-only surface. Hosted here rather than in `new_session`
+            # because picking the Maintenance column IS the definition of
+            # entering the mode, and this is the only place that knows the
+            # target mode; `new_session` runs BEFORE the launcher pick and
+            # prunes the same set whichever column is chosen next.
+            self._prune_non_xsd_surfaces_for_maintenance()
+
+    def _prune_non_xsd_surfaces_for_maintenance(self) -> None:
+        """Reduce the center stage to the surface Maintenance mode exists for
+        (BUG-260812001640): close the "browser" tabs (both DDL Explorers) and
+        every dynamic editor tab, leaving Edit XSD, the Manual, and the
+        structural tabs alone.
+
+        On EVERY entry into Maintenance, not only when coming from Project: from
+        Standalone the set is normally already empty, so a guard on the previous
+        mode would buy a branch and nothing else.
+
+        Both halves reuse an existing close API — no new close mechanism and no
+        new prompt. The Explorer half is prompt-less and always completes; the
+        dynamic half runs the per-kind unsaved-changes route, and a cancel there
+        keeps that tab (and every tab after it) open **while the mode still
+        changes**. That is the deliberate reading: the prompt's Cancel means
+        "keep this document", not "undo the mode I just picked" — and the mode
+        has already been assigned and the menu bar refreshed by the time this
+        runs. In the reported gesture the question barely arises: `new_session`
+        has already closed the dynamic tabs, with its own abort, before the
+        launcher is shown.
+        """
+        stage = self.center_stage
+        for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+            if stage.isTabVisible(stage.ddl_explorer_tab_index(role)):
+                # Only when visible: `hide_ddl_explorer` emits
+                # `ddl_explorer_visibility_changed` unconditionally, and a
+                # spurious hide-of-a-hidden-tab would tell every subscriber the
+                # tree just closed.
+                stage.hide_ddl_explorer(role)
+        self._close_dynamic_editor_tabs()
 
     def _refresh_workflow_mode_affordances(self) -> None:
         """The single "make both menu bars match the workflow mode" entry point

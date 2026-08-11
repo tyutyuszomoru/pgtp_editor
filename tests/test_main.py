@@ -262,3 +262,45 @@ def test_mcp_early_return_precedes_every_qt_import_in_main_source():
     mcp_return = source.index("return run_mcp_server(args.file)")
     assert source.index("from PySide6") > mcp_return
     assert source.index("from pgtp_editor.ui import launcher_dialog") > mcp_return
+
+
+# --- `python -m pgtp_editor` (BUG-260812002307) ------------------------------
+
+
+def test_module_entry_point_delegates_to_main():
+    """`python -m pgtp_editor` used to fail outright ("cannot be directly
+    executed"): the package had no `__main__`. It has one now, and it is a pure
+    delegation — the SAME `main` the documented `python -m pgtp_editor.main`
+    form and any console script run, so the two can never diverge."""
+    import pgtp_editor.__main__ as module_entry
+
+    assert module_entry.main is main_mod.main
+
+
+def test_module_entry_point_is_resolvable_by_runpy(monkeypatch):
+    """Resolves as an executable module without launching a GUI: `main` is
+    stubbed, so `runpy` proves only that `-m pgtp_editor` finds and runs a
+    `__main__` whose exit code comes from `main`."""
+    import runpy
+    import sys
+
+    monkeypatch.setattr(main_mod, "main", lambda *a, **k: 7)
+    sys.modules.pop("pgtp_editor.__main__", None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_module("pgtp_editor", run_name="__main__")
+
+    assert excinfo.value.code == 7
+    sys.modules.pop("pgtp_editor.__main__", None)
+
+
+def test_module_entry_point_adds_no_startup_logic():
+    """It must stay a delegation: no argument parsing, no logging setup, no Qt
+    of its own, or `-m pgtp_editor` and `pgtp_editor.main` drift apart."""
+    import inspect
+
+    import pgtp_editor.__main__ as module_entry
+
+    source = inspect.getsource(module_entry)
+    for forbidden in ("parse_args", "argparse", "PySide6", "QApplication", "debuglog"):
+        assert forbidden not in source

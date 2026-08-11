@@ -23,6 +23,8 @@ from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent
 from PySide6.QtWidgets import QDialog, QDialogButtonBox
 
 from pgtp_editor.ui import toolbar_registry
+from pgtp_editor.ui.center_stage import DDL_EXPLORER_SANDBOX, DDL_EXPLORER_TARGET
+from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.launcher_dialog import (
     GROUP_MODES,
     LAUNCHER_GROUPS,
@@ -976,3 +978,133 @@ def test_new_session_reopens_the_launcher_with_no_force_argument(
     assert win is window
     assert settings is window._settings
     assert kwargs == {}
+
+
+# -- BUG-260812001640: entering Maintenance prunes the center stage ----------
+
+
+def _reveal_explorer(stage, role):
+    """Reveal `role`'s Explorer tab WITHOUT the Database-menu toggle: with no
+    connection configured, `show_ddl_explorer`'s own signal round-trip lands in
+    `_open_ddl_explorer`, which un-checks the action and hides the tab again."""
+    stage.setTabVisible(stage.ddl_explorer_tab_index(role), True)
+
+
+def test_entering_maintenance_hides_both_ddl_explorer_tabs(qtbot, tmp_path):
+    """The reported gesture: a Project session had a DDL Explorer ("browser")
+    tab open, the Maintenance column is picked, and the Project-mode surface
+    stayed. The mode now reduces the stage to its XSD-only surface, not only the
+    menu bar."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    window.set_workflow_mode(MODE_PROJECT)
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)
+    _reveal_explorer(stage, DDL_EXPLORER_SANDBOX)
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+        assert stage.isTabVisible(stage.ddl_explorer_tab_index(role)) is False
+    # The surface the mode exists FOR is untouched, and so is the Manual toggle.
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+
+
+def test_entering_maintenance_closes_dynamic_editor_tabs(qtbot, tmp_path):
+    """"all editor tabs … that isn't xsd related": the dynamic DDL-object and
+    PHP tabs go through the stage's own close route, so their per-kind
+    unsaved-changes prompt is reused rather than re-derived."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    stage.open_ddl_object_tab(ref, "-- clean\n")
+    path = tmp_path / "hooks.php"
+    path.write_text("<?php\n", encoding="utf-8")
+    stage.open_php_file_tab(path, "<?php\n")
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert stage.ddl_object_panels() == []
+    assert stage.php_file_tabs() == {}
+
+
+def test_entering_maintenance_leaves_a_cancelled_dirty_tab_open(qtbot, tmp_path):
+    """The per-kind prompt's Cancel means "keep this document", not "undo the
+    mode": the tab survives and the mode still holds. No second dialog is added
+    — this is the SAME prompt the tab's own ✕ raises, patched here so no test
+    ever reaches a real modal."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    panel = stage.open_ddl_object_tab(ref, "-- body\n")
+    panel.editor.insertPlainText("-- edited\n")
+    assert panel.is_dirty() is True
+    asked = []
+    window._confirm_close_ddl_object = lambda r: asked.append(r) or "cancel"
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert asked == [ref]
+    assert stage.indexOf(panel) != -1
+    assert window.workflow_mode == MODE_MAINTENANCE
+
+
+def test_entering_standalone_or_project_prunes_nothing(qtbot, tmp_path):
+    """The prune is Maintenance-only: the other two columns are ordinary working
+    modes and must not close a user's tabs."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)
+    panel = stage.open_ddl_object_tab(
+        DdlObjectRef(kind="function", schema="pr", name="recalc"), "-- clean\n"
+    )
+
+    window.set_workflow_mode(MODE_PROJECT)
+    window.set_workflow_mode(MODE_STANDALONE)
+
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_TARGET)) is True
+    assert stage.indexOf(panel) != -1
+
+
+def test_the_prune_does_not_announce_a_hidden_explorer_as_closing(qtbot, tmp_path):
+    """`hide_ddl_explorer` emits unconditionally, so hiding an already-hidden tab
+    would tell every subscriber the tree just closed."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    seen = []
+    stage.ddl_explorer_visibility_changed.connect(
+        lambda role, visible: seen.append((role, visible))
+    )
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)  # sandbox stays hidden
+    seen.clear()
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert seen == [(DDL_EXPLORER_TARGET, False)]
+
+
+def test_new_session_into_maintenance_leaves_no_project_surface(qtbot, tmp_path):
+    """End to end on the reported path: Project session with an Explorer open →
+    New Session → the Maintenance column. `new_session` closes the dynamic tabs
+    and the document; the mode entry closes the browser tabs."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    window.set_workflow_mode(MODE_PROJECT)
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)
+    stage.open_ddl_object_tab(
+        DdlObjectRef(kind="function", schema="pr", name="recalc"), "-- clean\n"
+    )
+    # The launcher stands in for the real dialog: it picks the Maintenance
+    # column, which is the ONE production way the mode is entered.
+    window.show_launcher = lambda: window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert window.new_session() is True
+
+    assert window.workflow_mode == MODE_MAINTENANCE
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_TARGET)) is False
+    assert stage.ddl_object_panels() == []

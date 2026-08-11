@@ -140,11 +140,24 @@ _VALIDATION_PREFIX = "[Validate] "
 _BOOKMARK_PREFIX = "[Bookmark] "
 
 #: Sentinel for "the active editor has NO route in `_on_audit_item_clicked`"
-#: (the read-only DDL Explorer buffer, an FQ-006 draft tab). Its rows are emitted
+#: (an FQ-006 draft tab; an editor no stage table knows). Its rows are emitted
 #: roles-less and inert: the router's fallback branch navigates **Raw XML**, so a
 #: row carrying a line would jump to the wrong document -- the exact failure the
 #: `[Check]` branch's comment and §7's unmapped-line rule forbid.
 _NO_AUDIT_ROUTE = object()
+
+#: `UserRole+1` discriminator for a row found in a read-only DDL Explorer buffer
+#: (BUG-260811232724). Sibling of `LINT_AUDIT_TARGET`: a bare string the router
+#: branches on, paired with an `extra` on `UserRole+2` -- here the Explorer ROLE
+#: (`DDL_EXPLORER_SANDBOX` / `DDL_EXPLORER_TARGET`), because the two Explorer
+#: buffers are different documents with independent line numbering (§18.7), so
+#: the role must RIDE with the row rather than be inferred from the current tab.
+#:
+#: Supersedes the earlier `_NO_AUDIT_ROUTE` treatment of this pane: the route it
+#: was missing (a branch in `MainWindow._on_audit_item_clicked` resolving to the
+#: read-only `EditorPanel`) now exists, so the rows navigate like every other
+#: source instead of arriving inert.
+DDL_EXPLORER_AUDIT_TARGET = "ddl-explorer"
 
 #: Matches appended per timer tick. Small enough that Stop feels immediate,
 #: large enough that a big document does not spend all its time in the event loop.
@@ -610,11 +623,15 @@ class FindValidateController(QObject):
         rows are navigated by one router (`MainWindow._on_audit_item_clicked`),
         so a second answer to "which target does this editor carry?" would be a
         second chance to send the user to the wrong document. It also inherits
-        `_NO_AUDIT_ROUTE`: rows from the read-only DDL Explorer buffer and from
-        a draft fragment are emitted WITHOUT line/target roles, so they report
+        `_NO_AUDIT_ROUTE`: rows from a draft fragment (and from an editor no
+        stage table knows) are emitted WITHOUT line/target roles, so they report
         the matches and stay inert rather than navigating Raw XML (§7's
         unmapped-line rule). They still land on the Findings tab, which is the
         whole of what was missing.
+
+        The read-only DDL Explorer buffer USED to be in that inert set and no
+        longer is (BUG-260811232724): it carries `DDL_EXPLORER_AUDIT_TARGET`
+        plus its role, and navigates like every other source.
         """
         editor = bar.editor
         target, _label, extra = self._bookmark_audit_route(editor)
@@ -810,15 +827,18 @@ class FindValidateController(QObject):
             return "xsd", "Edit XSD", None
         for role, panel in stage.ddl_explorer_panels().items():
             if editor is panel.editor:
-                # A read-only DDL Explorer buffer: no route (see above). Named by
-                # role since §18.7 (FQ-022), so the empty-case wording says which
-                # of the two trees the rows came from.
+                # A read-only DDL Explorer buffer. Named by role since §18.7
+                # (FQ-022), so the empty-case wording says which of the two
+                # trees the rows came from -- and the role additionally RIDES
+                # on `UserRole+2` (BUG-260811232724), because the router needs
+                # to know WHICH Explorer buffer the line belongs to; inferring
+                # it from the active tab would jump the wrong document.
                 label = (
                     "the DDL Explorer (Sandbox)"
                     if role == DDL_EXPLORER_SANDBOX
                     else "the DDL Explorer (Quality)"
                 )
-                return _NO_AUDIT_ROUTE, label, None
+                return DDL_EXPLORER_AUDIT_TARGET, label, role
         for panel in stage.ddl_object_panels():
             if panel.editor is editor:
                 # §18.5 D3a's tuple payload: `DdlObjectRef.key`.

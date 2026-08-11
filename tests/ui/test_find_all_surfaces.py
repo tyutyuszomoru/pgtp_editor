@@ -30,16 +30,20 @@ What this module pins:
 * the row payload comes from `_bookmark_audit_route`, i.e. the SAME table
   `List All Bookmarks` uses -- so `[Find]` and `[Bookmark]` rows cannot
   disagree about which document a row describes. Concretely: a DDL object row
-  carries its `DdlObjectRef.key` tuple, a PHP row carries §22's pair, and the
-  read-only Explorer buffer / a draft fragment get **roles-less, inert** rows
-  (§7's unmapped-line rule -- the router's fallback is Raw XML);
+  carries its `DdlObjectRef.key` tuple, a PHP row carries §22's pair, a
+  read-only Explorer row carries `DDL_EXPLORER_AUDIT_TARGET` plus its Explorer
+  role (BUG-260811232724 -- it used to be inert, see the test that supersedes
+  that one), and a draft fragment still gets **roles-less, inert** rows (§7's
+  unmapped-line rule -- the router's fallback is Raw XML);
 * a **wired** bar still uses its callback and never publishes, so one click
   can never start two runs.
 """
 from PySide6.QtCore import Qt
 
 from pgtp_editor.lint.findings import LINT_AUDIT_TARGET
+from pgtp_editor.ui.center_stage import DDL_EXPLORER_SANDBOX, DDL_EXPLORER_TARGET
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+from pgtp_editor.ui.find_controller import DDL_EXPLORER_AUDIT_TARGET
 from pgtp_editor.ui.main_window import MainWindow
 
 _LINE = Qt.ItemDataRole.UserRole
@@ -125,17 +129,26 @@ def test_a_php_tabs_find_all_carries_the_php_target_and_its_tab_key(qtbot, tmp_p
     assert row.data(_LINE) == 2
 
 
-def test_the_ddl_explorer_buffer_reports_matches_as_inert_rows(qtbot, tmp_path):
-    """The router has no branch for this buffer and its fallback navigates Raw
-    XML, so a routed row would carry the user to a different document. The
-    matches are still REPORTED -- that is the whole of what was missing."""
+def test_the_ddl_explorer_buffer_rows_navigate_that_explorer_tab(qtbot, tmp_path):
+    """SUPERSEDES `test_the_ddl_explorer_buffer_reports_matches_as_inert_rows`
+    (BUG-260811232724).
+
+    BUG-060 left this buffer's rows deliberately roles-less and inert, because
+    the router's fallback navigates **Raw XML** and there was NO branch that
+    could resolve a row to the read-only `EditorPanel` -- so a routed row would
+    have carried the user to a different document (§7's unmapped-line rule).
+    That reasoning was about the missing branch, not about the pane: the branch
+    now exists, so the rows carry `DDL_EXPLORER_AUDIT_TARGET` plus their
+    Explorer **role**, and clicking one moves the caret in that Explorer's own
+    buffer -- the same behavior every other Find-All surface has.
+    """
     window = _window(qtbot, tmp_path)
     stage = window.center_stage
     stage.xml_editor.setPlainText("raw one\nraw two\nraw three")
     stage.show_ddl_explorer()
-    stage.setCurrentIndex(stage.ddl_tab_index)
     panel = stage.ddl_editor_panel
     panel.editor.setPlainText("one\ntwo alpha\nthree")
+    stage.setCurrentIndex(stage.raw_xml_tab_index)  # look away from the tab
 
     _run(qtbot, panel.find_replace_bar, "alpha")
 
@@ -144,12 +157,43 @@ def test_the_ddl_explorer_buffer_reports_matches_as_inert_rows(qtbot, tmp_path):
         '[Find] 1 match(es) for "alpha"',
     ]
     row = _rows(window)[0]
-    assert row.data(_LINE) is None and row.data(_TARGET) is None
+    assert row.data(_LINE) == 2
+    assert row.data(_TARGET) == DDL_EXPLORER_AUDIT_TARGET
+    assert row.data(_EXTRA) == DDL_EXPLORER_TARGET
 
     window._on_audit_item_clicked(row)
 
     assert stage.currentIndex() == stage.ddl_tab_index  # never yanked to Raw XML
+    assert panel.editor.textCursor().blockNumber() == 1  # the caret really moved
     assert stage.xml_editor.textCursor().blockNumber() == 0
+
+
+def test_the_sandbox_explorer_row_navigates_the_sandbox_buffer_not_quality(
+    qtbot, tmp_path
+):
+    """The role RIDES on the row (§18.7): the two Explorer buffers are different
+    documents with independent line numbering, so a row found in Sandbox must
+    never resolve against whichever Explorer happens to be current."""
+    window = _window(qtbot, tmp_path)
+    stage = window.center_stage
+    stage.show_ddl_explorer(DDL_EXPLORER_TARGET)
+    stage.show_ddl_explorer(DDL_EXPLORER_SANDBOX)
+    quality = stage.ddl_explorer_panel(DDL_EXPLORER_TARGET)
+    quality.editor.setPlainText("quality one\nquality two\nquality three")
+    sandbox = stage.ddl_explorer_panel(DDL_EXPLORER_SANDBOX)
+    sandbox.editor.setPlainText("s one\ns two\ns three alpha")
+    stage.setCurrentIndex(stage.ddl_tab_index)  # the OTHER Explorer is current
+
+    _run(qtbot, sandbox.find_replace_bar, "alpha")
+
+    row = _rows(window)[0]
+    assert (row.data(_LINE), row.data(_EXTRA)) == (3, DDL_EXPLORER_SANDBOX)
+
+    window._on_audit_item_clicked(row)
+
+    assert stage.currentIndex() == stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)
+    assert sandbox.editor.textCursor().blockNumber() == 2
+    assert quality.editor.textCursor().blockNumber() == 0  # untouched
 
 
 def test_a_draft_fragment_tabs_find_all_reports_inert_rows(qtbot, tmp_path):

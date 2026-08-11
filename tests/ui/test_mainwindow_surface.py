@@ -97,6 +97,9 @@ EXPECTED_HOST_SURFACE = {
     "_check_active_ddl_object",
     "_close_action",
     "_close_caption_mode",
+    # BUG-260812001640: the ONE dynamic-tab close loop, shared by `new_session`
+    # and the Maintenance-mode prune below.
+    "_close_dynamic_editor_tabs",
     "_code_editor_dialog",
     "_coherence_tab_visible",
     "_columns_block_line",
@@ -302,6 +305,10 @@ EXPECTED_HOST_SURFACE = {
     "_project_status_window",
     "_prompt_missing_connection",
     "_prompt_target_password",
+    # BUG-260812001640: entering Maintenance reduces the center stage to its
+    # XSD-only surface. Host-owned because it is a WINDOW-level mode
+    # transition -- the same place `_refresh_workflow_mode_affordances` lives.
+    "_prune_non_xsd_surfaces_for_maintenance",
     "_properties_action",
     "_provision_new_project_sandbox",
     "_raw_xml_history_lock_reason",
