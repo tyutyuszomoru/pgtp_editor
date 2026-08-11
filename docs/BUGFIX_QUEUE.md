@@ -7298,7 +7298,7 @@ one-clause rewording, and that bullet already names `Check and commit to sandbox
 ---
 
 ## BUG-260811024600: §18.5 D4's mandatory statement timeout is specified and does not exist
-**Status:** OPEN
+**Status:** RESOLVED (fc0b3e1)
 **Reported:** 2026-08-11
 **Report (verbatim):** "Found by spec-maintainer during a harmonization sweep (2026-08-11; spec-right / code-missing). CONSOLIDATED_SPEC §18.5 D4, under *Long-running statements, and the honest gap*, specifies: '**A statement timeout is mandatory, and it is the primary control**: `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000`, adjustable in the console with a **minimum of 1 000 ms and no "unlimited" setting**. A timeout comes back as a named `QueryError` (sqlstate `57014`) reading *"statement cancelled: exceeded the console's statement timeout of N s — raise the timeout or narrow the query"* — never a hang and never a bare stack trace.' and the seam signature `fetch(params, sql, *, row_limit: int, statement_timeout_ms: int) -> FetchResult`. None of it exists. Filed now rather than left as a known gap because §18.5 D4b (`FQ-260811020328`, owner-ruled) adds a Quality SQL Console running full read/write ad-hoc SQL against the production database: today an unbounded statement ties up a disposable sandbox, after D4b it ties up production, and there is no Cancel button either. Please triage and propose a fix covering: widening `SandboxExecutor.fetch` (protocol + `_RealSandboxExecutor` + every fake executor in tests) with `statement_timeout_ms`, where the constant and its 1 000 ms floor live, how the console spin box passes it, and how a `57014` failure is turned into the specified `QueryError` sentence rather than a raw driver message. Note that D4b's quality path (`db/quality_query.py::run_quality_query`, not yet built) must take the same parameter from day one."
 
@@ -7484,5 +7484,43 @@ pass so the not-yet-built function is specified with it rather than acquiring it
 **Manual impact:** `pgtp_editor/resources/manual.md:3796` documents the console's **Row limit** spin box;
 `manual-maintainer` should add the sibling **Statement timeout** bullet beside it (default 30 s, floor 1 s,
 no unlimited setting, and what the cancellation message says), after the feature-tester is green.
+
+**Resolution (fc0b3e1, 2026-08-11):** Shipped essentially as proposed.
+
+- `db/sandbox.py`: `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000` and `MIN_STATEMENT_TIMEOUT_MS = 1_000`, placed
+  beside the seam rather than beside `DEFAULT_MAX_ROWS` (which would cycle), with the reason written down.
+  Both `SandboxExecutor.fetch` and `_RealSandboxExecutor.fetch` widened with a keyword-only
+  `statement_timeout_ms`.
+- The timeout is issued as `SELECT set_config('statement_timeout', %s, true)`, first statement in the cursor
+  block, value clamped up to the floor.
+- `db/sandbox_query.py`: re-exports both constants, adds `TIMEOUT_SQLSTATE = "57014"` and a module-level
+  `timeout_error(...)` that `dataclasses.replace`s **only** `message`, so `sqlstate`/`detail`/`hint`/
+  `position`/`line` survive. `QueryRunner.__call__` widened — the third declaration this triage identified.
+- `ui/sql_console_panel.py`: `timeout_spin` + `timeout_label` in the controls row,
+  `statement_timeout_ms()`/`set_statement_timeout_ms()`, read once per Run and applied to every statement.
+  `MAX_TIMEOUT_MS = 600_000` matches the spec's `MAX_STATEMENT_TIMEOUT_MS`, folded in the same pass.
+- Full suite: **7478 passed, 51 skipped** (baseline 7453), +25 tests, no regressions.
+
+Confirmations: all four findings held. The third seam was exactly `QueryRunner.__call__` and there was **no
+fourth** — a sweep for the protocol method across `pgtp_editor/` and `tests/` found only the two real
+declarations plus one inline fake, the remaining three doubles being `run_query`/`runner` callables. All five
+doubles were widened. The **no-Cancel-button gap is not closed** by this fix, and the panel's docstring now
+restates it rather than dropping the paragraph.
+
+Two corrections to this entry, recorded rather than edited away:
+
+1. **The suggested source-scan test was unsafe as written.** Asserting `"SET LOCAL"` does not appear in the
+   source fails, because `_RealSandboxExecutor.fetch`'s comment deliberately *explains* the spelling it must
+   not use — precisely so nobody "fixes" it back. The shipped test
+   (`tests/db/test_sandbox.py`, ~`:1258-1275`) strips comment lines before scanning. The same trap applies to
+   any future "this string must not appear in the source" guard.
+2. Minor line drift in this entry's references (the panel's `max_rows = self.row_limit()` was cited as
+   `:784`); every named **symbol** was correct.
+
+Follow-up for `spec-maintainer`, beyond the Spec impact list above — two implementation choices the spec does
+not yet carry: (i) the executor **clamps up to the floor** as defence in depth while `run_sandbox_query`
+**rejects** out-of-range values loudly — two different disciplines on purpose; (ii) `timeout_error` /
+`TIMEOUT_SQLSTATE` and both constants are module-level and importable specifically so
+`FQ-260811020328`'s `db/quality_query.py` reuses them rather than copying the wording.
 
 ---
