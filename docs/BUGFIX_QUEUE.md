@@ -7658,8 +7658,18 @@ please color the new wide caret so it also instantly identifies visually when we
 ---
 
 ## BUG-260812001455: In Edit Snippets, the Add button (and Delete, and Restore Built-ins) does nothing — `clicked`'s `bool checked` is passed as the handler's first positional argument, raising inside the slot
-**Status:** OPEN
+**Status:** RESOLVED (`6a807b1`)
 **Reported:** 2026-08-12
+
+**Resolution note (corrects this entry — measured, not argued):** The root cause is confirmed exactly as diagnosed for **Add**: `QAbstractButton.clicked` emits `clicked(bool checked=False)`, PySide6 binds it to the slot's first positional parameter, `add_snippet(prefix=…)` had one spare, so a click ran `add_snippet(False)` → `False.strip()` → `AttributeError`, swallowed by Qt under a live loop. Fixed with argument-dropping lambdas; every mutation seam keeps its signature.
+
+**But this entry's claim that Delete and Restore were also dead is WRONG.** The implementer reverted the fix and drove real clicks: `remove_selected` and `restore_missing_defaults` take no parameters beyond `self`, and **PySide6 truncates the emitted argument list to the slot's arity**, so both worked pre-fix. There is no `TypeError` — that part of the diagnosis was inferred, not measured, and it does not match the owner's verbatim report (Add only) or the single captured traceback. Future triage: do not predict PySide6 signal/slot arity failures; drive the widget.
+
+All three lambdas were kept anyway, with a comment stating that Delete and Restore survive **by accident of their current signatures** — one added optional parameter would make either the next dead button.
+
+**Durable lesson recorded here because it is the reason a green suite sat over a dead button:** every existing add/delete/restore test called the mutation seam **directly**, asserting handler bodies and the persist-on-OK contract — both correct, both blind. Nothing went through `clicked`, so the connection layer, the only layer a user touches, was untested. Click-driven cases now cover it.
+
+`Restore Built-ins` was additionally checked for destructiveness and is **not** destructive — it only appends what is missing and leaves edited built-ins alone, now pinned by a test that says so.
 **Report (verbatim):** "in edit snippets Add button does nothing"
 
 **Confirmed in the wild / traceback:** The owner hit this live and confirms it is this bug (not a new one). It manifests as a **non-fatal console traceback** — Qt swallows the exception from the slot so the app keeps running ("doesn't stop the party"), but it prints to the console, and it is exactly why Add-snippet does nothing. The call chain is `add_snippet` (line 247) → `_unique_prefix` (line 312). Verbatim:
@@ -7786,8 +7796,14 @@ Minimum viable fix for the reported symptom is **B** (tell the user their app-da
 ---
 
 ## BUG-260812002838: Tab-focused buttons show no highlight — the app's qdarkstyle QSS styles `QPushButton:hover` but has NO `QPushButton:focus` rule, and its `outline: none` suppresses Qt's native focus ring, so keyboard focus is invisible
-**Status:** OPEN
+**Status:** RESOLVED (`7703eba`)
 **Reported:** 2026-08-12
+
+**Resolution note (corrects this entry twice):** Fixed in `pgtp_editor/ui/theme.py` with a `QPushButton:focus, QToolButton:focus` rule appended to the cached per-theme stylesheet, ringed in **`COLOR_TEXT_1`** — not the colour this entry recommended. `find_replace_bar.py` needed no change (its buttons are painted entirely by the app-wide sheet); it gained an end-to-end Tab test only.
+
+1. **The recommended colour fails contrast in both themes.** `COLOR_ACCENT_3` — qdarkstyle's own `QLineEdit:focus` colour, which this entry reasoned toward by analogy — measures **1.56:1** against a resting dark button and **1.06:1** against a light one. Shipping it would have left the same invisible-focus bug *with a rule in place*, which is worse than none. The shipped `COLOR_TEXT_1` measures 5.98:1 / 9.07:1 resting and 4.40:1 / 7.97:1 on hover, and a test asserts that the rejected accent really does fail. Lesson: a focus colour is a **measured contrast ratio against the actual resting background**, never "the colour the sheet already uses somewhere else".
+
+2. **"Not pixel-testable headless — recommend a manual verification step" is false.** It is pixel-testable: nine pixel assertions run green offscreen; the only requirement is a `show()`n top level. This is the same offscreen folklore that was wrong about `QShortcut`. It matters because this entry's fallback test plan was **stylesheet-string membership** — the exact false-green class that let `BUG-260811021804` ship. Assert rendered pixels.
 **Report (verbatim):** "when selecting buttons using tab, not mouse (eg press tab from Find input field jumps to first button then the next etc) the button is not highlighted like on mouse over"
 
 **Root cause:** The app's entire button styling comes from the vendored **qdarkstyle** stylesheet, applied app-globally in `pgtp_editor/ui/theme.py::apply_theme` (`theme.py:142`, `app.setStyleSheet(_qdarkstyle_stylesheet(light))`) — there is NO in-repo `.qss` file and no `:hover`/`:focus` rule authored anywhere in `pgtp_editor/` (confirmed: `grep -r ":hover" pgtp_editor/` is empty). Inspecting the generated QSS (`qdarkstyle.load_stylesheet(qt_api="pyside6", palette=…)`) for BOTH themes confirms the exact gap the report describes:
@@ -7814,5 +7830,113 @@ Minimum viable fix for the reported symptom is **B** (tell the user their app-da
 **Test impact:** `tests/ui/test_theme.py` already owns the qdarkstyle-QSS assertions (it checks membership of markers like `"QMenu::indicator"` and the per-palette accent hexes in `app.styleSheet()`) — **extend it, do not duplicate.** New cases: (1) assert `"QPushButton:focus"` is present in the applied stylesheet for BOTH themes (`apply_theme(app, False)` and `apply_theme(app, True)`), guarding the regression directly at the string level; (2) assert the focus rule carries the theme's accent color (`DarkPalette.COLOR_ACCENT_3` appears in the dark focus rule, `LightPalette.COLOR_ACCENT_3` in the light one) so a future edit can't silently drop the color-sourcing; (3) keep the existing cache-identity tests green — verify the combined string is still cached one-per-theme (`_qss_cache` still has exactly `{True, False}`). The visual highlight itself is not pixel-testable headless — recommend a manual verification step (Tab from the Find field through the buttons; each focused button must show a visible border/highlight in both light and dark themes). Offscreen note: these are stylesheet-string assertions and run fine headless; no modal Qt calls involved.
 
 **Spec impact:** `CONSOLIDATED_SPEC.md` has no theming/accessibility section covering focus styling (grep for `focus`/`accessib`/`:hover` found nothing), and §11-style theming rationale lives in the BUG-004/BUG-010/FQ-005 history in `theme.py`. Adding a keyboard-focus-visibility rule to the app QSS is a small new design fact (keyboard focus must be visible on buttons, symmetric across themes) — **flag for `spec-maintainer` after the fix lands** to record it alongside the existing theming design; do not edit the spec here. No `owner-decision` required: the fix has an obviously-right shape (match qdarkstyle's own input-focus accent).
+
+---
+
+## BUG-260812004649: `QTabBar::tab` has no `:focus` rule either — Tab-traversing INTO a tab bar changes nothing on screen, so a keyboard user cannot tell that the arrow keys now switch tabs
+**Status:** OPEN
+**Reported:** 2026-08-12
+**Report (verbatim):** "`QTabBar::tab` has the same missing-`:focus` defect and was deliberately left out of `7703eba`'s fix. qdarkstyle gives `QTabBar::tab` a `:hover` and a `:selected` rule but no `:focus`, so a tab that has keyboard focus but is **not** the selected tab is visually indistinguishable from any other unselected tab. A user tabbing through the tab bar cannot see where they are."
+
+**The report's framing is wrong, but the bug underneath it is real. Measured, not argued.** There is no such thing as a focused-but-unselected tab in Qt. `QTabBar` takes focus as a **whole widget**; Qt sets `State_HasFocus` on the style option of the **current** tab only. Rendered proof (offscreen, `QTabWidget` with 3 tabs, current = 1, bar focused, `QTabBar::tab:top:selected:focus` painted red and `QTabBar::tab:top:!selected:focus` painted green):
+
+```
+tab0 sel=False red=0   green=0
+tab1 sel=True  red=617 green=0
+tab2 sel=False red=0   green=0
+```
+
+The `:focus` pseudo-state never reaches an unselected tab, so the fix the report asks for is unimplementable *and unnecessary*. **Do not chase it.** Selection follows focus in `QTabBar` — Left/Right arrows change `currentIndex` directly — so "where you are" is always the selected tab.
+
+**Root cause (the real defect):** with the tab bar focused and unfocused, the painted tab bar is **byte-identical**. qdarkstyle ships `QTabBar::tab:<edge>`, `:<edge>:selected`, `:<edge>:!selected`, `:<edge>:!selected:hover` and the `:disabled` variants for all four edges, and **no `:focus` selector of any kind** (`"QTabBar::tab:focus" in qss` is `False` for both `DarkPalette` and `LightPalette`). So Tab-traversing into a tab bar gives the user **zero** feedback: nothing says the arrow keys are now live on tabs, and nothing says a subsequent Tab will leave. This is the same class of defect as BUG-260812002838 (buttons) — an invisible focused state — arrived at from a wrong premise. Same file, same mechanism, same fix shape.
+
+**Reachability — this is NOT theoretical. Verified against a real `MainWindow` (offscreen, shown):** `QTabBar`'s default focus policy is `Qt::TabFocus` (`focusPolicy() == 1`) on all three of the app's bars, and `QTabWidget` sets the bar as its `focusProxy`. Walking `focusNextPrevChild(True)` from a live window lands on a `QTabBar` **three times per traversal cycle**:
+
+```
+['XmlEditor', 'QLineEdit', 'QPushButton', 'QPushButton', 'QLineEdit', 'QPushButton', 'QPushButton',
+ 'QTabBar/qt_tabwidget_tabbar', 'ProjectTreePanel', 'QTabBar/qt_tabwidget_tabbar',
+ 'QListWidget', 'QTabBar/qt_tabwidget_tabbar', 'XmlEditor', ...]
+```
+
+The gesture is the plain `Tab` key — the same one in the original button report. No special gesture, no dock undocking, nothing exotic. Close as theoretical is **not** the right outcome.
+
+**Which tab bars this reaches (all verified on a live `MainWindow`):**
+- `CenterStage` document tabs — `center_stage.py:150` (`class CenterStage(QTabWidget)`). Shape `RoundedNorth`.
+- The left dock — `main_window.py:785` `self.left_tabs = QTabWidget()` (Project / Contents / Database-XML Coherence). Shape `RoundedNorth`.
+- The bottom dock — `main_window.py:921` `self.bottom_tabs = QTabWidget()` (Activity Log / Results). Shape `RoundedNorth`.
+- `project_settings_dialog.py:352` `tabs = QTabWidget(self)` — a dialog, same defect.
+- Qt's own tabified-`QDockWidget` bar. The app calls `tabifyDockWidget` **nowhere**, but a user can tabify docks by dragging, and Qt gives those bars a **South** shape — which is why the fix should cover `:bottom` even though nothing ships it today. qdarkstyle already scopes a parallel `QDockWidget QTabBar::tab…` selector list for exactly this; mirror it.
+
+No `setTabPosition` call exists anywhere in `pgtp_editor/`, so `:left`/`:right` are unreachable today. Cover them anyway — four rules cost nothing and a future vertical tab bar would silently lose the cue.
+
+**The exclusion ground was right, and there is a second one the report did not mention.**
+1. **Geometry does move**, as claimed. Measured on `tabRect()` with qdarkstyle applied, appending `QTabBar::tab:focus { border: 2px solid … }`: tabs go `[(0,0,37,25),(37,0,37,25),(74,0,37,25)]` → `[(0,0,37,26),(37,0,41,26),(78,0,37,26)]` — the focused tab grows 4px wide and every tab grows 1px tall, **and the following tabs shift right**. Adding `padding: 0px` (the compensation that worked for buttons) overshoots the other way: `37 → 33`. The button trick does not transfer, because tab padding is per-edge and asymmetric (`:top` is `padding 4/4/2/2`, `:left` is `2/2/4/4`).
+2. **Undocumented, and worse: a naive `QTabBar::tab:focus` rule is silently DEAD under qdarkstyle.** The same loud red rule that painted 1342 px on a bare `QTabBar` painted **0 px** once qdarkstyle's sheet was applied — qdarkstyle's `QTabBar::tab:top:selected` / `:top:!selected` are more specific and win. Any fix MUST match qdarkstyle's specificity (edge **and** selected-state qualified), or it will pass a stylesheet-string test and paint nothing. This is precisely the false-green trap.
+
+**Proposed fix — recolour the border qdarkstyle ALREADY paints; add no box.** This avoids the per-edge geometry compensation entirely rather than trying to get it right.
+
+For every edge, qdarkstyle's `:selected` rule already draws a 3px accent edge on the pane-facing side:
+
+| edge | selected rule draws | dark | light |
+|---|---|---|---|
+| `:top` | `border-bottom: 3px solid` | `#259AE9` | `#37AEFE` |
+| `:bottom` | `border-top: 3px solid` | `#259AE9` | `#37AEFE` |
+| `:left` | `border-right: 3px solid` | `#259AE9` | `#37AEFE` |
+| `:right` | `border-left: 3px solid` | `#259AE9` | `#37AEFE` |
+
+The focus rule changes **only that border's colour** — same side, same 3px width. Extend `_focus_visible_qss(pal)` in `pgtp_editor/ui/theme.py:110-159` (the function `7703eba` added; it is already appended into the cached per-theme string by `_qdarkstyle_stylesheet`, `theme.py:162-185`, so the "one QSS string per theme" invariant and the cache-identity tests hold unchanged). Generate, per edge:
+
+```
+QTabBar::tab:top:selected:focus, QDockWidget QTabBar::tab:top:selected:focus {
+  border-bottom: 3px solid {pal.COLOR_TEXT_1};
+}
+```
+…and `bottom`→`border-top`, `left`→`border-right`, `right`→`border-left`. Note `:selected:focus` is deliberate: `:focus` alone cannot reach an unselected tab (proved above) and would also lose the specificity contest against `:top:selected`.
+
+**Verified end-to-end before writing this entry** (offscreen, qdarkstyle dark + the four rules above):
+
+```
+rects unfocused == rects focused:  True   [(0,0,37,25),(37,0,37,25),(74,0,37,25)]
+selected tab bottom-edge TEXT_1 px:  unfocused 0   focused 28
+unselected tab0 bottom-edge TEXT_1 px, bar focused: 0
+selected tab bottom-edge ACCENT px:  unfocused 28  focused 0     <- presence anchor
+```
+
+Zero geometry change, cue appears exactly on focus, only on the selected tab.
+
+**Colour: `COLOR_TEXT_1`, the precedent `7703eba` set — measured against the UNSELECTED and SELECTED tab backgrounds in both themes.**
+
+| | dark | light |
+|---|---|---|
+| `COLOR_TEXT_1` vs **selected** tab bg (`#54687A` / `#B4B8BC`) | **4.40:1** | **7.97:1** |
+| `COLOR_TEXT_1` vs unselected/neighbour tab bg (`#455364` / `#C0C4C8`) | **5.98:1** | **9.07:1** |
+| `COLOR_TEXT_1` vs bar/pane bg (`#19232D` / `#FAFAFA`) | 12.13:1 | 15.25:1 |
+| `COLOR_ACCENT_3` vs selected tab bg — **rejected** | 1.15:1 | 1.08:1 |
+| qdarkstyle's own selection accent vs selected tab bg (for reference) | 1.89:1 | 1.22:1 |
+
+`COLOR_ACCENT_3` fails here for the same reason it failed on buttons — do not reach for it again. Take the value from `pal.COLOR_TEXT_1` inside `_focus_visible_qss`, which already receives the palette; **build no second colour table.**
+
+**Gotchas:**
+- **Specificity.** Must be `:<edge>:selected:focus`. A bare `QTabBar::tab:focus` renders nothing under qdarkstyle (measured: 0 px) while a string test passes.
+- **Mirror the `QDockWidget QTabBar::tab…` selector arm** for each rule, as qdarkstyle does throughout; otherwise a tabified dock keeps the defect.
+- **Do not add `border` shorthand, `padding`, `margin`, or `outline`** — any of them moves the box. Set exactly one `border-<side>` property.
+- The selection accent is *replaced* while focused, not overlaid. Selected-ness is still carried by background (`#54687A` vs `#455364`) and `margin-top`, so nothing is lost — but call it out in the docstring so a later reader does not "restore" the accent.
+- The rule must be appended **after** qdarkstyle's text (it already is — `_qdarkstyle_stylesheet` concatenates) to win at equal specificity against `:<edge>:selected`.
+- `setTabsClosable(True)` (`center_stage.py:362`) puts a ✕ on tabs, but those are Qt's private `QAbstractButton` close buttons with `focusPolicy() == 0` (NoFocus, verified) — **not** `QPushButton`/`QToolButton`, so `7703eba`'s button rule neither covers nor needs to cover them. No interaction.
+- No `:hover` interaction to worry about: qdarkstyle's hover rule is `:!selected:hover`, and this rule is `:selected:focus` — disjoint by construction.
+
+**Test impact:** `tests/ui/test_theme.py` owns this — **extend the BUG-260812002838 block at `tests/ui/test_theme.py:293-483`, do not duplicate it.** Reuse `_focus_ring_colour(light)` (`:314`, reads `COLOR_TEXT_1` from the same palette the implementation reads — not a second literal) and `_contrast` (`:323`). Add a `focus_tabs` fixture modelled on `focus_row` (`:339`): a shown `QTabWidget` with ≥3 tabs under a real theme — **`show()` is mandatory**, an unshown grab is not evidence and the QSS is only resolved on polish.
+
+New cases, all sampling **rendered pixels on the tab's pane-facing edge** — never a whole-image colour count and never a stylesheet-string membership check:
+1. `bar.setFocus()` → the selected tab's bottom-edge pixel is `_focus_ring_colour(light)`; both themes.
+2. **Absence with a presence anchor in the same sampler:** unfocused, that same pixel is qdarkstyle's selection accent (proving the sampler can see that edge at all), and is *not* the ring colour.
+3. Focused bar, an **unselected** tab's bottom edge is not the ring colour — pins the measured fact that `:focus` never reaches an unselected tab.
+4. `test_focus_does_not_move_the_tab`: `[bar.tabRect(i) for i in range(n)]` is **identical** focused and unfocused. This is the assertion the exclusion ground was about; it is the one that must not be dropped.
+5. Contrast: assert `_contrast(ring, selected_tab_bg) >= 3.0` in both themes, and assert `COLOR_ACCENT_3` **fails** it — same shape as `test_the_ring_clears_3_to_1_against_the_button_in_both_themes` (`:436`), which pins the rejected colour so nobody re-proposes it.
+6. Theme-flip survival, mirroring `test_the_ring_survives_a_theme_flip` (`:416`).
+
+**Sampling trap, stated because it already bit once:** the ring colour and the tab **label** colour are both `COLOR_TEXT_1`, so a whole-image count of that colour is not a clean signal (in the probe it happened to move 27 → 132, which is exactly the kind of number that reads as a pass for the wrong reason). Sample the specific edge pixel of a specific tab, at `tabRect(i).bottom() - 1`, inset a few px from the left/right so the 4px corner radius is not in the sample. `tests/ui/test_theme.py:293-301` already records this lesson for buttons — extend that comment rather than rediscovering it.
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` still has **no** theming/accessibility section covering focus visibility (grep for `focus ring` / `keyboard focus` / `COLOR_TEXT_1` / `:focus` returns nothing), so BUG-260812002838's flag for `spec-maintainer` is still outstanding — this entry rides the same flag rather than raising a second one. The fact to record, once, covering both: *keyboard focus must be visible on every focusable chrome surface, in both themes, with the indicator colour taken from the qdarkstyle palette (`COLOR_TEXT_1`) and measured for contrast against the actual resting background, and the indicator must never change the widget's geometry.* Do not edit the spec here. No `owner-decision` needed — the shape is measured, not chosen. **No `docs/KEYBINDINGS.md` impact:** this is pure QSS; no chord is added, moved, or removed, and the arrow-key/Tab behaviour on `QTabBar` is Qt's own, untouched.
 
 ---

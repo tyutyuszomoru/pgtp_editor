@@ -2756,6 +2756,37 @@ to none means the pane's first impression on a routine table is *"this is incomp
   execution seam so the answer drops into one place. **Do not read this entry as a reason to stall the
   feature.**
 
+### ⚠ Correction to the MECHANISM named in this entry — not to the answer (recorded 2026-08-12)
+
+**The ruling shipped exactly as decided and is not reopened.** Option C — run into an uncommitted
+transaction, inspect, then an explicit Commit gesture — is what `FQ-260811020328` shipped (commit
+`6258349`, full suite green). The owner's answer, reasoning and status above stand unchanged. **This note is
+not a question and needs no owner attention.**
+
+**What is wrong is the implementation mechanism this entry names.** Several places above say the run goes
+through `db/apply.py::apply_ddl(..., commit=False)` — the Answer bullet, the Unblocks bullet, consequence 2
+of the premise correction, option C's description, and "What the answer converts into". **It does not, and
+it cannot.** `apply_ddl` commits or rolls back **before it returns** (`pgtp_editor/db/apply.py:347-352`), so
+it can never hold a transaction open between the Run and the Commit gesture — which is the entire substance
+of option C. The entry contradicts itself internally: option C's own cost line already says the connection
+"must be **held open** between the run and the commit gesture, which neither existing seam does".
+
+**What actually shipped.** `db/apply.py` was **not touched**. The path is a new
+`pgtp_editor/db/quality_query.py` with a `QualitySession` (`:395`) that holds the connection and the
+transaction across calls, exposing `run` (`:481`), `commit` (`:554`) and `close` (`:600`) — the last
+covering the tab-close / window-close / connection-loss behaviours this entry required. A future reader
+following `apply_ddl` will look for a transaction it never holds; read `quality_query.py` instead.
+
+**Whose error this was.** The `apply_ddl` sentence was written by the filing session into the question put
+to the owner. It is a mistake in the framing, not in the ruling.
+
+**The durable rule, and why this note exists at all.** `spec-maintainer` folded the correction into
+`CONSOLIDATED_SPEC.md` §18.5 with a Supersession Ledger row, and recorded the general principle: **"a
+decision entry names an OUTCOME authoritatively and a MECHANISM only provisionally."** Read every decision
+entry that way — the owner rules on what must be true, and any seam, function or file named alongside it is
+the filing session's best guess at the time and may be superseded by implementation without reopening the
+decision.
+
 **Already settled by the owner, and NOT in question here.** The console is **full read/write** against
 quality, and it is **always available** whenever a quality connection with a password exists — no
 Maintenance-mode gate, no extra per-run confirmation beyond the existing object-change dialog.
