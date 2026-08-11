@@ -4790,7 +4790,12 @@ Two premises in the original request were **already false** and are corrected he
 ---
 
 ## FQ-260810165518: Red/rose selection highlight in the Quality (target) DDL Explorer — mark the dangerous explorer at a glance
-**Status:** QUEUED
+**Status:** PROCESSED (spec §18.7; `ui/ddl_buffer_panel.py`, commit 3c079b1; 7436 passed / 51 skipped)
+**Closing note:** reuses `mode_colors`' `MODE_MAINTENANCE` pair **swapped** — the strong red becomes the selection band and the pale one the text — rather than deriving a second red, which is the one thing this feature had to avoid. Swapped because the chip's background measures **1.10:1** against the light chrome: correct as a chip, invisible as a selection. Measured band-vs-text contrast is 7.98:1 light and 8.50:1 dark, against qdarkstyle's own blue selection at 4.57:1 dark — the danger colour is more legible than the default it replaces. The band reddens whether or not the tree has focus, because it rarely has it; hover is unchanged; the center tab is not reddened.
+
+**§18.7's stated mechanism was incomplete, found by pixels rather than by reading.** Overriding only `QTreeView::item:selected:active/!active` left **653 blue pixels** in the selected row's indent strip inside a 5594-pixel red band — that strip paints from the universal `QWidget` rule's `selection-background-color`, not from `::item`. The widget sheet must also restate `QTreeWidget { selection-background-color; selection-color }`. Regression-tested.
+
+The scope gate is `not browse_only` plus a public `set_danger_highlight()`, so no `main_window.py` change was needed.
 **Requested:** 2026-08-10
 **Idea (verbatim/summarized):** "In order to visually separate sandbox and quality DDL Explorer, the line highlighting should be a rose/red color in the quality DDL Explorer, so it's clear that's the dangerous one. Keep the same contrast ratio, just make it red instead of blue."
 
@@ -4813,7 +4818,12 @@ Two premises in the original request were **already false** and are corrected he
 ---
 
 ## FQ-260810180336: DDL Explorer name-filter bar — hide non-matching DDL objects (input + match-mode dropdown + Filter/Clear buttons), pure search-ease
-**Status:** QUEUED
+**Status:** PROCESSED (spec §18.1; `ui/ddl_buffer_panel.py`, commit 3c079b1; 7436 passed / 51 skipped)
+**Closing note:** shipped case-insensitive with no Match-case toggle, `Contains` as the default mode, an active-filter banner *and* a distinct no-matches message, groups with a matching child kept visible, and **no keyboard chord** — `Ctrl+F` in this tab already belongs to the Find bar over the text pane, so `Return` in the input is the only gesture. `FindReplaceBar` was not reused; the two are distinguished by dock, verb, the match-mode dropdown, and a placeholder naming the subject, pinned by a test, because a user who cannot tell which of two find-shaped boxes they are typing into is this feature's real failure mode.
+
+**The spec's matching rule was wrong and was corrected in the build.** §18.1 said to match against the stored *base* label, reasoning that `item.text(0)` carries the `*`/`!` drift markers. But the base label carries the other decorations — `[F]`/`[P]`/`[T]`, `[B][D]`, and a table's `  (N)` trigger count — so matching it reproduces exactly the defect the rule existed to prevent: `d` would match every DELETE trigger and `f` every function. Filtering now reads a dedicated role holding the bare name.
+
+Rebuild-under-live-filter was implemented as re-apply with the recommended `_dirty_keys` shape, and is tested including the case that actually bites: rows arriving *new* in the refresh are filtered too.
 **Requested:** 2026-08-10
 **Idea (verbatim/summarized):** "In the DDL Explorer I'd like a Find input. Function 1: acts as a filter — a text search tool that hides all the rest that doesn't match. It has an input field, a dropdown for [Contains / Starts with / Doesn't contain / Doesn't start with / Ends with], a Filter button, and a Clear Filter button. It should NOT change the behaviour of the DDL Explorer's edit pane — it's just to ease searching." Clarifications: it filters **DDL objects** (matches object NAMES, not the DDL source text); the owner labeled this "function 1", implying a possible later function 2.
 

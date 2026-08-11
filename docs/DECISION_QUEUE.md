@@ -2673,3 +2673,107 @@ to none means the pane's first impression on a routine table is *"this is incomp
   lands.
 - Either way it settles **how much weight future features may put on this buffer**, which is the reason to
   answer it before more is built on it rather than after.
+
+---
+
+## DEC-260811023646 — What are the transaction semantics for a multi-statement run in the Quality SQL Console?
+
+- **Status:** OPEN
+- **Raised:** 2026-08-11, by the main session, from `FQ-260811020328` (Quality SQL Console), which flags this
+  as the one place where its own *"mirror the sandbox console exactly"* directive may be the wrong instinct
+  and explicitly leaves it here.
+- **Blocks:** **one seam, not the feature.** Everything else in `FQ-260811020328` — the tab, the menu action,
+  the availability gate, the connection source, the shared console widget, completion, the results grid and
+  the danger marking — is being implemented now, with the commit behaviour isolated behind the single
+  execution seam so the answer drops into one place. **Do not read this entry as a reason to stall the
+  feature.**
+
+**Already settled by the owner, and NOT in question here.** The console is **full read/write** against
+quality, and it is **always available** whenever a quality connection with a password exists — no
+Maintenance-mode gate, no extra per-run confirmation beyond the existing object-change dialog.
+
+### ⚠ Correction to the premise the question arrived with — verified in the tree, 2026-08-11
+
+The filing request stated that the sandbox console *"runs all statements of a submission in one committing
+transaction"*, which would make "inherit the sandbox" and "one transaction" the same answer. **The code says
+the opposite, and the two must not be conflated.**
+
+- `SqlConsolePanel` **splits the submission** (`split_statements`) and runs the statements **one at a time**,
+  **stopping at the first failure** (`pgtp_editor/ui/sql_console_panel.py:774`, `:789-802`). Its own comment
+  states the semantics outright: *"each `run_query` call is one `SandboxExecutor.fetch`, i.e. **its own
+  committing transaction**, so continuing past a failure would pile more committed changes on top of a broken
+  Run."*
+- That is accurate at the seam: `_PsycopgSandboxExecutor.fetch` opens **its own connection per statement** and
+  commits it (`pgtp_editor/db/sandbox.py:965-1003`, `connection.commit()` at `:997`, rollback-and-raise at
+  `:999`).
+
+**So the sandbox console is ALREADY per-statement commit.** "Mirror the sandbox exactly" therefore means
+**option B below**, not option A. Option A is a *departure* from the sandbox, not the conservative inheritance
+it looked like. The owner should answer knowing which way the consistency argument actually points.
+
+**Two consequences of the correction, also verified.**
+1. Option B's follow-on question — *what do we report when statement N of M fails after N−1 committed?* — is
+   **already answered by shipped behaviour**, not open: the run stops at the failure and reports the statements
+   that ran out of the total (`RunReport(runs=..., total=len(statements))`, `sql_console_panel.py:802`).
+   Choosing B costs no new reporting design.
+2. Options A and C **cannot use the `fetch` seam at all** (one connection per statement, so a submission
+   cannot share a transaction). They must run through `db/apply.py::apply_ddl`, which **already does exactly
+   what they need**: *"Run `statements` as **one transaction** against `target`… per statement"*, where
+   `target` is any `ConnectionParams`, and it already carries a **`commit=False`** mode that runs the
+   identical list and rolls it back (`pgtp_editor/db/apply.py:568-609`). So A and C are cheaper than they
+   look — the machinery exists and is quality-capable today.
+
+**Context.** The two settled rulings above removed every other guard on this feature: no mode gate, no extra
+confirmation, full DDL/DML against a production-adjacent database. **Commit semantics are therefore the last
+remaining safety property**, and picking it by analogy to the sandbox would decide the feature's actual risk
+profile as a side effect of a consistency argument. It also cuts against the project's stated identity:
+`README.md` describes a safe/fast IDE that closes DBeaver's *"the only option is to break the DB"* gap —
+option B imports DBeaver's behaviour, option C goes further than DBeaver in the safe direction, option A is
+neither and is defensible on its own terms.
+
+**Options.**
+
+- **A — One committing transaction for the whole submission.** All-or-nothing: a run that fails halfway
+  leaves **nothing** behind, which is the strongest automatic protection for a production database and needs
+  no new UI. *Cost:* it **diverges from the sandbox console** (see the correction above), so one console
+  behaves unlike the other and both the manual and the spec must say why; it forbids statements PostgreSQL
+  cannot run inside a transaction block (`CREATE DATABASE`, `CREATE INDEX CONCURRENTLY`, `VACUUM`), which
+  simply fail in quality where they would have worked per-statement; and a long submission holds locks for
+  its whole duration on a live database.
+- **B — Per-statement commit, stopping at the first failure (what the sandbox does today).** Identical
+  behaviour across both consoles, matches DBeaver and therefore the user's muscle memory, no new reporting
+  design (point 1 above), and the smallest implementation. *Cost:* a failure halfway leaves the database
+  **partially applied** — precisely the outcome this project exists to prevent — and unlike the sandbox there
+  is no `reset()` to undo it. The blast radius that is acceptable on a disposable sandbox is being inherited,
+  unexamined, by a database that is not disposable.
+- **C — Run inside a transaction, show the results, require a deliberate commit gesture.** Strongest safety:
+  the user sees what happened before anything is durable, and a bad run is a rollback rather than an incident.
+  `apply_ddl(commit=False)` already supports the "run and roll back" half. *Cost:* a real departure from
+  "mirror the sandbox exactly" and **new UI the sandbox console does not have** — a commit/rollback affordance
+  plus a results grid that must represent an uncommitted state; the connection must be **held open** between
+  the run and the commit gesture, which neither existing seam does (both open a connection per call and close
+  it); and it introduces a state the app must handle on tab close, window close and connection loss.
+
+**Recommendation: C, with A as the fallback if the held-open connection proves too much surface for this
+feature.** The settled rulings deliberately removed every other guard, so the remaining one should be the
+strong form rather than the inherited one; and *"show me what it did before it is permanent"* is exactly the
+capability the README claims over DBeaver, on the one surface where the claim is tested. **B is the option to
+be most careful about**, because it is the one that arrives by default: it is what "mirror the sandbox" now
+literally means, it is the cheapest to build, and it is the only option whose failure mode is a
+half-applied production schema. If C's surface is judged too large for a first version, **A** buys most of
+the safety for none of the UI — but it is a divergence from the sandbox console and must be stated as one,
+not slipped in as consistency.
+
+**What the answer converts into.**
+- **A** → the quality execution path runs the split statements through `db/apply.py::apply_ddl(...,
+  commit=True)` in one call; results render from `ApplyOutcome`'s per-statement attribution. No new UI.
+- **B** → the quality path is a near-copy of `run_sandbox_query`/`fetch` against quality params; the existing
+  `RunReport` rendering is reused unchanged. Smallest diff, and the console's per-statement-commit comment
+  must be restated for a non-disposable target.
+- **C** → `apply_ddl(..., commit=False)` for the run, plus a held-open connection, a commit/rollback
+  affordance on the console, an uncommitted-state representation in the results grid, and a rule for what
+  happens to an uncommitted run on tab/window close. This is **new surface**, so the main session routes it
+  through **`feature-triage`** against `FQ-260811020328` rather than straight into implementation.
+- Any answer other than B means the two consoles differ, which **`spec-maintainer`** must record in the
+  console section (one console, two commit policies, with the reason) and **`manual-maintainer`** must state
+  where the manual describes running SQL.
