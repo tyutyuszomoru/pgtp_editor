@@ -13,6 +13,7 @@ from pgtp_editor.db.introspect import (
     INDEX_SQL,
     ROUTINE_TRIGGER_SQL,
     SCHEMA_SQL,
+    VIEWDEF_SQL,
     BaselineSnapshot,
     ColumnInfo,
     ConstraintInfo,
@@ -518,13 +519,20 @@ def _canned_routine_trigger_runner(relations=None, columns=None, constraints=Non
 
 
 def test_fetch_routines_and_triggers_passes_routine_trigger_schema_and_index_sql():
-    """The widened fetch (§18.6, widened again by FQ-025) runs all three query
-    sets in one round trip -- routines/triggers, the same three queries
-    `fetch_schema` runs, and the index query."""
+    """The widened fetch (§18.6, widened again by FQ-025 and by
+    `FQ-260810183812`) runs all four query sets in ONE round trip --
+    routines/triggers, the same three queries `fetch_schema` runs, the index
+    query, and the view-definition query. The last one is the feature's "no
+    second fetch path" rule made checkable: view bodies join this fetch."""
     runner, calls = _canned_routine_trigger_runner()
     fetch_routines_and_triggers(_PARAMS, runner=runner)
     assert len(calls) == 1
-    assert calls[0][1] == list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(INDEX_SQL)
+    assert calls[0][1] == (
+        list(ROUTINE_TRIGGER_SQL)
+        + list(SCHEMA_SQL)
+        + list(INDEX_SQL)
+        + list(VIEWDEF_SQL)
+    )
 
 
 def test_fetch_routines_and_triggers_builds_routines_keyed_by_signature():

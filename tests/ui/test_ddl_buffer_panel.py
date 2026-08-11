@@ -1,4 +1,4 @@
-from pgtp_editor.db.ddl_buffer import build_ddl_text
+from pgtp_editor.db.ddl_buffer import DdlObjectSpan, build_ddl_text
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
 from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_ACTIONS,
@@ -14,6 +14,7 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     RELOAD_LABEL,
     BrowserPanel,
     alter_table_action_groups,
+    edit_refusal_for_span,
     resolve_edit_target,
 )
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
@@ -1264,9 +1265,14 @@ def test_click_on_table_node_emits_table_selected_with_table_info(qtbot):
     assert got == [table_info]
 
 
-def test_click_on_table_node_does_not_emit_navigate_requested(qtbot):
-    """A table node has no DdlObjectSpan -- clicking it must go through the
-    table_selected path, never navigate_requested."""
+def test_click_on_table_node_navigates_to_its_synthesized_ddl(qtbot):
+    """A table node now DOES carry a span (`FQ-260810183812`): the buffer holds
+    its synthesized `CREATE TABLE`, and clicking the node jumps to its banner.
+
+    This supersedes the pre-feature assertion that a table click never emitted
+    `navigate_requested` -- which held only because tables had no DDL anywhere
+    in the app.
+    """
     schema = DatabaseSchema(tables={"pr.widget": _table_info("pr.widget")})
     _, spans = build_ddl_text(schema)
     panel = BrowserPanel()
@@ -1278,13 +1284,18 @@ def test_click_on_table_node_does_not_emit_navigate_requested(qtbot):
     table_item = panel.tree.topLevelItem(0).child(0)
     panel._on_item_clicked(table_item, 0)
 
-    assert got == []
+    table_span = next(span for span in spans if span.kind == "table")
+    assert got == [table_span.start_line]
 
 
 def test_click_on_trigger_owning_table_node_still_emits_table_selected(qtbot):
     """A table WITH triggers is still a table node in its own right -- its
-    top-level row click emits table_selected, distinct from clicking one of
-    its nested trigger leaves (which emits navigate_requested instead)."""
+    top-level row click emits table_selected.
+
+    Since `FQ-260810183812` the click is ADDITIVE (open question 2, settled
+    both-not-either): it ALSO navigates to the table's synthesized DDL. The
+    Properties population is the working behaviour that must not be withdrawn
+    to buy the jump, so this pins that it survives."""
     table_info = _table_info("pr.equipment")
     schema = DatabaseSchema(
         tables={"pr.equipment": table_info},
@@ -1308,7 +1319,8 @@ def test_click_on_trigger_owning_table_node_still_emits_table_selected(qtbot):
     panel._on_item_clicked(table_item, 0)
 
     assert got_table == [table_info]
-    assert got_navigate == []
+    table_span = next(span for span in spans if span.kind == "table")
+    assert got_navigate == [table_span.start_line]
 
 
 def test_table_with_no_tableinfo_and_no_triggers_never_happens_but_empty_schema_is_safe(qtbot):
@@ -1330,20 +1342,23 @@ def _table_panel(qtbot):
 
 
 def test_context_menu_on_a_table_node_offers_no_edit(qtbot):
-    """A table node still offers NO Edit…/Check Out (§18.1) -- a whole table
-    has no single DdlObjectSpan/source text for either to act on, and table
-    nodes carry only _TABLE_ROLE data, never _SPAN_ROLE.
+    """A table node still offers NO Edit…/Check Out (§18.1) -- a table is not
+    part of §18.2's checkout model, and its shape changes through
+    `Alter Table ▸` alone.
 
-    FQ-002 carved out a *creation* entry on this node (covered below), which
-    is why this asserts the absence of the two edit gestures rather than the
-    absence of a menu: the reason the edit entries stay away is unchanged, and
-    that is the guarantee worth pinning.
+    Since `FQ-260810183812` the node DOES carry a `_SPAN_ROLE` (it navigates to
+    its synthesized DDL), so the reason the edit entries stay away is no longer
+    "there is no span" but "this span's kind is not editable" -- which is what
+    `edit_refusal_for_span` answers and what this pins. The table menu must
+    still be the `Alter Table ▸`/creation one, not the span menu.
     """
     from PySide6.QtCore import Qt
 
     panel = _table_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
-    assert table_item.data(0, Qt.ItemDataRole.UserRole) is None  # no _SPAN_ROLE
+    span = table_item.data(0, Qt.ItemDataRole.UserRole)
+    assert span is not None and span.kind == "table"
+    assert edit_refusal_for_span(span) is not None
 
     menu = panel._menu_for_item(table_item)
 
@@ -1914,3 +1929,214 @@ def test_a_view_offers_no_constraint_operations_either(qtbot):
     table_item = panel.tree.topLevelItem(0).child(0)
 
     assert _submenu(panel._menu_for_item(table_item)) is None
+
+
+# ---------------------------------------------------------------------------
+# Every tree item that has DDL navigates to it (`FQ-260810183812`).
+# ---------------------------------------------------------------------------
+
+from pgtp_editor.db.introspect import ConstraintInfo, IndexInfo  # noqa: E402
+from pgtp_editor.ui.ddl_buffer_panel import (  # noqa: E402
+    NOT_EDITABLE_REFUSALS,
+)
+
+
+def _rich_table_schema():
+    table = TableInfo(
+        name="pr.orders",
+        kind="table",
+        columns=[
+            ColumnInfo("id", "integer", True, False, False, None),
+            ColumnInfo("tag", "text", False, False, True, None),
+        ],
+    )
+    view = TableInfo(name="pr.v_orders", kind="view", view_definition="SELECT 1")
+    constraints = {
+        "pr.orders.orders_pkey": ConstraintInfo(
+            schema="pr", table="orders", name="orders_pkey", kind="primary key",
+            columns=["id"], definition="PRIMARY KEY (id)",
+        )
+    }
+    indexes = {
+        "pr.ix_tag": IndexInfo(
+            schema="pr", table="orders", name="ix_tag", columns=["tag"],
+            method="btree", definition="CREATE INDEX ix_tag ON pr.orders (tag)",
+        ),
+        "pr.orders_pkey": IndexInfo(
+            schema="pr", table="orders", name="orders_pkey", columns=["id"],
+            is_unique=True, is_primary=True, method="btree",
+            definition="CREATE UNIQUE INDEX orders_pkey ON pr.orders (id)",
+            constraint_name="orders_pkey",
+        ),
+    }
+    return DatabaseSchema(
+        tables={"pr.orders": table, "pr.v_orders": view},
+        constraints=constraints,
+        indexes=indexes,
+    )
+
+
+def _rich_panel(qtbot):
+    schema = _rich_table_schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    return panel, text.splitlines()
+
+
+def _group_named(table_item, prefix):
+    for index in range(table_item.childCount()):
+        child = table_item.child(index)
+        if child.text(0).startswith(prefix):
+            return child
+    return None
+
+
+def _orders_item(panel):
+    root = panel.tree.topLevelItem(0)
+    for index in range(root.childCount()):
+        if root.child(index).text(0).startswith("pr.orders"):
+            return root.child(index)
+    raise AssertionError("no pr.orders node")
+
+
+def _clicked_line(panel, item):
+    got = []
+    panel.navigate_requested.connect(got.append)
+    panel._on_item_clicked(item, 0)
+    return got
+
+
+def test_a_view_node_navigates_to_its_create_view(qtbot):
+    panel, lines = _rich_panel(qtbot)
+    root = panel.tree.topLevelItem(0)
+    view_item = next(
+        root.child(i) for i in range(root.childCount())
+        if root.child(i).text(0).startswith("pr.v_orders")
+    )
+    got = _clicked_line(panel, view_item)
+    assert got and lines[got[0] - 1] == "-- VIEW pr.v_orders --"
+
+
+def test_a_column_node_jumps_to_its_own_line_not_the_banner(qtbot):
+    """Open question 3, settled: the column's line. Landing on the banner
+    would make the user find the row they just clicked by eye."""
+    panel, lines = _rich_panel(qtbot)
+    columns = _group_named(_orders_item(panel), "Columns")
+    tag_leaf = next(
+        columns.child(i) for i in range(columns.childCount())
+        if columns.child(i).text(0).startswith("tag")
+    )
+    got = _clicked_line(panel, tag_leaf)
+    assert got and lines[got[0] - 1].strip().startswith("tag text")
+
+
+def test_the_tree_gains_a_constraints_group_whose_nodes_navigate(qtbot):
+    """Open question 1, settled: a constraint jumps to its INLINE line inside
+    the `CREATE TABLE`, which is the only place it exists in a buffer that
+    emits no ALTERs."""
+    panel, lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Constraints")
+    assert group is not None and group.childCount() == 1
+    got = _clicked_line(panel, group.child(0))
+    assert got and "CONSTRAINT orders_pkey" in lines[got[0] - 1]
+
+
+def test_the_tree_gains_an_indexes_group_whose_nodes_navigate(qtbot):
+    panel, lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Indexes")
+    assert group is not None and group.childCount() == 2
+    ix_tag = next(
+        group.child(i) for i in range(group.childCount())
+        if group.child(i).text(0).startswith("ix_tag")
+    )
+    got = _clicked_line(panel, ix_tag)
+    assert got and lines[got[0] - 1].startswith("CREATE INDEX ix_tag")
+
+
+def test_a_constraint_backed_index_navigates_to_its_constraints_line(qtbot):
+    """The buffer never emits a `CREATE INDEX` for one (PostgreSQL rejects it
+    and the constraint already prints it), so the constraint's line is where
+    that index genuinely is."""
+    panel, lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Indexes")
+    backed = next(
+        group.child(i) for i in range(group.childCount())
+        if group.child(i).text(0).startswith("orders_pkey")
+    )
+    got = _clicked_line(panel, backed)
+    assert got and "CONSTRAINT orders_pkey" in lines[got[0] - 1]
+
+
+def test_a_table_click_is_additive_navigate_and_properties(qtbot):
+    """Open question 2, settled both-not-either."""
+    panel, lines = _rich_panel(qtbot)
+    got_table = []
+    panel.table_selected.connect(got_table.append)
+    got_line = _clicked_line(panel, _orders_item(panel))
+    assert got_table and got_table[0].name == "pr.orders"
+    assert got_line and lines[got_line[0] - 1] == "-- TABLE pr.orders --"
+
+
+def test_a_column_click_still_populates_properties_too(qtbot):
+    panel, _lines = _rich_panel(qtbot)
+    columns = _group_named(_orders_item(panel), "Columns")
+    got_table = []
+    panel.table_selected.connect(got_table.append)
+    got_line = _clicked_line(panel, columns.child(0))
+    assert got_table and got_table[0].name == "pr.orders"
+    assert got_line
+
+
+def test_the_columns_group_node_itself_still_navigates_nowhere(qtbot):
+    """The shipped rule "an item with no span navigates nowhere" is unchanged
+    -- which is what keeps this widening additive rather than a rewrite."""
+    panel, _lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Columns")
+    assert _clicked_line(panel, group) == []
+
+
+def test_a_table_node_keeps_its_alter_table_menu_not_the_span_menu(qtbot):
+    """A table node carries a span AND a `_TABLE_ROLE`; the span must not
+    shadow the menu that matters."""
+    panel, _lines = _rich_panel(qtbot)
+    menu = panel._menu_for_item(_orders_item(panel))
+    labels = [action.text() for action in menu.actions()]
+    assert any("Add Trigger" in label for label in labels)
+    assert not any("Edit DDL" == label for label in labels)
+
+
+def test_every_non_editable_kind_has_a_stated_reason():
+    """A refusal with a reason, not a silently disabled menu (FQ-023)."""
+    for kind in ("table", "view", "matview", "column", "constraint", "index"):
+        assert NOT_EDITABLE_REFUSALS[kind]
+        assert edit_refusal_for_span(DdlObjectSpan(kind, "pr", "x", None, 1, 1))
+
+
+def test_routines_and_triggers_are_still_editable():
+    for kind in ("function", "procedure", "trigger"):
+        assert edit_refusal_for_span(DdlObjectSpan(kind, "pr", "x", None, 1, 1)) is None
+
+
+def test_a_browse_only_tree_gains_the_navigation_but_no_creation_entries(qtbot):
+    """§18.7: both Explorers get this for free, because the change lands in
+    the panels the two roles construct from one path. The sandbox instance is
+    `browse_only=True`, so its widened tree must NAVIGATE without gaining any
+    of the creation / `Alter Table ▸` entries browse-only suppresses at
+    menu-BUILD time."""
+    schema = _rich_table_schema()
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    table_item = _orders_item(panel)
+    got = _clicked_line(panel, table_item)
+    assert got  # navigation works on the sandbox tree
+
+    labels = [a.text() for a in panel.context_menu_for_item(table_item).actions()]
+    assert labels == [RELOAD_LABEL]
+
+    constraints = _group_named(table_item, "Constraints")
+    assert _clicked_line(panel, constraints.child(0))

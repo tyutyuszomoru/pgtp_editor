@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pgtp_editor.db.ddl_buffer import DdlObjectSpan
+from pgtp_editor.db.ddl_buffer import EDITABLE_SPAN_KINDS, DdlObjectSpan
 from pgtp_editor.db.ddl_project import DriftMarkers, routine_ddl_paths, trigger_ddl_path
 from pgtp_editor.db.introspect import DatabaseSchema
 from pgtp_editor.ui.alter_column_dialogs import (
@@ -80,6 +80,41 @@ _LABEL_ROLE = Qt.ItemDataRole.UserRole + 4
 #: table row: it carries the click context an "Alter Table ▸" dialog defaults
 #: its column dropdown to, which a table row has nothing to say about.
 _COLUMN_ROLE = Qt.ItemDataRole.UserRole + 5
+
+#: The refusal a non-editable span states rather than silently offering
+#: nothing (`FQ-260810183812` / FQ-023). Tables, views and matviews are in the
+#: buffer to be READ: they are not part of §18.2's checkout model, and a
+#: table's shape changes through `Alter Table ▸` alone -- so `Edit DDL` has
+#: nothing to open, and saying why is not the same as leaving a dead menu.
+NOT_EDITABLE_REFUSALS = {
+    "table": "Tables are read-only here — change one with Alter Table ▸",
+    "view": "Views are read-only here — this pane does not edit them",
+    "matview": "Materialized views are read-only here — this pane does not edit them",
+    "column": "Columns are read-only here — change one with Alter Table ▸",
+    "constraint": "Constraints are read-only here — change one with Alter Table ▸",
+    "index": "Indexes are read-only here — change one with Alter Table ▸",
+}
+
+
+def edit_refusal_for_span(span) -> str | None:
+    """The reason `Edit DDL` is not offered for `span`, or None when it IS
+    offered (a routine or a trigger).
+
+    Shared by both right-click surfaces, exactly as `resolve_edit_target` is,
+    so the two can never disagree about which kinds are editable."""
+    kind = getattr(span, "kind", None)
+    if kind in EDITABLE_SPAN_KINDS:
+        return None
+    return NOT_EDITABLE_REFUSALS.get(kind, "This object is read-only here")
+
+
+_CONSTRAINT_MARKERS = {
+    "primary key": "PK",
+    "foreign key": "FK",
+    "unique": "U",
+    "check": "C",
+    "exclude": "X",
+}
 
 #: FQ-025 slice 1's eight column operations (slice 2's four constraint ones
 #: follow below), as `(operation id, menu label)` pairs.
@@ -552,6 +587,12 @@ class BrowserPanel(QWidget):
         #: project open at all.
         self._dirty_keys: set[tuple] = set()
 
+        #: `(kind, schema, table, name) -> DdlObjectSpan` for the single-line
+        #: column / constraint / index spans of the last `set_schema`
+        #: (`FQ-260810183812`). Rebuilt wholesale with the tree, like every
+        #: other derivation here.
+        self._span_by_detail: dict[tuple[str, str, str, str], DdlObjectSpan] = {}
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tree)
@@ -591,14 +632,25 @@ class BrowserPanel(QWidget):
         # the same (last-wins) span and navigated them into one body (BUG-018).
         span_by_routine: dict[str, DdlObjectSpan] = {}
         span_by_trigger: dict[tuple[str, str, str], DdlObjectSpan] = {}
+        # `FQ-260810183812`: relations, and the per-line detail spans for their
+        # columns, constraints and indexes. Keyed by the same identities the
+        # tree already builds its labels from, so a node finds its span with no
+        # second derivation.
+        span_by_relation: dict[tuple[str, str], DdlObjectSpan] = {}
+        span_by_detail: dict[tuple[str, str, str, str], DdlObjectSpan] = {}
         for span in spans:
             if span.kind == "trigger":
                 span_by_trigger[(span.schema, span.table, span.name)] = span
+            elif span.kind in ("table", "view", "matview"):
+                span_by_relation[(span.schema, span.name)] = span
+            elif span.kind in ("column", "constraint", "index"):
+                span_by_detail[(span.kind, span.schema, span.table, span.name)] = span
             elif span.signature is not None:
                 span_by_routine[span.signature] = span
+        self._span_by_detail = span_by_detail
 
         markers = drift_markers or {}
-        self._build_tables_branch(schema, span_by_trigger, markers)
+        self._build_tables_branch(schema, span_by_trigger, markers, span_by_relation)
         self._build_routines_branch(schema, span_by_routine, span_by_trigger, markers)
         # Re-apply the surviving unsaved-edit overlay to the rows that were
         # just rebuilt (BUG-033): a refresh must not drop the `*` of a tab
@@ -661,7 +713,9 @@ class BrowserPanel(QWidget):
         item.setData(0, _OBJKEY_ROLE, key)
         item.setData(0, _LABEL_ROLE, (base, drift.marker_text if drift is not None else ""))
 
-    def _build_tables_branch(self, schema: DatabaseSchema, span_by_trigger, markers) -> None:
+    def _build_tables_branch(
+        self, schema: DatabaseSchema, span_by_trigger, markers, span_by_relation=None
+    ) -> None:
         """Every table in `schema.tables` gets a node (2026-08-05 widening --
         the branch previously derived its whole node set from
         `schema.triggers`, so a table with zero triggers never got a node at
@@ -694,17 +748,40 @@ class BrowserPanel(QWidget):
             else:
                 label = f"{schema_name}.{table_name}"
             table_item = QTreeWidgetItem([label])
-            table_info = schema.tables.get(f"{schema_name}.{table_name}")
+            qualified = f"{schema_name}.{table_name}"
+            table_info = schema.tables.get(qualified)
             if table_info is not None:
                 table_item.setData(0, _TABLE_ROLE, table_info)
+            # The relation's own span (`FQ-260810183812`): a table/view/matview
+            # node now navigates into its synthesized DDL. It keeps `_TABLE_ROLE`
+            # too -- the click is ADDITIVE (see `_on_item_clicked`), because
+            # removing the Properties population would withdraw a working
+            # behaviour to buy a new one.
+            relation_span = (span_by_relation or {}).get((schema_name, table_name))
+            if relation_span is not None:
+                table_item.setData(0, _SPAN_ROLE, relation_span)
             tables_root.addChild(table_item)
             for trigger in triggers:
                 span = span_by_trigger.get((trigger.schema, trigger.table, trigger.name))
                 self._add_trigger_leaf(table_item, trigger, span, markers)
-            self._add_columns_group(table_item, table_info)
+            self._add_columns_group(table_item, table_info, schema_name, table_name)
+            self._add_constraints_group(
+                table_item, schema.constraints_for(qualified), schema_name, table_name
+            )
+            self._add_indexes_group(
+                table_item, schema.indexes_for(qualified), schema_name, table_name
+            )
 
-    @staticmethod
-    def _add_columns_group(table_item: QTreeWidgetItem, table_info) -> None:
+    def _detail_span(self, kind: str, schema_name: str, table_name: str, name: str):
+        return self._span_by_detail.get((kind, schema_name, table_name, name))
+
+    def _add_columns_group(
+        self,
+        table_item: QTreeWidgetItem,
+        table_info,
+        schema_name: str = "",
+        table_name: str = "",
+    ) -> None:
         """The table's columns, under one collapsible `Columns (N)` node
         (FQ-025 slice 1).
 
@@ -734,6 +811,78 @@ class BrowserPanel(QWidget):
             # two surfaces show one table the same way round.
             leaf = QTreeWidgetItem([f"{column.name} ({column.data_type})"])
             leaf.setData(0, _COLUMN_ROLE, (table_info, column.name))
+            # Open question 3, settled: a column node jumps to ITS OWN LINE
+            # inside the `CREATE TABLE`, not to the table's banner. The line
+            # index is what this feature builds; landing on the banner would
+            # make the user search the column list by eye for the row they
+            # just clicked, which is the work the jump exists to remove.
+            span = self._detail_span("column", schema_name, table_name, column.name)
+            if span is not None:
+                leaf.setData(0, _SPAN_ROLE, span)
+            group.addChild(leaf)
+
+    def _add_constraints_group(
+        self, table_item: QTreeWidgetItem, constraints, schema_name: str, table_name: str
+    ) -> None:
+        """The table's named constraints, under one `Constraints (N)` node
+        (`FQ-260810183812`).
+
+        Open question 1, settled: a constraint node jumps to its **inline
+        constraint line inside the `CREATE TABLE`** rather than getting a
+        statement of its own. That is the answer the owner's *"no ALTERs"*
+        shape leaves: the synthesized DDL renders constraints inline, so an
+        inline line is the only place a constraint exists in this buffer, and a
+        dedicated `ALTER TABLE ADD CONSTRAINT` block would have to be invented
+        to jump to -- exactly the kind of invention the reconstruction rule
+        forbids.
+        """
+        constraints = sorted(constraints, key=lambda c: c.name)
+        if not constraints:
+            return
+        group = QTreeWidgetItem([f"Constraints  ({len(constraints)})"])
+        table_item.addChild(group)
+        for constraint in constraints:
+            marker = _CONSTRAINT_MARKERS.get(constraint.kind, "?")
+            leaf = QTreeWidgetItem([f"{constraint.name} [{marker}]"])
+            span = self._detail_span(
+                "constraint", schema_name, table_name, constraint.name
+            )
+            if span is not None:
+                leaf.setData(0, _SPAN_ROLE, span)
+            group.addChild(leaf)
+
+    def _add_indexes_group(
+        self, table_item: QTreeWidgetItem, indexes, schema_name: str, table_name: str
+    ) -> None:
+        """The table's indexes, under one `Indexes (N)` node
+        (`FQ-260810183812`).
+
+        Constraint-backed indexes are listed like everything else (FQ-025's
+        rule: hiding them makes a *"why is my unique index missing?"* mystery),
+        but the buffer never renders a `CREATE INDEX` for one -- PostgreSQL
+        would reject it, and the constraint already prints. So such a node
+        navigates to the line of the CONSTRAINT that owns it, which is where
+        that index genuinely is in this text.
+        """
+        indexes = sorted(indexes, key=lambda i: i.name)
+        if not indexes:
+            return
+        group = QTreeWidgetItem([f"Indexes  ({len(indexes)})"])
+        table_item.addChild(group)
+        for index in indexes:
+            marker = "U" if index.is_unique else "I"
+            label = f"{index.name} [{marker}] ({index.method})" if index.method else (
+                f"{index.name} [{marker}]"
+            )
+            leaf = QTreeWidgetItem([label])
+            if index.is_constraint_backed:
+                span = self._detail_span(
+                    "constraint", schema_name, table_name, index.constraint_name
+                )
+            else:
+                span = self._detail_span("index", schema_name, table_name, index.name)
+            if span is not None:
+                leaf.setData(0, _SPAN_ROLE, span)
             group.addChild(leaf)
 
     def _build_routines_branch(
@@ -824,10 +973,19 @@ class BrowserPanel(QWidget):
         parent.addChild(leaf)
 
     def _on_item_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
+        """Navigate to whatever DDL the clicked item has, then populate the
+        Properties panel for whatever table it belongs to.
+
+        **Both, not either** (`FQ-260810183812`, open question 2): a table node
+        already emitted `table_selected`, and withdrawing that to buy the new
+        jump would trade a working behaviour for a new one. A routine or
+        trigger row carries no table role, so it navigates and nothing more --
+        exactly as before. An item with no span still navigates nowhere, which
+        is what keeps this widening additive.
+        """
         span = item.data(0, _SPAN_ROLE)
         if span is not None:
             self.navigate_requested.emit(span.start_line)
-            return
         table_info = item.data(0, _TABLE_ROLE)
         if table_info is not None:
             self.table_selected.emit(table_info)
@@ -911,6 +1069,12 @@ class BrowserPanel(QWidget):
         if self._browse_only:
             return None
         span = item.data(0, _SPAN_ROLE)
+        # A relation / column / constraint / index span is NAVIGABLE but not
+        # EDITABLE (`FQ-260810183812`), so it must fall through to the branches
+        # below rather than shadowing them -- a table node carries a span AND a
+        # `_TABLE_ROLE`, and its `Alter Table ▸` menu is the one that matters.
+        if span is not None and edit_refusal_for_span(span) is not None:
+            span = None
         if span is not None:
             if self._schema is None:
                 return None

@@ -797,3 +797,107 @@ def test_the_database_menu_reload_entry_exists_and_carries_no_shortcut(
     labels = action_labels(find_top_menu(window, "Database"))
     assert RELOAD_LABEL in labels, labels
     assert window._reload_ddl_action.shortcut().isEmpty()
+
+
+# ---------------------------------------------------------------------------
+# Non-editable kinds refuse with a REASON (`FQ-260810183812`, FQ-023).
+# ---------------------------------------------------------------------------
+
+
+def _table_buffer_panel(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+    from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
+
+    schema = DatabaseSchema(
+        tables={
+            "pr.orders": TableInfo(
+                name="pr.orders",
+                kind="table",
+                columns=[ColumnInfo("id", "integer", True, False, False, None)],
+            )
+        }
+    )
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    return panel, spans
+
+
+def test_a_click_inside_a_table_offers_no_edit_ddl_but_states_why(qtbot):
+    """`_span_at_line` now resolves to kinds that cannot be edited here. The
+    answer is a stated reason, not an absent entry: the span exists and the
+    click landed somewhere real."""
+    from pgtp_editor.ui.ddl_buffer_panel import NOT_EDITABLE_REFUSALS
+
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    pos = _local_pos_for_line(panel, table_span.start_line + 1)
+    menu = panel._build_context_menu_at(pos)
+
+    labels = [action.text() for action in menu.actions()]
+    assert not any(label.startswith("Edit DDL") for label in labels)
+    assert NOT_EDITABLE_REFUSALS["table"] in labels
+
+
+def test_the_refusal_is_disabled_because_it_is_a_sentence_not_a_command(qtbot):
+    from pgtp_editor.ui.ddl_buffer_panel import NOT_EDITABLE_REFUSALS
+
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    menu = panel._build_context_menu_at(
+        _local_pos_for_line(panel, table_span.start_line + 1)
+    )
+    action = next(
+        a for a in menu.actions() if a.text() == NOT_EDITABLE_REFUSALS["table"]
+    )
+    assert action.isEnabled() is False
+
+
+def test_reload_ddl_is_still_offered_inside_a_table(qtbot):
+    """Reload is a property of the CONNECTION, not of the clicked object."""
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    menu = panel._build_context_menu_at(
+        _local_pos_for_line(panel, table_span.start_line + 1)
+    )
+    assert RELOAD_LABEL in [action.text() for action in menu.actions()]
+
+
+def test_a_browse_only_instance_states_no_refusal_either(qtbot):
+    """The sandbox tree gains the new NAVIGATION without gaining any editing
+    gesture -- including the sentence explaining an absent one."""
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+    from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
+    from pgtp_editor.ui.ddl_buffer_panel import NOT_EDITABLE_REFUSALS
+
+    schema = DatabaseSchema(
+        tables={
+            "pr.orders": TableInfo(
+                name="pr.orders",
+                kind="table",
+                columns=[ColumnInfo("id", "integer", True, False, False, None)],
+            )
+        }
+    )
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    table_span = next(s for s in spans if s.kind == "table")
+    menu = panel._build_context_menu_at(
+        _local_pos_for_line(panel, table_span.start_line + 1)
+    )
+    labels = [action.text() for action in menu.actions()]
+    assert NOT_EDITABLE_REFUSALS["table"] not in labels
+    assert RELOAD_LABEL in labels
+
+
+def test_a_tables_body_is_foldable_under_its_banner(qtbot):
+    """Tables join the existing per-object folding -- which is what keeps a
+    multi-table buffer readable."""
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    document = panel.editor.document()
+    block = document.findBlockByNumber(table_span.start_line - 1)
+    assert panel.editor._foldable_region_starting_at(block) is not None

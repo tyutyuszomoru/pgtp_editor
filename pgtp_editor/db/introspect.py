@@ -551,6 +551,18 @@ WHERE t.typtype IN ('d', 'c')
 
 BASELINE_EXTRA_SQL: list[str] = [_VIEWDEFS_SQL, _TYPES_SQL]
 
+#: The view-definition query **on its own**, appended by
+#: `fetch_routines_and_triggers` (`FQ-260810183812`): the DDL Explorer's
+#: synthesized buffer now renders `CREATE VIEW` / `CREATE MATERIALIZED VIEW`
+#: bodies, and those bodies are `pg_get_viewdef`.
+#:
+#: The SAME statement `BASELINE_EXTRA_SQL` carries -- **not a second query
+#: text**, and not a second fetch path: it joins the Explorer's one
+#: connect-time round trip, exactly as §18.1 rules ("one fetch path serving two
+#: consumers, never a second parallel fetch and never a lazy per-keystroke
+#: query"). `snapshot_for_baseline` keeps its own pair untouched.
+VIEWDEF_SQL: list[str] = [_VIEWDEFS_SQL]
+
 # pg_trigger.tgtype bit flags (see Postgres's trigger.h) -- decoded in Python
 # rather than in SQL so the mapping is unit-testable without a live database.
 _TRIGGER_BEFORE = 1 << 1
@@ -867,12 +879,29 @@ def fetch_routines_and_triggers(
     `snapshot_for_baseline`. `.constraints` (named constraints) is filled too,
     from the `SCHEMA_SQL` rows already being fetched.
 
+    Widened a third time by `FQ-260810183812` with `VIEWDEF_SQL`, in the same
+    round trip, so `TableInfo.view_definition` is populated here too: the DDL
+    Explorer's buffer now renders view and matview bodies, and those bodies
+    were previously fetched only by `snapshot_for_baseline`. They JOIN this one
+    fetch rather than getting a lazy per-object query of their own.
+
     `fetch_schema` itself is UNCHANGED -- its own 3-query contract and tests
     are untouched, and DB Check keeps calling it directly. This is one
     widened fetch serving two consumers, never a second parallel fetch.
     """
     _log.info("db: fetch_routines_and_triggers started %s", debuglog.redacted(params))
     started = time.monotonic()
+    results = runner(
+        params,
+        list(ROUTINE_TRIGGER_SQL)
+        + list(SCHEMA_SQL)
+        + list(INDEX_SQL)
+        + list(VIEWDEF_SQL),
+    )
+    # Unpacked tolerantly (`*rest`), the same convention `_build_tables` uses
+    # for its widened relation row: a canned runner that predates the
+    # view-definition query returns six row-lists and simply yields
+    # `view_definition=None` on every relation, exactly as before.
     (
         routine_rows,
         trigger_rows,
@@ -880,10 +909,14 @@ def fetch_routines_and_triggers(
         column_rows,
         constraint_rows,
         index_rows,
-    ) = runner(params, list(ROUTINE_TRIGGER_SQL) + list(SCHEMA_SQL) + list(INDEX_SQL))
+        *rest,
+    ) = results
+    viewdef_rows = rest[0] if rest else []
 
     routines, triggers = _build_routines_and_triggers(routine_rows, trigger_rows)
-    tables = _build_tables(relation_rows, column_rows, constraint_rows)
+    tables = _build_tables(
+        relation_rows, column_rows, constraint_rows, view_definition_rows=viewdef_rows
+    )
     constraints = _build_constraints(constraint_rows)
     indexes = _build_indexes(index_rows)
 
