@@ -437,6 +437,64 @@ def test_ctrl_return_runs_but_does_not_commit(qtbot):
     assert console.has_uncommitted_run is True
 
 
+# -- the commit row, pressed as a real CLICK ---------------------------------
+# Every transaction test above reaches `commit_run()` / `rollback_run()`
+# directly. That is the wrong end of the gesture to pin on its own: the commit
+# row is the ONLY way a user makes anything durable here (the chord is
+# deliberately withheld), and both buttons are bound through an
+# argument-dropping `lambda _checked=False:` — because `clicked(bool)` connected
+# straight to a zero-argument slot is what killed the Edit Snippets buttons in
+# BUG-260812001455. A suite that only calls the seams stays green while the one
+# durable gesture in the app does nothing.
+
+
+def test_the_commit_BUTTON_CLICK_is_what_reaches_the_database(qtbot):
+    console, _session, connection = make_quality_console(qtbot)
+    console.editor.setPlainText("UPDATE t SET x = 1;")
+    console.run()
+    assert console.has_uncommitted_run is True
+    assert connection.commits == 0
+
+    console.commit_button.click()
+
+    assert connection.commits == 1
+    assert console.has_uncommitted_run is False
+    assert "COMMITTED" in console.pending_label.text()
+
+
+def test_the_ROLLBACK_BUTTON_CLICK_discards_the_run(qtbot):
+    console, _session, connection = make_quality_console(qtbot)
+    console.editor.setPlainText("DELETE FROM t;")
+    console.run()
+
+    console.rollback_button.click()
+
+    assert connection.rollbacks == 1
+    assert connection.commits == 0
+    assert console.has_uncommitted_run is False
+
+
+def test_a_DISABLED_commit_button_click_commits_NOTHING(qtbot):
+    """The buttons start disabled and are re-disabled the moment a transaction
+    ends, so "nothing pending" must be unreachable through the row rather than
+    merely discouraged — a second Commit click must not reach the connection."""
+    console, _session, connection = make_quality_console(qtbot)
+
+    assert console.commit_button.isEnabled() is False
+    console.commit_button.click()
+    console.rollback_button.click()
+    assert connection.commits == 0
+    assert connection.rollbacks == 0
+
+    console.editor.setPlainText("UPDATE t SET x = 1;")
+    console.run()
+    console.commit_button.click()
+    assert connection.commits == 1
+
+    console.commit_button.click()  # the double-press
+    assert connection.commits == 1
+
+
 def test_the_commit_gesture_has_no_keyboard_shortcut_of_any_kind(qtbot):
     """Do not add one, and do not let it inherit one — that is the whole basis of
     `DEC-260811025132`. A mnemonic (`&Commit`) and an auto-default button both

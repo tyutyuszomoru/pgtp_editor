@@ -674,6 +674,64 @@ def test_the_tab_ring_survives_a_theme_flip(focus_tabs, qapp):
     assert qapp.styleSheet().count("QPushButton:focus") == 1
 
 
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_SOUTH_tab_bars_ring_is_PAINTED_not_merely_declared(qtbot, qapp,
+                                                              _reset_app_palette,
+                                                              light):
+    """The `:bottom` rule, in rendered pixels rather than in the stylesheet text.
+
+    `test_every_edge_gets_a_rule_on_its_pane_facing_side` below checks all four
+    edges by reading the QSS string — which is precisely the assertion shape
+    that let this bug class ship twice: a bare `QTabBar::tab:focus` paints 0px
+    while passing any string test, and a rule Qt silently refuses to apply reads
+    identically to one it honours. Only `top` is proven in pixels above, and
+    `bottom` is not a hypothetical edge: Qt gives a tabified-QDockWidget bar a
+    South shape, which the docstring on `focus_tab_selector` names as the reason
+    the rule exists at all.
+
+    A South bar's pane-facing edge is its TOP, so the sampler is the mirror of
+    `_tab_edge_colours` — same clamping rationale, opposite side.
+    """
+    from PySide6.QtWidgets import QTabWidget, QWidget
+
+    apply_theme(qapp, light)
+    tabs = QTabWidget()
+    qtbot.addWidget(tabs)
+    tabs.setTabPosition(QTabWidget.TabPosition.South)
+    for index in range(3):
+        tabs.addTab(QWidget(), f"Tab {index}")
+    tabs.setCurrentIndex(1)
+    tabs.resize(400, 200)
+    tabs.show()
+    qapp.processEvents()
+    bar = tabs.tabBar()
+    bar.clearFocus()
+    qapp.processEvents()
+    assert not bar.hasFocus()  # showing hands the only focusable child focus
+
+    def top_edge_colours() -> list[str]:
+        image = bar.grab().toImage()
+        rect = bar.tabRect(1)
+        y = max(rect.top() + 1, 0)
+        return [
+            image.pixelColor(x, y).name()
+            for x in range(rect.left() + 8, rect.right() - 8)
+        ]
+
+    ring = _focus_ring_colour(light)
+    resting = top_edge_colours()
+    resting_rects = [bar.tabRect(i) for i in range(3)]
+    assert _tab_selection_accent(light) in resting  # the presence anchor
+    assert ring not in resting
+
+    bar.setFocus()
+    qapp.processEvents()
+    assert bar.hasFocus()
+    assert ring in top_edge_colours()
+    # ...and the geometry did not move, the exclusion ground for the whole fix.
+    assert [bar.tabRect(i) for i in range(3)] == resting_rects
+
+
 def test_every_edge_gets_a_rule_on_its_pane_facing_side(qapp, _reset_app_palette):
     """All four edges are covered even though the app calls `setTabPosition`
     nowhere: Qt gives a tabified-QDockWidget bar a SOUTH shape, which a user can

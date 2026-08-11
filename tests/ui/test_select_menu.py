@@ -770,6 +770,86 @@ def test_the_menu_command_and_v_share_ONE_state(qtbot):
     assert not window._sticky_selection_action.isChecked()
 
 
+def test_OPENING_the_menu_re_derives_the_checks_after_a_real_v_keystroke(qtbot):
+    """The gap `test_the_menu_command_and_v_share_ONE_state` leaves open, closed
+    from both ends.
+
+    That test writes the flag through `set_sticky_selection` (the seam `v` uses,
+    not `v` itself) and then calls `_refresh_sticky_selection_actions()` BY HAND
+    — so it stays green whether or not anything in the app ever calls the
+    refresh. Nothing else does on this path: `v` and `V` bypass the actions
+    entirely, so the only thing that can correct a stale check mark is the
+    `aboutToShow` connection. Press the actual key, emit the actual signal the
+    menu emits as it opens, and assert the marks moved.
+    """
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot)
+    editor = window.center_stage.xml_editor
+    menu = _select_menu(window)
+    window.show()
+    qtbot.waitExposed(window)
+    editor.setFocus()
+    qtbot.wait(1)
+
+    # `V` — Command mode, then the bare key, exactly as the user types it.
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    assert editor.in_command_mode
+    QTest.keyClicks(editor, "V")
+    assert editor.sticky_selection_mode == vim_mode.STICKY_LINE
+    # The marks are stale until the menu is opened — they are not authoritative.
+    menu.aboutToShow.emit()
+    assert window._line_selection_action.isChecked()
+    assert not window._sticky_selection_action.isChecked()
+
+    # ...and `v` moves them the other way, still without touching an action.
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    QTest.keyClicks(editor, "v")
+    assert editor.sticky_selection_mode == vim_mode.STICKY_CHARACTER
+    menu.aboutToShow.emit()
+    assert window._sticky_selection_action.isChecked()
+    assert not window._line_selection_action.isChecked()
+
+
+def test_OPENING_the_menu_CLEARS_the_checks_once_the_gesture_ENDS(qtbot):
+    """The absence direction, which matters more: a sticky gesture ends on its
+    own (a consumed selection, a printable character, focus loss), and none of
+    those endings goes anywhere near the menu. A check mark left set would
+    advertise a mode the editor is no longer in."""
+    window = _window(qtbot)
+    editor = window.center_stage.xml_editor
+    menu = _select_menu(window)
+
+    window._sticky_selection_action.trigger()
+    menu.aboutToShow.emit()
+    assert window._sticky_selection_action.isChecked()  # the anchor
+
+    editor.set_sticky_selection(None)
+    menu.aboutToShow.emit()
+    assert not window._sticky_selection_action.isChecked()
+    assert not window._line_selection_action.isChecked()
+
+
+def test_OPENING_the_menu_HIDES_the_entries_when_read_only_flips_at_RUNTIME(
+    qtbot,
+):
+    """Caption Mode and Compare/Merge make an editor read-only without a tab
+    change, so `_refresh_editor_menu_affordances` never fires — the `aboutToShow`
+    connection is the only thing standing between that and two live entries that
+    toggle a flag nothing reads."""
+    window = _window(qtbot)
+    editor = window.center_stage.xml_editor
+    menu = _select_menu(window)
+
+    menu.aboutToShow.emit()
+    assert window._sticky_selection_action.isVisible()  # the anchor
+
+    editor.setReadOnly(True)
+    menu.aboutToShow.emit()
+    assert not window._sticky_selection_action.isVisible()
+    assert not window._line_selection_action.isVisible()
+
+
 def test_both_entries_are_HIDDEN_on_a_read_only_editor(qtbot):
     """§8: on a read-only editor the whole editing-mode layer is inactive, so
     the sticky key handling refuses to answer. An entry that toggles a flag

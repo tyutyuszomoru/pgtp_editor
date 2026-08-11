@@ -27,7 +27,7 @@ row**:
 |---|---|---|
 | **Standalone** | Edit a `.pgtp` with the XML tooling, or a custom PHP file beside it. No project, no sandbox. | **File ▸ Open**, **File ▸ Open PHP File…** |
 | **Project** | Work on the quality database through a local sandbox, or converge a deployable `.pgtp` by diff/merge. | **File ▸ New Project…**, **File ▸ Open Project…** |
-| **Maintenance** | One-off administrative work on the app's own schema and settings. Reshapes the window menu bar for this session — see *Maintenance mode*, below. | **Schema ▸ Edit XSD**, **Schema ▸ Import XSD** |
+| **Maintenance** | One-off administrative work on the app's own schema, and where the app itself is configured. Reshapes the window menu bar for this session — see *Maintenance mode*, below. | **Schema ▸ Edit XSD**, **Schema ▸ Import XSD**, **Settings ▸ Software settings…** |
 
 **Every button on the launcher is the menu command it names**, which is why the
 buttons are labelled with menu paths such as `File › Open...`. Picking one closes
@@ -36,12 +36,16 @@ different version of any gesture hiding in here. A button whose menu item cannot
 run right now is **greyed out** for the same reason, rather than looking
 clickable and doing nothing.
 
-The three columns are deliberately short. **Maintenance is Edit XSD and Import
-XSD only**: the rest of the **Schema** menu (**Edit AutoXSD**, **Verify XSD**,
-**Export XSD** — see *Schema Tools*) and the whole **Generation** menu are
-ordinary work you reach from the menus once you are in the app. Generating your
-application is development, not maintaining the editor, so no generation entry
-is offered here — see *Generating PHP*.
+The three columns are deliberately short. **Maintenance is Edit XSD, Import XSD
+and Software settings…**: the rest of the **Schema** menu (**Edit AutoXSD**,
+**Verify XSD**, **Export XSD** — see *Schema Tools*) and the whole **Generation**
+menu are ordinary work you reach from the menus once you are in the app.
+Generating your application is development, not maintaining the editor, so no
+generation entry is offered here — see *Generating PHP*.
+
+**The third Maintenance button is the whole of the app's configuration**, because
+the four settings surfaces the app used to scatter across two menus are now one
+command — see *Software Settings*.
 
 - **The launcher always appears.** There is no "don't show this again" any more:
   it was removed together with the setting behind it, because the launcher is
@@ -115,9 +119,18 @@ go away, and one — **Settings** — appears.
 does is subtraction; **Settings** is absent in ordinary work and present here,
 because it is where the app is *configured* rather than used — configuring it is
 exactly what you came to Maintenance mode to do, and a distraction the rest of
-the time. It sits between **Generation** and **Help**, and today it holds two
-entries: **Edit Snippets…** (see *Snippets*) and **Autoformatter settings…**
-(see *The Autoformatter*).
+the time. It sits between **Generation** and **Help**, and it holds **exactly one
+entry**: **Software settings…**, the dialog that now contains everything the app
+lets you configure — snippets, the toolbar, the autoformatter and your keyboard
+shortcuts (see *Software Settings*).
+
+**Two of those four used to live on View, so they are Maintenance-mode gestures
+now.** **Customize Toolbar…** and **Customize Shortcuts…** were reachable at any
+time from the **View** menu; they are panes of **Software settings…** today,
+which means you enter Maintenance mode to rearrange your toolbar or rebind a key.
+That is the trade taken deliberately: the app is *configured* in this mode, and
+one launcher button can stand for the whole of "settings" only if settings is one
+command.
 
 **Nothing on the Settings menu carries a keyboard shortcut, and nothing on it
 ever will.** Hiding a menu does not switch off the keys of the entries inside it
@@ -139,13 +152,21 @@ ordinary work. These are rare, deliberate gestures, reached by opening the menu.
   saveable without leaving the mode (see *The Deployment Menu*). **Save XSD is
   how you save in Maintenance mode** — there is no File-menu save anywhere in
   the app.
+- **Entering the mode clears the surfaces it is not for.** Picking the
+  **Maintenance** column closes every **DDL object tab** and **PHP file tab**,
+  and hides **both DDL Explorer panels** — the menu bar is not the only thing
+  that gets out of the way. A tab with unsaved edits still asks first, and
+  **cancelling that prompt keeps the tab but does not undo the mode**: the
+  prompt's Cancel means *"keep this document"*, not *"put me back where I was"*.
+  Leaving the mode later does not bring anything back, exactly as if you had
+  closed the tabs yourself.
 - **A toolbar button keeps working**, even when it is pinned to a command this
   mode hides. The filter is the menu bar only, by design; pinning something to
   the toolbar means you wanted it within reach. **This cuts both ways**, and it
-  is worth knowing: **Settings ▸ Edit Snippets…** can be pinned in **View ▸
-  Customize Toolbar…** like any other command, and that button opens the dialog
-  **outside Maintenance mode** as well. Hiding here means *"not in your way"*,
-  never *"prevented"* — so a menu placement is a statement about where a command
+  is worth knowing: **Settings ▸ Software settings…** can be pinned to the
+  toolbar like any other command, and that button opens the dialog **outside
+  Maintenance mode** as well. Hiding here means *"not in your way"*, never
+  *"prevented"* — so a menu placement is a statement about where a command
   belongs, not a lock on it.
 - **A key you assigned yourself keeps working too — except on the File menu.**
   The two halves of the trim are built differently and behave differently, and
@@ -154,8 +175,8 @@ ordinary work. These are rare, deliberate gestures, reached by opening the menu.
   session: it is not on the menu and its key does nothing. **View**,
   **Database**, **Tools** and **Generation** are hidden *as whole menus*, and
   the commands inside them stay live underneath — so a key you bound to, say,
-  **View ▸ Customize Toolbar…** in **View ▸ Customize Shortcuts…** still fires
-  in Maintenance mode. That is deliberate and it stays that way: this mode
+  **View ▸ Light Theme** in the **Keyboard shortcuts** pane still fires in
+  Maintenance mode. That is deliberate and it stays that way: this mode
   exists to tidy the **menu bar**, it leaves the toolbar alone on purpose (see
   *Appearance & Layout ▸ The toolbar*), and a shortcut you deliberately
   assigned is yours to keep. None of the commands ship with a key of their
@@ -281,15 +302,16 @@ answer to a simple question: *what does this command act on?*
   Tools · Generation · Help** — holds the commands that act on **the project or
   the application**: opening files, projects and connections, the schema,
   generation, the panels and the theme. An eighth menu, **Settings**, slots in
-  between **Generation** and **Help** **only in Maintenance mode** — see
-  *Getting Started ▸ Maintenance mode* and *Snippets*.
+  between **Generation** and **Help** **only in Maintenance mode**, and holds a
+  single entry, **Software settings…** — see *Getting Started ▸ Maintenance mode*
+  and *Software Settings*.
 - The **Editor menu bar**, directly above the central working area, holds the
   commands that act on **whichever tab you are looking at**. Its five menus are:
 
 | Menu | Entries |
 |---|---|
 | **History** | **History…**, **Undo Project Edit**, **Redo Project Edit** — none of the three carries a shortcut |
-| **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Expand Selection** (Ctrl+Shift+A), **Shrink Selection** (Ctrl+Shift+Z) |
+| **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Expand Selection** (Ctrl+Shift+A), **Shrink Selection** (Ctrl+Shift+Z), and — on an editable editor only — **Sticky Selection** and **Line Selection**, both checkable and neither carrying a key (see *Editing Modes ▸ Sticky selection*) |
 | **Parsing** | two faces, by tab: **Auto Parse XML** and **Validate Project** on an ordinary tab; **Check Object in Sandbox** and **Check and rollback** on a DDL object editor tab |
 | **Navigation** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** — plus, only while a comparison is loaded, **Next Difference**, **Previous Difference** and **Apply Changes to Target** (see *Diff / Merge*) |
 | **Deployment** | every save and every outward push, **by tab kind** — see *The Deployment Menu* |
@@ -344,6 +366,11 @@ work here is absent, not greyed out.**
   entries are not offered rather than offered and inert. **Shrink Selection is
   additionally absent in the XML editors** — see *Expanding and shrinking the
   selection*, below, for what each surface offers and why.
+- **Select ▸ Sticky Selection and Line Selection are hidden on a read-only
+  editor** — either **DDL Explorer** buffer, and the Raw XML editor while
+  **Caption Mode** or **Compare/Merge** holds it. They toggle a selection you
+  build with the keyboard, and that whole layer is inactive where nothing can be
+  typed (see *Editing Modes ▸ Sticky selection*).
 - **Select ▸ Select Enclosing Block means the right thing for the language you
   are in**: in an XML editor (Raw XML, Edit XSD, a generated draft fragment) it
   selects the enclosing XML element; in a code editor (PHP tabs, DDL object tabs,
@@ -415,8 +442,8 @@ database-touching entries. Two different reasons meet here:
   on the app's standing rule that *an irreversible outward effect must not be one
   keystroke away*.
 
-If you use one of them constantly, pin it to the toolbar (**View ▸ Customize
-Toolbar…**). Be aware that such a button **comes and goes with the tab**, exactly
+If you use one of them constantly, pin it to the toolbar (**Settings ▸ Software
+settings… ▸ Toolbar**). Be aware that such a button **comes and goes with the tab**, exactly
 as the menu entry does — that is the honest posture, not a bug.
 
 ### What each entry does
@@ -508,9 +535,15 @@ very thing you are navigating.
   Bookmarks** and the bookmarks replace the finds — both answer *"where do I want
   to go next?"*, and only one such question is live at a time. Re-running the
   same operation likewise replaces its own previous rows.
-- Rows that could not be tied to a line (a read-only DDL Explorer buffer, a draft
-  tab, a finding with no line number) are **listed but inert when clicked**,
-  rather than sending you to a plausible-looking wrong place.
+- **Rows found in a DDL Explorer's read-only buffer navigate like any other.**
+  Clicking a `[Find]` or `[Bookmark]` row from either Explorer focuses that
+  Explorer's own viewing pane and puts the caret on the line — and it is always
+  the *right* one of the two, because the row remembers which Explorer it came
+  from rather than guessing from whichever tab you are on. Read-only never meant
+  "you cannot go there".
+- Rows that genuinely could not be tied to a line (a generated draft tab, a
+  finding with no line number) are **listed but inert when clicked**, rather than
+  sending you to a plausible-looking wrong place.
 
 ### The Messages tab — what the checks found, kept
 
@@ -938,10 +971,12 @@ one *"where do I want to go next?"* question at a time. The bottom dock's
 list does not update the list — ask again. (Loading a new document does clear the
 rows, since the bookmarks they described are gone.)
 
-Rows from a read-only **DDL Explorer** buffer and from **draft tabs** are listed
-but **do nothing when clicked**: those editors have no click-through route, and
-sending you to a plausible-looking line in a different document would be worse
-than not moving. The *no bookmarks in …* line names which explorer it read —
+**Rows from a read-only DDL Explorer buffer jump like any other**, into that
+Explorer's own viewing pane — and into the right one of the two, because each row
+carries the Explorer it was listed from. Only rows from **draft tabs** are listed
+and **do nothing when clicked**: a draft has no click-through route, and sending
+you to a plausible-looking line in a different document would be worse than not
+moving. The *no bookmarks in …* line names which explorer it read —
 **the DDL Explorer (Quality)** or **the DDL Explorer (Sandbox)** — so with both
 open you can tell the two listings apart.
 
@@ -1003,10 +1038,11 @@ tab are fully editable, so every control works there.
 button on four of them — either DDL Explorer, a DDL object tab, a PHP file tab
 and a generated draft fragment — where pressing it did nothing at all. Every one
 of those runs now streams its matches into the **Findings** tab like the Raw XML
-and Edit XSD bars always did. Two of them come with the caveat the Findings tab
-already states: rows found in a **read-only DDL Explorer buffer** or in a **draft
-fragment** are listed but **inert when clicked**, because those editors have no
-click-through route and sending you to a plausible-looking line in another
+and Edit XSD bars always did, **and every one of those rows is clickable** —
+including the ones found in a **read-only DDL Explorer** buffer, which land in
+that Explorer's own viewing pane. The one caveat the Findings tab still states is
+the **draft fragment**: a draft has no click-through route, so its rows are
+listed but inert, because sending you to a plausible-looking line in another
 document would be worse than not moving.
 
 ---
@@ -2905,6 +2941,62 @@ editor has none"*, *"this buffer is read-only"*), never a generic beep.
 
 ---
 
+## Software Settings
+
+**Settings ▸ Software settings… is the one place the app is configured.** It is a
+single dialog with a category list down the left and the settings for the
+selected category on the right, and it holds **four** panes:
+
+| Pane | What it configures |
+|---|---|
+| **Snippets** | The trigger words **Ctrl+Alt+E** expands in a SQL editor, and their bodies — see *Snippets*. |
+| **Toolbar** | Which commands sit on the Main Toolbar, in which order, with which icons — see *Appearance & Layout ▸ The toolbar*. |
+| **Autoformatter** | How **Format Selection** rewrites SQL/plpgsql and XML — see *The Autoformatter*. |
+| **Keyboard shortcuts** | The key bound to each menu command, and the keys the app pins — see *Keyboard Shortcuts ▸ Changing a shortcut*. |
+
+**Those four used to be four separate menu entries and no longer are.** **View ▸
+Customize Toolbar…**, **View ▸ Customize Shortcuts…**, **Settings ▸ Edit
+Snippets…** and **Settings ▸ Autoformatter settings…** are **gone** — not
+duplicated, not kept as second doors. Each is the same dialog you already knew,
+re-hosted as a pane, with the same controls, the same buttons and the same
+behaviour; only the way in changed.
+
+**There are two ways in, and both are the same command.** **Settings ▸ Software
+settings…** — the **Settings** menu's only entry — and the third button in the
+launcher's **Maintenance** column, which reads `Settings › Software settings`.
+
+**Which makes toolbar and shortcut customization Maintenance-mode gestures.** The
+**Settings** menu exists only in Maintenance mode (see *Getting Started ▸
+Maintenance mode*), so rearranging your toolbar or rebinding a key now means
+entering that mode first, where before you could do it at any time from **View**.
+That is deliberate: this is configuring the app rather than using it. As with any
+other command, a **toolbar button** you pin to it opens the dialog outside
+Maintenance mode too.
+
+**The dialog is non-modal and there is only ever one of it.** It stays beside
+your work — which is what lets the **Keyboard shortcuts** pane be open while you
+try a key — and asking for it again brings the existing window to the front
+rather than opening a second one editing the same settings.
+
+**Each pane keeps its own OK and Cancel, and the dialog itself only has Close.**
+That is the one thing worth reading twice:
+
+- A pane's **OK** saves exactly what it always saved, immediately. A pane's
+  **Cancel** discards exactly what it always discarded.
+- After either, that pane **reloads itself from what is now stored**, so you are
+  never looking at a stale scratch copy of something that has moved on.
+- **Closing the dialog is never a save.** There is no dialog-level OK, because
+  there is no dialog-level state — the four panes disagree about what "apply"
+  means and each one is right about itself. Close the window with edits sitting
+  unapplied in a pane and they are gone, exactly as closing any one of those four
+  dialogs always did.
+
+**Colours are not in here.** Syntax-highlight colours and the app's colour scheme
+are not settings this dialog offers, and it says nothing about them; the theme is
+still **View ▸ Light Theme** (see *Appearance & Layout*).
+
+---
+
 ## Snippets
 
 A **snippet** is a trigger word you type in a SQL editor and expand with
@@ -2959,15 +3051,17 @@ trigger-function skeleton. Braces never occur doubled in SQL, so `{{` collides
 with nothing. Anything else between braces is left exactly as you wrote it: a
 malformed body degrades to plain text rather than failing.
 
-### Editing them — Settings ▸ Edit Snippets…
+### Editing them — the Snippets pane
 
-**Settings ▸ Edit Snippets…** opens the editor. The **Settings** menu exists
-**only in Maintenance mode** (see *Getting Started ▸ Maintenance mode*), because
-this is configuring the app rather than using it.
+**Settings ▸ Software settings… ▸ Snippets** is the editor. The **Settings** menu
+exists **only in Maintenance mode** (see *Getting Started ▸ Maintenance mode*),
+because this is configuring the app rather than using it. (There is no
+**Settings ▸ Edit Snippets…** entry any more — the dialog became a pane of
+**Software settings…**; see *Software Settings*.)
 
-The window is **not modal** — it stays beside your work, so you can copy a body
-out of the SQL you are looking at — and there is only ever one of it: asking
-again while it is open just brings it to the front.
+The settings window is **not modal** — it stays beside your work, so you can copy
+a body out of the SQL you are looking at — and there is only ever one of it:
+asking again while it is open just brings it to the front.
 
 It has one table and one body pane:
 
@@ -2996,7 +3090,8 @@ Underneath sit **Add**, **Delete**, **Restore Built-ins**, **Export…** and
   be the silent overwrite this feature exists to avoid. When nothing is missing
   it says so.
 - **OK** saves. **Cancel** changes nothing at all — not on disk and not in your
-  editors.
+  editors. Both are this pane's own buttons; the settings window's **Close** is
+  neither of them and saves nothing (see *Software Settings*).
 
 **A saved set is live immediately**, in every SQL editor that is open and in
 every one you open afterwards. Nothing needs restarting.
@@ -3090,19 +3185,21 @@ The XML side **changes indentation only**: it re-indents by element nesting dept
 and rewrites nothing else. The SQL side re-indents and, if you ask it to, recases
 keywords and breaks lines at clause keywords.
 
-### Configuring it — Settings ▸ Autoformatter settings…
+### Configuring it — the Autoformatter pane
 
-**Settings ▸ Autoformatter settings…** opens the dialog. The **Settings** menu
-exists **only in Maintenance mode** (see *Getting Started ▸ Maintenance mode*),
-because this is configuring the app rather than using it, and like everything else
-on that menu the entry carries **no keyboard shortcut**.
+**Settings ▸ Software settings… ▸ Autoformatter** holds the controls. The
+**Settings** menu exists **only in Maintenance mode** (see *Getting Started ▸
+Maintenance mode*), because this is configuring the app rather than using it, and
+like everything else on that menu the entry carries **no keyboard shortcut**.
+(There is no **Settings ▸ Autoformatter settings…** entry any more — see
+*Software Settings*.)
 
 > **A saved configuration applies in every mode**, even though the dialog is only
 > reachable from Maintenance mode. The hosts of the gesture re-read your settings
 > each time you press **Ctrl+Alt+F**, so a change is live immediately, in every
-> editor that is already open, with nothing to restart. (And, as with **Edit
-> Snippets…**, a toolbar button you pin to this command opens the dialog outside
-> Maintenance mode too — see *Appearance & Layout ▸ The toolbar*.)
+> editor that is already open, with nothing to restart. (And a toolbar button you
+> pin to **Software settings…** opens the dialog outside Maintenance mode too —
+> see *Appearance & Layout ▸ The toolbar*.)
 
 **The defaults are byte-identical to the formatter this app always had.** Nothing
 about your formatting changes until you change something here — the shipped
@@ -3133,7 +3230,8 @@ anywhere: you cannot express a rule the formatter could not apply repeatably.
 - **XML / XSD** — **One indent level (spaces):**, for the XML indenter. Two by
   default, because two spaces is the `.pgtp` file's own indentation unit.
 
-**OK saves**, and saving *is* applying — there is nothing else to press.
+**OK saves**, and saving *is* applying — there is nothing else to press. **OK**
+and **Cancel** are this pane's own; the settings window's **Close** is neither.
 **Cancel** changes nothing, on disk or in your editors. Your configuration is
 stored with the app's other per-user settings, beside your theme, toolbar
 arrangement and shortcut overrides — it is **not** part of any project, because a
@@ -4326,12 +4424,17 @@ simply reads as busy instead of stalled.
   **View ▸ Messages** and **View ▸ Findings** are not toggles: each opens the dock
   its tab lives in if needed and focuses that tab (see *Where Output Appears*).
 - **View ▸ Expand All** / **Collapse All** open or fold the whole Project Tree.
-- **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar and
-  what icon each one carries (see *The toolbar*, below).
-- **View ▸ Customize Shortcuts…**, directly below it, changes the **key** any
-  menu command answers to (see *Keyboard Shortcuts ▸ Changing a shortcut*). The
-  two are siblings over the same set of commands: one picks the button, the other
-  picks the key.
+- **The toolbar and your shortcuts are customized in Settings ▸ Software
+  settings…**, in its **Toolbar** and **Keyboard shortcuts** panes — one picks a
+  command's button and icon, the other picks its key (see *Software Settings*,
+  *The toolbar* below, and *Keyboard Shortcuts ▸ Changing a shortcut*). **The
+  View menu no longer carries either**: `Customize Toolbar…` and `Customize
+  Shortcuts…` moved into that one dialog, which lives on the Maintenance-only
+  **Settings** menu.
+- **Keyboard focus is visible.** Move focus with **Tab** and the button or tab
+  bar that has it is outlined, so you can always tell what **Space** or
+  **Return** would press. It follows the theme in both the light and the dark
+  scheme.
 - Your window size and position, dock layout, theme, toolbar arrangement, and
   keyboard-shortcut changes are remembered between sessions.
 - **Dialogs open at a size that shows their contents.** **Project Settings…**,
@@ -4358,9 +4461,11 @@ any button you like. If you want a save button, pin whichever **Deployment** ent
 you actually use, accepting that it comes and goes with the tab (see *The
 Deployment Menu*).
 
-**View ▸ Customize Toolbar…** opens a two-list dialog: **Available** on the left,
-**On Toolbar** on the right, with **Add →**, **← Remove**, **Up**, **Down**, and
-**Choose Icon…** between them, and **OK** / **Cancel** at the bottom.
+**Settings ▸ Software settings… ▸ Toolbar** is where you arrange it: a two-list
+pane with **Available** on the left, **On Toolbar** on the right, **Add →**,
+**← Remove**, **Up**, **Down** and **Choose Icon…** between them, and **OK** /
+**Cancel** at the bottom. (This is the dialog that used to be **View ▸ Customize
+Toolbar…**; that entry is gone — see *Software Settings*.)
 
 - The Available list offers **every command on either menu bar**, listed by its
   menu path — `Deployment › Save pgtp`, `Schema › Verify XSD`,
@@ -4387,7 +4492,7 @@ menu item's enabled state (a command disabled in the menu is disabled on the
 toolbar), its checked state for toggles such as **Database ▸ DDL Explorer
 (Quality)** or
 **View ▸ Light Theme**, and its keyboard shortcut — including one you assigned
-yourself in **View ▸ Customize Shortcuts…**, since the button and the menu entry
+yourself in the **Keyboard shortcuts** pane, since the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
 are carried over unchanged — including a **DDL Explorer** button you pinned
 before the command was renamed to **DDL Explorer (Quality)**, a **Check Object in
@@ -4412,12 +4517,13 @@ of your way, and something you pinned yourself is something you meant to keep
 within reach.
 
 **The same holds in reverse, and it is the one place a menu location does not
-predict the behaviour.** `Settings › Edit Snippets…` and `Settings ›
-Autoformatter settings…` are offered in the Available list like any other command
-even though the **Settings** menu itself exists only in Maintenance mode — and a
-button you pin to either one opens that dialog **outside** that mode too (see
-*Snippets* and *The Autoformatter*). Hiding a menu means *"not in your way"*,
-never *"prevented"*, so pinning is how you say you want it anyway.
+predict the behaviour.** `Settings › Software settings` is offered in the
+Available list like any other command even though the **Settings** menu itself
+exists only in Maintenance mode — and a button you pin to it opens that dialog
+**outside** that mode too (see *Software Settings*). Hiding a menu means *"not in
+your way"*, never *"prevented"*, so pinning is how you say you want it anyway.
+It is also how you keep the toolbar and shortcut panes one click away without
+entering Maintenance mode.
 
 ### Choosing a button's icon
 
@@ -4482,7 +4588,17 @@ parallel keymap ever appears in ordinary typing.
 **Escape enters Command mode**, in the editor that has focus and only when that
 editor is editable. Any of the **insert-entry** keys — `i` `a` `I` `A` `o` `O`
 `s` `S` `cc` `C`, and also `v` and `V` — puts you back into Edit mode, as does a
-`c{motion}` change, which by definition lands you typing.
+`c{motion}` change, which by definition lands you typing. (`v` and `V` switch on
+a **sticky selection** on their way out — see *Sticky selection*, below.)
+
+**In Command mode the caret is a coloured block sitting *on* a character**,
+rather than the thin bar between characters you get while typing. That is the
+second thing telling you which vocabulary the editor is listening in, and it is
+right where you are looking. It follows the theme, so it reads in both the light
+and the dark scheme, and it is drawn only while the mode holds. The caret being
+*on* a character is also why `$` and `l` stop on the line's last character
+instead of past it — the one exception is straight after a `c`, which lands you
+in Edit mode with an ordinary bar again.
 
 **It belongs to one editor and it is transient.** Each tab is independent, and
 **losing focus drops that editor straight back to Edit mode** — switching tabs,
@@ -4551,8 +4667,24 @@ half-typed and does nothing.
 | `{` `}` | the previous / next blank line |
 
 **Operators** — `d` delete, `c` change (delete, then drop into Edit mode), `y`
-yank (copy). Each takes a motion (`dw`, `c$`, `y}`), or is **doubled** to act on
-whole lines (`dd`, `cc`, `yy`).
+yank (copy). Each takes a motion (`dw`, `c$`, `y}`), a **text object** (`daw`,
+`ciw`, `yiw`), or is **doubled** to act on whole lines (`dd`, `cc`, `yy`).
+
+**Text objects** — `aw` and `iw`, the two word objects, usable after any operator:
+
+| Keys | What it takes |
+|---|---|
+| `aw` | the word under the caret **and its trailing whitespace** — *a word*. With nothing trailing (the last word on the line) it takes the **leading** whitespace instead, and from a gap it takes the gap plus the word after it |
+| `iw` | the word under the caret and nothing else — *inner word*. From a gap it takes just the gap |
+
+So `daw` deletes a word and the space after it, `ciw` replaces a word in place,
+and `yiw` copies one. **Counts compose and multiply** exactly as they do with
+motions: `3daw` takes three words with their spacing, and `2d3iw` is six.
+
+**They never cross a line.** A word object is line-local, so a `daw` on the last
+word of a line can never quietly join it to the next one; and a count that asks
+for more than the line holds **refuses** — with a message beside the caret —
+rather than taking what it can, which is the same rule `42j` follows.
 
 **Shorthands**, which are just operator-plus-motion pairs spelled shorter:
 
@@ -4568,7 +4700,7 @@ whole lines (`dd`, `cc`, `yy`).
 | Key | What it does |
 |---|---|
 | `i` `a` `I` `A` `o` `O` | back to Edit mode — at the caret, after it, at the first non-blank, at the end of the line, on a new line below, on a new line above |
-| `v` `V` | also back to Edit mode — **there is no visual mode**, see below |
+| `v` `V` | switch **sticky selection** (character-wise / line-wise) on, then back to Edit mode — **there is still no visual mode**, see below |
 | `p` / `P` | paste after / at the caret |
 | `r` + a character | replace the character under the caret with it |
 | `u` | undo — the same undo the tab's own **Ctrl+Z** does |
@@ -4602,7 +4734,8 @@ Three deliberate behaviours look wrong the first time and are not:
   doing something near what you asked for is how you stop trusting the count at
   all. The same holds for `42G` in a shorter document, for `w` at the end of the
   buffer, for `f` with no such character on the line, and for `%` with no bracket
-  to match.
+  to match — and for a **text object** with too few words left on the line, or
+  none under the caret at all.
 - **Tab is swallowed and answers nothing.** In Command mode, **Tab** and
   **Shift+Tab** do nothing at all — inserting a tab character would be an edit
   from a mode whose whole point is that letters are not text, and vim has no Tab
@@ -4611,17 +4744,27 @@ Three deliberate behaviours look wrong the first time and are not:
 
 ### Selecting, deleting and pasting — and what is deliberately absent
 
-**There is no visual mode.** `v` and `V` drop you into **Edit mode** so you can
-select the Windows way — with the mouse, or **Shift** plus a motion key.
+**There is still no visual mode**, and that is worth saying to anyone who expects
+one: `v` and `V` do not put the editor into a third mode. They switch on **sticky
+selection** (below) and drop you into **Edit mode**, where you select the Windows
+way — with the mouse, with **Shift** plus a motion key, or with the sticky
+selection they just started.
 
-**The consequence is worth stating plainly: the select-then-`d` reflex does not
-exist here.** You have exactly two ways to operate on a range:
+You have three ways to operate on a range:
 
-1. **In Command mode**, operator plus motion — `d}`, `y2w`, `cc`. A `d` pressed
-   after a Windows-style selection is a Command-mode `d` waiting for its motion;
-   it is not *"delete the selection"*.
+1. **In Command mode**, operator plus motion or text object — `d}`, `y2w`, `cc`,
+   `daw`.
 2. **In Edit mode**, select however you like and use **Ctrl+C**, **Ctrl+X** or
    **Delete**.
+3. **Select first, then use an operator on it.** With something selected, a
+   Command-mode `d`, `c` or `y` acts on **the selection** and runs at once
+   instead of waiting for a motion. That works for any selection — sticky, mouse
+   or **Shift**-arrow — and it is what makes `v`, extend, **Escape**, `d` read
+   the way a vim user expects.
+
+One thing to keep straight: you have to be **in Command mode** for an operator to
+be an operator. A `d` typed straight after a mouse selection while you are still
+in Edit mode is the letter `d`, and it replaces what you selected.
 
 **There is one clipboard — the system one — and no registers.** `y` and `Y` write
 it, and so does **every delete**, which is what makes `dd` then `p` move a line.
@@ -4635,6 +4778,44 @@ accepted rather than worked around:
   exactly as **Ctrl+V** does — so `yy` followed by `p` inserts the line's text at
   the caret rather than opening a new line for it. The two differ only in where
   the caret is: `p` pastes after it, `P` at it.
+
+### Sticky selection
+
+**Sticky selection is "keep selecting as I move", without holding Shift.** Turn
+it on and every caret movement extends the selection from where you started,
+until something ends the gesture. It comes in two granularities, and they are one
+state rather than two — turning either on turns the other off:
+
+- **Sticky Selection** — character-wise. `v`, or **Select ▸ Sticky Selection**.
+- **Line Selection** — line-wise: the selection always covers whole lines. `V`,
+  or **Select ▸ Line Selection**.
+
+**Two ways in, one behaviour.** Pressing `v` or `V` in Command mode switches it
+on and returns you to Edit mode; the two **Select** menu entries do exactly the
+same thing and are **checkable**, so the menu always shows whether it is on.
+Neither entry carries a keyboard shortcut — `v` and `V` are already the keys for
+it, and one command gets one key.
+
+**Both entries are hidden on a read-only editor** — either **DDL Explorer**
+buffer, or the Raw XML editor while **Caption Mode** or **Compare/Merge** holds
+it — because the whole Command-mode layer is inactive there and the toggle would
+change nothing. Use **Shift** plus a motion key, or the mouse, to select in those.
+
+**What extends it:** the **arrow keys**, **Home**, **End**, **Page Up** and
+**Page Down** in Edit mode, and any Command-mode motion (`w`, `}`, `42G`) if you
+press **Escape** and keep moving.
+
+**What ends it:**
+
+- an operator consuming it — `d`, `c` or `y` in Command mode, which acts on the
+  selection and runs immediately;
+- **typing a printable character**, which replaces the selection and resumes
+  ordinary typing;
+- a **mouse click**, since you are selecting by hand now;
+- the editor **losing focus**, or its document being replaced.
+
+It is transient editor state, like Command mode itself: nothing is stored,
+nothing survives a tab switch, and there is no setting for it.
 
 ### Searching, and the colon command line
 
@@ -4814,8 +4995,9 @@ Console, **Edit code…** dialog)
 | **Ctrl+Shift+R** | **Reload DDL** — re-introspect this explorer. **Either DDL Explorer's viewing pane only**, and it reloads the one the caret is in (see *DDL Explorer ▸ Reloading an explorer*) |
 
 **The set Ctrl+Alt+E expands is editable** — eight snippets ship with the app and
-you can change, add to or replace them in **Settings ▸ Edit Snippets…** (see
-*Snippets*). The chord itself stays what it is; only what it inserts changes.
+you can change, add to or replace them in **Settings ▸ Software settings… ▸
+Snippets** (see *Snippets*). The chord itself stays what it is; only what it
+inserts changes.
 
 **Ctrl+Alt+E and Ctrl+Alt+C are SQL-only by design.** The snippet set is plpgsql,
 so in a **PHP** tab or a `js` **Edit code…** dialog these keys are untouched — an
@@ -4924,8 +5106,8 @@ They always drive the **project's** snapshot history, whatever tab is in front: 
 chord means *"undo here"* and is answered by the surface you are in, while clicking
 one of these means *"undo the project, wherever I am"*. **Neither carries a
 keyboard shortcut at all** — the pair could not share a key with Ctrl+Z without
-losing that distinction. (You may still assign them one yourself in **View ▸
-Customize Shortcuts…**, where they are ordinary rebindable menu commands.)
+losing that distinction. (You may still assign them one yourself in the
+**Keyboard shortcuts** pane, where they are ordinary rebindable menu commands.)
 
 | Where | **Ctrl+Z** / **Ctrl+Y** undoes |
 |---|---|
@@ -5045,9 +5227,9 @@ Mode: selecting text mutates nothing, exactly as with **Select All**.
 carries no shortcut of its own: **Ctrl+Shift+Z** is caught inside every editor's
 own key handling, which is what stops Qt from treating it as a second redo (see
 *Ctrl+Shift+Z is not redo*, above), and a key caught there cannot also be a
-window command. So **Ctrl+Shift+A** can be moved through **View ▸ Customize
-Shortcuts…** while **Ctrl+Shift+Z** cannot, and cannot be given to anything else
-either. The pairing was worth the asymmetry; the asymmetry is real.
+window command. So **Ctrl+Shift+A** can be moved through the **Keyboard
+shortcuts** pane while **Ctrl+Shift+Z** cannot, and cannot be given to anything
+else either. The pairing was worth the asymmetry; the asymmetry is real.
 
 **Select Parent Block was renamed.** It is now **Expand Selection**, on the same
 key, because the command means the same thing in the SQL editors as in the XML
@@ -5079,7 +5261,7 @@ five kinds of "open" — and whichever it picks is a guess about which one you
 meant. Opening is also a once-per-session act the launcher already puts one click
 away (see *Getting Started ▸ The startup launcher*). Pressing **Ctrl+O** now does
 nothing, and the chord is genuinely **free**: if you want it back on a particular
-open, assign it yourself in **View ▸ Customize Shortcuts…**.
+open, assign it yourself in the **Keyboard shortcuts** pane.
 
 **Ctrl+W is in exactly the same position.** It used to close the project from
 the File menu and to cancel the **Edit code…** dialog; both bindings were
@@ -5118,9 +5300,16 @@ Validate Project**, **History ▸ History…**, **History ▸ Undo Project Edit*
 entries, **View ▸ Activity Log**, **View ▸
 Messages**, **View ▸ Findings**, **Database ▸ DDL Explorer (Quality)**,
 **Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Reload DDL**,
-**Database ▸ Sandbox SQL Console…**, **Database ▸ Quality SQL Console…** and
+**Database ▸ Sandbox SQL Console…**, **Database ▸ Quality SQL Console…**,
+**Settings ▸ Software settings…** and
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
+
+**Select ▸ Sticky Selection and Select ▸ Line Selection are keyless for a
+different reason** — not because a key would be dangerous, but because they
+already have one. `v` and `V` in Command mode are those commands, and one command
+gets exactly one keyboard host, so the menu entries carry nothing (see *Editing
+Modes ▸ Sticky selection*).
 
 **Database ▸ Reload DDL is the interesting one of those**, because a keyboard
 gesture for it *does* exist: **Ctrl+Shift+R**, hosted on the DDL Explorer's
@@ -5131,13 +5320,12 @@ menu entry and both right-click forms are deliberately keyless (see *DDL Explore
 
 **The Settings menu contributes no chords at all, by rule.** It exists only in
 Maintenance mode, and hiding a menu does not switch off the keys of the entries
-inside it — so a shortcut on **Settings ▸ Edit Snippets…** or **Settings ▸
-Autoformatter settings…** would open that dialog in the middle of ordinary work
-and make nonsense of where the command
-lives. Nothing on that menu ships with a key. **View ▸ Customize Shortcuts…**
-will still let you assign one, because it lists every menu command in the app —
-but a key you assign there behaves exactly as described: it fires in any mode
-(see *Snippets* and *The Autoformatter*).
+inside it — so a shortcut on its one entry, **Settings ▸ Software settings…**,
+would open that dialog in the middle of ordinary work and make nonsense of where
+the command lives. Nothing on that menu ships with a key. The **Keyboard
+shortcuts** pane will still let you assign one, because it lists every menu
+command in the app — but a key you assign there behaves exactly as described: it
+fires in any mode (see *Software Settings*).
 
 **Ten keys have no menu-bar entry at all** — **F3**, **Ctrl+L**, **Ctrl+Alt+F**,
 **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G**, and the four SQL editor gestures
@@ -5148,9 +5336,10 @@ is why you can neither put them on the toolbar nor rebind them: a toolbar button
 *is* a menu item and the rebinding dialog lists menu commands, and these have no
 menu-bar entry to be either. **Ctrl+Shift+R** is locked for a near-identical
 reason with the opposite starting point — its command *is* on the menu bar, but
-the chord itself is hosted on a panel. All of them are still **listed** in **View ▸
-Customize Shortcuts…**, as greyed rows saying why they are locked — a key you can
-see and cannot take is better than one that is simply missing from the list.
+the chord itself is hosted on a panel. All of them are still **listed** in the
+**Keyboard shortcuts** pane, as greyed rows saying why they are locked — a key
+you can see and cannot take is better than one that is simply missing from the
+list.
 
 In **Caption Mode** the **Navigation** menu's five bookmark entries — and
 **Ctrl+F2** / **F2** /
@@ -5172,17 +5361,19 @@ widget. It matters only if *you* have assigned a chord to a command on **View**,
 **Database**, **Tools** or **Generation** — that chord stays live in Maintenance
 mode even though its menu is gone.
 
-### Changing a shortcut — View ▸ Customize Shortcuts…
+### Changing a shortcut — the Keyboard shortcuts pane
 
-**View ▸ Customize Shortcuts…** lists every menu command in the app with the key
-it currently answers to, and lets you change it. It sits directly under **View ▸
-Customize Toolbar…** and is its sibling: the same set of commands, customized on
-its other axis — one dialog picks a command's icon and place on the toolbar, this
-one picks its key.
+**Settings ▸ Software settings… ▸ Keyboard shortcuts** lists every menu command
+in the app with the key it currently answers to, and lets you change it. It is
+the pane directly under **Toolbar** and is its sibling: the same set of commands,
+customized on its other axis — one picks a command's icon and place on the
+toolbar, this one picks its key. (It used to be **View ▸ Customize Shortcuts…**;
+that entry is gone, and reaching this pane means entering Maintenance mode — see
+*Software Settings*.)
 
-The dialog is one table with three columns:
+The pane is one table with three columns:
 
-- **Command** — the command's menu path, exactly as the toolbar dialog spells it
+- **Command** — the command's menu path, exactly as the **Toolbar** pane spells it
   (`File › Discard Changes`, `Deployment › Save pgtp`, `Navigation › List All
   Bookmarks`).
 - **Shortcut** — the key it answers to right now. Blank means the command has no
@@ -5206,7 +5397,8 @@ Under the table sit a **New shortcut** capture field and four buttons:
 **OK applies your changes immediately** — the new keys work in the window you are
 already in, with nothing to restart — and remembers them for future sessions,
 beside your toolbar arrangement. **Cancel changes nothing**, neither in the
-running window nor on disk.
+running window nor on disk. Both belong to this pane; the settings window's
+**Close** is neither, and closing it saves nothing (see *Software Settings*).
 
 **Assigning a key another command already holds takes it from that command.**
 Before you commit, a line under the table names the current holder (*"Ctrl+F2 is
@@ -5221,7 +5413,7 @@ is ambiguous, and Qt then fires neither of them**. A double binding does not mea
 Stealing is what prevents that, so a key always has exactly one owner.
 
 **A key held by something that is not a menu command is refused, not stolen.**
-The dialog can only change menu commands, so it has no way to release a key that
+The pane can only change menu commands, so it has no way to release a key that
 a window-level shortcut, a per-tab Find field or an editor widget's own key
 handling answers to — and stealing what it cannot release would produce exactly
 the ambiguity above. The refusal appears on the same line as the warnings, naming
@@ -5268,8 +5460,9 @@ hunting for a row that was never there. None of these is arbitrary:
 | **Ctrl+C** / **Ctrl+X** / **Ctrl+V**, and **Ctrl+Insert** / **Shift+Insert** / **Ctrl+Shift+Insert** / **Shift+Delete** | Copy, cut and paste are the editors' **own** built-ins, and the Insert/Delete group is the older spelling of the same three — every text field and table in the app answers both spellings, and **Ctrl+Shift+Insert** is a paste the app binds itself in every editor so that it exists on both platforms. A window-level shortcut on any of them would outrank the editor and break copy, cut or paste everywhere in the app. **Ctrl+C** and **Ctrl+V** are additionally the caption grid's own copy and paste. |
 | **F1**, and **Help ▸ Manual** itself | The universal convention, and **Help ▸ Manual** is the one entry no mode may put out of reach — including Maintenance mode (see *Getting Started ▸ Maintenance mode*). It is the only case locked from both ends: nothing else may take **F1**, and Manual may not leave it, so its row is present but read-only. |
 
-**Customize Shortcuts… is itself an ordinary menu command**, so it appears in its
-own list, can be given a key, and can be pinned to the toolbar like anything else.
+**Software settings… is itself an ordinary menu command**, so it appears in this
+pane's own list, can be given a key, and can be pinned to the toolbar like
+anything else — with the caveat above that a key on it fires in every mode.
 
 ---
 
@@ -5294,9 +5487,13 @@ because two unlabelled numbers a few lines apart is exactly how they get read as
 one:
 
 - **"PGTP Editor version …"** — this application's own release. It is read from
-  the app's package metadata rather than typed anywhere, so it cannot go stale;
-  where it genuinely cannot be determined it reads **`unknown`**, which is a word
-  and not a number, so it can never be mistaken for a release.
+  the project's own `pyproject.toml` first, and only falls back to the installed
+  package metadata, rather than being typed anywhere, so it cannot go stale. That
+  order is deliberate and not the obvious one: in a development install the
+  package metadata goes stale while `pyproject.toml` does not, so trusting
+  metadata first would show the wrong version in the one place anyone can check
+  it. Where the version genuinely cannot be determined it reads **`unknown`**,
+  which is a word and not a number, so it can never be mistaken for a release.
 - **".pgtp project format version 22.8 — SQL Maestro's format version, not this
   application's"** — the **vendor's** file format this editor targets, i.e. which
   PHP Generator for PostgreSQL projects it understands. It moves when SQL Maestro
@@ -5368,7 +5565,7 @@ change your project file or your database.
 
 ## Troubleshooting: debug mode
 
-Launch the editor with `python -m pgtp_editor.main --debug` (or set the
+Launch the editor with `python -m pgtp_editor --debug` (or set the
 environment variable `PGTP_EDITOR_DEBUG=1`) to record a full diagnostic log
 of the session. A red **DEBUG** chip appears in the status bar (see *The Status
 Bar*) and the log file's path is recorded in the **Activity Log** at
@@ -5376,3 +5573,7 @@ startup. Even without debug mode, errors are always
 recorded to a small `errors.log`. **Help ▸ Open Log Folder** opens the folder
 containing both logs — attach the newest `debug_*.log` when reporting a
 problem.
+
+**`python -m pgtp_editor` starts the editor**, with or without `--debug`. The
+longer `python -m pgtp_editor.main` is the same thing and keeps working; both
+forms take the same arguments, including `--mcp` (see *The MCP Server*).

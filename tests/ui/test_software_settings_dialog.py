@@ -284,6 +284,61 @@ def test_opening_twice_FOCUSES_the_one_dialog(window):
     assert win._software_settings_dialog is first
 
 
+def test_the_menu_ACTION_opens_the_dialog_on_a_FRESH_window(window):
+    """The dialog's user path, asserted from nothing.
+
+    `test_opening_twice_FOCUSES_the_one_dialog` below triggers the action too,
+    but only AFTER `_open()` already built the dialog — so it passes unchanged
+    against an action whose `triggered` connection does not exist, because the
+    handle it asserts on was put there by the direct call. This is the
+    BUG-260812001455 shape (`add_snippet` was green through its seam while the
+    button was dead), and re-hosting four surfaces is exactly when a connection
+    gets rewritten by accident. Trigger first, assert the dialog appeared.
+    """
+    win = window()
+    assert win._software_settings_dialog is None
+
+    win._software_settings_action.trigger()
+
+    dialog = win._software_settings_dialog
+    assert isinstance(dialog, SoftwareSettingsDialog)
+    assert dialog.pane_keys() == ["snippets", "toolbar", "autoformatter", "shortcuts"]
+
+
+def test_the_LAUNCHER_BUTTON_CLICK_chooses_this_command(window):
+    """`test_the_launcher_offers_it_in_the_MAINTENANCE_column` proves the button
+    EXISTS and is labelled from the menu walk; it never presses it. The launcher
+    binds every button through `lambda _checked=False, cid=...` precisely because
+    `clicked(bool)` would otherwise land `False` in `choose`'s `command_id` — the
+    same argument-binding defect BUG-260812001455 shipped. Press it for real."""
+    from pgtp_editor.ui.launcher_dialog import LauncherDialog, resolve_menu_entries
+
+    win = window()
+    dialog = LauncherDialog(resolve_menu_entries(win), parent=win)
+
+    dialog.button_for(COMMAND_ID).click()
+
+    assert dialog.chosen_command_id == COMMAND_ID
+    assert dialog.chosen_group_title == "Maintenance"
+    assert dialog.chosen_workflow_mode == MODE_MAINTENANCE
+
+
+def test_picking_a_CATEGORY_ROW_switches_the_shown_pane(window):
+    """`select_pane` returns True from the pane table alone, so it reports
+    success whether or not `currentRowChanged → stack.setCurrentIndex` survived.
+    Drive the list widget the way a click does and assert the STACK moved."""
+    win = window()
+    dialog = _open(win)
+    keys = dialog.pane_keys()
+
+    for row, key in enumerate(keys):
+        dialog.category_list.setCurrentRow(row)
+        assert dialog.stack.currentIndex() == row, key
+        assert dialog.current_pane_key() == key
+        # ...and the real widget for that key is the one now on screen.
+        assert dialog.pane_widget(key).isVisible() is True
+
+
 def test_closing_it_lets_the_next_open_build_a_FRESH_one(window):
     """Every pane reads its store at construction, so a settings window kept
     alive across a session would be the one place showing yesterday's values."""
