@@ -1,5 +1,6 @@
 """Sub-project D -- Light/Dark theme (#9): pure palette + apply_theme."""
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
@@ -287,3 +288,196 @@ def test_apply_theme_false_is_platform_independent(qapp, _reset_app_palette):
     if standard_window.rgb() == dark_window.rgb():
         pytest.skip("native standardPalette happens to coincide with dark_palette() on this platform")
     assert app.palette().color(QPalette.ColorRole.Window).rgb() != standard_window.rgb()
+
+
+# -- BUG-260812002838: keyboard focus must be VISIBLE on buttons -------------
+# These sample `grab().toImage()` rather than asserting on the stylesheet text,
+# for the reason `tests/ui/test_sql_results_panel.py` records at length: a
+# stylesheet assertion proves the string, not the paint, and that is the class
+# of false green that let BUG-260811021804 ship. A `"QPushButton:focus" in
+# app.styleSheet()` test would pass just as happily against a rule Qt silently
+# refuses to apply -- and while writing this fix the rule DID render while a
+# naive whole-image colour count read as "nothing changed", because the ring
+# colour and the button label are the same colour. Sample the ring.
+
+
+def _ring_pixel(button) -> str:
+    """The colour Qt actually paints at the middle of `button`'s top edge --
+    where the 2px focus border lives when the button has focus, and where the
+    plain button background is when it does not. Lower-case `#rrggbb`, the way
+    `QImage.pixelColor().name()` spells it (the qdarkstyle palette literals are
+    UPPER case, so a raw comparison against them never matches)."""
+    image = button.grab().toImage()
+    return image.pixelColor(button.width() // 2, 0).name()
+
+
+def _focus_ring_colour(light: bool) -> str:
+    """What the ring is *supposed* to be, read from the same qdarkstyle palette
+    the implementation reads -- not a second copy of the literal."""
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
+    return QColor((LightPalette if light else DarkPalette).COLOR_TEXT_1).name()
+
+
+def _contrast(one: str, two: str) -> float:
+    """WCAG 2.x relative-luminance contrast ratio between two `#rrggbb`."""
+
+    def luminance(hex_colour: str) -> float:
+        colour = QColor(hex_colour)
+        channels = []
+        for raw in (colour.redF(), colour.greenF(), colour.blueF()):
+            channels.append(
+                raw / 12.92 if raw <= 0.03928 else ((raw + 0.055) / 1.055) ** 2.4
+            )
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+    high, low = sorted((luminance(one), luminance(two)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+@pytest.fixture
+def focus_row(qtbot, qapp, _reset_app_palette):
+    """Two shown QPushButtons under a real theme. Showing is not optional: an
+    unshown widget's grab is not evidence, the app-wide QSS is only resolved
+    once the widget is polished, and `hasFocus()` needs a top level that has
+    been `show()`n."""
+    from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
+
+    def build(light: bool):
+        apply_theme(qapp, light)
+        host = QWidget()
+        qtbot.addWidget(host)
+        row = QHBoxLayout(host)
+        first, second = QPushButton("Find Next"), QPushButton("Find All")
+        row.addWidget(first)
+        row.addWidget(second)
+        host.show()
+        qapp.processEvents()
+        return host, first, second
+
+    return build
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_focused_button_paints_a_visible_ring(focus_row, qapp, light):
+    """The report itself: Tab onto a button and nothing happens. qdarkstyle
+    styles `QPushButton:hover` but ships no `:focus` rule, and its
+    `outline: none` kills Qt's native focus rectangle."""
+    _host, first, _second = focus_row(light)
+    first.setFocus()
+    qapp.processEvents()
+    assert first.hasFocus()
+    assert _ring_pixel(first) == _focus_ring_colour(light)
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_an_unfocused_button_paints_no_ring(focus_row, qapp, light):
+    """The absence half -- anchored by the presence half in the SAME sampler
+    and the SAME render, so it cannot pass by the probe being blind: `first`
+    below proves the ring colour is reachable at this pixel at this moment."""
+    _host, first, second = focus_row(light)
+    first.setFocus()
+    qapp.processEvents()
+    assert _ring_pixel(first) == _focus_ring_colour(light)  # the anchor
+    assert not second.hasFocus()
+    assert _ring_pixel(second) != _focus_ring_colour(light)
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_ring_follows_focus_from_one_button_to_the_next(focus_row, qapp, light):
+    """Tabbing on: exactly one button wears the ring at a time."""
+    _host, first, second = focus_row(light)
+    ring = _focus_ring_colour(light)
+
+    first.setFocus()
+    qapp.processEvents()
+    assert _ring_pixel(first) == ring
+    assert _ring_pixel(second) != ring
+
+    second.setFocus()
+    qapp.processEvents()
+    assert _ring_pixel(second) == ring
+    assert _ring_pixel(first) != ring
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_focus_does_not_move_the_button(focus_row, qapp, light):
+    """The base rule is `padding: 2px; border: none` and the focus rule is
+    `padding: 0px; border: 2px` -- 2px of box either way, so gaining focus
+    cannot resize the button or jitter the row it sits in."""
+    _host, first, _second = focus_row(light)
+    resting = first.size()
+    first.setFocus()
+    qapp.processEvents()
+    assert first.size() == resting
+
+
+def test_the_ring_survives_a_theme_flip(focus_row, qapp):
+    """A flip re-applies the whole app stylesheet, so the ring must come back
+    in the NEW theme's colour -- and the rule must not be appended twice.
+    (`apply_theme` builds the combined text once per theme and caches it; an
+    implementation that concatenated the tail on every call would compound,
+    and the four PaletteChange events a flip fires would make that worse.)"""
+    _host, first, _second = focus_row(False)
+    first.setFocus()
+    qapp.processEvents()
+    assert _ring_pixel(first) == _focus_ring_colour(False)
+
+    apply_theme(qapp, True)
+    apply_theme(qapp, False)
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    assert _ring_pixel(first) == _focus_ring_colour(True)
+    assert qapp.styleSheet().count("QPushButton:focus") == 1
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_ring_clears_3_to_1_against_the_button_in_both_themes(light):
+    """Two hardcoded status colours in this app previously measured 2.96:1 and
+    2.74:1, each failing 3:1 in exactly one theme -- so the indicator is
+    measured, not eyeballed, against BOTH the resting and the hover button
+    background.
+
+    This is why the ring is NOT `COLOR_ACCENT_3`, which the bug entry proposed
+    so it would match qdarkstyle's own `QLineEdit:focus` border: that accent is
+    picked to read against an *input* background and against a *button* it
+    measures 1.56:1 dark / 1.06:1 light -- invisible, i.e. the same bug with
+    extra steps."""
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
+    palette = LightPalette if light else DarkPalette
+    ring = _focus_ring_colour(light)
+    resting = QColor(palette.COLOR_BACKGROUND_4).name()  # QPushButton background
+    hovered = QColor(palette.COLOR_BACKGROUND_5).name()  # QPushButton:hover
+    assert _contrast(ring, resting) >= 3.0
+    assert _contrast(ring, hovered) >= 3.0
+    # ... and the rejected accent really does fail, so this test is not vacuous.
+    assert _contrast(QColor(palette.COLOR_ACCENT_3).name(), resting) < 3.0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_tool_buttons_get_the_same_ring(qtbot, qapp, _reset_app_palette, light):
+    """QToolButton carries the identical defect from the identical qdarkstyle
+    shape (`padding: 2px; outline: none; border: none`, a `:hover` rule, no
+    `:focus`), so it rides the same single rule rather than a second one."""
+    from PySide6.QtWidgets import QHBoxLayout, QToolButton, QWidget
+
+    apply_theme(qapp, light)
+    host = QWidget()
+    qtbot.addWidget(host)
+    row = QHBoxLayout(host)
+    first, second = QToolButton(), QToolButton()
+    first.setText("Run")
+    second.setText("Stop")
+    for button in (first, second):
+        button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        row.addWidget(button)
+    host.show()
+    qapp.processEvents()
+
+    first.setFocus()
+    qapp.processEvents()
+    assert _ring_pixel(first) == _focus_ring_colour(light)
+    assert _ring_pixel(second) != _focus_ring_colour(light)

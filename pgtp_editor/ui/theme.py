@@ -102,6 +102,62 @@ def dark_palette() -> QPalette:
 # QApplication exists, and apply_theme always runs with one.
 _qss_cache: dict[bool, str] = {}
 
+#: Marker selector for the app-authored keyboard-focus rule appended to
+#: qdarkstyle's QSS. Tests assert on this rather than re-spelling the text.
+FOCUS_RULE_SELECTOR = "QPushButton:focus, QToolButton:focus"
+
+
+def _focus_visible_qss(pal) -> str:
+    """The app-authored tail appended to qdarkstyle's QSS so a keyboard-focused
+    button is VISIBLE (BUG-260812002838).
+
+    qdarkstyle styles ``QPushButton``/``QToolButton`` with ``outline: none;
+    border: none;`` and supplies ``:hover``/``:pressed``/``:checked`` but **no**
+    ``:focus`` rule -- so Tab-focusing a button paints it identically to an
+    unfocused one (no hover background, and the native focus rectangle is
+    suppressed by ``outline: none``). It does style ``:focus`` for text inputs
+    (``QLineEdit``/``QTextEdit``/``QComboBox``/the item views) and ships
+    focus-variant icons for check boxes and radio buttons, which is why only
+    the two button classes are dark here. This adds the missing rule for both,
+    for both themes.
+
+    **The colour is the button's own text colour** (``COLOR_TEXT_1``), not the
+    accent used for input focus. The bug entry proposed ``COLOR_ACCENT_3`` to
+    match ``QLineEdit:focus``, but that accent is chosen to read against an
+    *input* background, and measured against a *button* background it fails
+    even 3:1 in both themes -- dark ``#1A72BB`` on ``#455364`` is 1.56:1 and
+    light ``#73C7FF`` on ``#C0C4C8`` is 1.06:1 (against the hover background it
+    is worse still: 1.15:1 / 1.08:1). ``COLOR_TEXT_1`` is the one palette value
+    guaranteed by construction to read on the button, because qdarkstyle
+    already paints the button's label with it: 5.98:1 dark and 9.07:1 light
+    against the resting button, 4.40:1 / 7.97:1 against the hover background.
+    It also inverts with the theme for free -- no second, parallel colour table
+    (the mistake ``mode_indicator.py`` records).
+
+    **The box does not move.** The base rule is ``padding: 2px; border: none``
+    (total 2px); the focus rule is ``padding: 0px; border: 2px`` (total 2px
+    again), so focusing a button cannot jitter the layout -- and 2px is the
+    thickness WCAG 2.2's focus-appearance guidance asks for, which a 1px
+    qdarkstyle-style input border would not give.
+
+    No ``:focus:hover`` companion is needed (the bug entry proposed one):
+    qdarkstyle's ``:hover`` rule sets only ``background-color``/``color`` and
+    this one sets only ``border``/``padding``, so the two merge per-property and
+    a focused-and-hovered button keeps BOTH cues. That merge is not covered by a
+    test -- the offscreen platform will not enter the hover state (neither a
+    synthesised ``QEnterEvent`` nor ``WA_UnderMouse`` makes the QSS ``:hover``
+    rule take), so asserting it would mean asserting nothing.
+
+    ``:checked`` sets ``padding`` at equal specificity, so this rule is appended
+    *after* qdarkstyle's text to win by order and keep the box math right for
+    checked buttons too."""
+    return (
+        f"\n\n{FOCUS_RULE_SELECTOR} {{\n"
+        f"  border: 2px solid {pal.COLOR_TEXT_1};\n"
+        f"  padding: 0px;\n"
+        f"}}\n"
+    )
+
 
 def _qdarkstyle_stylesheet(light: bool) -> str:
     """The QDarkStyleSheet QSS (github.com/ColinDuquesnoy/QDarkStyleSheet, the
@@ -119,9 +175,13 @@ def _qdarkstyle_stylesheet(light: bool) -> str:
         from qdarkstyle.dark.palette import DarkPalette
         from qdarkstyle.light.palette import LightPalette
 
+        pal = LightPalette if light else DarkPalette
+        # The app-authored focus tail is folded into the CACHED string, so the
+        # "one QSS string per theme" invariant and the cache-identity tests
+        # hold unchanged, and apply_theme still does a single setStyleSheet.
         _qss_cache[light] = qdarkstyle.load_stylesheet(
-            qt_api="pyside6", palette=LightPalette if light else DarkPalette
-        )
+            qt_api="pyside6", palette=pal
+        ) + _focus_visible_qss(pal)
     return _qss_cache[light]
 
 
