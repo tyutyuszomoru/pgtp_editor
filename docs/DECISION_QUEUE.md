@@ -3144,7 +3144,9 @@ product scope, which is why this is filed rather than decided.
 
 ## DEC-260811094437 — Do the synthesized `CREATE TABLE`'s inheritance and partitioning gaps get closed, and what triggers closing them?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-12) — **but SUPERSEDED IN DIRECTION: the owner rejected the frame of the
+  question rather than choosing an option. See the answer below and `FQ-260812022749`. The three options
+  survive as the FALLBACK if the `pg_dump` route is rejected at design time.**
 - **Raised:** 2026-08-11, by the main session — this is the **deferred half of `DEC-260811022536`**, split out
   as that entry's answer directed. `DEC-260811022536` is otherwise ANSWERED and closed.
 - **Blocks:** **nothing today.** Nothing in the tree consumes the synthesized `CREATE TABLE` as anything but
@@ -3221,11 +3223,71 @@ option that cannot be reversed cheaply once a second renderer exists.
   missing things into an intentional boundary, and adds the sourcing constraint to §18.5 so no future
   migration generator reaches for this buffer.
 
+### ANSWER (2026-08-12) — **none of the three; the approach itself is redirected**
+
+The owner picked **no option**. They rejected the premise that the two structural gaps should be closed by
+extending the hand-rolled synthesizer at all. **Verbatim:**
+
+> *"serial in postgres is an int4 with default value at nextval('[any sequence]');. Defaults should show, so
+> serial shows. creating a table column as serial (or bigserial) or uuid, is not an issue as postgres
+> silently handles the creation of sequence and defaulting to nextval(). for the complete ddl you don't need
+> any special treatment, just a pg_dump. we can easily make this dependency... we can only create table ddls
+> if the correctly versioned pg_dump is on the local machine. this probably would simplify many many
+> problems. indeed, would simplify all ddl issues, if psycopg can't do it."*
+
+There are **two distinct things** in that answer, and they are recorded separately because only one of them
+supersedes this entry.
+
+**(1) A confirmation of shipped behaviour — `SERIAL` needs no special casing.** `SERIAL` is not a type: it is
+`int4` with a `DEFAULT nextval('…')`, so **rendering the default IS rendering `SERIAL`**, and the same holds
+for `bigserial`; Postgres creates the sequence and the default silently on the way in. This endorses what
+shipped in `69473cd`, where an implementer's judgement made that call. It now has an owner's ruling behind
+it and should not be revisited as an open question. **The durable form:** where Postgres expresses sugar as
+an ordinary catalog fact, reconstruct the fact, not the sugar.
+
+**(2) A change of approach that supersedes the question — get complete DDL from `pg_dump`.** Rather than
+growing `db/table_ddl.py` to cover inheritance and partitioning, source table DDL from the **`pg_dump`
+binary**, accepting a hard dependency: *table DDL is available only when a correctly-versioned `pg_dump` is
+on the local machine.* The owner's reasoning is that this does not merely close these two gaps — it
+*"would simplify all ddl issues"*, i.e. it removes the entire class of reconstruct-it-ourselves fidelity
+problems of which inheritance and partitioning are two instances, rather than paying them off one at a time.
+The conditional in the quote is load-bearing: *"if psycopg can't do it"* — an in-process route is preferred
+where one exists.
+
+**Verified fact recorded with the answer (checked in this sweep, both directions).** The dependency is
+already half-present: `pgtp_editor/db/sandbox.py` probes both binaries on `PATH` (`DATA_CLONE_TOOLS =
+("pg_dump", "pg_restore")`, `which("pg_dump")`/`which("pg_restore")` at `:172-173`, surfaced as
+`pg_dump_path`/`pg_restore_path` on the capability record) behind an **injectable `subprocess.run` seam**
+(`:77`), for sandbox data cloning — so the binary probe, the seam and the offline test discipline all exist
+and would be reused, not invented.
+
+**But the change is one of KIND, and the entry says so rather than presenting the dependency as free.**
+Today that dependency is **optional and degrades**: a sandbox without `pg_dump` simply cannot clone data,
+and §18.5 D2a already specifies its absence as *"a named, surfaced failure"*. Under the proposed route a
+**shipped, currently-working feature** — §18.1's table DDL pane, which renders today with no external binary
+at all — becomes **unavailable without a correctly-versioned local `pg_dump`**. That is the honest cost, and
+it is the thing design must answer: what the pane shows when the binary is missing or version-mismatched.
+
+**What this entry's status now means.** The question *"do the gaps get closed and what triggers it"* is
+**superseded in direction**, not answered by an option. The three options above are **not withdrawn** — they
+remain the recorded fallback if the `pg_dump` route is rejected at design time, and their costs still stand
+as analysed.
+
+**Unblocks.**
+- The `pg_dump`-sourced DDL approach is filed as **`FQ-260812022749`**, which is where the design work now
+  lives: version matching, the missing-binary surface, whether `psycopg` can do it in-process first, and
+  whether this replaces or supplements `db/table_ddl.py`.
+- `spec-maintainer` should record `SERIAL` needing no special treatment as settled (§18.1), and should
+  **re-point** §18.5's existing bold dependency warning — which today names `DEC-260811094437` as the place
+  the gaps get closed — at `FQ-260812022749` instead, since closing them is no longer expected to happen in
+  `table_ddl.py`.
+- No change to `db/table_ddl.py` today. Its two-gap notice stays true and stays accurate under either route.
+
 ---
 
 ## DEC-260812004358 — Confirm the trade: after the move, toolbar and shortcut customization are Maintenance-only
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-12)
 - **Raised:** 2026-08-12, by the main session, from `FQ-260812002827` (consolidated two-pane **Software
   settings** dialog), which flags this itself as *"owner to answer at design time"*.
 - **Blocks:** **nothing.** The feature is being implemented now with the default below, structured so an
@@ -3276,11 +3338,70 @@ surfaces. Reversal = re-add two `View` actions that open the Software Settings d
 Toolbar / Keyboard Shortcuts pane, and state in the spec why those two categories are exempt from the
 Maintenance gate.
 
+### ANSWER (2026-08-12) — option 1, **CONFIRMED as shipped**
+
+The owner confirmed the trade exactly as built: **no `View` entries; toolbar and keyboard-shortcut
+customization are reachable only in Maintenance mode**, through the `Settings ▸ Software settings…` pane.
+
+**Reasoning, and the durable part.** This was confirmed as the direct consequence of the owner's own earlier
+ruling that *"relocating means moving, so they won't be anymore where they were before"*, and of FQ-027's
+design that **the app is configured in Maintenance mode** — which is why the `Settings` menu is gated that
+way in the first place. A second `View` door would reintroduce precisely the scattering the consolidation
+existed to remove.
+
+**Status of this entry's own options.** It was filed as *"confirm the shipped default"*, and the
+confirmation converts it: this is now **settled design, not a default pending an answer**. Option 2 (a
+`View` second door) is **no longer a live option** and its recorded reversal cost is historical. Anyone who
+wants it must reopen this decision explicitly rather than treating it as still-open latitude.
+
+**Unblocks.** Nothing to implement. `spec-maintainer` records the reachability trade as settled design in
+the Supersession Ledger rows for the two relocated surfaces, phrased as a ruling rather than as a default.
+
+### SECOND RULING RECORDED IN THE SAME SWEEP (2026-08-12) — **absorption degrades as deletion**
+
+Raised during the 2026-08-12 sweep by the main session, about a call it had made alone while implementing
+`FQ-260812002827` and recorded only in a commit message. Filed here rather than as its own entry because it
+is a consequence of *this* relocation; cite it as **`DEC-260812004358`'s second ruling**.
+
+**The situation.** Four absorbed command ids — `View ▸ Customize Toolbar…`, `View ▸ Customize Shortcuts…`,
+`Settings ▸ Edit Snippets…`, `Settings ▸ Autoformatter settings…` — were given **no
+`toolbar_registry.RENAMED_ID_ALIASES` rows**, on the reasoning that they were *absorbed, not renamed*: there
+is no successor id meaning "customize the toolbar" for a stored id to resolve onto. The precedents point
+both ways — deletions (`file.save`, `database.deploy-this-edit`) deliberately get no row and are dropped by
+`resolve_ids`, while moves do get one (`database.project-status` → `file.project-status` kept its button
+when §18.8's screen changed menus). Absorption is neither: the *capability* survives behind a different
+door. The alternative considered was aliasing all four onto `settings.software-settings`, which
+`valid_ids`' de-duplication would collapse to a single button rather than four.
+
+**ANSWER: keep it as shipped — no alias rows.**
+
+**Reasoning, verbatim in substance:** *a pinned button for a command that no longer exists must not open a
+dialog that does five other things.* The owner accepted **both** silent consequences, explicitly:
+
+1. a customized toolbar containing any of those four buttons **loses that button** on next launch, and
+2. a **custom keyboard override** stored against any of those four ids is **also dropped** — verified in
+   this sweep at `pgtp_editor/ui/shortcut_registry.py:805-816`, which runs stored overrides through the
+   **same** `LEGACY_ID_ALIASES` → `RENAMED_ID_ALIASES` pair that `resolve_ids` uses.
+
+Consequence (2) was **not** weighed when the implementing session made the call alone — it was found during
+this sweep — and the owner's answer covers it knowingly. That is why the call is recorded here as a ruling
+rather than left in a commit message: the decision as originally made was not the decision as it stood.
+
+**THE DURABLE PART — a rule wider than these four ids.** **Absorption degrades as deletion.** An id whose
+*capability* survives behind a different door still gets **no alias row**. An alias table row is a claim
+that a command **moved**, and a command that was folded into a larger surface did not move — it stopped
+existing as a command. `resolve_ids` dropping the id is the honest degradation, and the same applies to the
+stored shortcut override. Only a genuine rename or menu-move earns a row.
+
+**Unblocks.** No code change. The next absorption follows the rule without re-asking, and
+`spec-maintainer` should carry the rule into §7's account of `RENAMED_ID_ALIASES`, where the
+deletion-vs-move distinction is already documented but the third case was not.
+
 ---
 
 ## DEC-260812004359 — Is the Software Settings dialog modal, given the shortcuts editor is non-modal today?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-12)
 - **Raised:** 2026-08-12, by the main session, from `FQ-260812002827`, which flags this itself as *"owner to
   answer at design time"*.
 - **Blocks:** **nothing.** The dialog is being built now with the default below; modality is one call on the
@@ -3324,11 +3445,39 @@ records "the Software Settings dialog is non-modal, single-instance, because the
 preview is load-bearing" so the next reader does not "tidy" it to modal. Reversal = one `setModal(True)`,
 drop the single-instance raise logic, and the manual notes that chords are tested after closing settings.
 
+### ANSWER (2026-08-12) — option 1, **CONFIRMED as shipped**
+
+The Software Settings dialog is **non-modal and single-instance**, as built.
+
+**Reasoning.** The confirmation was given on the ground that the shipped surfaces it absorbed were already
+non-modal, and that the keyboard-shortcuts pane's **live chord preview** — trying a key against the running
+application while the editor is open — is a real product property, not an artifact of how the dialog
+happened to be written. Modality would have traded that property for implementation tidiness, which is the
+wrong direction for a surface whose entire job is configuration.
+
+**Verified shipped shape at the time of answering** (`pgtp_editor/ui/main_window.py:3810`,
+`open_software_settings_dialog`): opened with `show()`, never `exec()`; no `setModal` call anywhere in
+`pgtp_editor/ui/software_settings_dialog.py`; a stored handle makes a second request **raise and focus the
+existing window** rather than build a rival, and the handle is dropped on `finished` so the next open
+rebuilds panes against current state rather than showing yesterday's values.
+
+**Non-modal and single-instance are ONE decision, not two.** A non-modal window that can be opened twice is
+two windows editing the same stores. Anyone removing the raise-and-focus logic must go modal in the same
+change, or reintroduce that bug.
+
+**Status of this entry's own options.** Now **settled design, not a shipped default awaiting confirmation**.
+Option 2 (modal) is no longer a live option; its recorded reversal cost is historical unless someone
+reopens this decision.
+
+**Unblocks.** Nothing to implement. `spec-maintainer` records *"the Software Settings dialog is non-modal
+and single-instance, because the shortcuts pane's live chord preview is load-bearing"* so a later reader
+does not "tidy" it to modal.
+
 ---
 
 ## DEC-260812004400 — Do the two unimplemented settings panes appear disabled, or not at all?
 
-- **Status:** OPEN
+- **Status:** ANSWERED (2026-08-12)
 - **Raised:** 2026-08-12, by the main session, from `FQ-260812002827`, which flags this itself as *"owner to
   answer at design time"*.
 - **Blocks:** **nothing**, and this is the least load-bearing of the three filed from this feature — it is
@@ -3371,3 +3520,24 @@ first costs nothing if the owner disagrees.
 `FQ-260812002828`/`FQ-260812002829` add their pane *and* its list row when their descriptions land. Reversal
 = add two disabled rows with a stated reason, and decide (a second, smaller question) whether selecting one
 shows an explanatory panel or nothing.
+
+### ANSWER (2026-08-12) — option 1, **CONFIRMED as shipped**
+
+**Four panes.** The two unbuilt colour categories are **omitted, not stubbed**.
+
+**Verified shipped shape:** `software_settings_dialog.SETTINGS_PANES` is a four-tuple —
+`snippets`, `toolbar`, `autoformatter`, `shortcuts` — carrying the comment *"FOUR, not six"*.
+
+**Reasoning, and the boundary it draws on FQ-023.** The confirmation keeps the FQ-023 principle (*a gesture
+states its reason rather than vanishing*) **scoped to gestures whose siblings are present**: `Add Trigger…`
+exists on other object kinds, so its absence on a matview reads as a bug and must be explained. A settings
+category the user has never been told about carries no such expectation — there is nothing for its absence
+to contradict — so a disabled row would be a "coming soon" with no date, i.e. a promise the app cannot keep.
+**This narrows FQ-023 deliberately rather than contradicting it, and that narrowing is the durable part.**
+
+**Status of this entry's own options.** Settled design, not a default pending an answer. Option 2 (six rows,
+two disabled) is no longer a live option unless someone reopens this.
+
+**Unblocks.** Nothing to implement. `FQ-260812002828` (syntax highlight colours) and `FQ-260812002829`
+(colour scheme) each add their pane **and** its category-list row in the same change, when the owner's
+descriptions land — neither adds a row ahead of a working pane.
