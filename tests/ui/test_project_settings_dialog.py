@@ -2,7 +2,7 @@
 """Tests for ProjectSettingsDialog (§18.2) -- the whole project JSON,
 viewable and editable, never a simplified subset. Never `.exec()`-ed."""
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QLineEdit, QTableWidgetItem, QTabWidget
+from PySide6.QtWidgets import QLineEdit, QPushButton, QTableWidgetItem, QTabWidget
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import DeployedObject, GitConfig, PgtpLink, ProjectSettings
@@ -17,6 +17,14 @@ def _sync_run(fn, on_result, on_error=None):
         on_result(fn())
     except Exception as exc:  # noqa: BLE001
         (on_error or (lambda _e: None))(exc)
+
+
+def _offline_prober(server_version=(16, 0, 3), **fields):
+    """A `Prober` stub. Required wherever the TARGET Test button is exercised:
+    that button now asks the prober for the server version after the tester
+    reports success (FQ-260812025353), and the real default `probe` would open
+    a psycopg connection."""
+    return lambda params, **_: SandboxCapabilities(server_version=server_version, **fields)
 
 
 def _full_settings() -> ProjectSettings:
@@ -236,21 +244,27 @@ def test_non_current_tab_fields_are_still_populated_by_set_settings(qtbot):
 # --- connection Test buttons (FQ-001) ----------------------------------------
 def test_target_test_reports_success_in_green(qtbot):
     dialog = ProjectSettingsDialog(
-        _full_settings(), tester=lambda params: (True, "Connected to PostgreSQL 16.2")
+        _full_settings(),
+        tester=lambda params: (True, "Connected to PostgreSQL 16.2"),
+        prober=_offline_prober(),
     )
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
 
     dialog.test_target()
 
-    assert dialog._target_status_label.text() == "Connected to PostgreSQL 16.2"
+    assert dialog._target_status_label.text() == (
+        "Connected to PostgreSQL 16.2 Server: PostgreSQL 16.0.3."
+    )
     assert "green" in dialog._target_status_label.styleSheet()
     assert dialog._target_test_button.isEnabled()
 
 
 def test_target_test_reports_failure_in_red(qtbot):
     dialog = ProjectSettingsDialog(
-        _full_settings(), tester=lambda params: (False, "could not connect to server")
+        _full_settings(),
+        tester=lambda params: (False, "could not connect to server"),
+        prober=_offline_prober(),
     )
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
@@ -280,7 +294,9 @@ def test_target_test_surfaces_a_raised_error_in_red(qtbot):
 def test_target_test_uses_the_currently_typed_fields_not_the_saved_settings(qtbot):
     seen = []
     dialog = ProjectSettingsDialog(
-        _full_settings(), tester=lambda params: (seen.append(params), (True, "ok"))[1]
+        _full_settings(),
+        tester=lambda params: (seen.append(params), (True, "ok"))[1],
+        prober=_offline_prober(),
     )
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
@@ -297,7 +313,9 @@ def test_target_test_uses_the_currently_typed_fields_not_the_saved_settings(qtbo
 def test_target_test_does_not_use_the_sandbox_fields(qtbot):
     seen = []
     dialog = ProjectSettingsDialog(
-        _full_settings(), tester=lambda params: (seen.append(params), (True, "ok"))[1]
+        _full_settings(),
+        tester=lambda params: (seen.append(params), (True, "ok"))[1],
+        prober=_offline_prober(),
     )
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
@@ -311,7 +329,7 @@ def test_target_test_does_not_use_the_sandbox_fields(qtbot):
 def test_sandbox_test_reports_probe_error_in_red(qtbot):
     dialog = ProjectSettingsDialog(
         _full_settings(),
-        prober=lambda params: SandboxCapabilities(probe_error="connection refused"),
+        prober=lambda params, **_: SandboxCapabilities(probe_error="connection refused"),
     )
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
@@ -327,7 +345,7 @@ def test_sandbox_test_non_superuser_is_a_red_failure_not_a_green_light(qtbot):
     """A connection that connects but is not a superuser must NOT get a green
     light -- that is exactly the failure mode the probe exists to catch."""
     dialog = ProjectSettingsDialog(
-        _full_settings(), prober=lambda params: SandboxCapabilities(is_superuser=False)
+        _full_settings(), prober=lambda params, **_: SandboxCapabilities(is_superuser=False)
     )
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
@@ -343,7 +361,7 @@ def test_sandbox_test_non_superuser_is_a_red_failure_not_a_green_light(qtbot):
 def test_sandbox_test_with_data_mode_names_the_missing_clone_tools(qtbot):
     dialog = ProjectSettingsDialog(
         ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA),
-        prober=lambda params: SandboxCapabilities(
+        prober=lambda params, **_: SandboxCapabilities(
             is_superuser=True, pg_dump_path=None, pg_restore_path=None
         ),
     )
@@ -362,7 +380,7 @@ def test_sandbox_test_with_data_mode_names_the_missing_clone_tools(qtbot):
 def test_sandbox_test_without_data_mode_ignores_missing_clone_tools(qtbot):
     dialog = ProjectSettingsDialog(
         ProjectSettings(sandbox_mode=SandboxMode.SCHEMA_ONLY),
-        prober=lambda params: SandboxCapabilities(
+        prober=lambda params, **_: SandboxCapabilities(
             is_superuser=True, pg_dump_path=None, pg_restore_path=None
         ),
     )
@@ -378,7 +396,7 @@ def test_sandbox_test_without_data_mode_ignores_missing_clone_tools(qtbot):
 def test_sandbox_test_full_green_superuser_with_clone_tools(qtbot):
     dialog = ProjectSettingsDialog(
         ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA),
-        prober=lambda params: SandboxCapabilities(
+        prober=lambda params, **_: SandboxCapabilities(
             is_superuser=True,
             pg_dump_path="/usr/bin/pg_dump",
             pg_restore_path="/usr/bin/pg_restore",
@@ -395,7 +413,7 @@ def test_sandbox_test_full_green_superuser_with_clone_tools(qtbot):
 
 
 def test_sandbox_test_surfaces_a_raised_error_in_red(qtbot):
-    def boom(params):
+    def boom(params, **_):
         raise RuntimeError("probe exploded")
 
     dialog = ProjectSettingsDialog(_full_settings(), prober=boom)
@@ -413,7 +431,7 @@ def test_sandbox_test_uses_the_currently_typed_fields_not_the_saved_settings(qtb
     seen = []
     dialog = ProjectSettingsDialog(
         _full_settings(),
-        prober=lambda params: (seen.append(params), SandboxCapabilities(is_superuser=True))[1],
+        prober=lambda params, **_: (seen.append(params), SandboxCapabilities(is_superuser=True))[1],
     )
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
@@ -436,7 +454,11 @@ def test_test_buttons_are_disabled_while_a_test_is_in_flight(qtbot):
         pending["fn"] = fn
         pending["on_result"] = on_result
 
-    dialog = ProjectSettingsDialog(_full_settings(), tester=lambda params: (True, "ok"))
+    dialog = ProjectSettingsDialog(
+        _full_settings(),
+        tester=lambda params: (True, "ok"),
+        prober=_offline_prober(),
+    )
     dialog._run_async = deferred
     qtbot.addWidget(dialog)
 
@@ -534,3 +556,193 @@ def test_every_tab_fits_at_the_opening_size(qtbot):
         needed = page.minimumSizeHint()
         assert needed.width() <= page.width(), tabs.tabText(index)
         assert needed.height() <= page.height(), tabs.tabText(index)
+
+
+# --- FQ-260812025353: the "Locate postgres binaries" folder -------------------
+def _make_tool(folder, name):
+    path = folder / name
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    return str(path)
+
+
+def test_binaries_folder_defaults_to_empty_which_means_path(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings())
+    qtbot.addWidget(dialog)
+
+    assert dialog.postgres_bin_dir() == ""
+    assert dialog.settings().postgres_bin_dir == ""
+    assert "PATH" in dialog.bin_dir_status_text()
+
+
+def test_binaries_folder_is_populated_and_round_trips(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings(postgres_bin_dir="/opt/pg17/bin"))
+    qtbot.addWidget(dialog)
+
+    assert dialog._postgres_bin_dir_edit.text() == "/opt/pg17/bin"
+    assert dialog.settings().postgres_bin_dir == "/opt/pg17/bin"
+
+
+def test_editing_the_binaries_folder_changes_the_settings_result(qtbot):
+    dialog = ProjectSettingsDialog(ProjectSettings())
+    qtbot.addWidget(dialog)
+
+    dialog._postgres_bin_dir_edit.setText("/opt/pg16/bin")
+
+    assert dialog.settings().postgres_bin_dir == "/opt/pg16/bin"
+
+
+def test_browse_writes_the_chosen_folder_into_the_field(qtbot):
+    dialog = ProjectSettingsDialog(
+        ProjectSettings(), folder_chooser=lambda *_a: "/opt/pg18/bin"
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.browse_for_postgres_bin_dir()
+
+    assert dialog.settings().postgres_bin_dir == "/opt/pg18/bin"
+
+
+def test_browse_cancelled_leaves_the_field_untouched(qtbot):
+    dialog = ProjectSettingsDialog(
+        ProjectSettings(postgres_bin_dir="/keep/me"), folder_chooser=lambda *_a: ""
+    )
+    qtbot.addWidget(dialog)
+
+    dialog.browse_for_postgres_bin_dir()
+
+    assert dialog.settings().postgres_bin_dir == "/keep/me"
+
+
+def test_a_complete_binaries_folder_reports_both_tools_found(qtbot, tmp_path):
+    _make_tool(tmp_path, "pg_dump")
+    _make_tool(tmp_path, "pg_restore")
+    dialog = ProjectSettingsDialog(ProjectSettings())
+    qtbot.addWidget(dialog)
+
+    dialog._postgres_bin_dir_edit.setText(str(tmp_path))
+
+    assert "Found" in dialog.bin_dir_status_text()
+    assert "green" in dialog._bin_dir_status_label.styleSheet()
+
+
+def test_an_incomplete_binaries_folder_warns_but_does_not_block(qtbot, tmp_path):
+    """Warn, never block: PATH is still a legitimate fallback and the user may
+    be mid-typing a path."""
+    _make_tool(tmp_path, "pg_dump")
+    dialog = ProjectSettingsDialog(ProjectSettings())
+    qtbot.addWidget(dialog)
+
+    dialog._postgres_bin_dir_edit.setText(str(tmp_path))
+
+    assert "pg_restore" in dialog.bin_dir_status_text()
+    assert "pg_dump" not in dialog.bin_dir_status_text()
+    # Nothing is disabled and the value is still saveable.
+    assert dialog.settings().postgres_bin_dir == str(tmp_path)
+
+
+def test_the_binaries_group_lives_on_the_connections_tab(qtbot):
+    dialog = ProjectSettingsDialog(_full_settings())
+    qtbot.addWidget(dialog)
+
+    tabs = dialog.findChild(QTabWidget)
+    connections_page = tabs.widget(
+        [tabs.tabText(i) for i in range(tabs.count())].index("Connections")
+    )
+
+    assert dialog._postgres_bin_dir_edit in connections_page.findChildren(QLineEdit)
+    assert dialog._browse_bin_dir_button in connections_page.findChildren(QPushButton)
+
+
+def test_the_sandbox_test_passes_the_typed_binaries_folder_to_the_probe(qtbot):
+    seen = {}
+
+    def prober(params, **kwargs):
+        seen.update(kwargs)
+        return SandboxCapabilities(is_superuser=True, server_version=(16, 0, 3))
+
+    dialog = ProjectSettingsDialog(_full_settings(), prober=prober)
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog._postgres_bin_dir_edit.setText("/opt/pg16/bin")
+
+    dialog.test_sandbox()
+
+    assert seen["bin_dir"] == "/opt/pg16/bin"
+
+
+def test_the_target_test_passes_the_typed_binaries_folder_to_the_probe(qtbot):
+    seen = {}
+
+    def prober(params, **kwargs):
+        seen.update(kwargs)
+        return SandboxCapabilities(server_version=(16, 0, 3))
+
+    dialog = ProjectSettingsDialog(
+        _full_settings(), tester=lambda params: (True, "Connected."), prober=prober
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+    dialog._postgres_bin_dir_edit.setText("/opt/pg16/bin")
+
+    dialog.test_target()
+
+    assert seen["bin_dir"] == "/opt/pg16/bin"
+
+
+# --- the Test buttons report the server version ------------------------------
+def test_the_sandbox_test_reports_the_server_version(qtbot):
+    dialog = ProjectSettingsDialog(
+        _full_settings(),
+        prober=_offline_prober(server_version=(18, 0, 1), is_superuser=True),
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+
+    dialog.test_sandbox()
+
+    assert dialog._sandbox_status_label.text() == (
+        "Connected — superuser. Server: PostgreSQL 18.0.1."
+    )
+
+
+def test_the_target_test_reports_the_server_version(qtbot):
+    dialog = ProjectSettingsDialog(
+        _full_settings(),
+        tester=lambda params: (True, "Connected."),
+        prober=_offline_prober(server_version=(15, 0, 6)),
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+
+    dialog.test_target()
+
+    assert dialog._target_status_label.text() == "Connected. Server: PostgreSQL 15.0.6."
+
+
+def test_an_unknown_server_version_appends_nothing_rather_than_inventing_one(qtbot):
+    dialog = ProjectSettingsDialog(
+        _full_settings(),
+        tester=lambda params: (True, "Connected."),
+        prober=_offline_prober(server_version=()),
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+
+    dialog.test_target()
+
+    assert dialog._target_status_label.text() == "Connected."
+
+
+def test_a_failed_target_test_never_asks_the_prober_for_a_version(qtbot):
+    def prober(params, **kwargs):  # pragma: no cover -- must never be reached
+        raise AssertionError("an unreachable host must cost one attempt, not two")
+
+    dialog = ProjectSettingsDialog(
+        _full_settings(), tester=lambda params: (False, "refused"), prober=prober
+    )
+    dialog._run_async = _sync_run
+    qtbot.addWidget(dialog)
+
+    dialog.test_target()
+
+    assert dialog._target_status_label.text() == "refused"

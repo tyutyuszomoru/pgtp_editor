@@ -3,8 +3,11 @@
 (reused as-is by §18.2's New Project "Test superuser" button). psycopg is
 never imported here: `probe` takes an injected `runner=` callable.
 """
+import subprocess
+
 import pytest
 
+from pgtp_editor.db import sandbox
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import (
     ColumnInfo,
@@ -1392,3 +1395,226 @@ def test_no_row_this_version_writes_can_match_the_orphan_delete():
     for text in ("", "   ", "ALTER TABLE pr.invoice DROP COLUMN legacy;"):
         assert len(text_sha1(text)) == 40
         assert text_sha1(text) != ""
+
+
+# --- FQ-260812025353: folder-aware binary resolution --------------------------
+def _make_tool(folder, name):
+    path = folder / name
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    return str(path)
+
+
+def test_resolve_tool_with_no_folder_is_todays_path_only_behaviour():
+    resolved = sandbox.resolve_tool("pg_dump", None, _which_stub({"pg_dump": "/usr/bin/pg_dump"}))
+    assert resolved == "/usr/bin/pg_dump"
+
+
+def test_resolve_tool_prefers_the_configured_folder_over_path(tmp_path):
+    """The precedence that makes the setting worth having: PATH is what picks
+    the WRONG major on a multi-version machine, so the explicit answer wins."""
+    expected = _make_tool(tmp_path, "pg_dump")
+
+    resolved = sandbox.resolve_tool(
+        "pg_dump", str(tmp_path), _which_stub({"pg_dump": "/usr/bin/pg_dump"})
+    )
+
+    assert resolved == expected
+
+
+def test_resolve_tool_falls_back_to_path_when_the_folder_lacks_the_tool(tmp_path):
+    resolved = sandbox.resolve_tool(
+        "pg_dump", str(tmp_path), _which_stub({"pg_dump": "/usr/bin/pg_dump"})
+    )
+    assert resolved == "/usr/bin/pg_dump"
+
+
+def test_resolve_tool_returns_none_when_the_tool_is_nowhere(tmp_path):
+    assert sandbox.resolve_tool("pg_dump", str(tmp_path), _which_stub({})) is None
+
+
+def test_resolve_tool_finds_the_windows_exe_spelling(tmp_path):
+    expected = _make_tool(tmp_path, "pg_dump.exe")
+    assert sandbox.resolve_tool("pg_dump", str(tmp_path), _which_stub({})) == expected
+
+
+def test_resolve_tool_prefers_the_unsuffixed_spelling_when_both_exist(tmp_path):
+    expected = _make_tool(tmp_path, "pg_dump")
+    _make_tool(tmp_path, "pg_dump.exe")
+    assert sandbox.resolve_tool("pg_dump", str(tmp_path), _which_stub({})) == expected
+
+
+def test_resolve_tool_ignores_a_directory_named_like_the_tool(tmp_path):
+    (tmp_path / "pg_dump").mkdir()
+    assert sandbox.resolve_tool("pg_dump", str(tmp_path), _which_stub({})) is None
+
+
+def test_probe_resolves_the_tools_from_the_configured_folder(tmp_path):
+    dump = _make_tool(tmp_path, "pg_dump")
+    restore = _make_tool(tmp_path, "pg_restore")
+
+    caps = probe(
+        _PARAMS,
+        runner=_canned_runner(),
+        which=_which_stub({"pg_dump": "/usr/bin/pg_dump", "pg_restore": "/usr/bin/pg_restore"}),
+        bin_dir=str(tmp_path),
+    )
+
+    assert (caps.pg_dump_path, caps.pg_restore_path) == (dump, restore)
+
+
+def test_probe_with_an_empty_folder_still_uses_path(tmp_path):
+    caps = probe(
+        _PARAMS,
+        runner=_canned_runner(),
+        which=_which_stub({"pg_dump": "/usr/bin/pg_dump", "pg_restore": "/usr/bin/pg_restore"}),
+        bin_dir=str(tmp_path),
+    )
+    assert caps.pg_dump_path == "/usr/bin/pg_dump"
+
+
+def test_require_data_clone_tools_uses_the_configured_folder(tmp_path):
+    dump = _make_tool(tmp_path, "pg_dump")
+    restore = _make_tool(tmp_path, "pg_restore")
+
+    assert require_data_clone_tools(
+        which=_which_stub({}), bin_dir=str(tmp_path)
+    ) == (dump, restore)
+
+
+def test_missing_clone_tool_error_names_the_configured_folder(tmp_path):
+    with pytest.raises(MissingCloneToolError) as exc_info:
+        require_data_clone_tools(which=_which_stub({}), bin_dir=str(tmp_path))
+    assert exc_info.value.bin_dir == str(tmp_path)
+    assert str(tmp_path) in str(exc_info.value)
+
+
+def test_clone_data_invokes_the_binaries_found_in_the_configured_folder(tmp_path):
+    dump = _make_tool(tmp_path, "pg_dump")
+    restore = _make_tool(tmp_path, "pg_restore")
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout=b"dump", stderr=b"")
+
+    sandbox.clone_data(
+        _TARGET, _SANDBOX, which=_which_stub({}), run=run, bin_dir=str(tmp_path)
+    )
+
+    assert [argv[0] for argv in calls] == [dump, restore]
+
+
+# --- FQ-260812022749 Part 1: pg_dump --version --------------------------------
+def test_parse_pg_dump_version_reads_the_standard_banner():
+    assert sandbox.parse_pg_dump_version("pg_dump (PostgreSQL) 16.2\n") == (16, 2)
+
+
+def test_parse_pg_dump_version_reads_a_packagers_parenthetical():
+    text = "pg_dump (PostgreSQL) 16.2 (Ubuntu 16.2-1.pgdg22.04+1)\n"
+    assert sandbox.parse_pg_dump_version(text) == (16, 2)
+
+
+def test_parse_pg_dump_version_reads_a_three_part_version():
+    assert sandbox.parse_pg_dump_version("pg_dump (PostgreSQL) 9.6.24") == (9, 6, 24)
+
+
+def test_parse_pg_dump_version_reads_a_bare_major():
+    assert sandbox.parse_pg_dump_version("pg_dump (PostgreSQL) 18") == (18,)
+
+
+def test_parse_pg_dump_version_returns_none_for_nonsense():
+    assert sandbox.parse_pg_dump_version("command not found") is None
+    assert sandbox.parse_pg_dump_version("") is None
+
+
+def test_pg_dump_version_runs_the_binary_through_the_injected_runner():
+    seen = []
+
+    def run(argv, **kwargs):
+        seen.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout=b"pg_dump (PostgreSQL) 17.0\n")
+
+    assert sandbox.pg_dump_version("/opt/pg17/pg_dump", run) == (17, 0)
+    assert seen[0][0] == ["/opt/pg17/pg_dump", "--version"]
+    assert seen[0][1]["timeout"] == sandbox.PG_DUMP_VERSION_TIMEOUT_S
+
+
+def test_pg_dump_version_is_none_when_there_is_no_path():
+    def run(argv, **kwargs):  # pragma: no cover -- must never be reached
+        raise AssertionError("no binary means no spawn")
+
+    assert sandbox.pg_dump_version(None, run) is None
+
+
+def test_pg_dump_version_is_none_on_a_nonzero_exit():
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"boom")
+
+    assert sandbox.pg_dump_version("/usr/bin/pg_dump", run) is None
+
+
+def test_pg_dump_version_is_none_when_the_process_raises():
+    def run(argv, **kwargs):
+        raise OSError("no such file")
+
+    assert sandbox.pg_dump_version("/usr/bin/pg_dump", run) is None
+
+
+def test_pg_dump_version_is_none_on_a_timeout():
+    def run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, 10)
+
+    assert sandbox.pg_dump_version("/usr/bin/pg_dump", run) is None
+
+
+def test_pg_dump_version_accepts_str_stdout():
+    def run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 0, stdout="pg_dump (PostgreSQL) 15.6\n")
+
+    assert sandbox.pg_dump_version("/usr/bin/pg_dump", run) == (15, 6)
+
+
+def test_probe_never_spawns_a_process_even_when_pg_dump_is_found(monkeypatch):
+    """`probe`'s tool detection is resolution only. Folding the version spawn
+    into it would make every existing probe call site start a process."""
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append(a))
+
+    probe(
+        _PARAMS,
+        runner=_canned_runner(),
+        which=_which_stub({"pg_dump": "/usr/bin/pg_dump"}),
+    )
+
+    assert calls == []
+
+
+def test_open_sandbox_records_the_binaries_folder_on_the_session():
+    """`reset()` re-clones through `clone_data`, and it must find the SAME
+    binaries the original provisioning used -- not whatever PATH answers
+    later. So the folder is recorded on the session, like `mode` is."""
+    session = open_sandbox(
+        _SANDBOX,
+        runner=_canned_runner(
+            database="pgtp_sandbox_x", owner_marker=f"{OWNER_MARKER_PREFIX}abc"
+        ),
+        postgres_bin_dir="/opt/pg17/bin",
+    )
+
+    assert session.postgres_bin_dir == "/opt/pg17/bin"
+
+
+def test_a_session_defaults_to_no_binaries_folder_which_means_path():
+    assert SandboxSession(params=_SANDBOX, mode=SandboxMode.SCHEMA_ONLY).postgres_bin_dir == ""
+
+
+def test_local_postgres_backend_probes_through_the_binaries_folder(tmp_path):
+    dump = _make_tool(tmp_path, "pg_dump")
+    backend = LocalPostgresBackend(
+        params=_PARAMS,
+        runner=_canned_runner(),
+        which=_which_stub({"pg_dump": "/usr/bin/pg_dump"}),
+        postgres_bin_dir=str(tmp_path),
+    )
+
+    assert backend.capabilities().pg_dump_path == dump

@@ -4,6 +4,7 @@ drift comparison. Qt-free, DB-free -- real temp directories only.
 """
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import (
+    SETTINGS_DIRNAME,
     DeployedObject,
     DriftMarkers,
     GitConfig,
@@ -564,3 +565,33 @@ def test_compute_drift_markers_is_recomputed_fresh_not_cached(tmp_path):
 
     assert first["ddl/pr.recalc.sql"].locally_edited is False
     assert second["ddl/pr.recalc.sql"].locally_edited is True
+
+
+# --- FQ-260812025353: postgres_bin_dir ---------------------------------------
+def test_postgres_bin_dir_defaults_to_empty_meaning_path():
+    assert ProjectSettings().postgres_bin_dir == ""
+
+
+def test_postgres_bin_dir_round_trips_through_the_settings_file(tmp_path):
+    save_settings(tmp_path, ProjectSettings(postgres_bin_dir="/opt/pg17/bin"))
+    assert load_settings(tmp_path).postgres_bin_dir == "/opt/pg17/bin"
+
+
+def test_a_settings_file_written_before_the_field_existed_loads_as_path(tmp_path):
+    path = settings_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"name": "legacy"}', encoding="utf-8")
+
+    settings = load_settings(tmp_path)
+
+    assert settings.name == "legacy"
+    assert settings.postgres_bin_dir == ""
+
+
+def test_the_binaries_folder_is_written_to_the_gitignored_project_store(tmp_path):
+    """A machine-specific absolute path must never travel via git; the store
+    that already holds the password is exactly where it belongs."""
+    save_settings(tmp_path, ProjectSettings(postgres_bin_dir="/opt/pg17/bin"))
+
+    assert "/opt/pg17/bin" in settings_path(tmp_path).read_text(encoding="utf-8")
+    assert SETTINGS_DIRNAME in (tmp_path / ".gitignore").read_text(encoding="utf-8")

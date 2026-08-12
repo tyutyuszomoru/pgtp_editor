@@ -69,6 +69,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -94,12 +95,14 @@ from pgtp_editor.db.ddl_project import (
 )
 from pgtp_editor.db.introspect import test_connection
 from pgtp_editor.db.sandbox import (
+    DATA_CLONE_TOOLS,
     SANDBOX_DB_PREFIX,
     ForeignDatabaseError,
     SandboxCapabilities,
     SandboxMode,
     is_app_owned,
     probe,
+    resolve_tool,
 )
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.sandbox_controller import (
@@ -112,7 +115,14 @@ from pgtp_editor.ui.sandbox_controller import (
 _DEPLOYED_COLUMNS = ("Path", "Content hash", "Deployed commit")
 
 Tester = Callable[[ConnectionParams], "tuple[bool, str]"]
-Prober = Callable[[ConnectionParams], SandboxCapabilities]
+#: Takes the params plus the project's configured binaries folder
+#: (FQ-260812025353), because `pg_dump`/`pg_restore` detection is part of what
+#: a probe reports and PATH is no longer the only place they can live. A stub
+#: therefore has the shape `lambda params, **_: SandboxCapabilities(...)`.
+Prober = Callable[..., SandboxCapabilities]
+#: Injectable folder picker, so no test ever reaches an un-patched modal
+#: `QFileDialog` (§30 / the testing policy's modal rule).
+FolderChooser = Callable[[QWidget, str, str], str]
 
 #: Which database `create_sandbox_database`'s admin connection targets --
 #: PostgreSQL forbids `CREATE DATABASE` inside the database being created. An
@@ -183,6 +193,43 @@ BASELINE_CAVEAT = (
 )
 
 
+#: The *Locate postgres binaries* field's explanation (FQ-260812025353). Says
+#: what EMPTY means, because "leave it blank" is the common, correct answer and
+#: a blank required-looking field otherwise reads as unfinished configuration.
+POSTGRES_BIN_DIR_NOTE = (
+    "The folder holding this project's pg_dump / pg_restore. Leave EMPTY to "
+    "use whatever is on PATH (today's behaviour). Set it when several "
+    "PostgreSQL versions are installed, or when the client tools are not on "
+    "PATH at all — pg_dump refuses to dump from a server NEWER than itself, "
+    "so the major must match this project's server. Stored per project, in "
+    "the gitignored settings file, so this machine-specific path never "
+    "travels via git."
+)
+
+#: Shown when the folder is set but a tool is not in it. **Warn, never block**
+#: (the entry's own ruling): the field is optional, the user may be mid-typing,
+#: and PATH is still a legitimate fallback — which is exactly what the resolver
+#: does.
+BIN_DIR_MISSING_TEMPLATE = (
+    "{missing} not in this folder — falling back to PATH for {missing_short}."
+)
+
+
+def _with_server_version(message: str, caps: SandboxCapabilities) -> str:
+    """Append `" Server: PostgreSQL 16.0.3."` to a Test button's status text.
+
+    The point of showing it (FQ-260812025353) is that the user can SEE a
+    server-vs-`pg_dump` major mismatch — quality and sandbox each state their
+    own, and `pg_dump` refuses a server newer than itself. An **unknown**
+    version (a probe that could not read `server_version_num`) appends
+    nothing: silence is honest, an invented number is not.
+    """
+    if not caps.server_version:
+        return message
+    version = ".".join(str(part) for part in caps.server_version)
+    return f"{message} Server: PostgreSQL {version}."
+
+
 def _clear_layout(layout) -> None:
     """Remove and destroy everything in `layout` -- how an unavailable control
     becomes ABSENT rather than disabled (§18.5 carve-out 2)."""
@@ -212,6 +259,8 @@ class ProjectSettingsDialog(QDialog):
         confirm: Callable[[str], bool] | None = None,
         settings_saver: Callable[..., None] = save_settings,
         maintenance_database: str = DEFAULT_MAINTENANCE_DATABASE,
+        folder_chooser: FolderChooser = QFileDialog.getExistingDirectory,
+        tool_resolver: Callable[..., "str | None"] = resolve_tool,
     ) -> None:
         super().__init__(parent)
         # Test seams, same convention as ConnectionSetupDialog (generic
@@ -227,6 +276,8 @@ class ProjectSettingsDialog(QDialog):
         self._confirm = confirm
         self._settings_saver = settings_saver
         self._maintenance_database = maintenance_database
+        self._folder_chooser = folder_chooser
+        self._tool_resolver = tool_resolver
         #: The `ProjectSettings` a provisioning gesture PERSISTED, or None when
         #: none has run. Deliberately not `settings()` (which is the live field
         #: state): the host must adopt exactly what was written to disk.
@@ -319,6 +370,28 @@ class ProjectSettingsDialog(QDialog):
         sandbox_group.layout().addRow(provisioning_group)
         sandbox_group.layout().addRow(self._sandbox_action_status)
 
+        # -- FQ-260812025353: where this project's client binaries live ------
+        # On the Connections tab, not a tab of its own: which pg_dump answers
+        # is a property of WHICH SERVER this project talks to (its major must
+        # match), so it belongs beside the two connection profiles that
+        # determine it.
+        binaries_group = QGroupBox("PostgreSQL binaries")
+        self._postgres_bin_dir_edit = QLineEdit()
+        browse_button = QPushButton("Browse…")
+        browse_button.clicked.connect(self.browse_for_postgres_bin_dir)
+        self._browse_bin_dir_button = browse_button
+        bin_dir_row = QHBoxLayout()
+        bin_dir_row.addWidget(self._postgres_bin_dir_edit, 1)
+        bin_dir_row.addWidget(browse_button)
+        self._bin_dir_status_label = QLabel("")
+        self._bin_dir_status_label.setWordWrap(True)
+        bin_dir_note = QLabel(POSTGRES_BIN_DIR_NOTE)
+        bin_dir_note.setWordWrap(True)
+        binaries_form = QFormLayout(binaries_group)
+        binaries_form.addRow("Locate postgres binaries:", bin_dir_row)
+        binaries_form.addRow(self._bin_dir_status_label)
+        binaries_form.addRow(bin_dir_note)
+
         git_group = QGroupBox("Git (optional -- not yet used)")
         self._git_server_edit = QLineEdit()
         self._git_user_edit = QLineEdit()
@@ -361,6 +434,7 @@ class ProjectSettingsDialog(QDialog):
         connections_layout = QVBoxLayout(connections_page)
         connections_layout.addWidget(target_group)
         connections_layout.addWidget(sandbox_group)
+        connections_layout.addWidget(binaries_group)
         tabs.addTab(connections_page, "Connections")
 
         git_page = QWidget()
@@ -390,6 +464,8 @@ class ProjectSettingsDialog(QDialog):
         # live -- so every one of those is a rebuild trigger. Connected after
         # `set_settings` so the seeding writes do not fire a rebuild before the
         # action layout has ever been built.
+        self._postgres_bin_dir_edit.textChanged.connect(self._refresh_bin_dir_status)
+        self._refresh_bin_dir_status()
         self._sandbox_host_edit.textChanged.connect(self._rebuild_sandbox_actions)
         self._target_host_edit.textChanged.connect(self._rebuild_sandbox_actions)
         self._sandbox_mode_with_data_radio.toggled.connect(
@@ -454,6 +530,59 @@ class ProjectSettingsDialog(QDialog):
             return SandboxMode.WITH_DATA
         return SandboxMode.SCHEMA_ONLY
 
+    # --- PostgreSQL binaries folder (FQ-260812025353) -------------------------
+    def postgres_bin_dir(self) -> str:
+        """The binaries folder as **currently typed**, not as last saved --
+        same rule as `target_params`/`sandbox_params`, so a Test run right
+        after editing the field tests what is on screen."""
+        return self._postgres_bin_dir_edit.text().strip()
+
+    def browse_for_postgres_bin_dir(self) -> None:
+        """Pick the folder. Goes through the injected `folder_chooser` seam so
+        no test ever reaches an un-patched modal `QFileDialog`."""
+        chosen = self._folder_chooser(
+            self, "Locate postgres binaries", self.postgres_bin_dir()
+        )
+        if chosen:
+            self._postgres_bin_dir_edit.setText(str(chosen))
+
+    def _refresh_bin_dir_status(self, *_args) -> None:
+        """**Warn, never block.** States what the folder currently resolves to
+        -- empty means PATH; set-and-complete says so; set-but-incomplete names
+        the tools that will fall back to PATH. No subprocess is spawned here:
+        this runs on every keystroke, and existence is a filesystem question."""
+        bin_dir = self.postgres_bin_dir()
+        if not bin_dir:
+            self._bin_dir_status_label.setText(
+                "Empty — pg_dump and pg_restore are taken from PATH."
+            )
+            self._bin_dir_status_label.setStyleSheet("")
+            return
+        missing = [
+            name
+            for name in DATA_CLONE_TOOLS
+            if self._tool_resolver(name, bin_dir=bin_dir, which=lambda _name: None) is None
+        ]
+        if not missing:
+            self._bin_dir_status_label.setText(
+                f"Found {' and '.join(DATA_CLONE_TOOLS)} in this folder."
+            )
+            self._bin_dir_status_label.setStyleSheet("color: green;")
+            return
+        joined = " and ".join(missing)
+        self._bin_dir_status_label.setText(
+            BIN_DIR_MISSING_TEMPLATE.format(missing=joined, missing_short=joined)
+        )
+        # Amber, not red: this is a warning, and the operation can still work
+        # (PATH answers). A CSS colour NAME, like the `red`/`green` the two
+        # Test rows above already use -- a hex literal here would be a second
+        # colour table outside `resources/themes/*.json`, which a test forbids.
+        self._bin_dir_status_label.setStyleSheet("color: darkorange;")
+
+    def bin_dir_status_text(self) -> str:
+        """What the binaries-folder warning line currently says."""
+        return self._bin_dir_status_label.text()
+
     def test_target(self) -> None:
         """Generic connectivity check, identical to `ConnectionSetupDialog.test`.
         Run off the GUI thread so an unreachable host can't freeze the dialog."""
@@ -461,6 +590,19 @@ class ProjectSettingsDialog(QDialog):
         self._target_status_label.setStyleSheet("")
         self._target_status_label.setText("Testing connection…")
         params = self.target_params()
+        bin_dir = self.postgres_bin_dir()
+
+        def work() -> "tuple[bool, str]":
+            # The connectivity verdict stays the `tester`'s (unchanged); the
+            # VERSION comes from the probe, because `test_connection` runs
+            # `SELECT 1` and knows nothing about the server. Only asked for
+            # once the connection is known good, so an unreachable host costs
+            # one failed attempt, not two.
+            ok, message = self._tester(params)
+            if not ok:
+                return False, message
+            caps = self._prober(params, bin_dir=bin_dir)
+            return True, _with_server_version(message, caps)
 
         def on_result(result: "tuple[bool, str]") -> None:
             ok, message = result
@@ -474,7 +616,7 @@ class ProjectSettingsDialog(QDialog):
             self._target_status_label.setStyleSheet("color: red;")
             self._target_test_button.setEnabled(True)
 
-        self._run_async(lambda: self._tester(params), on_result=on_result, on_error=on_error)
+        self._run_async(work, on_result=on_result, on_error=on_error)
 
     def test_sandbox(self) -> None:
         """Superuser-specific probe, identical to `NewProjectDialog.test_sandbox`
@@ -484,6 +626,7 @@ class ProjectSettingsDialog(QDialog):
         self._sandbox_status_label.setStyleSheet("")
         self._sandbox_status_label.setText("Testing…")
         params = self.sandbox_params()
+        bin_dir = self.postgres_bin_dir()
 
         def on_result(caps: SandboxCapabilities) -> None:
             self._apply_sandbox_probe_result(caps)
@@ -493,7 +636,11 @@ class ProjectSettingsDialog(QDialog):
             self._sandbox_status_label.setStyleSheet("color: red;")
             self._sandbox_test_button.setEnabled(True)
 
-        self._run_async(lambda: self._prober(params), on_result=on_result, on_error=on_error)
+        self._run_async(
+            lambda: self._prober(params, bin_dir=bin_dir),
+            on_result=on_result,
+            on_error=on_error,
+        )
 
     def _apply_sandbox_probe_result(self, caps: SandboxCapabilities) -> None:
         self._sandbox_test_button.setEnabled(True)
@@ -514,12 +661,17 @@ class ProjectSettingsDialog(QDialog):
                 if path is None
             ]
             self._sandbox_status_label.setText(
-                "Connected — superuser, but 'with data' needs "
-                f"{' and '.join(missing)} on PATH (not found)."
+                _with_server_version(
+                    "Connected — superuser, but 'with data' needs "
+                    f"{' and '.join(missing)} on PATH (not found).",
+                    caps,
+                )
             )
             self._sandbox_status_label.setStyleSheet("color: red;")
             return
-        self._sandbox_status_label.setText("Connected — superuser.")
+        self._sandbox_status_label.setText(
+            _with_server_version("Connected — superuser.", caps)
+        )
         self._sandbox_status_label.setStyleSheet("color: green;")
 
     # --- Sandbox provisioning (§18.5 D2/D2a) ---------------------------------
@@ -755,6 +907,7 @@ class ProjectSettingsDialog(QDialog):
             self._sandbox_mode_with_data_radio.setChecked(True)
         else:
             self._sandbox_mode_without_data_radio.setChecked(True)
+        self._postgres_bin_dir_edit.setText(settings.postgres_bin_dir)
         self._git_server_edit.setText(settings.git.server)
         self._git_user_edit.setText(settings.git.user)
         self._git_branch_edit.setText(settings.git.checkout_branch)
@@ -782,6 +935,7 @@ class ProjectSettingsDialog(QDialog):
             target=self.target_params(),
             sandbox=self.sandbox_params(),
             sandbox_mode=self.sandbox_mode(),
+            postgres_bin_dir=self.postgres_bin_dir(),
             git=GitConfig(
                 server=self._git_server_edit.text(),
                 user=self._git_user_edit.text(),

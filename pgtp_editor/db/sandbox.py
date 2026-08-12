@@ -57,6 +57,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Protocol
 
 from .config import ConnectionParams
@@ -82,6 +83,128 @@ ProcessRunner = Callable[..., "subprocess.CompletedProcess[bytes]"]
 #: the taxonomy at the top of §18, these are required ONLY for the "with
 #: data" clone variant -- the schema-only baseline path needs neither.
 DATA_CLONE_TOOLS = ("pg_dump", "pg_restore")
+
+
+# ---------------------------------------------------------------------------
+# Folder-aware binary resolution (FQ-260812025353)
+# ---------------------------------------------------------------------------
+
+#: The filename suffixes a client binary can carry. Tried in order, on every
+#: platform: Windows spells them `pg_dump.exe`, POSIX spells them `pg_dump`,
+#: and probing both unconditionally keeps this function's behaviour (and its
+#: tests) identical everywhere rather than branching on `os.name` -- a
+#: platform-conditional resolver is exactly the shape the offscreen suite
+#: cannot see through.
+_BINARY_SUFFIXES = ("", ".exe")
+
+
+def resolve_tool(
+    name: str,
+    bin_dir: str | None = None,
+    which: Which = shutil.which,
+) -> str | None:
+    """Locate one PostgreSQL client binary -- **the configured folder first,
+    `PATH` second** (FQ-260812025353).
+
+    **Why folder-first and not PATH-first.** The setting exists precisely
+    because `PATH` picks an *arbitrary* major on a machine with several
+    PostgreSQL installations, and `pg_dump` refuses a server newer than
+    itself. A PATH-first order would make the setting a no-op in exactly the
+    situation it was added for (the tools ARE on `PATH` -- they are the wrong
+    ones), so the explicit, per-project answer must beat the ambient one.
+    `PATH` remains the fallback, which keeps `bin_dir=""`/`None` bit-for-bit
+    identical to today's behaviour.
+
+    A folder that is set but does not contain `name` falls back to `PATH`
+    rather than failing: the field is optional, the user may be mid-typing,
+    and `PATH` is still a legitimate answer (warn, never block).
+
+    Returns an absolute-ish path string, or None when the tool is nowhere.
+    """
+    if bin_dir:
+        folder = Path(bin_dir)
+        for suffix in _BINARY_SUFFIXES:
+            candidate = folder / f"{name}{suffix}"
+            try:
+                if candidate.is_file():
+                    return str(candidate)
+            except OSError:
+                # An unreadable/invalid path is "not found here", never a
+                # raise -- resolution never fails the caller.
+                continue
+    return which(name)
+
+
+def binary_resolver(bin_dir: str | None = None, which: Which = shutil.which) -> Which:
+    """`resolve_tool` bound to one `bin_dir`, shaped as the existing `Which`
+    seam so no call site has to know whether a path came from the configured
+    folder or from `PATH`. This is the ONE binary-resolution rule in the app;
+    nothing else may grow a second one.
+    """
+    return lambda name: resolve_tool(name, bin_dir=bin_dir, which=which)
+
+
+# ---------------------------------------------------------------------------
+# `pg_dump --version` (FQ-260812022749 Part 1)
+# ---------------------------------------------------------------------------
+
+#: Seconds before a `pg_dump --version` probe is abandoned. `--version` does
+#: not connect to anything, so anything slower than this is a wedged binary,
+#: and the honest answer is then "could not read the version" (degrade), not
+#: a frozen caller.
+PG_DUMP_VERSION_TIMEOUT_S = 10
+
+#: `pg_dump --version` prints `pg_dump (PostgreSQL) 16.2`, and packagers
+#: append their own parenthetical (`... 16.2 (Ubuntu 16.2-1.pgdg22.04+1)`).
+#: The FIRST dotted number on the first line is the version; there are no
+#: digits before it in any spelling PostgreSQL has ever emitted.
+_PG_DUMP_VERSION_RE = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?")
+
+
+def parse_pg_dump_version(text: str) -> tuple[int, ...] | None:
+    """`"pg_dump (PostgreSQL) 16.2\\n"` -> `(16, 2)`. **Pure** -- every branch
+    is testable without a binary. Returns None for anything unparseable,
+    which the caller must treat as "absent", never as "fine"."""
+    first_line = str(text).strip().splitlines()[0] if str(text).strip() else ""
+    match = _PG_DUMP_VERSION_RE.search(first_line)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.groups() if part is not None)
+
+
+def pg_dump_version(
+    pg_dump_path: str | None,
+    run: ProcessRunner = subprocess.run,
+    *,
+    timeout: int = PG_DUMP_VERSION_TIMEOUT_S,
+) -> tuple[int, ...] | None:
+    """Run `<pg_dump_path> --version` through the existing `ProcessRunner`
+    seam and decode the answer. **Never raises** -- a missing binary, a
+    non-zero exit, a timeout or unparseable output all come back as None,
+    because every one of them means the same thing to the caller: this
+    machine has no `pg_dump` we can trust, so degrade.
+
+    Deliberately NOT called from `probe()`: `probe`'s tool detection is
+    `shutil.which` only and spawns nothing, and folding a subprocess into it
+    would make every existing probe call site (and every test that stubs
+    `which`) start a process.
+    """
+    if not pg_dump_path:
+        return None
+    try:
+        result = run(
+            [pg_dump_path, "--version"],
+            capture_output=True,
+            timeout=timeout,
+        )
+    except Exception:  # noqa: BLE001 -- any failure means "unknown version"
+        return None
+    if getattr(result, "returncode", 1) != 0:
+        return None
+    stdout = getattr(result, "stdout", b"") or b""
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8", errors="replace")
+    return parse_pg_dump_version(stdout)
 
 #: Sibling of `db/introspect.py::SCHEMA_SQL` -- run as ONE call so the whole
 #: probe is one connection, one round trip (§18.5 D2).
@@ -114,8 +237,9 @@ class SandboxCapabilities:
     #: Set instead of raising when `probe` could not reach/query the server.
     #: Every other field is left at its default in that case.
     probe_error: str | None = None
-    #: D2a -- absolute paths of `pg_dump`/`pg_restore` if found on `PATH`,
-    #: else None. Irrelevant to the schema-only baseline path (which needs
+    #: D2a -- absolute paths of `pg_dump`/`pg_restore` if found (the
+    #: project's configured binaries folder first, then `PATH` -- see
+    #: `resolve_tool`), else None. Irrelevant to the schema-only baseline path (which needs
     #: neither); only consulted when the user chooses "with data" cloning.
     pg_dump_path: str | None = None
     pg_restore_path: str | None = None
@@ -123,7 +247,7 @@ class SandboxCapabilities:
     @property
     def data_clone_available(self) -> bool:
         """Whether D2a's "with data" clone path can run at all -- both
-        `pg_dump` and `pg_restore` must be present on `PATH`. Never implies
+        `pg_dump` and `pg_restore` must be locatable. Never implies
         anything about the schema-only path, which needs neither."""
         return self.pg_dump_path is not None and self.pg_restore_path is not None
 
@@ -159,18 +283,25 @@ def probe(
     params: ConnectionParams,
     runner: Runner = run_queries,
     which: Which = shutil.which,
+    *,
+    bin_dir: str | None = None,
 ) -> SandboxCapabilities:
     """Probe a Postgres connection's capabilities in one round trip, plus
-    (D2a) whether `pg_dump`/`pg_restore` are on `PATH`.
+    (D2a) whether `pg_dump`/`pg_restore` can be located.
 
     **Never raises** -- any failure (unreachable host, bad credentials, a
     server too old to know one of the settings queried) becomes
     `probe_error`, mirroring `db/introspect.py::test_connection`'s
     never-raises contract. Tool detection is independent of the DB round
-    trip and never itself fails the probe -- `shutil.which` doesn't raise.
+    trip and never itself fails the probe -- neither `shutil.which` nor
+    `resolve_tool` raises, and neither spawns a process.
+
+    `bin_dir` is §18.2's per-project *Locate postgres binaries* folder
+    (FQ-260812025353); empty/None is today's PATH-only behaviour exactly.
     """
-    pg_dump_path = which("pg_dump")
-    pg_restore_path = which("pg_restore")
+    resolve = binary_resolver(bin_dir, which)
+    pg_dump_path = resolve("pg_dump")
+    pg_restore_path = resolve("pg_restore")
     try:
         rows = runner(params, PROBE_SQL)
         version_rows, superuser_rows, installed_rows, available_rows, db_rows = rows
@@ -266,13 +397,24 @@ class MissingCloneToolError(RuntimeError):
     silent fallback to schema-only"). Carries which binary was missing and
     what `PATH` was searched, so the message can be shown verbatim."""
 
-    def __init__(self, binary: str, path_searched: str) -> None:
+    def __init__(self, binary: str, path_searched: str, bin_dir: str = "") -> None:
         self.binary = binary
         self.path_searched = path_searched
+        #: The project's configured *Locate postgres binaries* folder, if any
+        #: -- named in the message because "not found on PATH" is a misleading
+        #: sentence when a folder WAS configured and simply lacked the tool.
+        self.bin_dir = bin_dir
+        where = (
+            f"in the configured PostgreSQL binaries folder ({bin_dir}) or on "
+            f"PATH ({path_searched})"
+            if bin_dir
+            else f"on PATH ({path_searched})"
+        )
         super().__init__(
-            f"'{binary}' was not found on PATH ({path_searched}). Install "
-            f"PostgreSQL client tools (providing '{binary}') or add them to "
-            f"PATH, or choose 'without data' sandbox provisioning instead."
+            f"'{binary}' was not found {where}. Install PostgreSQL client "
+            f"tools (providing '{binary}'), point Project Settings -> "
+            "Connections -> PostgreSQL binaries at the folder that contains "
+            "them, or choose 'without data' sandbox provisioning instead."
         )
 
 
@@ -289,19 +431,23 @@ class CloneDataError(RuntimeError):
         )
 
 
-def require_data_clone_tools(which: Which = shutil.which) -> tuple[str, str]:
-    """Locate `pg_dump`/`pg_restore` on `PATH`, or raise `MissingCloneToolError`
-    naming exactly which binary is missing. Called before `clone_data` so the
-    failure is reported up front, not mid-pipeline. Returns
+def require_data_clone_tools(
+    which: Which = shutil.which, *, bin_dir: str | None = None
+) -> tuple[str, str]:
+    """Locate `pg_dump`/`pg_restore` -- **configured folder first, `PATH`
+    second** (`resolve_tool`) -- or raise `MissingCloneToolError` naming
+    exactly which binary is missing. Called before `clone_data` so the failure
+    is reported up front, not mid-pipeline. Returns
     `(pg_dump_path, pg_restore_path)`.
     """
     path_searched = os.environ.get("PATH", "")
-    pg_dump_path = which("pg_dump")
+    resolve = binary_resolver(bin_dir, which)
+    pg_dump_path = resolve("pg_dump")
     if pg_dump_path is None:
-        raise MissingCloneToolError("pg_dump", path_searched)
-    pg_restore_path = which("pg_restore")
+        raise MissingCloneToolError("pg_dump", path_searched, bin_dir or "")
+    pg_restore_path = resolve("pg_restore")
     if pg_restore_path is None:
-        raise MissingCloneToolError("pg_restore", path_searched)
+        raise MissingCloneToolError("pg_restore", path_searched, bin_dir or "")
     return pg_dump_path, pg_restore_path
 
 
@@ -320,6 +466,7 @@ def clone_data(
     *,
     which: Which = shutil.which,
     run: ProcessRunner = subprocess.run,
+    bin_dir: str | None = None,
 ) -> None:
     """D2a's "with data" clone: `pg_dump` (custom format) the **target**
     database, then `pg_restore` it into the (already `create_sandbox_database`-
@@ -335,7 +482,7 @@ def clone_data(
     Both `which` and `run` are injectable so tests never need real binaries
     or a real Postgres server.
     """
-    pg_dump_path, pg_restore_path = require_data_clone_tools(which=which)
+    pg_dump_path, pg_restore_path = require_data_clone_tools(which=which, bin_dir=bin_dir)
 
     dump_result = run(
         [
@@ -1096,6 +1243,11 @@ class SandboxSession:
     #: Needed only to re-clone on `reset()` for a `WITH_DATA` sandbox.
     target_params: ConnectionParams | None = None
     executor: SandboxExecutor = field(default=DEFAULT_SANDBOX_EXECUTOR)
+    #: §18.2's per-project *Locate postgres binaries* folder, recorded on the
+    #: session for the same reason `mode` is: `reset()` re-clones through
+    #: `clone_data`, and it must find the SAME binaries the original
+    #: provisioning used -- not whatever `PATH` happens to answer later.
+    postgres_bin_dir: str = ""
 
     def apply(self, ref: str, ddl_text: str) -> None:
         """Apply one DDL object's text and record it in the `applied`
@@ -1161,7 +1313,7 @@ class SandboxSession:
                     "SandboxSession.reset() for a WITH_DATA sandbox requires "
                     "target_params to re-clone from, but none were recorded"
                 )
-            clone_data(self.target_params, self.params)
+            clone_data(self.target_params, self.params, bin_dir=self.postgres_bin_dir or None)
         elif self.baseline is not None:
             statements = build_baseline_sql(self.baseline)
             if statements:
@@ -1177,6 +1329,7 @@ def open_sandbox(
     schema_names: frozenset[str] = frozenset(),
     baseline: DatabaseSchema | BaselineSnapshot | None = None,
     target_params: ConnectionParams | None = None,
+    postgres_bin_dir: str = "",
 ) -> SandboxSession:
     """Probe `params`, check ownership, and return a `SandboxSession` --
     **the only gate** (§18.5 D2). Raises `ForeignDatabaseError` if the
@@ -1192,7 +1345,7 @@ def open_sandbox(
     through; a caller that only wants to read/apply without ever calling
     `reset()` may omit them.
     """
-    caps = probe(params, runner=runner)
+    caps = probe(params, runner=runner, bin_dir=postgres_bin_dir or None)
     if not is_app_owned(caps.database, caps.owner_marker):
         raise ForeignDatabaseError(caps.database)
     return SandboxSession(
@@ -1202,6 +1355,7 @@ def open_sandbox(
         baseline=baseline,
         target_params=target_params,
         executor=executor,
+        postgres_bin_dir=postgres_bin_dir,
     )
 
 
@@ -1233,6 +1387,7 @@ def provision_sandbox(
     target_params: ConnectionParams | None = None,
     runner: Runner = run_queries,
     executor: SandboxExecutor = DEFAULT_SANDBOX_EXECUTOR,
+    postgres_bin_dir: str = "",
 ) -> SandboxSession:
     """Provision a fresh, already-`create_sandbox_database`-created sandbox
     from `schema` and return a working `SandboxSession` (§18.5 D2).
@@ -1260,12 +1415,13 @@ def provision_sandbox(
         schema_names=frozenset(schema_names),
         baseline=schema,
         target_params=target_params,
+        postgres_bin_dir=postgres_bin_dir,
     )
 
     if mode is SandboxMode.WITH_DATA:
         if target_params is None:
             raise ValueError("provision_sandbox(mode=WITH_DATA) requires target_params")
-        clone_data(target_params, sandbox_params)
+        clone_data(target_params, sandbox_params, bin_dir=postgres_bin_dir or None)
     else:
         statements = build_baseline_sql(schema)
         if statements:
@@ -1372,13 +1528,20 @@ class LocalPostgresBackend:
     params: ConnectionParams
     runner: Runner = run_queries
     which: Which = shutil.which
+    #: §18.2's per-project *Locate postgres binaries* folder; "" is PATH-only.
+    postgres_bin_dir: str = ""
     _cached_capabilities: SandboxCapabilities | None = field(default=None, init=False, repr=False)
 
     def ensure_running(self) -> ConnectionParams:
         """No-op for v1's bring-your-own backend -- fails loudly (raises
         `ConnectionError`) if the configured profile cannot be reached at
         all, rather than silently returning params that don't work."""
-        caps = probe(self.params, runner=self.runner, which=self.which)
+        caps = probe(
+            self.params,
+            runner=self.runner,
+            which=self.which,
+            bin_dir=self.postgres_bin_dir or None,
+        )
         if caps.probe_error is not None:
             raise ConnectionError(
                 f"could not connect to the configured local Postgres sandbox: {caps.probe_error}"
@@ -1387,5 +1550,10 @@ class LocalPostgresBackend:
 
     def capabilities(self) -> SandboxCapabilities:
         if self._cached_capabilities is None:
-            self._cached_capabilities = probe(self.params, runner=self.runner, which=self.which)
+            self._cached_capabilities = probe(
+                self.params,
+                runner=self.runner,
+                which=self.which,
+                bin_dir=self.postgres_bin_dir or None,
+            )
         return self._cached_capabilities
