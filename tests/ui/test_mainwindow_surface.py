@@ -66,6 +66,10 @@ EXPECTED_HOST_SURFACE = {
     "_activity_write_timer",
     "_adopt_provisioned_sandbox_settings",
     "_apply_caption_edits",
+    # The status bar's DEBUG chip reads its colours from the theme now rather
+    # than carrying `color: white; background: #b33` inline (BUG-260812063745),
+    # so it needs a repaint hook on the host that owns the status bar.
+    "_apply_debug_chip_colours",
     "_apply_ddl_object_to_sandbox",
     "_apply_ddl_object_to_target",
     "_apply_history_text",

@@ -111,6 +111,12 @@ from pgtp_editor.ui.sandbox_controller import (
     SandboxOperation,
     sandbox_name_stem,
 )
+from pgtp_editor.ui.status_colours import (
+    STATUS_ERROR,
+    STATUS_OK,
+    STATUS_WARNING,
+    StatusLabel,
+)
 
 _DEPLOYED_COLUMNS = ("Path", "Content hash", "Deployed commit")
 
@@ -383,7 +389,7 @@ class ProjectSettingsDialog(QDialog):
         bin_dir_row = QHBoxLayout()
         bin_dir_row.addWidget(self._postgres_bin_dir_edit, 1)
         bin_dir_row.addWidget(browse_button)
-        self._bin_dir_status_label = QLabel("")
+        self._bin_dir_status_label = StatusLabel("")
         self._bin_dir_status_label.setWordWrap(True)
         bin_dir_note = QLabel(POSTGRES_BIN_DIR_NOTE)
         bin_dir_note.setWordWrap(True)
@@ -492,12 +498,17 @@ class ProjectSettingsDialog(QDialog):
         return host_edit, port_edit, database_edit, user_edit, password_edit
 
     @staticmethod
-    def _add_test_row(group: QGroupBox, slot: Callable[[], None]) -> tuple[QPushButton, QLabel]:
+    def _add_test_row(
+        group: QGroupBox, slot: Callable[[], None]
+    ) -> tuple[QPushButton, StatusLabel]:
         """The Test button + inline colored status label row, same shape as
-        `ConnectionSetupDialog` / `NewProjectDialog` (FQ-001)."""
+        `ConnectionSetupDialog` / `NewProjectDialog` (FQ-001).
+
+        A `StatusLabel`, not a plain `QLabel`: the verdict's colour is a
+        per-theme value derived from a remembered KIND (BUG-260812063745)."""
         test_button = QPushButton("Test")
         test_button.clicked.connect(slot)
-        status_label = QLabel("")
+        status_label = StatusLabel("")
         test_row = QHBoxLayout()
         test_row.addWidget(test_button)
         test_row.addWidget(status_label, 1)
@@ -556,7 +567,7 @@ class ProjectSettingsDialog(QDialog):
             self._bin_dir_status_label.setText(
                 "Empty — pg_dump and pg_restore are taken from PATH."
             )
-            self._bin_dir_status_label.setStyleSheet("")
+            self._bin_dir_status_label.set_status_kind(None)
             return
         missing = [
             name
@@ -567,17 +578,18 @@ class ProjectSettingsDialog(QDialog):
             self._bin_dir_status_label.setText(
                 f"Found {' and '.join(DATA_CLONE_TOOLS)} in this folder."
             )
-            self._bin_dir_status_label.setStyleSheet("color: green;")
+            self._bin_dir_status_label.set_status_kind(STATUS_OK)
             return
         joined = " and ".join(missing)
         self._bin_dir_status_label.setText(
             BIN_DIR_MISSING_TEMPLATE.format(missing=joined, missing_short=joined)
         )
         # Amber, not red: this is a warning, and the operation can still work
-        # (PATH answers). A CSS colour NAME, like the `red`/`green` the two
-        # Test rows above already use -- a hex literal here would be a second
-        # colour table outside `resources/themes/*.json`, which a test forbids.
-        self._bin_dir_status_label.setStyleSheet("color: darkorange;")
+        # (PATH answers). `STATUS_WARNING` resolves it per theme from the
+        # `status_warning` accent -- which is what this line was reaching for
+        # when it named `darkorange` to satisfy the colour guard's letter
+        # (BUG-260812063745); that name measured 2.23:1 on the light chrome.
+        self._bin_dir_status_label.set_status_kind(STATUS_WARNING)
 
     def bin_dir_status_text(self) -> str:
         """What the binaries-folder warning line currently says."""
@@ -587,8 +599,7 @@ class ProjectSettingsDialog(QDialog):
         """Generic connectivity check, identical to `ConnectionSetupDialog.test`.
         Run off the GUI thread so an unreachable host can't freeze the dialog."""
         self._target_test_button.setEnabled(False)
-        self._target_status_label.setStyleSheet("")
-        self._target_status_label.setText("Testing connection…")
+        self._target_status_label.set_status("Testing connection…", None)
         params = self.target_params()
         bin_dir = self.postgres_bin_dir()
 
@@ -606,14 +617,16 @@ class ProjectSettingsDialog(QDialog):
 
         def on_result(result: "tuple[bool, str]") -> None:
             ok, message = result
-            color = "green" if ok else "red"
-            self._target_status_label.setText(message)
-            self._target_status_label.setStyleSheet(f"color: {color};")
+            # A KIND, not a colour: the indirect `"green" if ok else "red"`
+            # form this replaces was invisible to the colour guard *and*
+            # theme-blind (BUG-260812063745).
+            self._target_status_label.set_status(
+                message, STATUS_OK if ok else STATUS_ERROR
+            )
             self._target_test_button.setEnabled(True)
 
         def on_error(exc: BaseException) -> None:
-            self._target_status_label.setText(str(exc))
-            self._target_status_label.setStyleSheet("color: red;")
+            self._target_status_label.set_status(str(exc), STATUS_ERROR)
             self._target_test_button.setEnabled(True)
 
         self._run_async(work, on_result=on_result, on_error=on_error)
@@ -623,8 +636,7 @@ class ProjectSettingsDialog(QDialog):
         -- NOT a plain connectivity check, which would give a false green light
         to a connection that connects but can't `CREATE EXTENSION` (§18.5 D2)."""
         self._sandbox_test_button.setEnabled(False)
-        self._sandbox_status_label.setStyleSheet("")
-        self._sandbox_status_label.setText("Testing…")
+        self._sandbox_status_label.set_status("Testing…", None)
         params = self.sandbox_params()
         bin_dir = self.postgres_bin_dir()
 
@@ -632,8 +644,7 @@ class ProjectSettingsDialog(QDialog):
             self._apply_sandbox_probe_result(caps)
 
         def on_error(exc: BaseException) -> None:
-            self._sandbox_status_label.setText(str(exc))
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status(str(exc), STATUS_ERROR)
             self._sandbox_test_button.setEnabled(True)
 
         self._run_async(
@@ -645,14 +656,13 @@ class ProjectSettingsDialog(QDialog):
     def _apply_sandbox_probe_result(self, caps: SandboxCapabilities) -> None:
         self._sandbox_test_button.setEnabled(True)
         if caps.probe_error is not None:
-            self._sandbox_status_label.setText(caps.probe_error)
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status(caps.probe_error, STATUS_ERROR)
             return
         if not caps.is_superuser:
             self._sandbox_status_label.setText(
                 "Connected, but NOT a superuser — sandbox provisioning needs CREATE EXTENSION."
             )
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status_kind(STATUS_ERROR)
             return
         if self.sandbox_mode() is SandboxMode.WITH_DATA and not caps.data_clone_available:
             missing = [
@@ -667,12 +677,12 @@ class ProjectSettingsDialog(QDialog):
                     caps,
                 )
             )
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status_kind(STATUS_ERROR)
             return
         self._sandbox_status_label.setText(
             _with_server_version("Connected — superuser.", caps)
         )
-        self._sandbox_status_label.setStyleSheet("color: green;")
+        self._sandbox_status_label.set_status_kind(STATUS_OK)
 
     # --- Sandbox provisioning (§18.5 D2/D2a) ---------------------------------
     def _on_session_changed(self, _alive: bool) -> None:

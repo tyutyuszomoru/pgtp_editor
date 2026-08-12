@@ -112,6 +112,7 @@ from pgtp_editor.db.sandbox import (
 )
 from pgtp_editor.model.parser import PgtpParseError, load_project
 from pgtp_editor.ui.async_task import run_async
+from pgtp_editor.ui.status_colours import STATUS_ERROR, STATUS_OK, StatusLabel
 from pgtp_editor.ui.sandbox_controller import (
     MAINTENANCE_DATABASE,
     generate_sandbox_database_names,
@@ -233,7 +234,7 @@ class NewProjectDialog(QDialog):
         quality_form.addRow("Password:", self._quality_password_edit)
         self._quality_test_button = QPushButton("Test")
         self._quality_test_button.clicked.connect(self.test_quality)
-        self._quality_status_label = QLabel("")
+        self._quality_status_label = StatusLabel("")
         quality_test_row = QHBoxLayout()
         quality_test_row.addWidget(self._quality_test_button)
         quality_test_row.addWidget(self._quality_status_label, 1)
@@ -274,7 +275,7 @@ class NewProjectDialog(QDialog):
         sandbox_form.addRow(self._sandbox_database_caveat)
         self._sandbox_test_button = QPushButton("Test")
         self._sandbox_test_button.clicked.connect(self.test_sandbox)
-        self._sandbox_status_label = QLabel("")
+        self._sandbox_status_label = StatusLabel("")
         sandbox_test_row = QHBoxLayout()
         sandbox_test_row.addWidget(self._sandbox_test_button)
         sandbox_test_row.addWidget(self._sandbox_status_label, 1)
@@ -320,8 +321,10 @@ class NewProjectDialog(QDialog):
         git_layout.addLayout(git_form)
         git_layout.addWidget(git_caveat)
 
-        self._folder_error_label = QLabel("")
-        self._folder_error_label.setStyleSheet("color: red;")
+        # A `StatusLabel` in the error KIND, painted per theme: plain
+        # `color: red` fails 4.5:1 on BOTH chromes (BUG-260812063745).
+        self._folder_error_label = StatusLabel("")
+        self._folder_error_label.set_status_kind(STATUS_ERROR)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -549,16 +552,14 @@ class NewProjectDialog(QDialog):
             # Tried, and answered -- so `quality_advisory` has nothing left to
             # say about it, red included: the user is reading that answer here.
             self._quality_tested = True
-            self._quality_status_label.setText(message)
-            self._quality_status_label.setStyleSheet(
-                "color: green;" if ok else "color: red;"
+            self._quality_status_label.set_status(
+                message, STATUS_OK if ok else STATUS_ERROR
             )
             self._quality_test_button.setEnabled(True)
 
         def on_error(exc: BaseException) -> None:
             self._quality_tested = True
-            self._quality_status_label.setText(str(exc))
-            self._quality_status_label.setStyleSheet("color: red;")
+            self._quality_status_label.set_status(str(exc), STATUS_ERROR)
             self._quality_test_button.setEnabled(True)
 
         self._run_async(
@@ -578,16 +579,14 @@ class NewProjectDialog(QDialog):
         connection project creation will use to `CREATE DATABASE`: there is no
         sandbox database to probe yet."""
         self._sandbox_test_button.setEnabled(False)
-        self._sandbox_status_label.setStyleSheet("")
-        self._sandbox_status_label.setText("Testing…")
+        self._sandbox_status_label.set_status("Testing…", None)
         params = self.sandbox_admin_params()
 
         def on_result(caps: SandboxCapabilities) -> None:
             self._apply_sandbox_probe_result(caps)
 
         def on_error(exc: BaseException) -> None:
-            self._sandbox_status_label.setText(str(exc))
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status(str(exc), STATUS_ERROR)
             self._sandbox_test_button.setEnabled(True)
 
         self._run_async(
@@ -600,14 +599,13 @@ class NewProjectDialog(QDialog):
         self._sandbox_test_button.setEnabled(True)
         self._last_probe = caps
         if caps.probe_error is not None:
-            self._sandbox_status_label.setText(caps.probe_error)
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status(caps.probe_error, STATUS_ERROR)
             return
         if not caps.is_superuser:
             self._sandbox_status_label.setText(
                 "Connected, but NOT a superuser — sandbox provisioning needs CREATE EXTENSION."
             )
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status_kind(STATUS_ERROR)
             return
         if self.sandbox_mode() is SandboxMode.WITH_DATA and not caps.data_clone_available:
             missing = [
@@ -619,7 +617,8 @@ class NewProjectDialog(QDialog):
                 "Connected — superuser, but 'with data' needs "
                 f"{' and '.join(missing)} on PATH (not found)."
             )
-            self._sandbox_status_label.setStyleSheet("color: red;")
+            self._sandbox_status_label.set_status_kind(STATUS_ERROR)
             return
-        self._sandbox_status_label.setText("Connected — superuser.")
-        self._sandbox_status_label.setStyleSheet("color: green;")
+        self._sandbox_status_label.set_status(
+            "Connected — superuser.", STATUS_OK
+        )

@@ -6,10 +6,13 @@ calls an injected prober stub, so no real connection is ever opened. The
 folder picker is exercised by driving the underlying line edit / accept
 logic rather than a real QFileDialog popup.
 """
+from PySide6.QtWidgets import QLabel
+
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import GitConfig
 from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
+from pgtp_editor.ui.status_colours import STATUS_ERROR, STATUS_OK
 
 
 def _sync_run(fn, on_result, on_error=None):
@@ -241,7 +244,7 @@ def test_with_data_caveat_mentions_one_shot_and_pg_dump_restore(qtbot):
     pg_dump/pg_restore. The dialog must state this, not bury it."""
     dialog = NewProjectDialog()
     qtbot.addWidget(dialog)
-    labels = [child.text() for child in dialog.findChildren(type(dialog._folder_error_label))]
+    labels = [child.text() for child in dialog.findChildren(QLabel)]
     combined = " ".join(labels).lower()
     assert "pg_dump" in combined
     assert "pg_restore" in combined
@@ -326,7 +329,7 @@ def test_git_section_states_it_is_not_yet_used(qtbot):
     """§18.2: git is optional/TBD -- the dialog must not imply otherwise."""
     dialog = NewProjectDialog()
     qtbot.addWidget(dialog)
-    labels = [child.text() for child in dialog.findChildren(type(dialog._folder_error_label))]
+    labels = [child.text() for child in dialog.findChildren(QLabel)]
     assert any("not yet" in text.lower() or "later" in text.lower() for text in labels)
 
 
@@ -520,6 +523,12 @@ def test_attaching_a_pgtp_does_not_gate_accept(qtbot, tmp_path):
 def test_quality_test_uses_generic_connectivity_not_the_superuser_probe(
     qtbot, tmp_path
 ):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     probed = []
     tested = []
     dialog = NewProjectDialog(
@@ -536,10 +545,16 @@ def test_quality_test_uses_generic_connectivity_not_the_superuser_probe(
     assert len(tested) == 1
     assert tested[0].host == "quality.example.com"
     assert dialog._quality_status_label.text() == "Connected."
-    assert "green" in dialog._quality_status_label.styleSheet()
+    assert dialog._quality_status_label.status_kind() == STATUS_OK
 
 
 def test_quality_test_reports_a_failure_without_blocking_anything(qtbot, tmp_path):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = NewProjectDialog(tester=lambda params: (False, "could not connect"))
     dialog._run_async = _sync_run
     qtbot.addWidget(dialog)
@@ -549,7 +564,7 @@ def test_quality_test_reports_a_failure_without_blocking_anything(qtbot, tmp_pat
     dialog.test_quality()
 
     assert dialog._quality_status_label.text() == "could not connect"
-    assert "red" in dialog._quality_status_label.styleSheet()
+    assert dialog._quality_status_label.status_kind() == STATUS_ERROR
     got = []
     dialog.accepted.connect(lambda: got.append(True))
     dialog._on_accept_clicked()

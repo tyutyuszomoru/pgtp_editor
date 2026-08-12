@@ -46,6 +46,8 @@
     "command_caret_background": "#E56A00",
     "command_caret_foreground": "#FFFFFF",
     "status_warning": "#8a5a00",
+    "debug_chip_background": "#B00020",
+    "debug_chip_foreground": "#FFFFFF",
     "connectivity_unknown": "#9E9E9E",
     "connectivity_not_set_up": "#FFFFFF",
     "connectivity_offline": "#D02020",

@@ -8,6 +8,7 @@ from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import DeployedObject, GitConfig, PgtpLink, ProjectSettings
 from pgtp_editor.db.sandbox import SandboxCapabilities, SandboxMode
 from pgtp_editor.ui.project_settings_dialog import ProjectSettingsDialog
+from pgtp_editor.ui.status_colours import STATUS_ERROR, STATUS_OK
 
 
 def _sync_run(fn, on_result, on_error=None):
@@ -243,6 +244,12 @@ def test_non_current_tab_fields_are_still_populated_by_set_settings(qtbot):
 
 # --- connection Test buttons (FQ-001) ----------------------------------------
 def test_target_test_reports_success_in_green(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = ProjectSettingsDialog(
         _full_settings(),
         tester=lambda params: (True, "Connected to PostgreSQL 16.2"),
@@ -256,11 +263,17 @@ def test_target_test_reports_success_in_green(qtbot):
     assert dialog._target_status_label.text() == (
         "Connected to PostgreSQL 16.2 Server: PostgreSQL 16.0.3."
     )
-    assert "green" in dialog._target_status_label.styleSheet()
+    assert dialog._target_status_label.status_kind() == STATUS_OK
     assert dialog._target_test_button.isEnabled()
 
 
 def test_target_test_reports_failure_in_red(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = ProjectSettingsDialog(
         _full_settings(),
         tester=lambda params: (False, "could not connect to server"),
@@ -272,11 +285,17 @@ def test_target_test_reports_failure_in_red(qtbot):
     dialog.test_target()
 
     assert dialog._target_status_label.text() == "could not connect to server"
-    assert "red" in dialog._target_status_label.styleSheet()
+    assert dialog._target_status_label.status_kind() == STATUS_ERROR
     assert dialog._target_test_button.isEnabled()
 
 
 def test_target_test_surfaces_a_raised_error_in_red(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     def boom(params):
         raise RuntimeError("boom")
 
@@ -287,7 +306,7 @@ def test_target_test_surfaces_a_raised_error_in_red(qtbot):
     dialog.test_target()
 
     assert dialog._target_status_label.text() == "boom"
-    assert "red" in dialog._target_status_label.styleSheet()
+    assert dialog._target_status_label.status_kind() == STATUS_ERROR
     assert dialog._target_test_button.isEnabled()
 
 
@@ -327,6 +346,12 @@ def test_target_test_does_not_use_the_sandbox_fields(qtbot):
 
 
 def test_sandbox_test_reports_probe_error_in_red(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = ProjectSettingsDialog(
         _full_settings(),
         prober=lambda params, **_: SandboxCapabilities(probe_error="connection refused"),
@@ -337,13 +362,20 @@ def test_sandbox_test_reports_probe_error_in_red(qtbot):
     dialog.test_sandbox()
 
     assert dialog._sandbox_status_label.text() == "connection refused"
-    assert "red" in dialog._sandbox_status_label.styleSheet()
+    assert dialog._sandbox_status_label.status_kind() == STATUS_ERROR
     assert dialog._sandbox_test_button.isEnabled()
 
 
 def test_sandbox_test_non_superuser_is_a_red_failure_not_a_green_light(qtbot):
     """A connection that connects but is not a superuser must NOT get a green
-    light -- that is exactly the failure mode the probe exists to catch."""
+    light -- that is exactly the failure mode the probe exists to catch.
+
+    Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = ProjectSettingsDialog(
         _full_settings(), prober=lambda params, **_: SandboxCapabilities(is_superuser=False)
     )
@@ -355,10 +387,16 @@ def test_sandbox_test_non_superuser_is_a_red_failure_not_a_green_light(qtbot):
     status = dialog._sandbox_status_label.text()
     assert "NOT a superuser" in status
     assert "CREATE EXTENSION" in status
-    assert "red" in dialog._sandbox_status_label.styleSheet()
+    assert dialog._sandbox_status_label.status_kind() == STATUS_ERROR
 
 
 def test_sandbox_test_with_data_mode_names_the_missing_clone_tools(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = ProjectSettingsDialog(
         ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA),
         prober=lambda params, **_: SandboxCapabilities(
@@ -374,10 +412,16 @@ def test_sandbox_test_with_data_mode_names_the_missing_clone_tools(qtbot):
     assert "pg_dump" in status
     assert "pg_restore" in status
     assert "not found" in status
-    assert "red" in dialog._sandbox_status_label.styleSheet()
+    assert dialog._sandbox_status_label.status_kind() == STATUS_ERROR
 
 
 def test_sandbox_test_without_data_mode_ignores_missing_clone_tools(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = ProjectSettingsDialog(
         ProjectSettings(sandbox_mode=SandboxMode.SCHEMA_ONLY),
         prober=lambda params, **_: SandboxCapabilities(
@@ -390,10 +434,16 @@ def test_sandbox_test_without_data_mode_ignores_missing_clone_tools(qtbot):
     dialog.test_sandbox()
 
     assert dialog._sandbox_status_label.text() == "Connected — superuser."
-    assert "green" in dialog._sandbox_status_label.styleSheet()
+    assert dialog._sandbox_status_label.status_kind() == STATUS_OK
 
 
 def test_sandbox_test_full_green_superuser_with_clone_tools(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     dialog = ProjectSettingsDialog(
         ProjectSettings(sandbox_mode=SandboxMode.WITH_DATA),
         prober=lambda params, **_: SandboxCapabilities(
@@ -408,11 +458,17 @@ def test_sandbox_test_full_green_superuser_with_clone_tools(qtbot):
     dialog.test_sandbox()
 
     assert dialog._sandbox_status_label.text() == "Connected — superuser."
-    assert "green" in dialog._sandbox_status_label.styleSheet()
+    assert dialog._sandbox_status_label.status_kind() == STATUS_OK
     assert dialog._sandbox_test_button.isEnabled()
 
 
 def test_sandbox_test_surfaces_a_raised_error_in_red(qtbot):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     def boom(params, **_):
         raise RuntimeError("probe exploded")
 
@@ -423,7 +479,7 @@ def test_sandbox_test_surfaces_a_raised_error_in_red(qtbot):
     dialog.test_sandbox()
 
     assert dialog._sandbox_status_label.text() == "probe exploded"
-    assert "red" in dialog._sandbox_status_label.styleSheet()
+    assert dialog._sandbox_status_label.status_kind() == STATUS_ERROR
     assert dialog._sandbox_test_button.isEnabled()
 
 
@@ -614,6 +670,12 @@ def test_browse_cancelled_leaves_the_field_untouched(qtbot):
 
 
 def test_a_complete_binaries_folder_reports_both_tools_found(qtbot, tmp_path):
+    """Supersedes the literal `"green"`/`"red"` stylesheet assertion
+    BUG-260812063745 removed: those CSS names were theme-blind (`green` 3.10:1
+    on the dark chrome, `red` below 4.5:1 on BOTH). The verdict is a status
+    KIND now; the colours it resolves to are proved as rendered pixels, in
+    both themes and with a presence anchor, in `tests/ui/test_theme.py`.
+    """
     _make_tool(tmp_path, "pg_dump")
     _make_tool(tmp_path, "pg_restore")
     dialog = ProjectSettingsDialog(ProjectSettings())
@@ -622,7 +684,7 @@ def test_a_complete_binaries_folder_reports_both_tools_found(qtbot, tmp_path):
     dialog._postgres_bin_dir_edit.setText(str(tmp_path))
 
     assert "Found" in dialog.bin_dir_status_text()
-    assert "green" in dialog._bin_dir_status_label.styleSheet()
+    assert dialog._bin_dir_status_label.status_kind() == STATUS_OK
 
 
 def test_an_incomplete_binaries_folder_warns_but_does_not_block(qtbot, tmp_path):

@@ -3,7 +3,11 @@
 Three things are proved here, in this order of importance:
 
 1. **The package-wide guard** (bottom of the file): no module outside the theme
-   source declares a `#rrggbb`. That is the feature's real deliverable — it is
+   source declares a colour — a hex in ANY notation, or a CSS colour name in a
+   style declaration. (It began as `#rrggbb` only; BUG-260812063745 widened it
+   after a `#b8860b` literal was "fixed" by respelling it `darkorange`, which
+   made the guard green and left the defect exactly in place.) That is the
+   feature's real deliverable — it is
    what makes the next "second colour table beside the real one" impossible
    rather than merely discouraged, which is the mistake `mode_indicator.py`'s
    docstring exists to record and which this codebase has made repeatedly.
@@ -655,7 +659,56 @@ COLOUR_LITERAL_EXEMPTIONS = {
     "ui/activity_panel.py",
 }
 
-_HEX_RE = re.compile(r"#[0-9a-fA-F]{6}\b")
+#: **Any** hex a module could paint with, not just `#rrggbb` — BUG-260812063745
+#: found `#b33` (the status bar's DEBUG chip) sitting in plain sight, invisible
+#: to the old `{6}`-only pattern. `{3,8}` covers `#rgb`, `#rgba`, `#rrggbb` and
+#: `#rrggbbaa`, which is every notation Qt's stylesheet parser accepts.
+_HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+
+#: One CSS declaration inside a string constant: the property name, then its
+#: value up to the next `;` or brace. The guard is **declaration-scoped** for
+#: colour NAMES because a bare word list over every string constant is
+#: unusable — `tan`, `plum`, `linen`, `gold`, `snow`, `orange` and friends all
+#: occur in ordinary prose, and `theme_model.py`'s own error message *"expected
+#: a colour or a {color: ...} map"* would trip a naive scan. Scoping to a
+#: declaration reduces the false-positive count to zero on the whole package.
+_DECLARATION_RE = re.compile(
+    r"(?:^|[;{])\s*(?:[-a-z]*color|background[-a-z]*|border[-a-z]*)\s*:\s*([^;{}]*)"
+)
+
+#: Tokens inside a declaration's value. `%s`, `{placeholder}` and `...` do not
+#: match as bare words, which is what lets `mode_indicator.mode_stylesheet`'s
+#: `color: %s` and every f-string hole through untouched — those resolve from
+#: the theme at paint time and are the CORRECT shape.
+_VALUE_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+
+#: The CSS named colours. This list lives in the TEST, not in `pgtp_editor/`:
+#: it is a list of forbidden tokens, not a colour table, and putting a colour
+#: table in the package to enforce "no colour tables in the package" would be
+#: the joke writing itself. `transparent`, `currentColor`, `none` and `inherit`
+#: are deliberately absent — they name no colour.
+_CSS_COLOUR_NAMES = frozenset("""
+aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond
+blue blueviolet brown burlywood cadetblue chartreuse chocolate coral
+cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray
+darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid
+darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey
+darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue
+firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod
+gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki
+lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan
+lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon
+lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue
+lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue
+mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen
+mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin
+navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod
+palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum
+powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon
+sandybrown seagreen seashell sienna silver skyblue slateblue slategray
+slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet
+wheat white whitesmoke yellow yellowgreen
+""".split())
 
 
 def _docstring_ids(tree: ast.Module) -> set[int]:
@@ -676,8 +729,37 @@ def _docstring_ids(tree: ast.Module) -> set[int]:
     return found
 
 
+def colours_in_text(text: str) -> list[str]:
+    """Every paintable colour in one string constant.
+
+    **Two detectors, deliberately different in scope** (BUG-260812063745):
+
+    * a **hex of any length**, anywhere in the string — a `#`-prefixed hex
+      digit run is never anything but a colour in this package;
+    * a **CSS colour NAME**, but only inside a style DECLARATION (`color:`,
+      `background:`, `border:`). Unscoped, half the list is ordinary English.
+
+    What this deliberately does NOT catch is the **indirect** form —
+    `colour = "green" if ok else "red"` followed by
+    `setStyleSheet(f"color: {colour};")`. The string `"green"` is not adjacent
+    to any declaration, and telling it apart from any other pair of strings
+    needs dataflow analysis, not a regex. **Do not re-open this by making the
+    guard cleverer**: the answer is that the indirect form was deleted
+    (BUG-260812063745 replaced both sites with a status *kind*), and the way to
+    keep it deleted is to review, not to scan.
+    """
+    found = list(_HEX_RE.findall(text))
+    for declaration in _DECLARATION_RE.finditer(text):
+        found.extend(
+            token
+            for token in _VALUE_TOKEN_RE.findall(declaration.group(1))
+            if token.lower() in _CSS_COLOUR_NAMES
+        )
+    return found
+
+
 def colour_literals_in(path: Path) -> list[tuple[int, str]]:
-    """Every `#rrggbb` a module could actually paint with: string literals,
+    """Every colour a module could actually paint with: string literals,
     excluding docstrings. Comments are excluded for free (they are not in the
     AST), which is what lets `#:` documentation keep quoting real values."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -688,8 +770,32 @@ def colour_literals_in(path: Path) -> list[tuple[int, str]]:
         if isinstance(node, ast.Constant)
         and isinstance(node.value, str)
         and id(node) not in docstrings
-        for match in _HEX_RE.findall(node.value)
+        for match in colours_in_text(node.value)
     ]
+
+
+def test_the_colour_DETECTOR_itself_sees_what_it_claims_to():
+    """The guard's own widening, verified — a guard that quietly matches
+    nothing is precisely the failure mode BUG-260812063745 was about.
+
+    The false-positive half matters as much as the true-positive half: `%s`,
+    an f-string hole and `theme_model.py`'s `{color: ...}` prose all sit in
+    shipped modules that must stay green without an exemption.
+    """
+    assert colours_in_text("color: green;") == ["green"]
+    assert colours_in_text("color: darkorange;") == ["darkorange"]
+    assert colours_in_text(
+        "QLabel { color: white; background: #b33; padding: 1px 6px; }"
+    ) == ["#b33", "white"]
+    assert colours_in_text("#1a9e1a") == ["#1a9e1a"]
+    # ...and the shapes that MUST fall through:
+    assert colours_in_text("QLabel { color: %s; background: %s; }") == []
+    assert colours_in_text("color: {colour};") == []
+    assert colours_in_text("expected a colour or a {color: ...} map") == []
+    assert colours_in_text("background: rgba(1, 2, 3, 4);") == []
+    assert colours_in_text("a tan plum on white linen, snow and gold") == []
+    # The indirect form is out of reach BY DESIGN — see `colours_in_text`.
+    assert colours_in_text("green") == []
 
 
 def test_NO_module_outside_the_theme_source_declares_a_colour():

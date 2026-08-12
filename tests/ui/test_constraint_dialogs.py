@@ -19,6 +19,7 @@ from pgtp_editor.db.ddl_skeleton import (
     add_constraint_skeleton,
     drop_constraint_skeleton,
 )
+from pgtp_editor.ui.status_colours import STATUS_ERROR
 from pgtp_editor.ui.constraint_dialogs import (
     AddConstraintDialog,
     AddForeignKeyDialog,
@@ -440,10 +441,24 @@ def test_drop_constraint_states_the_consequence_but_never_blocks(qtbot):
 
 
 def test_the_note_is_not_the_error_label(qtbot):
+    """A note explains; it must not shout. The note label carries no attention
+    colour at all, while the error label beside it does.
+
+    **Rewritten by BUG-260812063745, which found this assertion about to go
+    silently vacuous.** It read `assert "color: red" not in
+    ...styleSheet()` — pinned to the literal CSS name that bugfix deleted from
+    the whole package, so from that commit onward it would have passed no
+    matter what the note label was painted. An absence assertion with no
+    presence anchor beside it proves nothing; the `_error_label` line below is
+    that anchor, and it fails if the error kind ever stops being applied.
+    """
     dialog = _drop(qtbot)
     dialog._constraint_combo.setCurrentIndex(0)
     assert dialog._note_label.text() == dialog.note()
-    assert "color: red" not in (dialog._note_label.styleSheet() or "")
+    # The anchor: the error label IS in the error kind on this same dialog...
+    assert dialog._error_label.status_kind() == STATUS_ERROR
+    # ...and the note label carries no status colour whatsoever.
+    assert not (dialog._note_label.styleSheet() or "")
 
 
 def test_an_index_backed_constraint_says_so(qtbot):

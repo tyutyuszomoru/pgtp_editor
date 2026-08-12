@@ -86,8 +86,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..db.sandbox_query import QueryOutcome, QueryResult, error_text, status_line
-from .mode_indicator import MODE_MAINTENANCE, mode_colors
-from .theme_model import theme_for
+from .status_colours import (  # noqa: F401 - re-exported, see the block below
+    STATUS_ERROR,
+    STATUS_OK,
+    STATUS_WARNING,
+    status_colour,
+)
 
 #: How a NULL prints. Upper-case, and additionally italic + dimmed below, so it
 #: can never be mistaken for the four-character string `'NULL'` either.
@@ -101,7 +105,7 @@ IDLE_TEXT = "Nothing run yet — statements run against this project's sandbox d
 #: a query, and sending it would produce a confusing driver-level error.
 EMPTY_SQL_TEXT = "Nothing to run — type a statement first."
 
-#: The status strip's two attention colours, named as **kinds** rather than as
+#: The status strip's attention colours, named as **kinds** rather than as
 #: resolved `QColor`s. Two things force that (BUG-260811021804):
 #:
 #: 1. A per-widget `setPalette` is INERT under the app-wide qdarkstyle sheet
@@ -117,33 +121,11 @@ EMPTY_SQL_TEXT = "Nothing to run — type a statement first."
 #:    pair, resolved at paint time from the live palette's lightness. Storing a
 #:    resolved colour would re-apply the OLD theme's value after a flip.
 #:
-#: The error pair is **not a new red**: it is `mode_indicator.mode_colors`'
-#: `MODE_MAINTENANCE` foreground in each theme, imported rather than re-typed, so
-#: the app keeps one red (§18.7). Warning has no existing pair anywhere; these
-#: two clear 4.5:1 against both chrome backgrounds (5.68 light / 7.45 dark).
-STATUS_ERROR = "error"
-STATUS_WARNING = "warning"
-
-#: Warning's per-theme value, read from the theme file's `status_warning`
-#: accent (FQ-260812021715) rather than spelled here — for exactly the reason
-#: the error pair is imported rather than re-typed one paragraph above.
-def _warning_colour(light: bool) -> str:
-    return theme_for(light).accent("status_warning")
-
-
-def status_colour(kind: str | None, light: bool) -> str | None:
-    """The status strip's colour for `kind` under the light/dark theme, or None
-    for the ordinary status (which must render in the theme's own text colour,
-    i.e. with **no** widget stylesheet at all).
-
-    Pure, and the single place a status kind becomes a colour — a test can pin
-    the contrast of every pair without touching a widget.
-    """
-    if kind == STATUS_ERROR:
-        return mode_colors(light)[MODE_MAINTENANCE][1]
-    if kind == STATUS_WARNING:
-        return _warning_colour(light)
-    return None
+#: **The definitions moved to `ui/status_colours.py`** (BUG-260812063745) once
+#: seven dialogs needed the same three kinds — a dialog importing its colour
+#: from a results panel is a bad arrow. They are re-exported here, not copied:
+#: there is one definition, and this panel's callers and tests did not move.
+#: `STATUS_OK` joined the pair at that point; the panel itself does not use it.
 
 
 #: No column is allowed to hog the panel just because one cell holds a 4 kB

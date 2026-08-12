@@ -142,6 +142,12 @@ ACCENT_KEYS: tuple[str, ...] = (
     "command_caret_background",
     "command_caret_foreground",
     "status_warning",
+    # The status-bar DEBUG chip, folded in by BUG-260812063745. It was the
+    # app's last hardcoded chip (`color: white; background: #b33`), which §7
+    # already singled out as forbidden to copy because it does not re-theme;
+    # it is a background/foreground PAIR because a chip is not text on chrome.
+    "debug_chip_background",
+    "debug_chip_foreground",
     "connectivity_unknown",
     "connectivity_not_set_up",
     "connectivity_offline",

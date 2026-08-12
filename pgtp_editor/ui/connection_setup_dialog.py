@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.introspect import test_connection
 from pgtp_editor.ui.async_task import run_async
+from pgtp_editor.ui.status_colours import STATUS_ERROR, STATUS_OK, StatusLabel
 
 Tester = Callable[[ConnectionParams], "tuple[bool, str]"]
 
@@ -74,7 +75,7 @@ class ConnectionSetupDialog(QDialog):
 
         self._test_button = QPushButton("Test")
         self._test_button.clicked.connect(self.test)
-        self._status_label = QLabel("")
+        self._status_label = StatusLabel("")
         test_row = QHBoxLayout()
         test_row.addWidget(self._test_button)
         test_row.addWidget(self._status_label, 1)
@@ -117,20 +118,22 @@ class ConnectionSetupDialog(QDialog):
         # host can't block the event loop. Busy state is set now; the result (or
         # error) is applied by the callbacks, which run back on the GUI thread.
         self._test_button.setEnabled(False)
-        self._status_label.setStyleSheet("")
-        self._status_label.setText("Testing connection…")
+        self._status_label.set_status("Testing connection…", None)
         params = self.params()
 
         def on_result(result: "tuple[bool, str]") -> None:
             ok, message = result
-            color = "green" if ok else "red"
-            self._status_label.setText(message)
-            self._status_label.setStyleSheet(f"color: {color};")
+            # A KIND, not a colour. The indirect `"green" if ok else "red"`
+            # form this replaces slipped past the colour guard entirely -- a
+            # bare string is not adjacent to any `color:` declaration -- and
+            # both names failed contrast (BUG-260812063745).
+            self._status_label.set_status(
+                message, STATUS_OK if ok else STATUS_ERROR
+            )
             self._test_button.setEnabled(True)
 
         def on_error(exc: BaseException) -> None:
-            self._status_label.setText(str(exc))
-            self._status_label.setStyleSheet("color: red;")
+            self._status_label.set_status(str(exc), STATUS_ERROR)
             self._test_button.setEnabled(True)
 
         self._run_async(

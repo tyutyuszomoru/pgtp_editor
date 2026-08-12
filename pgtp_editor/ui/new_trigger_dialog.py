@@ -93,6 +93,7 @@ from pgtp_editor.db.ddl_skeleton import (
     trigger_timings_for_kind,
 )
 from pgtp_editor.db.sandbox import UnsafeIdentifierError
+from pgtp_editor.ui.status_colours import STATUS_ERROR, StatusLabel
 
 #: Either the candidate names outright, or a callable producing them -- the
 #: caller filters `introspect.RoutineInfo` down to `trigger`-returning
@@ -179,8 +180,11 @@ class NewTriggerDialog(QDialog):
         form.addRow("Level:", self._level_combo)
         form.addRow("Trigger function:", self._function_combo)
 
-        self._error_label = QLabel("")
-        self._error_label.setStyleSheet("color: red;")
+        # A `StatusLabel` in the error KIND, painted per theme: plain
+        # `color: red` measured 3.98:1 on the dark chrome and 3.83:1 on the
+        # light one -- below 4.5:1 in BOTH (BUG-260812063745).
+        self._error_label = StatusLabel("")
+        self._error_label.set_status_kind(STATUS_ERROR)
         self._error_label.setWordWrap(True)
 
         self._buttons = QDialogButtonBox(

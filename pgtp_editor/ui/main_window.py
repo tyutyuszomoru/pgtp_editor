@@ -1170,10 +1170,7 @@ class MainWindow(QMainWindow):
 
         if self._debug_log_path is not None:
             self._debug_label = QLabel("DEBUG")
-            self._debug_label.setStyleSheet(
-                "QLabel { color: white; background: #b33; padding: 1px 6px;"
-                " border-radius: 3px; font-weight: bold; }"
-            )
+            self._apply_debug_chip_colours()
             self.statusBar().addPermanentWidget(self._debug_label)
             self.statusBar().showMessage(f"Debug logging: {self._debug_log_path}")
 
@@ -2059,6 +2056,8 @@ class MainWindow(QMainWindow):
         # ...and re-consult the theme's mode chips, so the indicator is never
         # painted in the other theme's colours.
         self._refresh_mode_indicator()
+        # ...and the DEBUG chip, which is a theme colour now too.
+        self._apply_debug_chip_colours()
         return applied
 
     def theme_name(self) -> str:
@@ -6636,6 +6635,36 @@ class MainWindow(QMainWindow):
         if stage.isTabVisible(stage.xsd_tab_index):
             return MINOR_XSD
         return None
+
+    def _apply_debug_chip_colours(self) -> None:
+        """Paint the status bar's DEBUG chip from the LIVE theme.
+
+        It used to be `color: white; background: #b33`, hardcoded — the last
+        chip in the app that did not re-theme, and one §7 already named as
+        forbidden to copy. BUG-260812063745 folded it into
+        `resources/themes/*.json` as the `debug_chip_*` accent pair rather than
+        exempting `main_window.py` from the colour guard: an exemption on the
+        largest module in the project would be a far bigger hole than the one
+        that bug closed.
+
+        Re-read on every theme flip (`apply_theme_named`), never stored: a
+        remembered colour re-applied after a flip paints the previous theme's
+        value (BUG-260811021804 step 4).
+        """
+        if getattr(self, "_debug_label", None) is None:
+            return
+        # The SELECTED theme when there is one -- a custom theme file may set
+        # its own chip -- and the bundled one for its side of the seam before
+        # `_restore_theme` has run.
+        theme = getattr(self, "_theme", None)
+        if theme is None:
+            theme = theme_model.theme_for(self._is_light_theme())
+        self._debug_label.setStyleSheet(
+            "QLabel { color: %s; background: %s; padding: 1px 6px;"
+            " border-radius: 3px; font-weight: bold; }"
+            % (theme.accent("debug_chip_foreground"),
+               theme.accent("debug_chip_background"))
+        )
 
     def _refresh_mode_indicator(self) -> None:
         """The SINGLE update path: rewrite both surfaces from `current_mode()`.

@@ -789,3 +789,296 @@ def test_command_caret_background_is_NOT_the_selection_blue():
     for light, palette in ((True, light_palette()), (False, dark_palette())):
         highlight = palette.color(QPalette.ColorRole.Highlight)
         assert QColor(command_caret_colors(light)[0]) != highlight
+
+
+# -- BUG-260812063745: the status colours must be THEME colours, in pixels ----
+# Fourteen sites across seven dialogs painted themselves with the CSS names
+# `green`, `darkorange` and `red`. Each is a single value for both themes, so
+# each fails contrast in at least one of them -- and plain `red` fails in BOTH
+# (3.98:1 dark / 3.83:1 light). They are now `StatusLabel`s carrying a KIND,
+# resolved per theme at paint time.
+#
+# Sampled from `grab().toImage()` for the reason the focus-ring block above
+# records: a stylesheet assertion proves the string, not the paint, and the
+# app-wide qdarkstyle QSS beats a QPalette for every property it declares --
+# measured, the palette faithfully reported `#d02020` while zero red pixels
+# were drawn. Every probe below therefore carries a PRESENCE anchor as well as
+# the absence assertion: an absence-only test passes forever, including against
+# a sampler pointed at nothing, and that has cost this project two false greens
+# in a single week.
+
+
+def _painted_colours(widget) -> set[str]:
+    """Every colour `widget` actually paints, as lower-case `#rrggbb` -- the way
+    `QImage.pixelColor().name()` spells it, which is why the theme values are
+    put through `QColor(...).name()` before comparison: `resources/themes/*.json`
+    mixes `#D32F2F` with `#e0a83a`, and a raw string compare against a pixel name
+    silently never matches.
+
+    A whole-image set rather than one anchored pixel: a text colour lands
+    wherever the glyphs land, and the sampler must not have to know the font
+    metrics. The label is given a large bold font at every call site so the
+    colour reaches full strength somewhere inside a stroke rather than only in
+    antialiased edge pixels."""
+    image = widget.grab().toImage()
+    return {
+        image.pixelColor(x, y).name()
+        for y in range(image.height())
+        for x in range(image.width())
+    }
+
+
+def _status_name(kind: str, light: bool) -> str:
+    """The colour a kind is *supposed* to paint under a theme, read from the
+    same `status_colour` the widget reads -- never a second copy of the hex."""
+    from pgtp_editor.ui.status_colours import status_colour
+
+    return QColor(status_colour(kind, light)).name()
+
+
+def _chrome(light: bool) -> str:
+    """The live qdarkstyle chrome these labels sit on -- the reference §7 names,
+    and the one the bare QPalette does not tell you about. Read from qdarkstyle,
+    not retyped: `#FAFAFA` light, `#19232D` dark."""
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
+    return QColor((LightPalette if light else DarkPalette).COLOR_BACKGROUND_1).name()
+
+
+def _status_kinds():
+    from pgtp_editor.ui.status_colours import (
+        STATUS_ERROR,
+        STATUS_OK,
+        STATUS_WARNING,
+    )
+
+    return {"ok": STATUS_OK, "warning": STATUS_WARNING, "error": STATUS_ERROR}
+
+
+@pytest.fixture
+def status_label(qtbot, qapp, _reset_app_palette):
+    """A shown `StatusLabel` in a real theme, big and bold enough that its
+    colour covers pixels.
+
+    `show()` is mandatory and not tidiness: the app-wide QSS is only resolved on
+    polish, so an unshown grab is not evidence -- the same trap the focus-ring
+    fixtures above document."""
+    from PySide6.QtGui import QFont
+
+    from pgtp_editor.ui.status_colours import StatusLabel
+
+    def build(light: bool, kind: str):
+        apply_theme(qapp, light)
+        label = StatusLabel("")
+        qtbot.addWidget(label)
+        font = QFont()
+        font.setPointSize(40)
+        font.setBold(True)
+        label.setFont(font)
+        label.set_status("Connection succeeded", kind)
+        label.show()
+        qapp.processEvents()
+        return label
+
+    return build
+
+
+@pytest.mark.parametrize("kind_id", ["ok", "warning", "error"])
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_status_label_paints_ITS_themes_colour_and_not_the_others(
+    status_label, kind_id, light
+):
+    """The whole bug in one assertion: a status colour is a per-theme value, so
+    the label must paint the colour of the theme that is actually applied and
+    must never paint the other theme's.
+
+    The presence half is the anchor -- it proves the sampler can see the label
+    at all -- and the absence half is what a single theme-blind literal (`green`
+    at 3.10:1 on the dark chrome, `darkorange` at 2.23:1 on the light one) would
+    fail."""
+    kind = _status_kinds()[kind_id]
+    painted = _painted_colours(status_label(light, kind))
+    assert _status_name(kind, light) in painted  # the anchor
+    assert _status_name(kind, not light) not in painted
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_a_REAL_dialogs_error_label_paints_the_themes_red(
+    qtbot, qapp, _reset_app_palette, light
+):
+    """Through a real dialog rather than a bare widget, because the seven
+    dialogs are where the defect lived: `NewRoutineDialog._error_label` was
+    `setStyleSheet("color: red;")` -- 3.98:1 dark and 3.83:1 light, i.e. below
+    4.5:1 in BOTH themes, which is why plain `red` was not grandfathered.
+
+    `NewRoutineDialog` is the dialog chosen here because it constructs with no
+    database and opens no modal."""
+    from PySide6.QtGui import QFont
+
+    from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
+    from pgtp_editor.ui.status_colours import STATUS_ERROR
+
+    apply_theme(qapp, light)
+    dialog = NewRoutineDialog()
+    qtbot.addWidget(dialog)
+    label = dialog._error_label
+    assert label.status_kind() == STATUS_ERROR  # a kind, never a stored colour
+    font = QFont()
+    font.setPointSize(30)
+    font.setBold(True)
+    label.setFont(font)
+    label.setText("Name is required")
+    dialog.show()
+    qapp.processEvents()
+
+    painted = _painted_colours(label)
+    assert _status_name(STATUS_ERROR, light) in painted  # the anchor
+    assert _status_name(STATUS_ERROR, not light) not in painted
+    # ...and the literal it replaced is nowhere in the render.
+    assert "#ff0000" not in painted
+
+
+@pytest.mark.parametrize("kind_id", ["ok", "warning", "error"])
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_every_status_kind_clears_4_5_to_1_on_the_chrome(kind_id, light):
+    """Measured, not eyeballed, against the background these labels actually sit
+    on. Measured values: ok 11.17 dark / 7.54 light, warning 7.45 / 5.68, error
+    9.28 / 8.74 -- every pair clears the 4.5:1 body-text threshold in BOTH
+    themes, which is exactly what a single CSS name cannot do."""
+    kind = _status_kinds()[kind_id]
+    assert _contrast(_status_name(kind, light), _chrome(light)) >= 4.5
+
+
+def test_the_CSS_names_this_bug_replaced_genuinely_FAIL():
+    """The focus-ring precedent: the rejected values are asserted to fail, by
+    literal, so the choice cannot be quietly undone by someone reaching for the
+    "obvious" colour name again.
+
+    These are the exact measurements BUG-260812063745 replaced, against the live
+    qdarkstyle chrome: CSS `green` `#008000` scores 3.10 on the dark chrome,
+    `darkorange` `#FF8C00` scores 2.23 on the light chrome, and plain `red`
+    `#FF0000` scores 3.98 dark AND 3.83 light -- red is the one that failed in
+    both, so `color: red` was never the acceptable status quo it looked like.
+
+    Hardcoding hex here is deliberate and is the opposite of the rule the rest
+    of this block follows: these are not the app's colours, they are the values
+    that must never come back."""
+    assert _contrast("#008000", _chrome(False)) < 4.5   # green, dark: 3.10
+    assert _contrast("#FF8C00", _chrome(True)) < 4.5    # darkorange, light: 2.23
+    assert _contrast("#FF0000", _chrome(False)) < 4.5   # red, dark: 3.98
+    assert _contrast("#FF0000", _chrome(True)) < 4.5    # red, light: 3.83
+
+
+# -- BUG-260812063745, second half: the status bar's DEBUG chip ---------------
+# `color: white; background: #b33`, hardcoded in `main_window.py` -- the last
+# chip in the app that did not re-theme, and the one §7 already named as
+# forbidden to copy. It is now the `debug_chip_background` / `debug_chip_
+# foreground` accent pair, so the colour guard did not have to exempt the
+# largest module in the project.
+
+
+def _debug_chip_label(qapp, light: bool):
+    """The chip painted by the REAL `MainWindow._apply_debug_chip_colours`,
+    driven with a stand-in host rather than a MainWindow.
+
+    A whole MainWindow is expensive and modal-prone in this suite, and it is not
+    what is under test: the method reads `self._theme` (or `theme_for`) and
+    `self._debug_label` and nothing else, so calling it unbound over a real
+    QLabel exercises the shipped code path exactly, including the theme lookup
+    that is the point of the fix."""
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QLabel
+
+    from pgtp_editor.ui.main_window import MainWindow
+    from pgtp_editor.ui.theme_model import theme_for
+
+    apply_theme(qapp, light)
+
+    class _Host:
+        pass
+
+    host = _Host()
+    host._debug_label = QLabel("DEBUG")
+    host._theme = theme_for(light)
+    MainWindow._apply_debug_chip_colours(host)
+
+    font = QFont()
+    font.setPointSize(30)
+    font.setBold(True)
+    host._debug_label.setFont(font)
+    return host._debug_label
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_DEBUG_chip_is_PAINTED_from_the_theme_file(qtbot, qapp,
+                                                       _reset_app_palette,
+                                                       light):
+    """Both chip colours in rendered pixels, and both read from the parsed theme
+    rather than retyped -- which is also what proves they are no longer a
+    literal: a hardcoded pair cannot equal `#D32F2F` on dark and `#B00020` on
+    light, and the two are asserted distinct in the test below.
+
+    The old `#b33` is asserted absent from the render: the guard that was
+    supposed to catch it only matched six-digit hex, so it lived there
+    invisibly."""
+    from pgtp_editor.ui.theme_model import theme_for
+
+    label = _debug_chip_label(qapp, light)
+    qtbot.addWidget(label)
+    label.show()
+    qapp.processEvents()
+
+    theme = theme_for(light)
+    painted = _painted_colours(label)
+    assert QColor(theme.accent("debug_chip_background")).name() in painted
+    assert QColor(theme.accent("debug_chip_foreground")).name() in painted
+    assert QColor("#b33").name() not in painted
+
+
+def test_the_DEBUG_chips_two_themes_are_DIFFERENT_backgrounds(qapp,
+                                                              _reset_app_palette):
+    """The single assertion a hardcoded `#b33` could never satisfy: the chip's
+    background differs between the themes, so it is genuinely re-themed and not
+    a literal wearing a theme lookup."""
+    from pgtp_editor.ui.theme_model import theme_for
+
+    dark_sheet = _debug_chip_label(qapp, False).styleSheet()
+    light_sheet = _debug_chip_label(qapp, True).styleSheet()
+    assert dark_sheet != light_sheet
+    for light in (True, False):
+        theme = theme_for(light)
+        sheet = light_sheet if light else dark_sheet
+        assert theme.accent("debug_chip_background") in sheet
+        assert theme.accent("debug_chip_foreground") in sheet
+    assert theme_for(True).accent("debug_chip_background") != theme_for(
+        False
+    ).accent("debug_chip_background")
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_DEBUG_chips_text_clears_4_5_to_1_on_its_OWN_background(light):
+    """A chip is not text on chrome: its label reads against the chip's fill, so
+    that is the pair that must clear the body-text threshold. Measured 4.98 dark
+    (`#FFFFFF` on `#D32F2F`) and 7.33 light (`#FFFFFF` on `#B00020`). Read from
+    the parsed theme, never retyped."""
+    from pgtp_editor.ui.theme_model import theme_for
+
+    theme = theme_for(light)
+    assert _contrast(
+        theme.accent("debug_chip_foreground"),
+        theme.accent("debug_chip_background"),
+    ) >= 4.5
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_DEBUG_chips_background_clears_3_to_1_on_the_chrome(light):
+    """The other half, and a different threshold on purpose: the chip's fill is
+    a non-text graphical object against the status bar, so 3:1 is the bar it has
+    to clear to be distinguishable at all. Measured 3.20 dark and 7.02 light --
+    dark is the tight one, which is why it is asserted rather than assumed."""
+    from pgtp_editor.ui.theme_model import theme_for
+
+    assert _contrast(
+        theme_for(light).accent("debug_chip_background"), _chrome(light)
+    ) >= 3.0
