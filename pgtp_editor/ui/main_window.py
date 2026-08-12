@@ -1542,7 +1542,6 @@ class MainWindow(QMainWindow):
             # this lane must not pick its own, or the app connects with one set
             # of credentials while Project Settings shows another.
             target_params=self._target_params_for_fetch,
-            show_left_dock=self._show_left_dock,
             show_audit_dock=self._show_audit_dock,
             panel_visible=self._coherence_tab_visible,
         )
@@ -2293,27 +2292,48 @@ class MainWindow(QMainWindow):
         return self._run_async(*args, **kwargs)
 
     def _reveal_left_panel(self, panel) -> None:
-        """`UiShell.reveal_left_panel` -- show a left-dock tab and focus it."""
+        """`UiShell.reveal_left_panel` -- the ONE "open the browser pane and
+        show this child in it" primitive (BUG-260812023420).
+
+        It owns the WHOLE gesture: the dock is un-hidden, the tab is made
+        visible, and the tab becomes current. That un-hide step used to be
+        copy-pasted at every reveal site (DDL Explorer, Findings, Contents,
+        Coherence) while this seam did only the tab half -- so any reveal that
+        forgot it landed a visible tab inside a hidden dock, i.e. the reveal
+        "silently did nothing". A caller cannot get it half-right any more.
+
+        `_show_left_dock()` runs AFTER the `index < 0` guard on purpose: a
+        widget that is not a left-dock tab has nothing to reveal, and popping an
+        empty dock for it would be worse than the no-op.
+
+        The counterpart for "make available without stealing the user's layout"
+        is `_set_left_panel_visible`, which deliberately touches neither the
+        dock nor the current tab.
+        """
         index = self.left_tabs.indexOf(panel)
         if index < 0:
             return
+        self._show_left_dock()
         self.left_tabs.setTabVisible(index, True)
         self.left_tabs.setCurrentWidget(panel)
 
     def _set_left_panel_visible(self, panel, visible: bool) -> None:
-        """`UiShell.set_left_panel_visible` -- visibility only, no focus."""
+        """`UiShell.set_left_panel_visible` -- visibility only, no focus, and
+        deliberately no dock un-hide (contrast `_reveal_left_panel`)."""
         index = self.left_tabs.indexOf(panel)
         if index < 0:
             return
         self.left_tabs.setTabVisible(index, visible)
 
-    # Three dock/tab gestures `UiShell` has no field for, injected into
-    # `CoherenceController` instead: the docks themselves are host furniture,
-    # and exactly one lane needs each of these.
+    # Dock/tab gestures `UiShell` has no field for: the docks themselves are
+    # host furniture. `_show_audit_dock` is injected into the lanes that need
+    # it; `_show_left_dock` is no longer injected anywhere, because
+    # `_reveal_left_panel` now calls it (BUG-260812023420).
 
     def _show_left_dock(self) -> None:
         """Un-hide the left dock. Revealing a left-dock TAB is not enough if a
-        prior action hid the dock that carries it."""
+        prior action hid the dock that carries it -- which is exactly why
+        `_reveal_left_panel` calls this and no reveal site does it by hand."""
         self.tree_dock.setVisible(True)
 
     def _show_audit_dock(self) -> None:
@@ -2329,10 +2349,11 @@ class MainWindow(QMainWindow):
     def _reveal_findings_tab(self) -> None:
         """Auto-open and focus the left-dock Findings tab. Called by the router
         the moment a navigable row lands: a result the user asked for should
-        not need a second gesture to be seen."""
-        self._show_left_dock()
-        self.left_tabs.setTabVisible(self.findings_tab_index, True)
-        self.left_tabs.setCurrentWidget(self.findings_panel)
+        not need a second gesture to be seen.
+
+        Routed through `_reveal_left_panel`, which owns the un-hide-the-dock
+        step (BUG-260812023420) -- this site no longer repeats it."""
+        self._reveal_left_panel(self.findings_panel)
 
     def _reveal_activity_tab(self) -> None:
         """View ▸ Activity Log: un-hide the bottom dock and focus its journal
@@ -4618,10 +4639,14 @@ class MainWindow(QMainWindow):
         independent, so this runs once per role and never touches the other's
         tab.
         """
-        self.left_tabs.setTabVisible(self._ddl_browser_tab_indexes[role], visible)
         if visible:
-            self.tree_dock.setVisible(True)
-            self.left_tabs.setCurrentWidget(self._ddl_browser_panels[role])
+            # `_reveal_left_panel` is the one primitive that owns
+            # "open the pane, then show this child in it"
+            # (BUG-260812023420) -- including un-hiding `tree_dock`, which this
+            # site used to do for itself.
+            self._reveal_left_panel(self._ddl_browser_panels[role])
+        else:
+            self.left_tabs.setTabVisible(self._ddl_browser_tab_indexes[role], False)
         action = self._ddl_explorer_actions.get(role)
         if action is not None:
             action.setChecked(visible)
@@ -7969,16 +7994,21 @@ class MainWindow(QMainWindow):
             cs.hide_manual()
             return
         cs.show_manual()
-        self.tree_dock.setVisible(True)
 
     def _on_manual_visibility_changed(self, visible):
         """Keep the left-dock Contents tab in lockstep with the Manual tab: show
         and focus it when the Manual opens, hide it and fall back to Project when
-        the Manual closes."""
-        self.left_tabs.setTabVisible(self.contents_tab_index, visible)
+        the Manual closes.
+
+        The open branch goes through `_reveal_left_panel`, so the dock un-hides
+        here rather than in `_show_manual` (BUG-260812023420): every path that
+        opens the Manual -- the menu entry, F1, `show_manual` from anywhere --
+        gets a Contents tab the user can actually see, not just the one path
+        that remembered to call `setVisible(True)` itself."""
         if visible:
-            self.left_tabs.setCurrentWidget(self.manual_contents)
+            self._reveal_left_panel(self.manual_contents)
         else:
+            self.left_tabs.setTabVisible(self.contents_tab_index, False)
             self.left_tabs.setCurrentIndex(self.project_tab_index)
 
     def _on_manual_chapter_selected(self, index):

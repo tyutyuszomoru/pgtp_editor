@@ -116,7 +116,6 @@ class CoherenceController(QObject):
         find_all: Callable[..., None],
         prompt_missing_connection: Callable[[], None],
         target_params: Callable[..., object] | None = None,
-        show_left_dock: Callable[[], None],
         show_audit_dock: Callable[[], None],
         panel_visible: Callable[[], bool],
     ):
@@ -136,7 +135,6 @@ class CoherenceController(QObject):
         #: showed something else entirely. Injected rather than duplicated;
         #: `None` (no host wired it) keeps the old `seed_params` behavior.
         self._target_params = target_params
-        self._show_left_dock = show_left_dock
         self._show_audit_dock = show_audit_dock
         self._panel_visible = panel_visible
 
@@ -206,7 +204,10 @@ class CoherenceController(QObject):
     # -- the coherence view --------------------------------------------------
 
     def _reveal_panel(self) -> None:
-        self._show_left_dock()
+        # `reveal_left_panel` owns the whole gesture -- un-hide the dock, show
+        # the tab, make it current (BUG-260812023420). This lane used to call an
+        # injected `show_left_dock` first; that pairing was enforced by nothing,
+        # so the seam absorbed it and the injection is gone.
         self._shell.reveal_left_panel(self._panel)
 
     def _populate(self, schema, project, summary) -> None:

@@ -1272,3 +1272,87 @@ def test_see_column_in_caption_filters_and_selects_row(qtbot):
     # visibly represented via the panel's active-filter banner, not silent.
     assert panel._filter_banner.isVisibleTo(panel)
     assert f"Field = {column.field_name}" in panel._filter_banner_label.text()
+
+
+# ---------------------------------------------------------------------------
+# BUG-260812023420: `_reveal_left_panel` is the ONE primitive that opens the
+# browser pane and shows a child in it. Every assertion here is on observable
+# state (`isVisible`/`isTabVisible`/`currentWidget`), never on a call: the old
+# bug was four sites each doing half the job while the suite was green.
+# ---------------------------------------------------------------------------
+
+def test_reveal_left_panel_alone_opens_a_hidden_dock(qtbot):
+    """The seam is SUFFICIENT: no separate `_show_left_dock` call anywhere near
+    it, and the pane is genuinely on screen afterwards."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()  # top level must be shown for dock isVisible() to mean anything
+    window.tree_dock.setVisible(False)
+    assert window.tree_dock.isVisible() is False
+
+    window._reveal_left_panel(window.coherence_panel)
+
+    assert window.tree_dock.isVisible() is True
+    assert window.left_tabs.isTabVisible(window.coherence_tab_index) is True
+    assert window.left_tabs.currentWidget() is window.coherence_panel
+    # BUG-007's bidirectional sync still holds: the pane really is open, so the
+    # View entry must say so.
+    assert window._tree_action.isChecked() is True
+
+
+def test_reveal_left_panel_ignores_a_widget_that_is_not_a_left_tab(qtbot):
+    """The `index < 0` guard comes FIRST: a non-tab has nothing to reveal, and
+    popping an empty dock for it would be worse than the no-op."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.tree_dock.setVisible(False)
+
+    window._reveal_left_panel(window.properties_panel)
+
+    assert window.tree_dock.isVisible() is False
+
+
+def test_set_left_panel_visible_does_not_steal_the_users_layout(qtbot):
+    """The "make available" counterpart: it must NOT open a dock the user hid,
+    which is why the two primitives stay distinct."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.tree_dock.setVisible(False)
+    before = window.left_tabs.currentWidget()
+
+    window._set_left_panel_visible(window.coherence_panel, True)
+
+    assert window.tree_dock.isVisible() is False
+    assert window.left_tabs.isTabVisible(window.coherence_tab_index) is True
+    assert window.left_tabs.currentWidget() is before
+
+
+def test_findings_reveal_opens_a_hidden_dock(qtbot):
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.tree_dock.setVisible(False)
+
+    window._reveal_findings_tab()
+
+    assert window.tree_dock.isVisible() is True
+    assert window.left_tabs.isTabVisible(window.findings_tab_index) is True
+    assert window.left_tabs.currentWidget() is window.findings_panel
+
+
+def test_manual_contents_reveal_opens_a_hidden_dock(qtbot):
+    """Ownership moved off `_show_manual` and onto the visibility handler, so
+    EVERY path that opens the Manual gets a visible Contents tab -- including
+    `center_stage.show_manual()` called directly, which never un-hid the dock."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.show()
+    window.tree_dock.setVisible(False)
+
+    window.center_stage.show_manual()
+
+    assert window.tree_dock.isVisible() is True
+    assert window.left_tabs.isTabVisible(window.contents_tab_index) is True
+    assert window.left_tabs.currentWidget() is window.manual_contents

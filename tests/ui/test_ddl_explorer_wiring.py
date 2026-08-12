@@ -139,6 +139,24 @@ def test_toggle_on_populates_editor_and_browser_and_reveals_both_tabs(qtbot, tmp
     assert "1 trigger(s)" in window.statusBar().currentMessage()
 
 
+def test_toggle_on_opens_the_pane_even_when_the_user_hid_it(qtbot, tmp_path):
+    """BUG-260812023420: revealing a child of the browser pane must OPEN the
+    pane. The suite used to assert only the tab, so a reveal that left the tab
+    stranded inside a hidden dock -- "silently doesn't show" -- passed."""
+    window = _window(qtbot, tmp_path)
+    window.show()  # top level must be shown for dock isVisible() to mean anything
+    window.tree_dock.setVisible(False)
+    assert window.tree_dock.isVisible() is False
+
+    window._ddl_explorer_action.setChecked(True)
+
+    assert window.tree_dock.isVisible() is True
+    assert window.left_tabs.isTabVisible(window.ddl_browser_tab_index) is True
+    assert window.left_tabs.currentWidget() is window.ddl_browser_panel
+    # BUG-007's bidirectional sync: the pane is open again, so View says so.
+    assert window._tree_action.isChecked() is True
+
+
 def test_open_works_standalone_without_a_project(qtbot, tmp_path):
     """Standalone mode (§18): no .pgtp loaded -- the connection comes from the
     saved settings alone."""

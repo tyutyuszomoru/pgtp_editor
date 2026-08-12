@@ -112,6 +112,22 @@ def test_coherence_run_reveals_the_tab_and_shows_the_reference_side(qtbot, tmp_p
     assert any("lookup with insert" in lbl for lbl in labels)
 
 
+def test_coherence_run_opens_the_pane_even_when_the_user_hid_it(qtbot, tmp_path):
+    """BUG-260812023420: this lane used to call an injected `show_left_dock`
+    before `reveal_left_panel`; nothing enforced that pairing. The seam owns it
+    now, so the behaviour -- not the call -- is what is pinned here."""
+    window = _window(qtbot, tmp_path)
+    window.show()  # top level must be shown for dock isVisible() to mean anything
+    window.tree_dock.setVisible(False)
+    assert window.tree_dock.isVisible() is False
+
+    window._db_ui.run_check()
+
+    assert window.tree_dock.isVisible() is True
+    assert window.left_tabs.isTabVisible(window.coherence_tab_index) is True
+    assert window.left_tabs.currentWidget() is window.coherence_panel
+
+
 def test_selection_drives_properties_panel(qtbot, tmp_path):
     """The panel's selection_changed reaches the shared Properties panel —
     unchanged from the Table references tab."""
