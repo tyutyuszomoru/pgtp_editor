@@ -5070,7 +5070,14 @@ Three owner decisions shipped with **defaults, not settled design**, each isolat
 ---
 
 ## FQ-260812021715: Consolidate every color source into ONE file-based `Theme` object, loaded at runtime — the theming foundation
-**Status:** QUEUED
+**Status:** PROCESSED (spec §7/§5; `ui/theme_model.py` + `resources/themes/*.json`, commits c0ab500 and 7caf024; 8010 passed / 51 skipped)
+**Closing note:** the real deliverable is the **AST guard**, not the JSON — an absence of colour literals that a test enforces rather than a convention. It was widened almost immediately by `BUG-260812063745`, which is the guard working: a `#b8860b` literal failed it, was changed to `color: darkorange`, and the test went green while the defect stayed. It now catches hex of any length and named CSS colours inside declarations.
+
+**The entry's specified mechanism was impossible.** It said — owner-confirmed, *"pin it exactly"* — to subclass qdarkstyle's `Palette` and pass it to `load_stylesheet(palette=…)`. qdarkstyle 3.2.3 reads a **precompiled** resource chosen by `palette.ID` and then **replaces the caller's palette** with the stock one, so a subclass's colours are discarded before any is read. It silently yields the stock sheet — a refactor that looks like it worked. A test pins that it does not recolour.
+
+**One latent bug was invisible until this shipped:** `_qss_cache` was keyed on the `light` bool, which cannot distinguish two *dark* themes, so an edited user theme would have been served the other one's chrome. Now keyed on the sheet's actual inputs.
+
+The settings migration is a one-shot **move**: `lightTheme` is translated once and then **removed**, because two stored answers to *"which theme"* is the drift this consolidation exists to kill — a stale `lightTheme=true` would resurrect light on the next restart after the user picked dark.
 **Requested:** 2026-08-12
 **Idea (verbatim/summarized):** Owner brainstorm outcome (record as settled design, NOT re-challenged): consolidate the scattered color sources into ONE `Theme` object, and do that FIRST as its own feature ("start with that feature"). A theme is **colors only**; each theme is a **separate file**, loaded at **runtime**; adding a new theme file makes a new selectable theme — "new palettes added as variable objects, saved in separate files, picked up on runtime". **Syntax highlighting is PART OF the theme**, not a separate setting: one theme bundles chrome + editor decorations + syntax token colors, which collapses the former panes #5/#6 into one concern and removes the light-syntax-on-dark-chrome mismatch risk by construction. This is the FOUNDATION that Feature B (**FQ-260812021716**, the in-app Themes pane) rides on.
 
@@ -5111,7 +5118,14 @@ Syntax token colors are also part of a theme but live apart and inconsistently:
 ---
 
 ## FQ-260812021716: In-app "Themes" customization pane in Software Settings — browse / select / duplicate / edit file-based themes
-**Status:** QUEUED
+**Status:** PROCESSED (`ui/software_settings_dialog.py::ThemesPane`, commit 7caf024; 8010 passed / 51 skipped)
+**Closing note:** added as **one row** in `SETTINGS_PANES`, which is what `FQ-260812002827`'s pane contract promised and a test proves by injecting another. `DEC-260812004400` is now satisfied by a real fifth pane rather than a stub, and `FQ-260812002828`/`FQ-260812002829` are absent as **merged** — syntax colours are part of a theme.
+
+The editor's section list is **derived from `theme_model`'s own tuples**, so adding a colour to the model appears in the editor with no change here. Bundled themes are read-only with the reason on screen.
+
+**This entry's own open questions were stale when it was picked up:** its recommendation that theme selection stay always-available had already been answered the other way by `FQ-260812021715`'s recorded ruling (Maintenance-only, persisted app-wide by name). Superseded, not deferred.
+
+Live preview is **apply-on-save**, not per-keystroke — per-keystroke would re-apply the whole app stylesheet on every colour-slider move and multiply the four-`PaletteChange` cost for no gain. Named in the class docstring in case the owner wants otherwise.
 **Requested:** 2026-08-12
 **Idea (verbatim/summarized):** Owner brainstorm outcome (record as settled design): an in-app **"Themes"** pane inside the consolidated **Software settings** dialog (**FQ-260812002827**) to browse, select, **duplicate ("new = copy an existing one")** and edit themes built on Feature A's (**FQ-260812021715**) file-based `Theme` objects — chrome colors plus the 8 syntax roles, each with color + bold/italic/underline. Saves to a Feature-A theme file. Live preview desirable. This pane **MERGES and SUPERSEDES** the two placeholders (below) — because syntax highlighting is part of the theme, there is ONE Themes pane, not two.
 
@@ -5143,7 +5157,8 @@ Syntax token colors are also part of a theme but live apart and inconsistently:
 ---
 
 ## FQ-260812022749: DUAL-MODE DDL — full `pg_dump` view when a correctly-versioned `pg_dump` is present, the synthesized restricted DDL otherwise, with the mode reported to Messages every time DDL is opened (and the same rule applied to sandbox provisioning) — the complete DDL is a CLONE SOURCE for tables and matviews (Part 5); view editing is split to `FQ-260812025836`
-**Status:** QUEUED
+**Status:** QUEUED — **PART 1 SHIPPED** (`db/pg_dump_mode.py` + `db/sandbox.py` + `ui/audit_router.py`, commit a852563; wired in 07b83e9). The probe, the `pg_dump major >= server major` rule, the four restricted verdict shapes and the `[DDL]` notice on every DDL open all ship. **The dual-mode buffer rendering is the remaining work** and is in flight.
+**Note:** wiring part 1 established that **there was no quality capability probe anywhere** — `db/sandbox.py::probe` had only ever run against the sandbox, so *"on connecting to the quality server"* had no existing hook; the quality Explorer's fetch is now that event. It also established that the owner's **same-version principle is assumed, not enforced**: `server_version` was produced only by that probe and consumed only by one PG14 trigger gate, so no comparison of the two servers existed anywhere. `server_major_divergence()` now performs it.
 **Requested:** 2026-08-12
 **Idea (verbatim):** *"serial in postgres is an int4 with default value at nextval('[any sequence]');. Defaults should show, so serial shows. creating a table column as serial (or bigserial) or uuid, is not an issue as postgres silently handles the creation of sequence and defaulting to nextval(). for the complete ddl you don't need any special treatment, just a pg_dump. we can easily make this dependency... we can only create table ddls if the correctly versioned pg_dump is on the local machine. this probably would simplify many many problems. indeed, would simplify all ddl issues, if psycopg can't do it."*
 
@@ -5279,7 +5294,12 @@ Verbatim: *"editing is already present! we can add, alter, delete columns, add i
 ---
 
 ## FQ-260812025353: Project setting — "Locate postgres binaries" folder field (full-path `pg_dump`/`pg_restore` invocation, empty ⇒ PATH), plus PostgreSQL server version on both Test buttons
-**Status:** QUEUED
+**Status:** PROCESSED (`db/ddl_project.py` + `db/sandbox.py` + `ui/project_settings_dialog.py`, commit a852563; wired through the controllers in 07b83e9)
+**Closing note:** precedence is **configured folder first, PATH second**, and that ordering is the feature: PATH-first would make the setting a no-op in exactly the case it exists for — a multi-major machine where the tools *are* on PATH and are the wrong ones. A folder missing a tool falls back to PATH rather than failing, and an empty setting is bit-for-bit today's behaviour.
+
+`resolve_tool` tries `<dir>/name` then `<dir>/name.exe` on **every** platform rather than branching on `os.name`, because the offscreen suite cannot see a platform branch — the same reasoning that makes this project bind chords explicitly on both keyboard schemes.
+
+Shipped and then found **inert**: only the settings dialog's own Test buttons passed the folder, so `sandbox_controller` and `ddl_project_controller` still resolved PATH-only. Wired in `07b83e9`. And `determine_project_tier`'s degraded reason still said *"not found on PATH"* once a folder could be configured — a sentence that sends the user to fix the wrong thing. The suite was green before that test existed, which is why it went unnoticed.
 **Requested:** 2026-08-12
 **Idea (verbatim/summarized):** "A Project settings *Locate postgres binaries* field. Today `pg_dump`/`pg_restore` must be on PATH to be callable, which breaks two ways: (1) with multiple PostgreSQL versions installed, we must point at the one whose major matches the quality (and sandbox) server; (2) on Windows the client tools are often not on PATH at all. So: a Project-settings **folder field** locating where `pg_dump`/`pg_restore` live; when invoked they are called by **full path** from that folder. **Empty ⇒ assume PATH** (today's behavior, unchanged). Also: the connection **Test button** (today reports 'Connected' / 'Connected — superuser') should **also report the PostgreSQL server version**, so the user can see e.g. that the sandbox port runs PG18 while the `pg_dump` on PATH is PG15's — that version mismatch is the whole reason the locate field matters."
 
@@ -5351,7 +5371,14 @@ All three stores are APP-WIDE (`generator_config.json` in the app data dir) — 
 ---
 
 ## FQ-260812025836: Make VIEWS editable in the DDL Explorer — `CREATE OR REPLACE VIEW` through the EXISTING §18.5 apply lane (views only; matviews and tables stay read-only)
-**Status:** QUEUED
+**Status:** PROCESSED (`db/ddl_buffer.py` + `ui/ddl_buffer_panel.py` + `ui/ddl_object_editor.py`, commit c7c45b3; gated in 07b83e9; 8035 passed / 51 skipped)
+**Closing note:** views fit the lane built for routines and triggers with **no new machinery** — `db/apply.py` needed no change at all, being genuinely kind-agnostic. Matviews stay read-only and their refusal now **states its reason**: there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so replacing one would drop its stored data.
+
+**The entry missed the only real regression risk.** A view row carries **both** an editable span and `_TABLE_ROLE`, and `_menu_for_item` short-circuited on the span — so making views editable would have silently replaced a view's `Add Trigger…`/`Create Table…` menu with an Edit-DDL-only one, **withdrawing `INSTEAD OF` trigger creation**: the standard way to make a view updatable, and something `DEC-260811025733` had deliberately kept on views hours earlier. The menu is now the union.
+
+It also missed that `parse_buffer_identity` is a **blocker**: without a view branch, precondition 1 would have hard-refused every view, leaving `Apply to quality` dead for the one kind being added. And `_drop_statement` was a **fifth** consumer of `qualified` — one that emits SQL the user pastes into the Quality console, so the `pr.orders_v()` defect was never confined to prose.
+
+Shipped incomplete and completed in `07b83e9`: `_on_ddl_edit_requested` routed any non-trigger to the checkout path, so editing a view with a project open would have written `ddl/pr.orders_v.sql` and registered it deployed — colliding with a same-named function on a path §18.2's identity regex cannot recover.
 **Requested:** 2026-08-12
 **Idea (verbatim):** *"the exception is view, that can be create or replace, or the ddl can start with drop view, then create view. developers will know this"*
 
