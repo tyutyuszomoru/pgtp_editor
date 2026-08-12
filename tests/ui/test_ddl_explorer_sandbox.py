@@ -121,7 +121,7 @@ def _open_project(window, tmp_path, sandbox_host="sandbox-host"):
     )
     save_settings(project_dir, settings)
     window._ddl_project_ui.probe_sandbox_capabilities = (
-        lambda params: SandboxCapabilities(is_superuser=True)
+        lambda params, **kw: SandboxCapabilities(is_superuser=True)
     )
     window._ddl_project_ui.set_active_project(project_dir, settings)
     return settings

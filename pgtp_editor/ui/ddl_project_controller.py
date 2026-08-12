@@ -887,13 +887,20 @@ class DdlProjectController(QObject):
         sandbox_params = settings.sandbox
         sandbox_mode = settings.sandbox_mode
         sandbox_configured = bool(sandbox_params.host)
+        # FQ-260812025353: the project's *Locate postgres binaries* folder is
+        # what `probe` resolves `pg_dump`/`pg_restore` through, and it is the
+        # answer `determine_project_tier` then reads off the capabilities to
+        # decide tier 3 vs. a degraded tier 2. Without it the tier was computed
+        # from PATH alone while the settings dialog's own Test button used the
+        # folder -- two answers to one question. `None` is PATH-only.
+        bin_dir = settings.postgres_bin_dir or None
 
         def do_probe() -> ProjectCapabilityStatus:
             if not sandbox_configured:
                 return determine_project_tier(
                     SandboxCapabilities(), sandbox_mode, sandbox_configured=False
                 )
-            caps = self.probe_sandbox_capabilities(sandbox_params)
+            caps = self.probe_sandbox_capabilities(sandbox_params, bin_dir=bin_dir)
             return determine_project_tier(caps, sandbox_mode, sandbox_configured=True)
 
         def on_result(status: ProjectCapabilityStatus) -> None:

@@ -96,7 +96,8 @@ from pgtp_editor.db.quality_query import (
 from pgtp_editor.db.introspect import RoutineInfo, fetch_routines_and_triggers
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.schema_index import SchemaIndex
-from pgtp_editor.db.sandbox import SandboxMode
+from pgtp_editor.db.sandbox import SandboxMode, probe as sandbox_probe
+from pgtp_editor.db.pg_dump_mode import probe_ddl_mode, server_major_divergence
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
@@ -227,7 +228,7 @@ from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
 from pgtp_editor.ui import theme_model
 from pgtp_editor.ui.theme import apply_theme
-from pgtp_editor.ui.audit_router import AuditRouter
+from pgtp_editor.ui.audit_router import DDL_PREFIX, AuditRouter
 from pgtp_editor.ui.software_settings_dialog import (
     MENU_LABEL as SOFTWARE_SETTINGS_MENU_LABEL,
     SoftwareSettingsDialog,
@@ -767,6 +768,33 @@ class MainWindow(QMainWindow):
         self._ddl_schema_index: SchemaIndex | None = None
         #: The raw `DatabaseSchema` behind `_ddl_schema_index` (FQ-002).
         self._ddl_schema = None
+        #: FQ-260812022749 part 1 -- the dual-mode DDL verdict
+        #: (`db/pg_dump_mode.py`). Probed ONCE per quality connection (the
+        #: `pg_dump --version` spawn is expensive and its answer cannot change
+        #: mid-connection) and cached here with the connection it was probed
+        #: for; every DDL open then REPORTS it from this cache. The repetition
+        #: is the owner's ruling -- *"this way the choice is clear"* -- so the
+        #: notice is not collapsed to once per session and not withheld when the
+        #: verdict is good.
+        self._ddl_mode_verdict = None
+        #: What `_ddl_mode_verdict` was probed for: the quality connection's
+        #: identity plus the project's binaries folder. Anything else is a
+        #: DIFFERENT connection and re-probes, which is also how closing a
+        #: project (or pointing it at another binaries folder) invalidates the
+        #: cache without a single explicit clear.
+        self._ddl_mode_verdict_key = None
+        #: The quality server's `SandboxCapabilities` from that same probe --
+        #: kept because it carries `server_version`, which is one half of
+        #: `server_major_divergence`'s quality-vs-sandbox comparison.
+        self._quality_capabilities = None
+        #: The two `db/pg_dump_mode.py` seams, as plain attributes so a test can
+        #: replace them (the same convention as
+        #: `DdlProjectController.probe_sandbox_capabilities`). Both are I/O:
+        #: `probe_quality_capabilities` opens a connection and
+        #: `ddl_mode_prober` spawns `pg_dump --version`, so neither may ever
+        #: run on the GUI thread or inside a test that has not replaced it.
+        self.probe_quality_capabilities = sandbox_probe
+        self.ddl_mode_prober = probe_ddl_mode
         #: The §18.8 Project Status window, kept so re-invoking the menu entry
         #: raises the existing one instead of stacking duplicates.
         self._project_status_window = None
@@ -1171,8 +1199,11 @@ class MainWindow(QMainWindow):
         self.sandbox_controller = SandboxController(
             self,
             confirm_destructive=self._confirm_destructive_sandbox_operation,
-            prober=lambda params: self._ddl_project_ui.probe_sandbox_capabilities(
-                params
+            # `**kwargs` so the controller's `bin_dir=` (FQ-260812025353)
+            # reaches the real `probe` through this one seam rather than
+            # needing a second probing path of its own.
+            prober=lambda params, **kwargs: (
+                self._ddl_project_ui.probe_sandbox_capabilities(params, **kwargs)
             ),
         )
         # BUG-043: route the sandbox lane's off-thread runner through the SAME
@@ -4517,6 +4548,94 @@ class MainWindow(QMainWindow):
         `CoherenceController.fetch_schema`)."""
         return fetch_routines_and_triggers(params)
 
+    # -- the dual-mode DDL verdict (FQ-260812022749 part 1) --------------------
+
+    def postgres_bin_dir(self) -> str:
+        """The open project's *Locate postgres binaries* folder, or `""`
+        meaning **PATH only** -- today's behaviour exactly
+        (FQ-260812025353).
+
+        The ONE reader of `ProjectSettings.postgres_bin_dir` in this window, so
+        every `db/sandbox.py` call site that takes a `bin_dir` gets the same
+        answer and none of them re-derives it. Projectless has no project
+        settings and therefore no folder, which is not a degradation: PATH is
+        what the setting overrides, not what it replaces.
+        """
+        settings = self._ddl_project_settings
+        return (settings.postgres_bin_dir if settings is not None else "") or ""
+
+    def _ddl_mode_cache_key(self, params):
+        """What makes a cached `DdlModeVerdict` still THIS connection's answer.
+
+        The connection's identity plus the binaries folder: pointing the project
+        at a different `pg_dump` changes the verdict without changing the
+        server, and a verdict cached across that swap would name a binary the
+        app no longer uses."""
+        return (
+            params.user,
+            params.host,
+            params.port,
+            params.database,
+            self.postgres_bin_dir(),
+        )
+
+    def _probe_ddl_mode(self, params):
+        """The verdict for `params`, freshly probed -- **worker thread only.**
+
+        Opens a connection (`probe`, for the server version) and spawns
+        `pg_dump --version` (`probe_ddl_mode`), which is exactly why `probe()`
+        deliberately does not spawn and this is the one place that does.
+        Returns `(capabilities, verdict)`; the CALLER caches, on the GUI thread,
+        so this method holds no state and can never race the window.
+
+        Never raises in production -- both seams have never-raises contracts --
+        but the caller still guards, because an injected seam is not bound by
+        them and a version notice must not be able to fail a DDL open.
+        """
+        bin_dir = self.postgres_bin_dir() or None
+        caps = self.probe_quality_capabilities(params, bin_dir=bin_dir)
+        return caps, self.ddl_mode_prober(caps, bin_dir=bin_dir)
+
+    def _report_ddl_mode(self, verdict) -> None:
+        """The `[DDL]` row, on **every** DDL open (owner ruling: *"this way the
+        choice is clear"*).
+
+        Read from the cache, never re-probed: the sentence repeats, the
+        subprocess does not. `[DDL]` is routed to the Messages tab by
+        `ui/audit_router.py`, whose `DDL_PREFIX` is the prefix's one home --
+        `db/pg_dump_mode.py` builds the sentence and stays Qt-free.
+
+        The quality-vs-sandbox major comparison rides with it whenever both
+        probes are in hand: the owner's principle is that the two databases MUST
+        be the same version, and until `server_major_divergence` existed nothing
+        in the app checked it.
+        """
+        if verdict is None:
+            return
+        self.audit_panel.addItem(QListWidgetItem(f"{DDL_PREFIX} {verdict.message}"))
+        divergence = self._server_version_divergence(verdict)
+        if divergence:
+            self.audit_panel.addItem(QListWidgetItem(f"{DDL_PREFIX} {divergence}"))
+
+    def _server_version_divergence(self, verdict):
+        """`server_major_divergence`'s sentence, or None when it cannot be
+        asked (no sandbox probe yet) or the two majors agree.
+
+        The sandbox half comes from whichever probe has already run -- the
+        session controller's cached capabilities first, the §18 tier probe's
+        second -- and never from a probe started here: this runs on the GUI
+        thread, and a version notice may not open a connection.
+        """
+        caps = self.sandbox_controller.capabilities
+        if caps is None:
+            status = self._ddl_project_ui.capability_status
+            caps = getattr(status, "capabilities", None)
+        if caps is None:
+            return None
+        return server_major_divergence(
+            verdict.server_version, getattr(caps, "server_version", ())
+        )
+
     def _on_ddl_explorer_toggled(self, checked, role=DDL_EXPLORER_TARGET):
         if checked:
             self._open_ddl_explorer(role)
@@ -4620,7 +4739,32 @@ class MainWindow(QMainWindow):
             debuglog.redacted(params),
         )
 
-        def on_result(schema):
+        # FQ-260812022749: the quality DDL mode is probed at most ONCE per
+        # quality connection, on this worker thread, and REPORTED on every
+        # open. A cache hit does no I/O at all; a miss carries its
+        # `(capabilities, verdict)` back to `on_result`, which is where the
+        # cache is written -- the worker never touches window state.
+        probe_mode = role == DDL_EXPLORER_TARGET and self._ddl_mode_verdict_key != (
+            self._ddl_mode_cache_key(params)
+        )
+
+        def work():
+            schema = self._fetch_ddl_schema(params)
+            probed = None
+            if probe_mode:
+                try:
+                    probed = self._probe_ddl_mode(params)
+                except Exception as exc:  # noqa: BLE001 -- a notice never fails an open
+                    _log.info("db: ddl mode probe failed %s", exc)
+            return schema, probed
+
+        def on_result(outcome):
+            schema, probed = outcome
+            if probed is not None:
+                self._quality_capabilities, self._ddl_mode_verdict = probed
+                self._ddl_mode_verdict_key = self._ddl_mode_cache_key(params)
+            if role == DDL_EXPLORER_TARGET:
+                self._report_ddl_mode(self._ddl_mode_verdict)
             text, spans = build_ddl_text(schema)
             self.center_stage.ddl_explorer_panel(role).set_ddl_text(
                 text, spans, schema=schema
@@ -4687,11 +4831,7 @@ class MainWindow(QMainWindow):
             if action is not None:
                 action.setChecked(False)
 
-        self._run_async(
-            lambda: self._fetch_ddl_schema(params),
-            on_result=on_result,
-            on_error=on_error,
-        )
+        self._run_async(work, on_result=on_result, on_error=on_error)
 
     def _on_ddl_explorer_visibility_changed(self, role, visible):
         """Keep `role`'s left tree tab and its Database-menu toggle in lockstep
@@ -4777,8 +4917,23 @@ class MainWindow(QMainWindow):
 
         Creation (FQ-002) does NOT come through here -- it calls
         `_edit_ddl_live` directly, see `_open_created_ddl_object`.
+
+        **A project open is not enough: the KIND must be checkout-eligible**
+        (`DdlObjectRef.is_checkout_eligible` / `ddl_object_editor
+        .CHECKOUT_KINDS`, FQ-260812025836). A view is edit-and-apply only, and
+        routing one into the checkout branch would write
+        `ddl/pr.orders_v.sql` -- the exact path a same-named *function*
+        (`pr.orders_v()`, legal and common) claims -- and register it as
+        deployed. §18.2's identity-recovery header regex matches
+        `FUNCTION|PROCEDURE` only, so that file could never be read back as a
+        view either. The `getattr` default is **True** on purpose: anything
+        that does not carry the property keeps today's behaviour exactly.
         """
-        if self._ddl_project_folder is not None and self._ddl_project_settings is not None:
+        if (
+            self._ddl_project_folder is not None
+            and self._ddl_project_settings is not None
+            and getattr(ref, "is_checkout_eligible", True)
+        ):
             self._edit_ddl_checked_out(ref, source)
             return
         self._edit_ddl_live(ref, source)
@@ -6982,6 +7137,7 @@ class MainWindow(QMainWindow):
                 target_params=settings.target,
                 mode=settings.sandbox_mode,
                 configured=bool(settings.sandbox.host),
+                postgres_bin_dir=settings.postgres_bin_dir,
             )
         self._refresh_sandbox_affordances()
         params = self._configured_sandbox_params()
@@ -7338,7 +7494,27 @@ class MainWindow(QMainWindow):
         side uses, so both sides of the comparison are produced by one function.
         A trigger is identified by `(schema, table, name)`, which the catalog
         carries directly.
+
+        A **view** (FQ-260812025836) is identified by `(schema, name)` alone --
+        it has no signature to compare, so precondition 1 can only ask *does it
+        still exist*. It lives in `schema.tables` (keyed `"schema.name"`,
+        `kind == "view"`), not in `routines`, which is why it needs its own
+        branch: without one, an existing view always read as ABSENT and the
+        confirmation announced *"… does not exist in the target catalog;
+        applying will create it"* over a view that is plainly there. That never
+        wrongly blocked and never wrongly cleared -- it simply said something
+        untrue in the one dialog whose whole job is to be accurate.
         """
+        if ref.kind == "view":
+            for table in (getattr(schema, "tables", None) or {}).values():
+                if getattr(table, "kind", None) != "view":
+                    continue
+                table_schema, _, table_name = (table.name or "").rpartition(".")
+                if table_schema == ref.schema and table_name == ref.name:
+                    return DdlObjectRef(
+                        kind="view", schema=table_schema, name=table_name
+                    )
+            return None
         if ref.kind == "trigger":
             for trigger in (getattr(schema, "triggers", None) or {}).values():
                 if (

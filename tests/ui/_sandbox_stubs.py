@@ -62,5 +62,5 @@ def stub_sandbox_provisioning(window, *, created=None):
     controller._provisioner = lambda snapshot, params, mode, **kwargs: fake_session(params)
     controller._opener = lambda params, **kwargs: fake_session(params)
     controller._installer = lambda session: None
-    controller._cloner = lambda target_params, sandbox_params: None
+    controller._cloner = lambda target_params, sandbox_params, **kwargs: None
     return created

@@ -559,7 +559,7 @@ def test_the_sandbox_confirmation_also_names_the_host_now(qtbot, tmp_path):
     # `window._ddl_project_ui._run_async` by hand, which covered the probe and
     # not the session -- see BUG-043, and `_window`'s comment.
     window._ddl_project_ui.probe_sandbox_capabilities = (
-        lambda params: SandboxCapabilities(is_superuser=True)
+        lambda params, **kw: SandboxCapabilities(is_superuser=True)
     )
     # The probe passing means `open_session` proceeds to `_opener`, which is the
     # real `db/sandbox.py::open_sandbox` -- the thing that was actually dialling

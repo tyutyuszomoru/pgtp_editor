@@ -90,7 +90,7 @@ def _window(qtbot, tmp_path):
     )
     qtbot.addWidget(window)
     window._run_async = sync_run
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(
         is_superuser=True,
         available_extensions=frozenset({"plpgsql_check"}),
         database="pgtp_sandbox_x",
@@ -299,7 +299,7 @@ def test_a_failed_provisioning_leaves_the_reported_tier_agreeing_with_reality(
     )
     # A sandbox that cannot be reached/built must degrade the project, whatever
     # the recorded mode says (BUG-035's class of lie).
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(
         probe_error="database does not exist"
     )
     dialog = _dialog(qtbot, window, tmp_path)

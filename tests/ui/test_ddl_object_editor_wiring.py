@@ -744,3 +744,129 @@ def test_an_apply_to_target_that_did_not_commit_is_journalled_as_failed(
     entry = window.activity_log.entries[-1]
     assert entry.failed
     assert entry.error_full == "permission denied for schema pr"
+
+
+# --- FQ-260812025836: a VIEW is edit-and-apply only, never checked out -------
+#
+# Views became editable in c7c45b3, but `_on_ddl_edit_requested` routed every
+# object to the checkout branch whenever a project was open. A view checked out
+# that way would write `ddl/pr.orders_v.sql` -- the exact path a same-named
+# FUNCTION claims, since §18.2's naming scheme is `<schema>.<name>.sql` and its
+# identity-recovery header regex matches `FUNCTION|PROCEDURE` only -- and
+# register it as deployed. These assert the FILE SYSTEM, not which method ran:
+# the collision is a file, so a call-tracking test would pass over a rename.
+
+_VIEW_REF = DdlObjectRef(kind="view", schema="pr", name="orders_v")
+
+
+def _project_window(qtbot, tmp_path, monkeypatch, *, deployed=None):
+    from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
+
+    window = _window(qtbot, tmp_path)
+    window._current_project = _project_with_connection()
+    project_dir = tmp_path / "proj"
+    settings = ProjectSettings(target=_TARGET, deployed=deployed or {})
+    save_settings(project_dir, settings)
+    window._ddl_project_ui.set_active_project(project_dir, settings)
+    _load_explorer(window, monkeypatch)
+    return window, project_dir
+
+
+def test_editing_a_view_with_a_project_open_writes_no_checked_out_file(
+    qtbot, tmp_path, monkeypatch
+):
+    window, project_dir = _project_window(qtbot, tmp_path, monkeypatch)
+
+    window._on_ddl_edit_requested(_VIEW_REF, "CREATE VIEW pr.orders_v AS SELECT 1;")
+
+    assert list((project_dir / "ddl").glob("*.sql")) == []
+    panel = window.center_stage.ddl_object_tab(_VIEW_REF.key)
+    assert panel is not None
+    assert panel.text() == "CREATE VIEW pr.orders_v AS SELECT 1;"
+
+
+def test_editing_a_view_registers_nothing_as_deployed(qtbot, tmp_path, monkeypatch):
+    """The other half of the collision: a checked-out view would also claim the
+    `deployed` manifest row belonging to `pr.orders_v()` the function."""
+    from pgtp_editor.db.ddl_project import load_settings
+
+    window, project_dir = _project_window(qtbot, tmp_path, monkeypatch)
+
+    window._on_ddl_edit_requested(_VIEW_REF, "CREATE VIEW pr.orders_v AS SELECT 1;")
+
+    assert load_settings(project_dir).deployed == {}
+
+
+def test_editing_a_function_with_a_project_open_still_checks_out(
+    qtbot, tmp_path, monkeypatch
+):
+    """The gate narrows the checkout branch by KIND and by nothing else."""
+    window, project_dir = _project_window(qtbot, tmp_path, monkeypatch)
+
+    window._on_ddl_edit_requested(_REF, "-- live recalc\n")
+
+    assert (project_dir / "ddl" / "pr.recalc.sql").read_text() == "-- live recalc\n"
+
+
+def test_a_ref_without_the_eligibility_property_keeps_the_checkout_behaviour(
+    qtbot, tmp_path, monkeypatch
+):
+    """The `getattr(..., True)` default is load-bearing: anything that does not
+    carry `is_checkout_eligible` must behave exactly as it did before."""
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class _BareRef:
+        kind: str = "function"
+        schema: str = "pr"
+        name: str = "recalc"
+        table: str | None = None
+        arg_types: tuple = ()
+        is_trigger: bool = False
+
+        @property
+        def key(self):
+            return ("function", "pr", "recalc", None, ())
+
+        @property
+        def qualified(self):
+            return "pr.recalc()"
+
+        @property
+        def short_title(self):
+            return "recalc"
+
+    window, project_dir = _project_window(qtbot, tmp_path, monkeypatch)
+    assert not hasattr(_BareRef(), "is_checkout_eligible")
+
+    window._on_ddl_edit_requested(_BareRef(), "-- live recalc\n")
+
+    assert (project_dir / "ddl" / "pr.recalc.sql").exists()
+
+
+def test_identity_in_schema_finds_an_existing_view(qtbot, tmp_path):
+    """§18.5 precondition 1 asked `routines` only, so an existing view always
+    read as ABSENT and the confirmation announced it would be CREATED."""
+    from pgtp_editor.db.introspect import TableInfo
+
+    schema = DatabaseSchema(
+        tables={
+            "pr.orders_v": TableInfo(name="pr.orders_v", kind="view"),
+            "pr.orders": TableInfo(name="pr.orders", kind="table"),
+        }
+    )
+
+    identity = MainWindow._identity_in_schema(_VIEW_REF, schema)
+
+    assert identity == DdlObjectRef(kind="view", schema="pr", name="orders_v")
+
+
+def test_identity_in_schema_reports_a_missing_view_as_absent(qtbot, tmp_path):
+    from pgtp_editor.db.introspect import TableInfo
+
+    schema = DatabaseSchema(
+        # A same-named TABLE is not the view: only `kind == "view"` answers.
+        tables={"pr.orders_v": TableInfo(name="pr.orders_v", kind="table")}
+    )
+
+    assert MainWindow._identity_in_schema(_VIEW_REF, schema) is None

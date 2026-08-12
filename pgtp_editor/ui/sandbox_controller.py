@@ -520,6 +520,11 @@ class SandboxController(QObject):
         self._target_params: ConnectionParams | None = None
         self._mode = SandboxMode.SCHEMA_ONLY
         self._configured = False
+        #: §18.2's per-project *Locate postgres binaries* folder
+        #: (FQ-260812025353), recorded by `set_project` and handed to EVERY
+        #: `db/sandbox.py` seam this controller drives. `""` is PATH-only,
+        #: which is what the whole chain did before the setting existed.
+        self._postgres_bin_dir = ""
         self._baseline: DatabaseSchema | BaselineSnapshot | None = None
         self._schema_names: frozenset[str] = frozenset()
 
@@ -532,6 +537,7 @@ class SandboxController(QObject):
         target_params: ConnectionParams | None = None,
         mode: SandboxMode = SandboxMode.SCHEMA_ONLY,
         configured: bool | None = None,
+        postgres_bin_dir: str = "",
     ) -> None:
         """Point the controller at the open project's sandbox.
 
@@ -557,11 +563,18 @@ class SandboxController(QObject):
 
         `configured` defaults to "sandbox_params were supplied at all", which is
         `determine_project_tier`'s `sandbox_configured` input.
+
+        `postgres_bin_dir` is `ProjectSettings.postgres_bin_dir`, taken verbatim
+        like the other three (FQ-260812025353). It rides on the project binding
+        rather than on each operation because it is a property of the PROJECT,
+        and passing it per-call is how one lane ends up resolving `pg_dump`
+        differently from another.
         """
         self.close_session()
         self._sandbox_params = sandbox_params
         self._target_params = target_params
         self._mode = mode
+        self._postgres_bin_dir = postgres_bin_dir or ""
         self._configured = bool(sandbox_params) if configured is None else configured
         self._capabilities = None
         self._baseline = None
@@ -619,6 +632,22 @@ class SandboxController(QObject):
         return self._mode
 
     @property
+    def postgres_bin_dir(self) -> str:
+        """The project's recorded *Locate postgres binaries* folder, `""` for
+        PATH-only (FQ-260812025353)."""
+        return self._postgres_bin_dir
+
+    def _bin_dir(self) -> str | None:
+        """`self._postgres_bin_dir` in the spelling `db/sandbox.py` takes:
+        `None` for "PATH only", never `""`.
+
+        Read on the GUI thread and captured into each worker's closure, never
+        read from inside one -- a project transition while an operation is in
+        flight must not change which binaries that operation resolves
+        halfway through."""
+        return self._postgres_bin_dir or None
+
+    @property
     def sandbox_params(self) -> ConnectionParams | None:
         return self._sandbox_params
 
@@ -670,8 +699,10 @@ class SandboxController(QObject):
             )
             return
 
+        bin_dir = self._bin_dir()
+
         def work() -> SandboxCapabilities:
-            return self._prober(params)
+            return self._prober(params, bin_dir=bin_dir)
 
         def on_result(caps: SandboxCapabilities) -> None:
             self._capabilities = caps
@@ -719,8 +750,10 @@ class SandboxController(QObject):
         baseline = self._baseline
         schema_names = self._schema_names
 
+        bin_dir = self._bin_dir()
+
         def work() -> tuple[SandboxSession | None, SandboxCapabilities, str | None]:
-            caps = self._prober(params)
+            caps = self._prober(params, bin_dir=bin_dir)
             reason = self._blocking_reason(caps)
             if reason is not None:
                 return None, caps, reason
@@ -730,6 +763,7 @@ class SandboxController(QObject):
                 schema_names=schema_names,
                 baseline=baseline,
                 target_params=target_params,
+                postgres_bin_dir=bin_dir or "",
             )
             # DEC-008: drop the pre-BUG-044 alter bookkeeping rows, once per
             # session open, on this worker thread (never on the GUI one).
@@ -812,12 +846,18 @@ class SandboxController(QObject):
 
         mode = self._mode
 
+        bin_dir = self._bin_dir()
+
         def work() -> tuple[SandboxSession, BaselineSnapshot | DatabaseSchema]:
             if admin_params is not None and database_name is not None:
                 self._database_creator(admin_params, database_name)
             snapshot = self._snapshotter(target_params)
             session = self._provisioner(
-                snapshot, params, mode, target_params=target_params
+                snapshot,
+                params,
+                mode,
+                target_params=target_params,
+                postgres_bin_dir=bin_dir or "",
             )
             return session, snapshot
 
@@ -908,6 +948,8 @@ class SandboxController(QObject):
             mode = SandboxMode.SCHEMA_ONLY
             notes.append(_WITH_DATA_NEEDS_TARGET_NOTE)
 
+        bin_dir = self._bin_dir()
+
         def work():
             created = self._create_first_free_database(admin_params, candidates)
             sandbox_params = replace(params, database=created)
@@ -922,8 +964,9 @@ class SandboxController(QObject):
                 sandbox_params,
                 mode,
                 target_params=target_params if has_target else None,
+                postgres_bin_dir=bin_dir or "",
             )
-            caps = self._prober(sandbox_params)
+            caps = self._prober(sandbox_params, bin_dir=bin_dir)
             offered, reason = install_gate(caps)
             if offered:
                 try:
@@ -934,7 +977,7 @@ class SandboxController(QObject):
                         f"{str(exc) or exc.__class__.__name__}"
                     )
                 else:
-                    caps = self._prober(sandbox_params)
+                    caps = self._prober(sandbox_params, bin_dir=bin_dir)
             elif caps.plpgsql_check_state != "installed":
                 local_notes.append(f"plpgsql_check was not installed: {reason}")
             return created, sandbox_params, session, snapshot, caps, local_notes
@@ -1024,8 +1067,10 @@ class SandboxController(QObject):
 
         sandbox_params = self._session.params
 
+        bin_dir = self._bin_dir()
+
         def work() -> None:
-            self._cloner(target_params, sandbox_params)
+            self._cloner(target_params, sandbox_params, bin_dir=bin_dir)
 
         def on_result(_ignored) -> None:
             self._finish(SandboxOperation.CLONE_DATA, True, "", on_done)
@@ -1140,8 +1185,14 @@ class SandboxController(QObject):
         cached_caps = self._capabilities
         params = session.params
 
+        bin_dir = self._bin_dir()
+
         def work() -> tuple[object, SandboxCapabilities]:
-            caps = cached_caps if cached_caps is not None else self._prober(params)
+            caps = (
+                cached_caps
+                if cached_caps is not None
+                else self._prober(params, bin_dir=bin_dir)
+            )
             return self._checker(session, request, caps), caps
 
         def on_result(outcome: tuple[object, SandboxCapabilities]) -> None:
@@ -1218,8 +1269,14 @@ class SandboxController(QObject):
         params = session.params
         run_ladder = self._probe_checker if probe else self._applier
 
+        bin_dir = self._bin_dir()
+
         def work() -> tuple[object, SandboxCapabilities]:
-            caps = cached_caps if cached_caps is not None else self._prober(params)
+            caps = (
+                cached_caps
+                if cached_caps is not None
+                else self._prober(params, bin_dir=bin_dir)
+            )
             return run_ladder(session, request, caps, ddl_text=ddl_text), caps
 
         def on_result(outcome: tuple[object, SandboxCapabilities]) -> None:

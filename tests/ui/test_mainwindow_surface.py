@@ -151,6 +151,9 @@ EXPECTED_HOST_SURFACE = {
     "_ddl_project_settings",
     "_ddl_project_ui",
     "_ddl_sandbox_content_facts",
+    "_ddl_mode_cache_key",
+    "_ddl_mode_verdict",
+    "_ddl_mode_verdict_key",
     "_ddl_schema",
     "_ddl_schema_index",
     "_debug_label",
@@ -292,6 +295,7 @@ EXPECTED_HOST_SURFACE = {
     # `_quality_session` is the window's ONE held-open transaction
     # (`DEC-260811023646`) -- a second one would be a transaction nobody can see.
     "_open_quality_sql_console",
+    "_quality_capabilities",
     "_quality_console_action",
     "_quality_console_available",
     "_quality_session",
@@ -307,6 +311,7 @@ EXPECTED_HOST_SURFACE = {
     "_php_tabs",
     "_place_cursor_in_opening_tag",
     "_probe_check_active_ddl_object",
+    "_probe_ddl_mode",
     "_project_status_sandbox_facts",
     "_project_status_target",
     "_project_status_window",
@@ -344,6 +349,8 @@ EXPECTED_HOST_SURFACE = {
     "_report_check_lines",
     "_report_ddl_checkout_drift",
     "_report_ddl_format_refusal",
+    "_report_ddl_mode",
+    "_server_version_divergence",
     # FQ-030: the editor-gesture refusal reporter, the Audit half of
     # `CodeEditor.expansion_refused` (the widget can only show a tooltip).
     "_report_editor_gesture_refusal",
@@ -507,6 +514,12 @@ EXPECTED_HOST_SURFACE = {
     "coherence_tab_index",
     "contents_tab_index",
     "ddl_browser_panel",
+    # FQ-260812022749: the two `db/pg_dump_mode.py` seams (a probe that
+    # connects, a probe that spawns `pg_dump --version`) and the project's
+    # binaries folder every `bin_dir=` call site reads (FQ-260812025353).
+    "ddl_mode_prober",
+    "probe_quality_capabilities",
+    "postgres_bin_dir",
     "ddl_browser_tab_index",
     "dragEnterEvent",
     "dropEvent",

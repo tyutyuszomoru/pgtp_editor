@@ -55,7 +55,7 @@ def test_creating_a_project_with_no_sandbox_probes_and_lands_in_quality_tier(qtb
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
     called = []
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: called.append(params) or SandboxCapabilities()
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: called.append(params) or SandboxCapabilities()
 
     window._ddl_project_ui.create_project(dialog)
 
@@ -75,7 +75,7 @@ def test_creating_a_project_with_a_reachable_schema_only_sandbox_lands_in_develo
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
     dialog._sandbox_host_edit.setText("localhost")
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
 
     window._ddl_project_ui.create_project(dialog)
 
@@ -91,7 +91,7 @@ def test_probe_receives_the_projects_own_sandbox_params(qtbot, tmp_path):
     dialog._folder_edit.setText(str(tmp_path / "p"))
     dialog._sandbox_host_edit.setText("sandbox-host")
     seen = []
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: (
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: (
         seen.append(params), SandboxCapabilities(is_superuser=True)
     )[1]
 
@@ -107,7 +107,7 @@ def test_unreachable_sandbox_degrades_to_quality_tier_with_the_probe_error_named
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
     dialog._sandbox_host_edit.setText("dead-host")
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(
         probe_error="could not connect to server"
     )
 
@@ -126,7 +126,7 @@ def test_with_data_mode_missing_clone_tools_degrades_to_quality_naming_the_tools
     dialog._folder_edit.setText(str(tmp_path / "p"))
     dialog._sandbox_host_edit.setText("localhost")
     dialog._sandbox_with_data_radio.setChecked(True)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(
         is_superuser=True, pg_dump_path=None, pg_restore_path=None
     )
 
@@ -145,7 +145,7 @@ def test_with_data_mode_and_tools_present_lands_in_development_tier(qtbot, tmp_p
     dialog._folder_edit.setText(str(tmp_path / "p"))
     dialog._sandbox_host_edit.setText("localhost")
     dialog._sandbox_with_data_radio.setChecked(True)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(
         is_superuser=True, pg_dump_path="/usr/bin/pg_dump", pg_restore_path="/usr/bin/pg_restore"
     )
 
@@ -162,7 +162,7 @@ def test_creating_a_project_records_the_chosen_sandbox_mode(qtbot, tmp_path):
     project_dir = tmp_path / "p"
     dialog._folder_edit.setText(str(project_dir))
     dialog._sandbox_with_data_radio.setChecked(True)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities()
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities()
 
     window._ddl_project_ui.create_project(dialog)
 
@@ -188,7 +188,7 @@ def test_opening_a_project_probes_again_reflecting_the_sandboxs_current_state(
         modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
 
     window._ddl_project_ui.open_project()
 
@@ -210,7 +210,7 @@ def test_a_sandbox_that_died_between_sessions_is_detected_on_reopen(qtbot, tmp_p
         modals.QFileDialog, "getExistingDirectory",
         staticmethod(lambda *a, **k: str(project_dir)),
     )
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(
         probe_error="connection refused"
     )
 
@@ -229,7 +229,7 @@ def test_refresh_project_capability_status_can_be_called_on_demand(qtbot, tmp_pa
     dialog._folder_edit.setText(str(tmp_path / "p"))
     dialog._sandbox_host_edit.setText("localhost")
     probe_calls = []
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: (
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: (
         probe_calls.append(1), SandboxCapabilities(is_superuser=True)
     )[1]
     window._ddl_project_ui.create_project(dialog)
@@ -260,7 +260,7 @@ def test_closing_a_project_clears_the_capability_status(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     dialog._folder_edit.setText(str(tmp_path / "p"))
     dialog._sandbox_host_edit.setText("localhost")
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
     window._ddl_project_ui.create_project(dialog)
     assert window._ddl_project_ui.capability_status is not None
 
@@ -285,7 +285,7 @@ def _project_with_target(qtbot, tmp_path, target_host="target-host"):
     poking the attributes, so the target probe is exercised where it ships.
     """
     window = _window(qtbot, tmp_path)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
     project_dir = tmp_path / "p"
     settings = ProjectSettings(
         target=ConnectionParams(host=target_host, database="db", user="u"),
@@ -496,7 +496,7 @@ def test_a_projects_blank_target_renders_not_set_up_not_green(qtbot, tmp_path, m
     from pgtp_editor.ui.project_status_model import QualityState
 
     window = _window(qtbot, tmp_path)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
     project_dir = tmp_path / "blank"
     settings = ProjectSettings(sandbox=ConnectionParams(host="localhost"))
     save_settings(project_dir, settings)
@@ -522,7 +522,7 @@ def test_a_blank_target_stays_not_set_up_across_a_recheck(qtbot, tmp_path, monke
     from pgtp_editor.ui.project_status_model import QualityState
 
     window = _window(qtbot, tmp_path)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
     project_dir = tmp_path / "blank"
     settings = ProjectSettings(sandbox=ConnectionParams(host="localhost"))
     save_settings(project_dir, settings)
@@ -549,7 +549,7 @@ def test_the_quality_click_through_shows_no_details_for_a_nonexistent_connection
     from pgtp_editor.ui.project_status_model import NodeFamily
 
     window = _window(qtbot, tmp_path)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
     project_dir = tmp_path / "blank"
     settings = ProjectSettings(sandbox=ConnectionParams(host="localhost"))
     save_settings(project_dir, settings)
@@ -591,7 +591,7 @@ def test_a_real_target_still_shows_its_details(qtbot, tmp_path, monkeypatch):
 # --- BUG-035: Sandbox1 reports verified facts, never the configured mode ------
 def _project_with_sandbox(qtbot, tmp_path, mode=SandboxMode.SCHEMA_ONLY):
     window = _window(qtbot, tmp_path)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(is_superuser=True)
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(is_superuser=True)
     project_dir = tmp_path / "p"
     settings = ProjectSettings(
         target=ConnectionParams(host="target-host", database="db", user="u"),
@@ -863,3 +863,97 @@ def test_the_inspection_reads_both_facts_from_one_round_trip(qtbot, tmp_path, mo
         assert f"'{BOOKKEEPING_SCHEMA}'" in sql
         # Extension-owned objects must not pass for provisioning.
         assert "deptype = 'e'" in sql
+
+
+# --- FQ-260812025353: the binaries folder reaches the tier probe --------------
+#
+# `ProjectSettings.postgres_bin_dir` is what `db/sandbox.py::probe` resolves
+# `pg_dump`/`pg_restore` through, and `determine_project_tier` then reads the
+# result to decide tier 3 vs. a degraded tier 2 for a "with data" sandbox. This
+# lane resolved from PATH alone, so a project that HAD the tools in its
+# configured folder was still told the sandbox was unavailable.
+
+
+def test_the_projects_binaries_folder_reaches_the_capability_probe(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
+    from pgtp_editor.db.config import ConnectionParams
+
+    window = _window(qtbot, tmp_path)
+    seen = []
+    window._ddl_project_ui.probe_sandbox_capabilities = (
+        lambda params, **kwargs: seen.append(kwargs) or SandboxCapabilities()
+    )
+    settings = ProjectSettings(
+        sandbox=ConnectionParams(host="localhost", port="5432", database="s", user="u"),
+        postgres_bin_dir="/opt/pg17/bin",
+    )
+    save_settings(tmp_path / "proj", settings)
+
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", settings)
+
+    assert seen[-1] == {"bin_dir": "/opt/pg17/bin"}
+
+
+def test_no_binaries_folder_probes_path_only(qtbot, tmp_path):
+    """`""` reaches `db/sandbox.py` as `None` -- PATH-only, exactly what this
+    lane did before the setting existed."""
+    from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
+    from pgtp_editor.db.config import ConnectionParams
+
+    window = _window(qtbot, tmp_path)
+    seen = []
+    window._ddl_project_ui.probe_sandbox_capabilities = (
+        lambda params, **kwargs: seen.append(kwargs) or SandboxCapabilities()
+    )
+    settings = ProjectSettings(
+        sandbox=ConnectionParams(host="localhost", port="5432", database="s", user="u")
+    )
+    save_settings(tmp_path / "proj", settings)
+
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", settings)
+
+    assert seen[-1] == {"bin_dir": None}
+
+
+def test_opening_a_project_hands_the_folder_to_the_sandbox_controller(qtbot, tmp_path):
+    """The session lane needs it too: `open_sandbox`/`clone_data` resolve the
+    same binaries, and one lane resolving differently from the other is exactly
+    the "which one is right?" bug the single setting exists to prevent."""
+    from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
+    from pgtp_editor.db.config import ConnectionParams
+
+    window = _window(qtbot, tmp_path)
+    window._ddl_project_ui.probe_sandbox_capabilities = (
+        lambda params, **kwargs: SandboxCapabilities(is_superuser=True)
+    )
+    settings = ProjectSettings(
+        sandbox=ConnectionParams(host="localhost", port="5432", database="s", user="u"),
+        postgres_bin_dir="/opt/pg17/bin",
+    )
+    save_settings(tmp_path / "proj", settings)
+
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", settings)
+
+    assert window.sandbox_controller.postgres_bin_dir == "/opt/pg17/bin"
+    assert window.postgres_bin_dir() == "/opt/pg17/bin"
+
+
+def test_closing_the_project_returns_the_window_to_path_only(qtbot, tmp_path):
+    from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
+    from pgtp_editor.db.config import ConnectionParams
+
+    window = _window(qtbot, tmp_path)
+    window._ddl_project_ui.probe_sandbox_capabilities = (
+        lambda params, **kwargs: SandboxCapabilities(is_superuser=True)
+    )
+    settings = ProjectSettings(
+        sandbox=ConnectionParams(host="localhost", port="5432", database="s", user="u"),
+        postgres_bin_dir="/opt/pg17/bin",
+    )
+    save_settings(tmp_path / "proj", settings)
+    window._ddl_project_ui.set_active_project(tmp_path / "proj", settings)
+
+    window._ddl_project_ui.close_project()
+
+    assert window.postgres_bin_dir() == ""
+    assert window.sandbox_controller.postgres_bin_dir == ""

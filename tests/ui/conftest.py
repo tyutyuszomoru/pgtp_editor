@@ -33,6 +33,42 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _offline_ddl_mode_probe(monkeypatch):
+    """Keep FQ-260812022749's DDL-mode probe off the wire and out of a shell.
+
+    `MainWindow.__init__` binds two `db/pg_dump_mode.py` seams from this
+    module's globals: `probe_quality_capabilities` (which opens a real
+    connection, up to `connect_timeout=10` per call) and `ddl_mode_prober`
+    (which spawns `pg_dump --version`). Every `_open_ddl_explorer` on the
+    quality role reaches both, and the great majority of tests that open the
+    Explorer stub only `_fetch_ddl_schema` -- so without this the suite would
+    dial each test's fake host and shell out on every one.
+
+    The replacements are the REAL rule with the I/O removed: an unprobed
+    `SandboxCapabilities` and `decide_ddl_mode`, the pure function, told that
+    no `pg_dump` was located. Tests about the verdict itself replace
+    `window.probe_quality_capabilities` / `window.ddl_mode_prober` on the
+    instance, which wins over this.
+    """
+    from pgtp_editor.db.pg_dump_mode import decide_ddl_mode
+    from pgtp_editor.db.sandbox import SandboxCapabilities
+    from pgtp_editor.ui import main_window as main_window_module
+
+    monkeypatch.setattr(
+        main_window_module,
+        "sandbox_probe",
+        lambda params, *a, **k: SandboxCapabilities(
+            probe_error="the quality server was not probed (test stub)"
+        ),
+    )
+    monkeypatch.setattr(
+        main_window_module,
+        "probe_ddl_mode",
+        lambda caps, **k: decide_ddl_mode(caps.server_version, None, None),
+    )
+
+
+@pytest.fixture(autouse=True)
 def _reset_app_style_and_palette(qapp):
     original_style = qapp.style().objectName()
     original_palette = QPalette(qapp.palette())
