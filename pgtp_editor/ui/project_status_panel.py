@@ -739,7 +739,11 @@ class ProjectStatusPanel(QWidget):
         self._rebuild()
 
     def set_light_theme(self, light: bool) -> None:
-        """Convenience mirror of `MainWindow._light_theme_action.isChecked()`."""
+        """Convenience mirror of `UiShell.is_light_theme` — which now reads the
+        APPLIED `Theme.light`, not a checkable action. `View ▸ Light Theme` and
+        `MainWindow._light_theme_action` were deleted with `FQ-260812021715`;
+        this takes a bool rather than a theme name because it only ever needed
+        to know which way to shade, and a third theme still answers that."""
         self.set_dark(not light)
 
     def set_connection_summaries(
