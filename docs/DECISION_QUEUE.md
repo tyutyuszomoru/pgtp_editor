@@ -3149,9 +3149,12 @@ product scope, which is why this is filed rather than decided.
   survive as the FALLBACK if the `pg_dump` route is rejected at design time.**
 - **Raised:** 2026-08-11, by the main session — this is the **deferred half of `DEC-260811022536`**, split out
   as that entry's answer directed. `DEC-260811022536` is otherwise ANSWERED and closed.
-- **Blocks:** **nothing today.** Nothing in the tree consumes the synthesized `CREATE TABLE` as anything but
+- **Blocks:** ~~**nothing today.** Nothing in the tree consumes the synthesized `CREATE TABLE` as anything but
   read-only text. It **hardens** with every feature built on that buffer, and unlike most deferred items it
-  has a **named trigger**, so it can be answered in advance rather than only in hindsight.
+  has a **named trigger**, so it can be answered in advance rather than only in hindsight.~~
+  **SUPERSEDED BY THE 2026-08-12 CORRECTION BELOW — this is no longer "blocks nothing". It blocks the
+  restricted-mode half of `FQ-260812022749`'s design.** See **CORRECTION (2026-08-12) — the trigger
+  condition, restated** at the end of this entry.
 
 **Context (written for a cold reader).** §18.1's DDL Explorer shows a single read-only buffer containing a
 `CREATE TABLE` for every table, **synthesized from `pg_catalog`** by `pgtp_editor/db/table_ddl.py` — Postgres
@@ -3173,9 +3176,11 @@ That does **not** affect this entry's premise: the structural pair is deferred b
 not by the state of the banner. When the per-column work lands the banner shortens to name **inheritance and
 partitioning only**, and this decision is unchanged either way.
 
-**Why the trigger is a real question and not hypothetical, but also not imminent.** `DEC-260811022536`'s
-answer names the condition: *the first feature that consumes this buffer as anything other than a read-only
-view.* While the text is only ever shown, an omitted `PARTITION BY` is incomplete but harmless and the notice
+**Why the trigger is a real question and not hypothetical, but also not imminent.** *(⚠ The trigger stated in
+this paragraph was written under the migration-generator framing and **has been restated** — see
+**CORRECTION (2026-08-12)** at the end of this entry. Read that first; the paragraph below is kept for the
+record of how the condition was originally derived.)* `DEC-260811022536`'s answer names the condition: *the
+first feature that consumes this buffer as anything other than a read-only view.* While the text is only ever shown, an omitted `PARTITION BY` is incomplete but harmless and the notice
 says so; the moment it becomes an **input** — a generated migration, a deployment script, a `.pgtp` ↔ database
 sync step, a diff — the omission becomes a wrong answer that looks authoritative. Two verified facts sharpen
 this:
@@ -3282,6 +3287,64 @@ as analysed.
   the gaps get closed — at `FQ-260812022749` instead, since closing them is no longer expected to happen in
   `table_ddl.py`.
 - No change to `db/table_ddl.py` today. Its two-gap notice stays true and stays accurate under either route.
+
+### CORRECTION (2026-08-12) — the trigger condition, restated
+
+**No change to the answer or the status.** This corrects the *trigger condition* only, which the shipped
+framing made incoherent.
+
+**The old trigger.** *"The first feature that consumes this buffer as anything other than a read-only view"* —
+concretely, `db/migration_gen.py` gaining `object_kind="table"` support. That was written when the expected
+consumer was **the app itself**, reading the synthesized `CREATE TABLE` to diff or to generate a migration.
+
+**Why it can no longer fire.** The area was redirected (see the answer above and `FQ-260812022749`), and the
+framing that shipped is **clone-source**: the complete DDL exists so a *developer* can read it, edit the text
+by hand under a new name, and run it to create a new table. Under that framing **nothing in the app ever
+consumes the buffer — a human does.** The old trigger therefore waits for an event that is no longer on the
+roadmap, while reading like a live guard. **A trigger condition that cannot fire is worse than no trigger at
+all**, because it makes an unguarded area look guarded: nobody re-derives the risk, since the entry appears
+to have already thought about it.
+
+**The restated trigger:**
+
+> **The first feature that INVITES this buffer to be used as a source.**
+
+It fires on **invitation**, not on programmatic consumption. The app handing a developer text it *knows* to be
+incomplete, in a context that says "clone from this", is precisely the case the guard is for.
+
+**And the harm is worse under the new framing, not milder.** Read as a *view*, the inheritance and
+partitioning gaps are disclosed incompleteness — the buffer's own notice names them and nothing acts on the
+text. Read as a *clone template*, the same gaps are a **defect generator**: a developer who clones a
+partitioned or inherited table from restricted-mode DDL gets a plain table that looks right, and runs it.
+That is a silent wrong result reaching a real database, produced by someone acting in good faith on text the
+app handed them. The failure has no error, no diff, no exception — only a table that is quietly the wrong
+shape.
+
+**Context: the gap-question is broader than inheritance and partitioning.** Triage found a hazard that applies
+to **both** modes and that this entry never mentioned. A `SERIAL` column renders as
+`DEFAULT nextval('orders_id_seq'::regclass)` — correct as a *description* of the original table (and the
+`SERIAL`-needs-no-special-casing ruling above stands), but as a *clone template* it means the clone, created
+under a new name, **draws from the original table's sequence**: a shared counter, and dropping the original
+breaks the clone. Restricted mode never emits `CREATE SEQUENCE` at all; full `pg_dump` mode emits it, but in
+a different section, so copying just the `CREATE TABLE` still misses it. **Neither mode is clone-safe for
+`SERIAL` today.** This is recorded as context only — it is design detail belonging to `FQ-260812022749`, not
+a second question, and it is **not** being filed as one.
+
+**Judgement: this entry now BLOCKS, and specifically it blocks part of `FQ-260812022749`.** That feature is
+the invitation — it frames the complete DDL as a clone source for tables and matviews — so the restated
+trigger **is already fired**. What it blocks is not the whole feature, only its **restricted-mode half**: the
+full `pg_dump` mode closes inheritance and partitioning on its own, so nothing is owed there, but the
+restricted fallback hands the developer a knowingly incomplete template under the same clone-source framing.
+The unanswered question is therefore now sharper than the one this entry was filed with:
+
+> When `pg_dump` is absent or version-mismatched, may the restricted buffer be offered as a clone source at
+> all — with a warning (`FQ-260812022749` already proposes wording: *"do not clone a partitioned or inherited
+> table from this text"*), or must inheritance and partitioning be closed in `table_ddl.py` first (option 2
+> above), or must restricted mode refuse the clone framing and present itself as a view only (option 3's
+> boundary, applied to the mode rather than to the whole pane)?
+
+The rest of `FQ-260812022749` — probe, version matching, the `[DDL]` Messages row, the full-mode buffer — is
+untouched by this and should proceed.
 
 ---
 
