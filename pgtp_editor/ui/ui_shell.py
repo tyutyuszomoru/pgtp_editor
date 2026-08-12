@@ -125,5 +125,9 @@ class UiShell:
     #: Show + check + focus the center-stage Raw XML tab.
     reveal_raw_xml: Callable[[], None]
 
-    #: Whether the View ▸ Light Theme toggle is currently on.
+    #: Whether the APPLIED theme is a light one -- `Theme.light`, not a menu
+    #: toggle's checked state. `View ▸ Light Theme` was deleted by
+    #: `FQ-260812021715`; themes are now named files picked in the Themes
+    #: pane, and a consumer that only needs "which way do I shade" still
+    #: gets a bool from any number of themes.
     is_light_theme: Callable[[], bool]

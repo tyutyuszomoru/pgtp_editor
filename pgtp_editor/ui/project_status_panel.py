@@ -710,8 +710,10 @@ class ProjectStatusPanel(QWidget):
     def set_dark(self, dark: bool) -> None:
         """Re-render in the given theme (True = the ``_drk`` assets).
 
-        Takes the same boolean the **Light Theme** menu toggle already tracks
-        (inverted): ``panel.set_dark(not light)``. It re-resolves the current
+        Takes the same boolean `UiShell.is_light_theme` reports, inverted:
+        ``panel.set_dark(not light)``. That used to be a **Light Theme** menu
+        toggle's checked state; since `FQ-260812021715` it is the APPLIED
+        `Theme.light`, which is what lets a third theme answer it at all. It re-resolves the current
         diagram's asset filenames rather than re-deriving state, so a theme
         switch cannot silently change what the diagram claims — and it adds no
         second theme-detection mechanism.
