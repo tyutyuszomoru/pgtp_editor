@@ -48,7 +48,9 @@ so `shared_accent("status_ok")` would raise on the day these are correct.
 **Remember the KIND, never a resolved colour.** A stored colour re-applied after
 a theme flip paints the *previous* theme's value — that is a shipped bug
 (BUG-260811021804 step 4), not a hypothetical. `StatusLabel` below is the
-pattern written once so six dialogs cannot each get it subtly wrong: it holds
+pattern written once so six dialogs cannot each get it subtly wrong — and, since
+BUG-260812103144, so the status bar's connectivity dots inherit it rather than
+grow a second copy (they override `_colour_for`, nothing else): it holds
 the kind, recomputes from the live palette on every `changeEvent`, and paints
 through a **widget-level stylesheet** because the app-wide qdarkstyle sheet
 beats `QPalette` for every property it declares (§7, §18.7 — measured: the
@@ -127,6 +129,19 @@ class StatusLabel(QLabel):
     def _palette_is_light(self) -> bool:
         return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
 
+    def _colour_for(self, light: bool) -> str | None:
+        """The colour to paint under `light`, or None for "no sheet at all".
+
+        **The one overridable seam, and the reason it exists**
+        (BUG-260812103144): `ui/connectivity.py`'s status-bar dots need every
+        line of the machinery below — the re-entrancy bound, the queued
+        re-apply, the context-bound timer — but derive their colour from a
+        connectivity STATE rather than from a status kind. Overriding one pure
+        function is what kept `changeEvent` from being written a second time and
+        got subtly wrong a third.
+        """
+        return status_colour(self._status_kind, light)
+
     def _apply_status_colour(self) -> None:
         """Paint the remembered kind. Idempotent and last-write-wins —
         `changeEvent` fires several times per theme flip and the first ones
@@ -149,7 +164,7 @@ class StatusLabel(QLabel):
         """
         if self._applying:
             return
-        colour = status_colour(self._status_kind, self._palette_is_light())
+        colour = self._colour_for(self._palette_is_light())
         sheet = f"QLabel {{ color: {colour}; }}" if colour is not None else ""
         if sheet == self.styleSheet():
             return

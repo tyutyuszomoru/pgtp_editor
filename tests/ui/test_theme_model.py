@@ -39,7 +39,6 @@ from pgtp_editor.ui.theme_model import (
     duplicate,
     load_theme,
     load_theme_file,
-    shared_accent,
     theme_for,
 )
 
@@ -201,23 +200,81 @@ def test_a_syntax_role_carries_the_three_weight_flags(tmp_path):
     assert role == SyntaxRole("#6a9955", bold=True, italic=True, underline=True)
 
 
+def _theme_with_accent(light: bool, key: str, value: str) -> Theme:
+    """`theme_for(light)` with one accent overridden — a synthetic divergence."""
+    base = theme_for(light)
+    return Theme(**{**base.to_json(),
+                    "modes": base.modes,
+                    "syntax": base.syntax,
+                    "accents": {**base.accents, key: value}})
+
+
 def test_shared_accent_RAISES_when_the_themes_disagree(monkeypatch):
-    """A theme-blind consumer (`connectivity.py`'s dots) may only read an accent
-    every theme agrees on. The day one theme gives it its own value, that
-    consumer must fail loudly instead of silently painting the other theme's."""
-    assert shared_accent("connectivity_offline") == theme_for(False).accent(
-        "connectivity_offline"
-    )
-    divergent = Theme(**{**theme_for(True).to_json(),
-                         "modes": theme_for(True).modes,
-                         "syntax": theme_for(True).syntax,
-                         "accents": {**theme_for(True).accents,
-                                     "connectivity_offline": "#010203"}})
+    """A theme-blind consumer may only read an accent every theme agrees on. The
+    day one theme gives it its own value, that consumer must fail loudly instead
+    of silently painting the other theme's.
+
+    **Both halves are built synthetically, and that is a deliberate change**
+    (BUG-260812103144, superseding this test's original form). It used to use the
+    real `connectivity_offline` as its agreeing example, because the dots were
+    the function's live caller — and then the dots became per-theme, which made
+    the agreeing assertion RAISE and turned a mechanism test into a hostage of
+    whichever real key happened to be uniform this week. `shared_accent`'s
+    contract is about agreement, not about any particular colour, so it is
+    pinned against a pair of themes this test constructs.
+    """
+    agreeing = _theme_with_accent(True, "status_warning", "#010203")
+    also_agreeing = _theme_with_accent(False, "status_warning", "#010203")
     monkeypatch.setattr(
-        theme_model, "theme_for", lambda light: divergent if light else theme_for(False)
+        theme_model,
+        "theme_for",
+        lambda light: agreeing if light else also_agreeing,
+    )
+    assert theme_model.shared_accent("status_warning") == "#010203"
+
+    divergent = _theme_with_accent(True, "status_warning", "#040506")
+    monkeypatch.setattr(
+        theme_model,
+        "theme_for",
+        lambda light: divergent if light else also_agreeing,
     )
     with pytest.raises(ThemeError, match="not theme-blind"):
-        theme_model.shared_accent("connectivity_offline")
+        theme_model.shared_accent("status_warning")
+
+
+def test_shared_accent_has_no_production_caller_left(monkeypatch):
+    """It survives as a MECHANISM, not a helper (BUG-260812103144): its one
+    caller — the connectivity dots — became per-theme, and the function is kept
+    so the next consumer that resolves a colour once fails loudly. If a caller
+    reappears in `pgtp_editor/`, that is a claim of theme-blindness worth
+    reviewing, not a routine import.
+
+    Kept as a test rather than a comment because `shared_accent`'s value is now
+    entirely in what it FORBIDS, and a docstring cannot notice a new caller.
+    """
+    package = Path(theme_model.__file__).resolve().parent.parent
+    callers = sorted(
+        path.relative_to(package).as_posix()
+        for path in package.rglob("*.py")
+        if path.name != "theme_model.py"
+        and any(
+            isinstance(node, ast.Call)
+            and _called_name(node.func) == "shared_accent"
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        )
+    )
+    assert callers == []
+
+
+def _called_name(func) -> str | None:
+    """The bare name being called, for `f()` and `mod.f()` alike. An AST walk
+    rather than a text search, so `status_colours.py`'s docstring — which names
+    `shared_accent("status_ok")` precisely to forbid it — is not a caller."""
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +380,15 @@ def test_is_bundled_separates_the_install_from_the_users_own(monkeypatch, tmp_pa
 #: transcribed from the pre-refactor source. If an extraction ever drifts, this
 #: is the assertion that says so — and it must be corrected by fixing the theme
 #: file, never by editing the expectation.
+#:
+#: **The one legitimate way an entry leaves this table is a deliberate,
+#: recorded colour CHANGE**, which is not drift. The four `connectivity_*`
+#: accents left it that way (BUG-260812103144): the extraction was faithful, and
+#: then the faithfully-extracted values were found to fail contrast in every
+#: state against the status bar's own background — `#D02020` at 1.46:1 on dark,
+#: `#2E9E4F` under 2.3:1 in BOTH themes. They are now per-theme and are pinned,
+#: by contrast, in `tests/ui/test_status_bar_static.py`. Nothing else may be
+#: removed to make a test pass.
 PRE_REFACTOR = {
     "dark": {
         ("palette", "Window"): "#2B2B2B",
@@ -334,8 +400,6 @@ PRE_REFACTOR = {
         ("accents", "command_caret_background"): "#FFA500",
         ("accents", "command_caret_foreground"): "#1E1E1E",
         ("accents", "status_warning"): "#e0a83a",
-        ("accents", "connectivity_offline"): "#D02020",
-        ("accents", "connectivity_reachable"): "#2E9E4F",
         ("decorations", "current_line"): "#2d2d30",
         ("decorations", "error_line"): "#5a1d1d",
         ("decorations", "navigation_highlight"): "#264f78",
@@ -354,8 +418,6 @@ PRE_REFACTOR = {
         ("accents", "command_caret_background"): "#E56A00",
         ("accents", "command_caret_foreground"): "#FFFFFF",
         ("accents", "status_warning"): "#8a5a00",
-        ("accents", "connectivity_offline"): "#D02020",
-        ("accents", "connectivity_reachable"): "#2E9E4F",
         ("decorations", "current_line"): "#eef1f7",
         ("decorations", "error_line"): "#f7d4d4",
         ("decorations", "navigation_highlight"): "#cfe0ff",

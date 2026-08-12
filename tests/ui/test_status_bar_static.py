@@ -24,8 +24,11 @@ two properties worth pinning about the poll are the ones that would hurt if they
 broke silently: it must not run while the window is inactive, and it must never
 block the GUI thread.
 """
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtWidgets import QStatusBar
+from collections import Counter
+
+import pytest
+from PySide6.QtCore import QPoint, QSettings, Qt
+from PySide6.QtWidgets import QMainWindow, QStatusBar
 
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import ProjectSettings
@@ -34,6 +37,17 @@ from pgtp_editor.ui.connectivity import UNKNOWN, ConnectivityIndicator, dot_rend
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.project_status_model import QualityState, SandboxState
 from pgtp_editor.ui.status_bar import IDLE_TEXT, StaticStatusBar, busy_text
+from pgtp_editor.ui.theme import apply_theme
+from pgtp_editor.ui.theme_model import theme_for
+
+# `contrast_ratio` and `rendered` are the suite's one implementation each, in
+# the file that introduced the pixel-sampling precedent. Reused, not re-copied —
+# a third copy of the WCAG formula is a third chance to get it wrong.
+#
+# **`CHROME` from that module is deliberately NOT imported**: it names the WINDOW
+# background, which is right for a results panel and wrong for anything in the
+# status bar. See the block comment above `status_bar_chrome` below.
+from tests.ui.test_sql_results_panel import contrast_ratio, rendered
 
 
 def _quiet_async(window):
@@ -188,7 +202,8 @@ def test_the_dots_are_absent_without_a_project(qtbot, tmp_path):
     assert not window._sandbox_dot.isVisibleTo(window)
 
 
-def test_an_unknown_state_still_states_something(qtbot):
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_an_unknown_state_still_states_something(qtbot, light):
     """A slot always shows a defined fact -- "not checked yet" is one, and it is
     visibly different from a claim of reachability."""
     indicator = ConnectivityIndicator("Quality")
@@ -197,16 +212,231 @@ def test_an_unknown_state_still_states_something(qtbot):
     assert indicator.state is UNKNOWN
     assert indicator.text().strip() != "Quality"
     assert "not checked yet" in indicator.toolTip()
-    assert dot_rendering(UNKNOWN) != dot_rendering(QualityState.CONNECTION_OK)
+    assert dot_rendering(UNKNOWN, light) != dot_rendering(
+        QualityState.CONNECTION_OK, light
+    )
 
 
-def test_the_three_states_are_told_apart_by_colour():
-    colours = {
-        dot_rendering(QualityState.NOT_SET_UP)[0],
-        dot_rendering(QualityState.OFFLINE)[0],
-        dot_rendering(QualityState.CONNECTION_OK)[0],
-    }
-    assert len(colours) == 3
+# --- The dots' legibility, and their second channel (BUG-260812103144) ------
+#
+# This block replaces `test_the_three_states_are_told_apart_by_colour`, which
+# pinned exactly the design that had to go: three states drawn as the same
+# filled `●` and told apart by hue, with red-vs-green — the commonest
+# colour-vision confusion — carrying the most meaning. Colour still differs;
+# what is now REQUIRED is that it is not the only channel.
+#
+# Every ratio here is measured against the STATUS BAR's own background, which is
+# the correction that made this bug worth its own id. qdarkstyle sets
+# `QStatusBar { background: COLOR_BACKGROUND_4 }` and leaves `QStatusBar QLabel`
+# transparent, so a dot sits on the mid-tone `#455364` / `#C0C4C8` — NOT on
+# `COLOR_BACKGROUND_1`. Measuring against the window chrome is what let the
+# offline dot's real 1.46:1 be reported as 2.96:1, and it is why
+# `test_sql_results_panel.CHROME` must never be imported here: that constant
+# names the window, correctly for the panel it belongs to and wrongly for
+# anything in the status bar. `STATUS_BAR_CHROME` is derived from the theme file
+# instead, and `test_the_surface_the_dots_are_drawn_on_is_the_status_bars_own`
+# proves the derivation is what the user's screen actually shows.
+#
+# The threshold is **4.5:1, the TEXT threshold**, not 3:1 for a graphical
+# object: `_render` colours the whole label, so the word "Quality"/"Sandbox" is
+# painted in the state colour alongside the glyph.
+#
+# **Honest scope limit:** the surface is a theme file's own COLOR_BACKGROUND_4,
+# so a USER theme can move it and no assertion can promise 4.5:1 for arbitrary
+# user themes. What is guaranteed here is the two BUNDLED themes.
+
+#: The four states whose rendering must be legible and mutually distinguishable.
+#: `SandboxState`'s three are the same three renderings under different enum
+#: members, so pinning the Quality set plus UNKNOWN covers every value.
+DOT_STATES = (
+    UNKNOWN,
+    QualityState.NOT_SET_UP,
+    QualityState.OFFLINE,
+    QualityState.CONNECTION_OK,
+)
+
+#: The values the dots FAILED at, kept as data. Following the focus-ring
+#: precedent: a fix that only asserts the new state is one silent revert away
+#: from being undone, so the test also proves the old values genuinely failed.
+PRE_FIX_VALUES = {
+    "connectivity_unknown": "#9E9E9E",
+    "connectivity_not_set_up": "#FFFFFF",
+    "connectivity_offline": "#D02020",
+    "connectivity_reachable": "#2E9E4F",
+}
+
+
+def status_bar_chrome(light: bool) -> str:
+    """The colour a status-bar widget is actually drawn on, read from the theme.
+
+    Deliberately NOT `test_sql_results_panel.CHROME` — see the block comment
+    above. That constant is the window; this is the bar.
+    """
+    return theme_for(light).chrome["COLOR_BACKGROUND_4"]
+
+
+def _dot_in_a_shown_status_bar(qtbot, qapp, light, state):
+    """A real `QMainWindow` with a themed, SHOWN status bar carrying one dot.
+
+    Showing is not optional: an unshown widget's grab is not evidence of what
+    the user sees, and the app-wide qdarkstyle sheet — which beats `QPalette`
+    for every property it declares — is only resolved once the widget is
+    polished.
+    """
+    apply_theme(qapp, light)
+    window = QMainWindow()
+    qtbot.addWidget(window)
+    indicator = ConnectivityIndicator("Quality")
+    window.statusBar().addPermanentWidget(indicator)
+    indicator.set_state(state)
+    window.resize(600, 200)
+    window.show()
+    qtbot.waitExposed(window)
+    qapp.processEvents()
+    return window, indicator
+
+
+def _pixels_over(window, widget) -> Counter:
+    """`{'#rrggbb': count}` for the WINDOW's pixels inside `widget`'s rect.
+
+    Grabbing the widget itself is the trap here: `QWidget.grab()` renders a
+    transparent background as **black**, so a dot grabbed alone reports `#000000`
+    where the status bar's grey is, and the contrast being asserted becomes
+    unmeasurable. The pixels behind the label only exist on the window.
+    """
+    image = window.grab().toImage()
+    top_left = widget.mapTo(window, QPoint(0, 0))
+    counts: Counter = Counter()
+    for y in range(top_left.y(), min(top_left.y() + widget.height(), image.height())):
+        for x in range(top_left.x(), min(top_left.x() + widget.width(), image.width())):
+            counts[image.pixelColor(x, y).name()] += 1
+    return counts
+
+
+@pytest.mark.parametrize("state", DOT_STATES, ids=lambda s: str(s))
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_every_dot_state_is_LEGIBLE_on_the_status_bar(state, light):
+    """4.5:1 for all four states in both bundled themes.
+
+    Before this fix every state failed in at least one theme, and "reachable" —
+    the state a user reads most — was under 2.3:1 in BOTH.
+    """
+    colour = dot_rendering(state, light)[0]
+    ratio = contrast_ratio(colour, status_bar_chrome(light))
+    assert ratio >= 4.5, f"{state} renders {colour} at {ratio:.2f}:1"
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_values_this_fix_REPLACED_really_did_fail(light):
+    """The other half of the net, and the reason it is here: an assertion that
+    only pins the new values cannot tell a considered change from a revert.
+
+    Measured on the status-bar grey: offline `#D02020` scored 1.46:1 on dark and
+    3.06:1 on light; reachable `#2E9E4F` 2.29 / 1.96; unknown `#9E9E9E`
+    2.93 / 1.53; not-set-up `#FFFFFF` 7.85 / 1.75. Any theme file that goes back
+    to one of them fails here as well as above.
+    """
+    chrome = status_bar_chrome(light)
+    failures = [
+        old for old in PRE_FIX_VALUES.values() if contrast_ratio(old, chrome) < 4.5
+    ]
+    assert len(failures) >= 3, failures
+    live = {dot_rendering(state, light)[0].lower() for state in DOT_STATES}
+    assert live.isdisjoint({old.lower() for old in failures})
+
+
+def test_the_dots_are_not_told_apart_by_COLOUR_ALONE():
+    """Every state carries a distinct GLYPH as well as a distinct colour.
+
+    This is what supersedes `test_the_three_states_are_told_apart_by_colour`:
+    `NOT_SET_UP`, `OFFLINE` and `REACHABLE` all drew `●`, so "nothing
+    configured", "offline" and "reachable" were separated by hue alone — and the
+    pair that matters is red vs green. Colour is not a channel every user has.
+    """
+    for light in (True, False):
+        renderings = [dot_rendering(state, light) for state in DOT_STATES]
+        assert len({colour for colour, _g, _t in renderings}) == len(DOT_STATES)
+        assert len({glyph for _c, glyph, _t in renderings}) == len(DOT_STATES)
+        assert len({tooltip for _c, _g, tooltip in renderings}) == len(DOT_STATES)
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_surface_the_dots_are_drawn_on_is_the_status_bars_own(qtbot, qapp, light):
+    """The load-bearing measurement: what is actually behind a dot on screen.
+
+    The dot's label is transparent over `QStatusBar`, so the pixels around the
+    glyph must be the theme's `COLOR_BACKGROUND_4` — the value
+    `status_bar_chrome` derives — and NOT `COLOR_BACKGROUND_1`. If this ever
+    reports the window colour, every ratio above is being measured against the
+    wrong surface, which is the exact error that hid a 1.46:1 dot.
+    """
+    window, indicator = _dot_in_a_shown_status_bar(
+        qtbot, qapp, light, QualityState.OFFLINE
+    )
+    counts = _pixels_over(window, indicator)
+
+    bar = rendered(status_bar_chrome(light))
+    window_chrome = rendered(theme_for(light).chrome["COLOR_BACKGROUND_1"])
+    assert counts[bar] > 0, f"nothing behind the dot is {bar}: {counts.most_common(4)}"
+    assert counts[bar] > counts[window_chrome]
+    apply_theme(qapp, False)
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_dot_RENDERS_its_theme_colour_and_not_the_other_themes(qtbot, qapp, light):
+    """Rendered pixels, with a presence anchor. An absence-only assertion passes
+    forever the moment the sampler stops seeing the widget."""
+    window, indicator = _dot_in_a_shown_status_bar(
+        qtbot, qapp, light, QualityState.OFFLINE
+    )
+    counts = _pixels_over(window, indicator)
+
+    mine = rendered(dot_rendering(QualityState.OFFLINE, light)[0])
+    theirs = rendered(dot_rendering(QualityState.OFFLINE, not light)[0])
+    assert counts[mine] > 0, f"no {mine} pixels: {counts.most_common(4)}"
+    assert counts[theirs] == 0, f"the other theme's {theirs} is on screen"
+    apply_theme(qapp, False)
+
+
+def test_a_theme_FLIP_repaints_the_dots(qtbot, qapp):
+    """The latent freeze this fix had to solve anyway: the four colours used to
+    be resolved ONCE at import, so a runtime theme change (the Themes pane,
+    FQ-260812021716) left the dots painting whichever theme loaded first.
+    Harmless only while every theme agreed on the values — which this fix ends.
+
+    `ConnectivityIndicator` inherits `StatusLabel`'s machinery rather than
+    hand-rolling a `changeEvent`; both directions are exercised because only
+    dark -> light regressed in development, the flip whose NEW palette arrives
+    on the nested event.
+    """
+    window, indicator = _dot_in_a_shown_status_bar(
+        qtbot, qapp, False, QualityState.CONNECTION_OK
+    )
+
+    for light in (True, False, True, False):
+        apply_theme(qapp, light)
+        qapp.processEvents()
+        expected = dot_rendering(QualityState.CONNECTION_OK, light)[0]
+        assert expected in indicator.styleSheet(), (
+            f"stale colour after flipping to {'light' if light else 'dark'}: "
+            f"{indicator.styleSheet()!r}"
+        )
+        assert rendered(expected) in _pixels_over(window, indicator)
+    apply_theme(qapp, False)
+
+
+def test_the_dots_keep_their_status_bar_PADDING(qtbot):
+    """`StatusLabel` writes `QLabel { color: … }` and nothing else, where the
+    old `_render` declared `padding: 1px 6px` in the same sheet. Losing it
+    silently changes the status bar's spacing, so it moved to contents margins
+    and is pinned rather than trusted."""
+    indicator = ConnectivityIndicator("Quality")
+    qtbot.addWidget(indicator)
+
+    margins = indicator.contentsMargins()
+    assert (margins.left(), margins.top(), margins.right(), margins.bottom()) == (
+        6, 1, 6, 1,
+    )
 
 
 def test_opening_a_project_reveals_the_dots_and_polls_once(qtbot, tmp_path):

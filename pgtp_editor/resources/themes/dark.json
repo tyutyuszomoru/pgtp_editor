@@ -48,10 +48,10 @@
     "status_warning": "#e0a83a",
     "debug_chip_background": "#D32F2F",
     "debug_chip_foreground": "#FFFFFF",
-    "connectivity_unknown": "#9E9E9E",
+    "connectivity_unknown": "#D2D5D8",
     "connectivity_not_set_up": "#FFFFFF",
-    "connectivity_offline": "#D02020",
-    "connectivity_reachable": "#2E9E4F"
+    "connectivity_offline": "#F2B8AE",
+    "connectivity_reachable": "#B6E3C0"
   },
   "modes": {
     "none": [

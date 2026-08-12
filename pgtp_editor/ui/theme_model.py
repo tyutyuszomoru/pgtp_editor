@@ -564,13 +564,23 @@ def resolve_theme(name: str) -> tuple[str, Theme]:
 def shared_accent(key: str) -> str:
     """An accent that every bundled theme agrees on, for a THEME-BLIND consumer.
 
-    `connectivity.py`'s dots are theme-blind today (one `_RENDERING` table, no
-    palette lookup), and making them theme-aware would change pixels — which
-    this consolidation is explicitly not allowed to do. Rather than let them keep
-    private literals, they read through here, which **raises** if the bundled
-    themes ever disagree. So the day a theme gives the offline dot its own red,
-    the theme-blind reader fails loudly instead of silently painting the other
-    theme's colour.
+    **It has no production caller, and that is the point.** Its one caller was
+    `connectivity.py`'s status-bar dots, which read all four `connectivity_*`
+    accents through here while they were theme-blind — a single `_RENDERING`
+    table with no palette lookup. BUG-260812103144 ended that: the dots failed
+    contrast in every state precisely BECAUSE one value had to serve both themes,
+    so they now read per-theme through `theme_for(light).accent(...)` and the
+    bundled themes give each dot its own value. The app currently has no
+    theme-blind colour consumer left.
+
+    So this is kept as a **mechanism, not a helper**: it **raises** when the
+    bundled themes disagree, which is what turns "this consumer quietly ignores
+    the theme" from an invisible property into a failing test. The next consumer
+    tempted to resolve a colour once — at import, in a constructor, into a cached
+    attribute — reads through here and finds out immediately, instead of shipping
+    the other theme's pixels. A consumer whose colour must differ per theme must
+    NOT use it (see `ui/status_colours.py`); one whose colour genuinely cannot
+    differ should, so that assumption is checked rather than assumed.
     """
     values = {theme_for(light).accent(key) for light in (True, False)}
     if len(values) != 1:
