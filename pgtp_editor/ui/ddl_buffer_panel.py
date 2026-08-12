@@ -65,6 +65,7 @@ from pgtp_editor.db.ddl_buffer import EDITABLE_SPAN_KINDS, DdlObjectSpan
 from pgtp_editor.db.ddl_project import DriftMarkers, routine_ddl_paths, trigger_ddl_path
 from pgtp_editor.db.ddl_skeleton import trigger_timings_for_kind
 from pgtp_editor.db.introspect import DatabaseSchema
+from pgtp_editor.db.table_ddl import qualified_ident
 from pgtp_editor.ui.alter_column_dialogs import (
     OP_DROP_COLUMN,
     OP_DROP_DEFAULT,
@@ -123,14 +124,24 @@ _COLUMN_ROLE = Qt.ItemDataRole.UserRole + 5
 _FILTER_NAME_ROLE = Qt.ItemDataRole.UserRole + 6
 
 #: The refusal a non-editable span states rather than silently offering
-#: nothing (`FQ-260810183812` / FQ-023). Tables, views and matviews are in the
-#: buffer to be READ: they are not part of §18.2's checkout model, and a
-#: table's shape changes through `Alter Table ▸` alone -- so `Edit DDL` has
-#: nothing to open, and saying why is not the same as leaving a dead menu.
+#: nothing (`FQ-260810183812` / FQ-023). Tables and matviews are in the buffer
+#: to be READ: a table's shape changes through `Alter Table ▸` alone -- so
+#: `Edit DDL` has nothing to open, and saying why is not the same as leaving a
+#: dead menu.
+#:
+#: **The `"view"` row is gone** (`FQ-260812025836`): a view alters in place with
+#: `CREATE OR REPLACE VIEW`, which is the property §18.5's apply lane is built
+#: around, so it is editable. **The `"matview"` row must stay**, and its wording
+#: now carries its reason: there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so
+#: replacing one is a `DROP` + `CREATE` that discards its stored data. See
+#: `db/ddl_buffer.py::EDITABLE_SPAN_KINDS` for the full argument, and do not
+#: widen it to matviews by analogy with views.
 NOT_EDITABLE_REFUSALS = {
     "table": "Tables are read-only here — change one with Alter Table ▸",
-    "view": "Views are read-only here — this pane does not edit them",
-    "matview": "Materialized views are read-only here — this pane does not edit them",
+    "matview": (
+        "Materialized views are read-only here — there is no CREATE OR REPLACE "
+        "MATERIALIZED VIEW, so replacing one would drop its stored data"
+    ),
     "column": "Columns are read-only here — change one with Alter Table ▸",
     "constraint": "Constraints are read-only here — change one with Alter Table ▸",
     "index": "Indexes are read-only here — change one with Alter Table ▸",
@@ -139,7 +150,7 @@ NOT_EDITABLE_REFUSALS = {
 
 def edit_refusal_for_span(span) -> str | None:
     """The reason `Edit DDL` is not offered for `span`, or None when it IS
-    offered (a routine or a trigger).
+    offered (a routine, a trigger or a view).
 
     Shared by both right-click surfaces, exactly as `resolve_edit_target` is,
     so the two can never disagree about which kinds are editable."""
@@ -438,6 +449,8 @@ def resolve_edit_target(
     in exactly one place. Returns None if `schema` no longer has the object
     (a stale span -- shouldn't happen within one `set_schema` generation,
     guarded defensively)."""
+    if span.kind == "view":
+        return _resolve_view_edit_target(schema, span)
     if span.kind == "trigger":
         trigger = schema.triggers.get(f"{span.schema}.{span.table}.{span.name}")
         if trigger is None:
@@ -465,6 +478,46 @@ def resolve_edit_target(
         disambiguate=overloaded,
     )
     return ref, routine.source
+
+
+def _resolve_view_edit_target(
+    schema: DatabaseSchema, span: DdlObjectSpan
+) -> tuple[DdlObjectRef, str] | None:
+    """A view's edit target (`FQ-260812025836`): `(ref, CREATE OR REPLACE VIEW …)`.
+
+    **The editable text is built from `pg_get_viewdef`** (`TableInfo.view_definition`,
+    already fetched by `fetch_routines_and_triggers` and already rendered
+    verbatim by `db/table_ddl.py::build_view_ddl`), and that choice is
+    LOAD-BEARING, not a convenience:
+
+    - `pg_get_viewdef` returns the `SELECT` body and nothing else. A view can
+      carry `INSTEAD OF` triggers, and each of those triggers already owns its
+      own `ddl/*.sql` checkout identity (`trigger_ddl_path`, keyed
+      `schema.table.name` with the VIEW as `table`). Because the editable text
+      contains no `CREATE TRIGGER`, no object ever ends up with two checkout
+      identities -- the double-identity collision that blocks table editing
+      simply does not arise here. **Sourcing this text from `pg_dump`'s output
+      instead would bring that collision straight back**, so it is not a
+      swappable implementation detail.
+    - It is also exactly what the read-only buffer already shows, so the
+      editable tab opens on the text the user clicked.
+
+    The `kind`/`view_definition` re-check is not defensive noise: a span's kind
+    comes from the buffer generation, and this function is the last place that
+    can refuse to hand a MATVIEW to the editable tab. A view whose definition
+    the connection could not supply resolves to None -- there is nothing to
+    edit, and inventing a body is the one thing this app does not do.
+    """
+    table = schema.tables.get(f"{span.schema}.{span.name}")
+    if table is None or getattr(table, "kind", None) != "view":
+        return None
+    definition = (table.view_definition or "").strip()
+    if not definition:
+        return None
+    ref = DdlObjectRef(kind="view", schema=span.schema, name=span.name)
+    name = qualified_ident(f"{span.schema}.{span.name}")
+    body = definition if definition.endswith(";") else f"{definition};"
+    return ref, f"CREATE OR REPLACE VIEW {name} AS\n{body}"
 
 
 #: The name filter's five match modes (`FQ-260810180336`, §18.1).
@@ -1533,33 +1586,32 @@ class BrowserPanel(QWidget):
         # `_TABLE_ROLE`, and its `Alter Table ▸` menu is the one that matters.
         if span is not None and edit_refusal_for_span(span) is not None:
             span = None
-        if span is not None:
+        table_info = item.data(0, _TABLE_ROLE)
+        if span is not None and table_info is None:
             if self._schema is None:
                 return None
             resolved = resolve_edit_target(self._schema, span)
             if resolved is None:
                 return None
-            ref, source = resolved
             menu = QMenu(self)
-            # ONE editing entry (FQ-024). The clicked row already names the
-            # object, so the entry does not repeat it -- unlike `EditorPanel`'s
-            # equivalent, where the click landed in a multi-object buffer and
-            # two overloads' entries must read differently.
-            menu.addAction("Edit DDL", lambda: self.edit_requested.emit(ref, source))
-            # BESIDE Edit DDL, and only for an object that actually HAS a local
-            # working copy to throw away. Absent otherwise -- offering a
-            # "discard" on something never checked out would be a dead entry
-            # whose only possible outcome is an explanation.
-            if self._is_checked_out(ref):
-                menu.addAction(
-                    DISCARD_LOCAL_LABEL,
-                    lambda: self.discard_local_requested.emit(ref),
-                )
+            self._add_edit_ddl_entries(menu, resolved)
             return menu
 
-        table_info = item.data(0, _TABLE_ROLE)
         if table_info is not None:
             menu = QMenu(self)
+            # An editable VIEW row is the one item carrying BOTH an editable
+            # span and a `_TABLE_ROLE` (`FQ-260812025836`), so its menu is the
+            # UNION rather than either branch: `Edit DDL` first, then the
+            # relation gestures (`Add Trigger…`, `Create Table…`) a view row has
+            # always offered. Returning early with an Edit-DDL-only menu, the
+            # shape the routine/trigger branch above uses, would have silently
+            # withdrawn `Add Trigger…` from views -- the standard way to make a
+            # view updatable, and squarely what this app is for.
+            if span is not None and self._schema is not None:
+                resolved = resolve_edit_target(self._schema, span)
+                if resolved is not None:
+                    self._add_edit_ddl_entries(menu, resolved)
+                    menu.addSeparator()
             # FQ-002's *creation* entry stays at the TOP LEVEL: it creates a new
             # object, which is a different act from altering this one, and
             # burying it in the mutation submenu would say otherwise.
@@ -1615,6 +1667,35 @@ class BrowserPanel(QWidget):
         # a span nor a creation context -- no menu at all, rather than an empty
         # one popping up under the cursor.
         return None
+
+    def _add_edit_ddl_entries(self, menu: QMenu, resolved) -> None:
+        """`Edit DDL`, plus `Discard local change` when there is a working copy.
+
+        ONE builder for both callers in `_menu_for_item` (the routine/trigger
+        row and the view row), so the two can never come to offer different
+        editing entries -- the same reason `_add_alter_table_submenu` is shared.
+
+        The clicked row already names the object, so the entry does not repeat
+        it -- unlike `EditorPanel`'s equivalent, where the click landed in a
+        multi-object buffer and two overloads' entries must read differently
+        (FQ-024).
+        """
+        ref, source = resolved
+        menu.addAction("Edit DDL", lambda: self.edit_requested.emit(ref, source))
+        # BESIDE Edit DDL, and only for an object that actually HAS a local
+        # working copy to throw away. Absent otherwise -- offering a "discard"
+        # on something never checked out would be a dead entry whose only
+        # possible outcome is an explanation.
+        #
+        # A VIEW never has one: views are editable but are NOT part of §18.2's
+        # checkout model (`ddl_object_editor.CHECKOUT_KINDS`), so the question is
+        # not asked at all rather than asked and answered by a path scheme that
+        # would collide a view with a same-named function.
+        if getattr(ref, "is_checkout_eligible", True) and self._is_checked_out(ref):
+            menu.addAction(
+                DISCARD_LOCAL_LABEL,
+                lambda: self.discard_local_requested.emit(ref),
+            )
 
     @staticmethod
     def _schema_of(table_info) -> str:

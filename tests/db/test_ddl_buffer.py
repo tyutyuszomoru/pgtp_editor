@@ -357,10 +357,21 @@ def test_the_buffer_is_byte_identical_WHATEVER_ORDER_THE_CATALOG_RETURNED():
     assert forwards_text.count("CONSTRAINT ") == 2
 
 
-def test_only_routines_and_triggers_are_editable_kinds():
-    """The read-only boundary does not move: tables, views and matviews are in
-    the buffer to be READ, and are not part of the checkout model."""
-    assert EDITABLE_SPAN_KINDS == {"function", "procedure", "trigger"}
+def test_only_routines_triggers_and_views_are_editable_kinds():
+    """The read-only boundary moved by EXACTLY one kind (`FQ-260812025836`):
+    a view alters in place with `CREATE OR REPLACE VIEW`, which is the property
+    §18.5's apply lane is built around. Tables and matviews are still in the
+    buffer to be READ."""
+    assert EDITABLE_SPAN_KINDS == {"function", "procedure", "trigger", "view"}
+
+
+def test_matviews_are_not_editable_and_that_is_load_bearing():
+    """The carve-out this project has twice had widened by analogy: there is no
+    `CREATE OR REPLACE MATERIALIZED VIEW`, so replacing one is a `DROP` +
+    `CREATE` that discards its stored data. Asserted as a REFUSAL, not as an
+    absence from a list that happens not to mention it."""
+    assert "matview" not in EDITABLE_SPAN_KINDS
+    assert "table" not in EDITABLE_SPAN_KINDS
 
 
 def test_a_routines_only_schema_is_byte_for_byte_what_it_was():

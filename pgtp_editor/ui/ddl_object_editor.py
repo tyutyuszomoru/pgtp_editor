@@ -217,6 +217,26 @@ GESTURE_UNAVAILABLE_REASONS = {
 }
 
 
+#: The kinds PostgreSQL identifies by `(schema, name, ARGUMENT TYPES)` -- the
+#: only kinds that have a signature at all. Everything keyed off "does this ref
+#: render a `(…)`" reads this rather than testing `not is_trigger`, which is how
+#: a view came to render as `pr.orders_v()` the moment views became editable
+#: (`FQ-260812025836`).
+ROUTINE_KINDS = frozenset({"function", "procedure"})
+
+#: The kinds §18.2's checkout model (`ddl/*.sql` working copies, drift markers,
+#: the deploy manifest) can hold. **Views are editable but NOT checked out**
+#: (`FQ-260812025836`, v1): `db/ddl_project.py::routine_ddl_paths` maps a
+#: sole-holder routine to `ddl/<schema>.<name>.sql`, which a same-named view
+#: would collide with (`pr.orders_v` the view and `pr.orders_v()` the function
+#: are both legal and the pattern is common), and §18.2's identity-recovery
+#: header regex matches `FUNCTION|PROCEDURE` only, so a checked-out view file's
+#: identity could not be read back. Widening the checkout model is deferred to
+#: its own decision; until then a view is **edit-and-apply only** -- its tab
+#: holds the live definition and Save resolves through Save As….
+CHECKOUT_KINDS = frozenset({"function", "procedure", "trigger"})
+
+
 @dataclass(frozen=True)
 class DdlObjectRef:
     """The stable per-object identity of an editable DDL tab (§18.5).
@@ -232,11 +252,11 @@ class DdlObjectRef:
     would turn a no-argument `recalc` into `recalc()`.
     """
 
-    kind: str  # "function" | "procedure" | "trigger"
+    kind: str  # "function" | "procedure" | "trigger" | "view"
     schema: str
     name: str
     table: str | None = None  # triggers only -- the table the trigger fires on
-    arg_types: tuple[str, ...] = ()  # routines only; always () for a trigger
+    arg_types: tuple[str, ...] = ()  # routines only; () for a trigger or a view
     # Declared last, with a default: caller-supplied overload disambiguation.
     disambiguate: bool = False
 
@@ -245,8 +265,27 @@ class DdlObjectRef:
         return self.kind == "trigger"
 
     @property
+    def is_routine(self) -> bool:
+        """A function or a procedure -- the kinds that HAVE a signature.
+
+        Every rendering below asks this rather than `not is_trigger`: a view
+        (`FQ-260812025836`) is neither, has no argument types, and must never
+        be spelled with a `(…)`.
+        """
+        return self.kind in ROUTINE_KINDS
+
+    @property
+    def is_checkout_eligible(self) -> bool:
+        """Whether §18.2's `ddl/*.sql` checkout model may hold this object --
+        see `CHECKOUT_KINDS`. False for a view, which is edit-and-apply only."""
+        return self.kind in CHECKOUT_KINDS
+
+    @property
     def signature(self) -> str:
-        """`(integer, text)` / `()` -- the routine's argument-type list."""
+        """`(integer, text)` / `()` -- the routine's argument-type list.
+
+        Meaningful for a ROUTINE only; nothing outside `is_routine` may render
+        it (an empty `arg_types` spells `()`, which is a lie about a view)."""
         return "(" + ", ".join(self.arg_types) + ")"
 
     @property
@@ -265,27 +304,45 @@ class DdlObjectRef:
         """The tab label: the object's SHORT identity (§18.5).
 
         `recalc` for a sole-holder routine, `fmt(integer)` for an overloaded
-        one, `orders.trg_audit` for a trigger.
+        one, `orders.trg_audit` for a trigger, `orders_v` for a view.
         """
         if self.is_trigger:
             return f"{self.table}.{self.name}"
-        if self.disambiguate:
+        if self.is_routine and self.disambiguate:
             return f"{self.name}{self.signature}"
         return self.name
 
     @property
     def qualified(self) -> str:
-        """The tab tooltip: the FULL source identity -- schema-qualified, with
-        the signature for a routine and the table for a trigger."""
+        """The FULL source identity -- schema-qualified, with the signature for
+        a routine and the table for a trigger.
+
+        **Not cosmetic.** It is the tab tooltip, but it is also the name every
+        apply confirmation, cancellation line and result headline uses
+        (`f"applied {ref.qualified} to …"`), and `_drop_statement` builds a real
+        `DROP` from it. So a kind that has no signature must not be given one:
+        before `FQ-260812025836` this was `f"…{self.name}{self.signature}"` for
+        everything non-trigger, which would have named a view `pr.orders_v()` --
+        an object that does not exist under that name -- in a dialog asking the
+        user to confirm a write to their quality database.
+        """
         if self.is_trigger:
             return f"{self.schema}.{self.table}.{self.name}"
-        return f"{self.schema}.{self.name}{self.signature}"
+        if self.is_routine:
+            return f"{self.schema}.{self.name}{self.signature}"
+        return f"{self.schema}.{self.name}"
 
     @property
     def default_file_name(self) -> str:
         """The Save As… prefill: the sole-holder form of §18.2's file scheme,
         so the file a v1 user saves is already shaped like the checked-out one
-        §18.2 will manage."""
+        §18.2 will manage.
+
+        A view gets the same `<schema>.<name>.sql` shape, and that is a PREFILL
+        in a Save As… dialog only -- a view is not part of the checkout model
+        (`CHECKOUT_KINDS`), so this string is never a managed path and never
+        collides with a same-named routine's working copy.
+        """
         if self.is_trigger:
             return f"{self.schema}.{self.table}.{self.name}.sql"
         return f"{self.schema}.{self.name}.sql"
@@ -310,6 +367,25 @@ _CREATE_TRIGGER_RE = re.compile(
     r"(?P<name>\"[^\"]+\"|[^\s(.\"]+)\b(?P<rest>.*?)\bON\s+"
     r"(?P<table>(?:\"[^\"]+\"|[^\s(.\"]+)(?:\s*\.\s*(?:\"[^\"]+\"|[^\s(.\"]+))?)",
     re.IGNORECASE | re.DOTALL,
+)
+#: `CREATE [OR REPLACE] [RECURSIVE] VIEW <name>` (`FQ-260812025836`).
+#:
+#: **`CREATE MATERIALIZED VIEW` cannot match this** -- `MATERIALIZED` sits
+#: between `CREATE` and `VIEW` and there is no alternative admitting it. That is
+#: deliberate and load-bearing, not incidental: a matview has no
+#: `CREATE OR REPLACE` form at all, so a buffer declaring one must fail to parse
+#: and be refused, never be read as a view.
+#:
+#: It matches a `CREATE VIEW` that follows a leading `DROP VIEW`, which is
+#: exactly the shape the owner named for the cases `OR REPLACE` cannot express
+#: (a changed column list or type): *"the ddl can start with drop view, then
+#: create view. developers will know this."* The apply lane runs whatever is in
+#: the buffer and **inspects it for no other shape** -- no detection heuristic,
+#: no wizard, no offer to drop-and-recreate.
+_CREATE_VIEW_RE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:RECURSIVE\s+)?VIEW\s+"
+    r"(?P<name>(?:\"[^\"]+\"|[^\s(.\"]+)(?:\s*\.\s*(?:\"[^\"]+\"|[^\s(.\"]+))?)",
+    re.IGNORECASE,
 )
 _ARG_MODES = {"in", "out", "inout", "variadic"}
 #: Words that legitimately OPEN a multi-word type name. Everything else in
@@ -447,6 +523,11 @@ def _argument_type(raw: str) -> str | None:
     return normalize_arg_type(" ".join(tokens)) or None
 
 
+def _first(match: Any, *others: Any) -> bool:
+    """True when `match` starts before every non-None match in `others`."""
+    return all(other is None or match.start() < other.start() for other in others)
+
+
 def parse_buffer_identity(text: str, fallback: DdlObjectRef) -> DdlObjectRef | None:
     """The identity the BUFFER declares, or None when it cannot be determined.
 
@@ -458,6 +539,18 @@ def parse_buffer_identity(text: str, fallback: DdlObjectRef) -> DdlObjectRef | N
     """
     trigger_match = _CREATE_TRIGGER_RE.search(text)
     routine_match = _CREATE_ROUTINE_RE.search(text)
+    view_match = _CREATE_VIEW_RE.search(text)
+    # EARLIEST header wins, across all three shapes -- the generalization of the
+    # trigger-before-routine test this branch already made. A view's body is a
+    # `SELECT`, so it cannot contain a competing header; the ordering matters
+    # for the reverse case (a routine whose body mentions a view).
+    if view_match is not None and _first(view_match, trigger_match, routine_match):
+        schema, name = _split_qualified_name(view_match.group("name"))
+        return DdlObjectRef(
+            kind="view",
+            schema=schema or fallback.schema,
+            name=name,
+        )
     if trigger_match is not None and (
         routine_match is None or trigger_match.start() < routine_match.start()
     ):
@@ -1410,7 +1503,8 @@ class DdlObjectEditorPanel(
                     "the buffer, so a changed signature cannot be ruled out. "
                     "Nothing was applied. "
                     f"{GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]} needs a single "
-                    "CREATE [OR REPLACE] FUNCTION/PROCEDURE or CREATE TRIGGER "
+                    "CREATE [OR REPLACE] FUNCTION/PROCEDURE, CREATE TRIGGER or "
+                    "CREATE [OR REPLACE] VIEW "
                     "header with a complete argument list; an ALTER or a bare "
                     "statement has no signature to compare. Use Deployment ▸ "
                     f"{GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]} to run this "
@@ -1450,9 +1544,27 @@ class DdlObjectEditorPanel(
                 f"You checked out {live_ref.qualified}, but the buffer creates "
                 f"{buffer_ref.qualified}."
             )
+            # The sentence names the identity of the kind actually in hand. It
+            # said "a routine" for everything until `FQ-260812025836`, which was
+            # already loose for a trigger and became wrong for a view -- neither
+            # has argument types, so a user reading it would be told their
+            # rename was safe for a reason that does not apply.
+            if live_ref.is_routine:
+                identified_by = (
+                    "PostgreSQL identifies a routine by (schema, name, argument "
+                    "types)"
+                )
+            elif live_ref.is_trigger:
+                identified_by = (
+                    "PostgreSQL identifies a trigger by (schema, table, name)"
+                )
+            else:
+                identified_by = (
+                    f"PostgreSQL identifies a {live_ref.kind} by (schema, name)"
+                )
             consequence = (
-                "PostgreSQL identifies a routine by (schema, name, argument "
-                "types), so this does NOT replace the object you checked out: "
+                f"{identified_by}, so this does NOT replace the object you "
+                "checked out: "
                 f"it CREATES A SECOND OBJECT and leaves {live_ref.qualified} "
                 "live. This editor has no gesture that drops it, so dropping "
                 "it is yours to do -- run this in the Quality SQL Console "

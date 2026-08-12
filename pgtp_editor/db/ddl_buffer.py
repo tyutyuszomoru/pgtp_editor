@@ -38,13 +38,25 @@ from .table_ddl import build_relation_ddl
 #: The span kinds whose object has a *live source definition* that
 #: `resolve_edit_target` can hand to the editable single-object tab (§18.5 D1).
 #:
-#: Everything else in the buffer -- tables, views, matviews and the
+#: Everything else in the buffer -- tables, matviews and the
 #: column/constraint/index detail spans -- is **navigable but not editable**
-#: (`FQ-260810183812`): those objects are not part of §18.2's checkout model,
-#: and a table's shape changes through `Alter Table ▸` alone. Named here rather
-#: than spelled as a tuple at each call site, because two copies of this set is
-#: exactly how the second one comes to miss a kind.
-EDITABLE_SPAN_KINDS = frozenset({"function", "procedure", "trigger"})
+#: (`FQ-260810183812`): a table's shape changes through `Alter Table ▸` alone.
+#: Named here rather than spelled as a tuple at each call site, because two
+#: copies of this set is exactly how the second one comes to miss a kind.
+#:
+#: **`"view"` is here and `"matview"` is NOT, and the asymmetry is
+#: PostgreSQL's, not a preference** (`FQ-260812025836`). Everything editable
+#: through §18.5 is editable because it has `CREATE OR REPLACE` semantics --
+#: the apply lane replaces an object in place, and its four preconditions are
+#: written around that. A view has that property. A **materialized view does
+#: not**: there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so "replacing" one
+#: means `DROP` + `CREATE`, which discards its stored data, needs a `REFRESH`
+#: afterwards and drops its dependents. **Do not widen this set to `"matview"`
+#: by analogy** -- everything else in this codebase groups the two kinds (the
+#: tree branch, `TableInfo.kind`, `pg_get_viewdef`, `table_ddl.build_view_ddl`),
+#: which is exactly the shape of carve-out this project has had widened twice
+#: (BUG-052, BUG-063). A test asserts the matview refusal directly.
+EDITABLE_SPAN_KINDS = frozenset({"function", "procedure", "trigger", "view"})
 
 #: Kinds that render a whole object with a banner of its own, as opposed to the
 #: detail spans that point at ONE line inside another object's text. Object

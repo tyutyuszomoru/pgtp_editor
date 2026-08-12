@@ -2157,14 +2157,192 @@ def test_a_table_node_keeps_its_alter_table_menu_not_the_span_menu(qtbot):
 
 def test_every_non_editable_kind_has_a_stated_reason():
     """A refusal with a reason, not a silently disabled menu (FQ-023)."""
-    for kind in ("table", "view", "matview", "column", "constraint", "index"):
+    for kind in ("table", "matview", "column", "constraint", "index"):
         assert NOT_EDITABLE_REFUSALS[kind]
         assert edit_refusal_for_span(DdlObjectSpan(kind, "pr", "x", None, 1, 1))
 
 
-def test_routines_and_triggers_are_still_editable():
-    for kind in ("function", "procedure", "trigger"):
+def test_a_matview_span_is_still_refused_and_says_why():
+    """`FQ-260812025836`'s carve-out, asserted as a REFUSAL rather than as an
+    absence: views became editable, matviews must not have followed by analogy
+    (the BUG-052 / BUG-063 failure mode). The reason travels with the rule --
+    there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so a replace would be a
+    `DROP` + `CREATE` discarding the stored data."""
+    refusal = edit_refusal_for_span(DdlObjectSpan("matview", "pr", "x", None, 1, 1))
+    assert refusal is not None
+    assert "CREATE OR REPLACE MATERIALIZED VIEW" in refusal
+    assert "data" in refusal
+
+
+def test_a_table_span_is_still_refused():
+    refusal = edit_refusal_for_span(DdlObjectSpan("table", "pr", "x", None, 1, 1))
+    assert refusal is not None
+    assert "Alter Table" in refusal
+
+
+def test_routines_triggers_and_views_are_editable():
+    for kind in ("function", "procedure", "trigger", "view"):
         assert edit_refusal_for_span(DdlObjectSpan(kind, "pr", "x", None, 1, 1)) is None
+    assert "view" not in NOT_EDITABLE_REFUSALS
+
+
+# ---------------------------------------------------------------------------
+# Views are editable (`FQ-260812025836`).
+# ---------------------------------------------------------------------------
+def _relation_item(panel, prefix):
+    root = panel.tree.topLevelItem(0)
+    for index in range(root.childCount()):
+        if root.child(index).text(0).startswith(prefix):
+            return root.child(index)
+    raise AssertionError(f"no {prefix} node")
+
+
+def _matview_panel(qtbot):
+    """The same fixture with the view's kind flipped to `matview` -- the ONE
+    difference, so anything that passes for the view and fails here is the
+    carve-out doing its job."""
+    schema = _rich_table_schema()
+    schema.tables["pr.v_orders"] = TableInfo(
+        name="pr.v_orders", kind="matview", view_definition="SELECT 1"
+    )
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    return panel
+
+
+def _span_of(item):
+    from PySide6.QtCore import Qt
+
+    return item.data(0, Qt.ItemDataRole.UserRole)
+
+
+def test_a_view_span_resolves_to_a_create_or_replace_view_edit_target(qtbot):
+    """The editable text is `pg_get_viewdef` wrapped in `CREATE OR REPLACE
+    VIEW` -- the shape that alters a view in place, and the same text the
+    read-only buffer already shows."""
+    panel, _lines = _rich_panel(qtbot)
+    span = _span_of(_relation_item(panel, "pr.v_orders"))
+
+    ref, source = resolve_edit_target(panel._schema, span)
+
+    assert (ref.kind, ref.schema, ref.name) == ("view", "pr", "v_orders")
+    assert ref.arg_types == ()
+    assert ref.table is None
+    assert source == "CREATE OR REPLACE VIEW pr.v_orders AS\nSELECT 1;"
+
+
+def test_the_editable_view_text_carries_no_create_trigger(qtbot):
+    """LOAD-BEARING (`FQ-260812025836`, open question 1). A view can carry
+    `INSTEAD OF` triggers, and each of those already owns its own `ddl/*.sql`
+    checkout identity. The double-identity collision dissolves only because the
+    editable text comes from `pg_get_viewdef` -- the `SELECT` body alone.
+    Sourcing it from `pg_dump` output instead brings the collision straight
+    back, which is what this assertion is here to catch."""
+    panel, _lines = _rich_panel(qtbot)
+    _ref, source = resolve_edit_target(
+        panel._schema, _span_of(_relation_item(panel, "pr.v_orders"))
+    )
+    assert "CREATE TRIGGER" not in source.upper()
+
+
+def test_a_view_node_offers_edit_ddl_beside_its_relation_gestures(qtbot):
+    """A view row carries BOTH an editable span and a `_TABLE_ROLE`, so its
+    menu is the union: `Edit DDL` must not have displaced `Add Trigger…`, which
+    is how a view is made updatable."""
+    panel, _lines = _rich_panel(qtbot)
+    view_item = _relation_item(panel, "pr.v_orders")
+
+    labels = [a.text() for a in panel._menu_for_item(view_item).actions() if a.text()]
+
+    assert labels[0] == "Edit DDL"
+    assert "Add Trigger…" in labels
+    assert CREATE_TABLE_LABEL in labels
+    # No `Discard local change`: a view is not part of the checkout model.
+    assert DISCARD_LOCAL_LABEL not in labels
+
+
+def test_edit_ddl_on_a_view_node_emits_the_ref_and_the_source(qtbot):
+    panel, _lines = _rich_panel(qtbot)
+    requested = []
+    panel.edit_requested.connect(lambda ref, src: requested.append((ref, src)))
+
+    menu = panel._menu_for_item(_relation_item(panel, "pr.v_orders"))
+    next(a for a in menu.actions() if a.text() == "Edit DDL").trigger()
+
+    assert len(requested) == 1
+    ref, source = requested[0]
+    assert ref.kind == "view"
+    assert ref.qualified == "pr.v_orders"
+    assert source.startswith("CREATE OR REPLACE VIEW")
+
+
+def test_a_matview_node_offers_no_edit_ddl(qtbot):
+    """The carve-out, driven through the real menu path rather than asserted
+    off a constant: there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so a
+    matview keeps exactly the menu it had."""
+    panel = _matview_panel(qtbot)
+    labels = [
+        a.text() for a in panel._menu_for_item(_relation_item(panel, "pr.v_orders")).actions()
+    ]
+    assert "Edit DDL" not in labels
+
+
+def test_a_matview_span_resolves_no_edit_target(qtbot):
+    """The last line of defence, below the menu: even handed the span
+    directly, the resolver refuses to produce an editable matview."""
+    panel = _matview_panel(qtbot)
+    span = _span_of(_relation_item(panel, "pr.v_orders"))
+    assert span.kind == "matview"
+    assert resolve_edit_target(panel._schema, span) is None
+    # And a span that merely CLAIMS to be a view over a matview relation is
+    # refused too -- the resolver re-checks `TableInfo.kind`.
+    assert (
+        resolve_edit_target(
+            panel._schema,
+            DdlObjectSpan("view", "pr", "v_orders", None, span.start_line, span.end_line),
+        )
+        is None
+    )
+
+
+def test_a_table_node_still_offers_no_edit_ddl(qtbot):
+    panel, _lines = _rich_panel(qtbot)
+    labels = [a.text() for a in panel._menu_for_item(_orders_item(panel)).actions()]
+    assert "Edit DDL" not in labels
+    assert any("Add Trigger" in label for label in labels)
+
+
+def test_a_view_with_no_available_definition_falls_back_to_its_table_menu(qtbot):
+    """A connection that could not supply `pg_get_viewdef` leaves nothing to
+    edit -- and inventing a body is the one thing this app does not do. The row
+    must keep its relation gestures rather than losing its whole menu."""
+    schema = _rich_table_schema()
+    schema.tables["pr.v_orders"] = TableInfo(
+        name="pr.v_orders", kind="view", view_definition=None
+    )
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    labels = [a.text() for a in panel._menu_for_item(_relation_item(panel, "pr.v_orders")).actions()]
+
+    assert "Edit DDL" not in labels
+    assert "Add Trigger…" in labels
+
+
+def test_a_browse_only_tree_still_offers_nothing_on_a_view(qtbot):
+    """§18.7's sandbox Explorer is browse-only, and widening what is editable
+    must not have given it an editing gesture."""
+    schema = _rich_table_schema()
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    assert panel._menu_for_item(_relation_item(panel, "pr.v_orders")) is None
 
 
 def test_a_browse_only_tree_gains_the_navigation_but_no_creation_entries(qtbot):

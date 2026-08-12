@@ -71,6 +71,42 @@ def test_qualified_is_the_full_identity():
     assert _TRIGGER.qualified == "pr.orders.trg_audit"
 
 
+# --- A view's identity (`FQ-260812025836`) ----------------------------------
+_VIEW = DdlObjectRef(kind="view", schema="pr", name="orders_v")
+
+_VIEW_SRC = "CREATE OR REPLACE VIEW pr.orders_v AS\nSELECT id FROM pr.orders;\n"
+
+
+def test_a_view_is_never_rendered_with_empty_parens():
+    """The defect this feature would have shipped: `qualified` was
+    `f"{schema}.{name}{signature}"` for everything non-trigger, and `signature`
+    spells `()` on empty `arg_types` -- so a view would have been named
+    `pr.orders_v()`, an object that exists under no such name."""
+    assert _VIEW.qualified == "pr.orders_v"
+    assert _VIEW.short_title == "orders_v"
+    assert "(" not in _VIEW.qualified
+    assert "(" not in _VIEW.short_title
+
+
+def test_a_view_is_not_a_routine_and_not_checkout_eligible():
+    assert _VIEW.is_routine is False
+    assert _VIEW.is_trigger is False
+    # §18.2's `ddl/*.sql` scheme would collide `pr.orders_v` the view with
+    # `pr.orders_v()` the function, and its header recovery reads
+    # FUNCTION/PROCEDURE only -- so a view is edit-and-apply only for v1.
+    assert _VIEW.is_checkout_eligible is False
+    assert _PLAIN.is_checkout_eligible is True
+    assert _TRIGGER.is_checkout_eligible is True
+    assert _PLAIN.is_routine is True
+
+
+def test_the_drop_statement_for_a_view_names_a_real_object():
+    """`_drop_statement` builds real SQL out of `qualified`, which is why the
+    `()` defect was not cosmetic: it would have handed the user
+    `DROP VIEW pr.orders_v();`."""
+    assert _drop_statement(_VIEW) == "DROP VIEW pr.orders_v;"
+
+
 def test_key_distinguishes_two_overloads_and_is_usable_as_a_dict_key():
     one = DdlObjectRef(kind="function", schema="pr", name="fmt", arg_types=("integer",))
     two = DdlObjectRef(kind="function", schema="pr", name="fmt", arg_types=("text",))
@@ -1307,6 +1343,63 @@ def test_declined_confirmation_applies_nothing_to_the_target(qtbot):
     assert any("cancelled" in line for line in lines)
 
 
+# --- A view goes through the SAME apply lane (`FQ-260812025836`) ------------
+def test_a_view_applies_to_quality_through_the_unchanged_lane(qtbot):
+    """Reuse, not a parallel path: the same seams, the same preconditions, the
+    same write call -- only the ref's kind differs."""
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(qtbot, seams, ref=_VIEW, text=_VIEW_SRC)
+    panel.record_check_report(_green())
+
+    assert panel.apply_to_target() is True
+
+    assert seams.target_calls == [(_VIEW, _VIEW_SRC)]
+
+
+def test_the_view_apply_confirmation_names_the_view_without_parens(qtbot):
+    """The exact text is the assertion, because the confirmation is where the
+    `pr.orders_v()` defect would have surfaced -- a dialog asking the user to
+    authorise a write to their quality database while naming an object that
+    does not exist."""
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(qtbot, seams, ref=_VIEW, text=_VIEW_SRC)
+    panel.record_check_report(_green())
+
+    panel.apply_to_target()
+
+    _title, text = seams.confirms[-1]
+    assert text.startswith("Apply pr.orders_v to quality database prod on db01:5432?")
+    assert "pr.orders_v()" not in text
+
+
+def test_the_view_apply_result_headline_names_the_view_without_parens(qtbot):
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(qtbot, seams, ref=_VIEW, text=_VIEW_SRC)
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    panel.apply_to_target()
+
+    assert any("applied pr.orders_v to database prod on db01:5432." in line for line in lines)
+    assert not any("orders_v()" in line for line in lines)
+
+
+def test_a_view_buffer_the_parser_cannot_read_is_refused_not_applied(qtbot):
+    """The buffer contract is unchanged: an unparseable buffer is a hard
+    refusal. A matview `CREATE` is exactly that -- it never becomes an apply."""
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(
+        qtbot, seams, ref=_VIEW, text="CREATE MATERIALIZED VIEW pr.orders_v AS SELECT 1;"
+    )
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    assert any("refused" in line for line in lines)
+
+
 def test_apply_to_target_refuses_an_empty_buffer(qtbot):
     seams = _Seams(live=_live_same())
     panel = _wired(qtbot, seams, text="\n\n")
@@ -1742,6 +1835,50 @@ def test_parse_buffer_identity_reads_a_trigger_name_and_table():
 
 def test_parse_buffer_identity_returns_none_when_there_is_no_create():
     assert parse_buffer_identity("SELECT 1;", _PLAIN) is None
+
+
+def test_parse_buffer_identity_reads_a_view():
+    """Without this branch precondition 1 refuses every view buffer, so
+    `Apply to quality` would be dead for the one kind this feature adds."""
+    ref = parse_buffer_identity(_VIEW_SRC, _VIEW)
+    assert (ref.kind, ref.schema, ref.name, ref.arg_types) == ("view", "pr", "orders_v", ())
+    assert ref.qualified == "pr.orders_v"
+
+
+def test_parse_buffer_identity_reads_the_create_after_a_leading_drop_view():
+    """The owner's second, explicitly blessed shape for the cases
+    `OR REPLACE` cannot express: *"the ddl can start with drop view, then
+    create view. developers will know this."* No detection, no wizard -- the
+    identity is simply read off the CREATE."""
+    ref = parse_buffer_identity(
+        "DROP VIEW pr.orders_v;\nCREATE VIEW pr.orders_v AS SELECT 1 AS n;\n", _VIEW
+    )
+    assert (ref.kind, ref.name) == ("view", "orders_v")
+
+
+def test_parse_buffer_identity_refuses_a_materialized_view():
+    """`CREATE MATERIALIZED VIEW` must not be readable as a view: there is no
+    `CREATE OR REPLACE` form of it, so a buffer declaring one is unparseable
+    and precondition 1 refuses rather than treating it as a replace."""
+    assert parse_buffer_identity(
+        "CREATE MATERIALIZED VIEW pr.orders_mv AS SELECT 1;", _VIEW
+    ) is None
+
+
+def test_parse_buffer_identity_falls_back_to_the_tabs_schema_for_a_bare_view():
+    ref = parse_buffer_identity("CREATE OR REPLACE VIEW orders_v AS SELECT 1;", _VIEW)
+    assert (ref.schema, ref.name) == ("pr", "orders_v")
+
+
+def test_a_routine_header_still_wins_over_a_view_mentioned_later():
+    """The earliest header wins, so widening the parser cannot re-read an
+    existing routine buffer as something else."""
+    ref = parse_buffer_identity(
+        "CREATE FUNCTION pr.rebuild() RETURNS void AS $$\n"
+        "BEGIN\n  EXECUTE 'CREATE OR REPLACE VIEW pr.v AS SELECT 1';\nEND;\n$$;",
+        _PLAIN,
+    )
+    assert (ref.kind, ref.name) == ("function", "rebuild")
 
 
 # ===========================================================================
