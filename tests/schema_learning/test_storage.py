@@ -100,3 +100,32 @@ def test_bundled_curated_xsd_new_edit_ability_mode_block_verifies_cleanly():
     messages = [i.message for i in issues]
     assert not any("editAbilityMode" in m for m in messages)
     assert not any("duplicate attribute name" in m for m in messages)
+
+
+def test_bundled_curated_xsd_resolver_returns_the_whole_on_disk_file():
+    """BUG-260812002307: the resolver was suspected of being launch-method
+    dependent (`python -m pgtp_editor` vs `python -m pgtp_editor.main`). It is
+    not -- `importlib.resources.files("pgtp_editor")` is package-anchored, with
+    no `__file__`/CWD assumption. This pins the contract that actually matters:
+    the resource resolves, and what comes back is the ENTIRE file, so the
+    resource silently dropping out of the package (or being truncated) fails a
+    test instead of quietly degrading completion, hover and Properties labels.
+    """
+    from importlib import resources
+
+    text = bundled_curated_xsd_text()
+    assert text is not None
+    on_disk = (
+        resources.files("pgtp_editor") / "resources" / "curated.xsd"
+    ).read_text(encoding="utf-8")
+    assert len(text) == len(on_disk)
+    assert text == on_disk
+
+
+def test_the_bundled_text_is_what_the_apps_own_loader_accepts():
+    """The other half of the same guard: the copy the app would re-seed from
+    must parse through the app's own loader. A malformed bundled curated.xsd
+    would make the part-C restore command hand the user a second broken file.
+    """
+    schema = load_curated(bundled_curated_xsd_text())
+    assert schema.model.paths

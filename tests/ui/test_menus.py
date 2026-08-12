@@ -647,6 +647,11 @@ def test_schema_menu_contents(qtbot):
         "Verify XSD",
         "Export XSD",
         "Import XSD",
+        # BUG-260812002307 part C: the one sanctioned overwrite of the
+        # hand-owned curated.xsd. Deliberately carries NO shortcut (DEC-012 —
+        # a menu command form has exactly one keyboard host, and a chord would
+        # have to clear `docs/KEYBINDINGS.md` first).
+        "Restore Bundled Curated Schema…",
     ]
 
 

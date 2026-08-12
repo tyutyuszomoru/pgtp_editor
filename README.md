@@ -76,7 +76,7 @@ The app opens on a **launcher** offering its three modes — **Standalone** (a `
 ## Development
 
     pip install -e ".[dev]"
-    python -m pgtp_editor.main            # add --debug for a full diagnostic log
+    python -m pgtp_editor                 # add --debug for a full diagnostic log
 
 Tests mirror the package layout (`pgtp_editor/<area>/foo.py` → `tests/<area>/test_foo.py`) and run headless:
 

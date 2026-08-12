@@ -12,6 +12,14 @@ dependencies = [
     "qdarkstyle>=3.2",
 ]
 
+[project.gui-scripts]
+# An installed `pgtp-editor` command, alongside `python -m pgtp_editor`
+# (`pgtp_editor/__main__.py`). `gui-scripts`, not `scripts`: on Windows this
+# builds a `pythonw` launcher, so a Qt app started from Explorer or the Start
+# menu does not drag a console window along. Pure delegation to the one entry
+# point — the same rule `__main__.py` is guarded by.
+pgtp-editor = "pgtp_editor.main:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

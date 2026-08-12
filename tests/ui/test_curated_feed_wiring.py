@@ -213,3 +213,103 @@ def test_second_enrichment_does_not_replace_live_curated_schema(window, tmp_path
     window._xsd_ui.enrich_from_file(str(sample))
 
     assert window._xsd_ui.curated_schema is schema_before
+
+
+# --- BUG-260812002307 part B: neither load failure is silent -----------------
+#
+# The reported symptom was "xsd is not loaded" with nothing on screen saying so.
+# The mechanism is the bundled-vs-app-data split: `ensure_bootstrap` never
+# overwrites an existing app-data curated.xsd, so a hand-broken or truncated one
+# kills the feed while the pristine bundled copy sits unused. Both failure exits
+# must therefore NAME THE RESOLVED PATH -- a message that says "the curated
+# schema failed to load" without saying which file reproduces the bug in words.
+
+
+def test_missing_curated_audits_the_resolved_path(window):
+    """The previously-silent branch (`return False`, no audit line, no dialog)."""
+    _unseed(window)
+    before = len(window.activity_panel.row_texts())
+
+    assert window._xsd_ui.load_curated() is False
+
+    new_lines = window.activity_panel.row_texts()[before:]
+    said = [line for line in new_lines if "curated" in line.lower()]
+    assert said, "the missing-file branch emitted nothing at all"
+    path = str(curated_xsd_path(window._schema_storage_dir))
+    assert any(path in line for line in said), (
+        f"no line names the resolved path {path}: {said}"
+    )
+    # ...and points at the way back, which is the whole of part C.
+    assert any("Restore Bundled Curated Schema" in line for line in said)
+
+
+def test_broken_curated_with_no_live_schema_warns_and_names_the_path(
+    window, monkeypatch
+):
+    """A fresh start with a corrupt app-data curated.xsd: completion, hover and
+    the Properties labels are running against `None`, so the audit line is
+    escalated to a modal warning. `shell.status` is NOT the escalation -- since
+    FQ-028 it journals instead of painting, so it would have moved the message
+    from one journal to the same journal."""
+    warnings = []
+    monkeypatch.setattr(
+        xsd_controller_module.modals.QMessageBox, "warning",
+        staticmethod(lambda *a, **k: warnings.append(a)),
+    )
+    path = curated_xsd_path(window._schema_storage_dir)
+    path.write_text("<broken", encoding="utf-8")
+    window._xsd_ui.curated_schema = None
+
+    assert window._xsd_ui.load_curated() is False
+
+    assert warnings, "a schema-less load failure was swallowed into the journal"
+    body = " ".join(str(arg) for arg in warnings[0])
+    assert str(path) in body, f"the warning does not name the file: {body}"
+    assert "Restore Bundled Curated Schema" in body
+    lines = window.activity_panel.row_texts()
+    assert any("XML errors" in line and str(path) in line for line in lines)
+
+
+def test_broken_curated_warns_once_until_it_loads_again(window, monkeypatch):
+    """A user opening six .pgtp files with a corrupt curated.xsd is told once,
+    not six times -- and told again after a fix that then breaks again."""
+    warnings = []
+    monkeypatch.setattr(
+        xsd_controller_module.modals.QMessageBox, "warning",
+        staticmethod(lambda *a, **k: warnings.append(a)),
+    )
+    path = curated_xsd_path(window._schema_storage_dir)
+    path.write_text("<broken", encoding="utf-8")
+    window._xsd_ui.curated_schema = None
+
+    window._xsd_ui.load_curated()
+    window._xsd_ui.load_curated()
+    assert len(warnings) == 1
+
+    _seed_curated(window)
+    assert window._xsd_ui.load_curated() is True
+    path.write_text("<broken", encoding="utf-8")
+    window._xsd_ui.curated_schema = None
+    window._xsd_ui.load_curated()
+    assert len(warnings) == 2
+
+
+def test_broken_curated_with_a_live_schema_stays_an_audit_line(window, monkeypatch):
+    """The mild case keeps its old shape: completion still works off the last
+    good schema, so no modal -- otherwise every save of half-typed XSD text
+    would pop one."""
+    called = []
+    monkeypatch.setattr(
+        xsd_controller_module.modals.QMessageBox, "warning",
+        staticmethod(lambda *a, **k: called.append(a)),
+    )
+    _seed_curated(window)
+    assert window._xsd_ui.load_curated() is True
+    curated_xsd_path(window._schema_storage_dir).write_text("<broken", encoding="utf-8")
+
+    assert window._xsd_ui.load_curated() is False
+    assert called == []
+    assert any(
+        "keeping last good schema" in line
+        for line in window.activity_panel.row_texts()
+    )

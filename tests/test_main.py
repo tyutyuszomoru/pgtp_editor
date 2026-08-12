@@ -5,6 +5,8 @@ positional still exists and still reaches `run_mcp_server` as the headless
 server's default project, but **the GUI no longer opens it**. And the FQ-010
 startup launcher seam in `main()`.
 """
+import importlib
+
 import pytest
 
 import pgtp_editor.main as main_mod
@@ -304,3 +306,29 @@ def test_module_entry_point_adds_no_startup_logic():
     source = inspect.getsource(module_entry)
     for forbidden in ("parse_args", "argparse", "PySide6", "QApplication", "debuglog"):
         assert forbidden not in source
+
+
+def test_gui_scripts_console_entry_points_at_the_same_main():
+    """The installed `pgtp-editor` command (BUG-260812002307's optional extra).
+    `gui-scripts`, not `scripts`, so the Windows launcher is `pythonw` and a Qt
+    app started from a shortcut drags no console window along. It names the one
+    entry point, like `__main__.py` does — three launch forms, one `main`.
+
+    Asserted as a THIRD delegation rather than a string: an entry point that
+    points somewhere else is the drift this guards."""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert pyproject["project"]["gui-scripts"] == {
+        "pgtp-editor": "pgtp_editor.main:main"
+    }
+    module_path, _, attribute = (
+        pyproject["project"]["gui-scripts"]["pgtp-editor"].partition(":")
+    )
+    module = importlib.import_module(module_path)
+    assert getattr(module, attribute) is main_mod.main

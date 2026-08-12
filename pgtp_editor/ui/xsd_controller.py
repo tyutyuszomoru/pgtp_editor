@@ -95,6 +95,12 @@ _EMPTY_XSD_SKELETON = (
     'elementFormDefault="qualified">\n</xs:schema>\n'
 )
 
+#: The Schema-menu label of the one sanctioned re-seed (BUG-260812002307 part
+#: C). Named here because the two load-failure messages point the user at it:
+#: telling someone their curated.xsd is broken without naming the way back is
+#: half a message.
+RESTORE_BUNDLED_LABEL = "Restore Bundled Curated Schema…"
+
 _SCHEMA_REPORT_TEMPLATES = {
     "new_element": "[Schema] NEW ELEMENT: {path} (first seen in {source})",
     "new_attribute": "[Schema] NEW ATTRIBUTE: {path}@{attr} (first seen in {source})",
@@ -136,6 +142,13 @@ class XsdController(QObject):
         self._mode = "curated"
         #: The window-level Ctrl+L action, set by `build_menu`.
         self._goto_xsd_action = None
+        #: Set once the "no schema at all" warning has been shown for the
+        #: current broken state, and cleared by the next successful load, so a
+        #: user who opens six .pgtp files with a corrupt curated.xsd is told
+        #: once rather than six times (BUG-260812002307 part B).
+        self._reported_broken_curated = False
+        #: Schema ▸ Restore Bundled Curated Schema…, set by `build_menu`.
+        self._restore_bundled_action = None
         #: Replaceable seam -- an ATTRIBUTE, not a method. See the module
         #: docstring: the suite assigns over it to avoid a real modal.
         self.confirm_close = self._confirm_close_xsd
@@ -203,6 +216,14 @@ class XsdController(QObject):
         export_action.triggered.connect(self.export)
         import_action = menu.addAction("Import XSD")
         import_action.triggered.connect(self.import_)
+        # BUG-260812002307 part C: the only in-app way back from a curated.xsd
+        # the user broke by hand. It carries NO shortcut — it is a menu command
+        # form, so under DEC-012 it would have exactly one keyboard host and
+        # the chord would have to clear `docs/KEYBINDINGS.md` first; a menu
+        # entry with no chord needs no ledger row.
+        restore_action = menu.addAction(RESTORE_BUNDLED_LABEL)
+        restore_action.triggered.connect(self.restore_bundled)
+        self._restore_bundled_action = restore_action
         # "Go To XSD" (Ctrl+L) lives as a window-level action, not a menu
         # entry -- the Schema menu proper is Edit XSD / Edit AutoXSD / Verify /
         # Export / Import.
@@ -217,22 +238,84 @@ class XsdController(QObject):
     def load_curated(self) -> bool:
         """Parse curated.xsd and feed completion/hover from it — the SOLE
         schema source (spec §11). On parse failure the last good in-memory
-        schema stays live; returns False. Missing file → False, silent."""
+        schema stays live; returns False.
+
+        **Neither failure is silent any more (BUG-260812002307 part B).** The
+        reported symptom was "XSD is not loaded" with nothing on screen saying
+        so: the missing-file exit returned False without a word, and the parse
+        exit wrote one Activity-Log line. Both now NAME THE RESOLVED PATH,
+        because the whole confusion in that report is *which* curated.xsd is in
+        play — the pristine bundled resource, or the user's hand-owned app-data
+        copy that the bootstrap will never overwrite.
+
+        The escalation rule is "is there any schema at all?", not "did a load
+        fail":
+
+        * a broken file **with a last good schema live** is the mild case the
+          message already described — completion keeps working, so an audit
+          line is proportionate and a modal would be nagging (it fires on every
+          save of half-typed XSD text);
+        * a broken file **with no schema live** — a fresh start, exactly the
+          reported case — means completion, hover and the Properties labels are
+          running against ``None``. That gets a modal, once per broken state,
+          naming the file and the way back.
+        """
         path = curated_xsd_path(self._schema_storage_dir)
         if not path.exists():
+            # Previously `return False` with nothing emitted at all. At startup
+            # `ensure_bootstrap` runs first and has already audited whatever
+            # stopped it from seeding, so this stays a journal line: no modal.
+            self._shell.audit.addItem(
+                f"[Schema] No curated XSD at {path} — completion, hover and "
+                f"Properties labels have no schema until it is restored "
+                f"(Schema ▸ {RESTORE_BUNDLED_LABEL})."
+            )
             return False
         try:
             schema = load_curated(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, XsdLoadError) as exc:
+            if self._curated_schema is not None:
+                self._shell.audit.addItem(
+                    f"[Schema] Curated XSD has XML errors: {exc} — keeping last "
+                    f"good schema ({path})"
+                )
+                return False
             self._shell.audit.addItem(
-                f"[Schema] Curated XSD has XML errors: {exc} — keeping last good schema"
+                f"[Schema] Curated XSD has XML errors: {exc} — no schema is "
+                f"loaded; completion, hover and Properties labels are off "
+                f"({path})"
             )
+            self._warn_no_curated_schema(path, exc)
             return False
+        self._reported_broken_curated = False
         self._curated_schema = schema
         self._shell.stage.xml_editor.set_schema_model(schema.model)
         if self._feed_properties_schema is not None:
             self._feed_properties_schema(schema.model)
         return True
+
+    def _warn_no_curated_schema(self, path: Path, exc: object) -> None:
+        """The escalation beyond the audit panel, once per broken state.
+
+        A `QMessageBox` and not a status-bar notice **on purpose**: since
+        FQ-028 `shell.status` does not paint anything — `StaticStatusBar.
+        showMessage` journals into the Activity Log and
+        `displayed_message()` is permanently `""` — so "escalate to the status
+        bar" would have moved the message from one journal to the same journal
+        and left the bug exactly as reported.
+        """
+        if self._reported_broken_curated:
+            return
+        self._reported_broken_curated = True
+        modals.QMessageBox.warning(
+            self._shell.window,
+            "Curated Schema Not Loaded",
+            "The curated schema could not be read, so completion, hover and "
+            "the Properties panel's labels have no schema behind them.\n\n"
+            f"{path}\n\n{exc}\n\n"
+            "Fix that file in Schema ▸ Edit XSD, or replace it with the schema "
+            f"shipped with the app: Schema ▸ {RESTORE_BUNDLED_LABEL}",
+        )
 
     def ensure_bootstrap(self) -> None:
         """One-time seed of the user's curated.xsd when it is absent — never
@@ -620,6 +703,77 @@ class XsdController(QObject):
             notice += " (unsaved XSD tab edits were replaced)"
         self._shell.audit.addItem(notice)
         self._report_verify_issues(issues)
+
+    def restore_bundled(self) -> None:
+        """Schema ▸ Restore Bundled Curated Schema…: overwrite the user's
+        app-data ``curated.xsd`` with the copy shipped inside the app, then
+        re-feed completion.
+
+        **This is the one sanctioned exception to §11's "curated.xsd is
+        hand-owned and never overwritten" (BUG-260812002307 part C.)** The rule
+        itself is untouched — `ensure_bootstrap` still refuses to overwrite,
+        because it runs unattended at startup and must never eat a hand
+        curation. This is the opposite situation: the user asked for it by name
+        and confirmed a prompt that says what is destroyed. Without it, a
+        corrupted app-data copy is unrecoverable from inside the app, since the
+        pristine bundled resource is never re-read once a file exists.
+
+        Mirrors `import_` for the write-then-reload half, including its `.bak`
+        beside the replaced file.
+        """
+        path = curated_xsd_path(self._schema_storage_dir)
+        bundled = bundled_curated_xsd_text()
+        if bundled is None:
+            modals.QMessageBox.critical(
+                self._shell.window,
+                "No Bundled Schema",
+                "This build does not carry a bundled curated schema, so there "
+                "is nothing to restore from.",
+            )
+            return
+        answer = modals.QMessageBox.question(
+            self._shell.window,
+            "Restore Bundled Curated Schema",
+            f"Replace\n\n{path}\n\nwith the curated schema shipped with the "
+            f"app (v{CURATED_BUNDLED_VERSION})?\n\n"
+            "Every hand edit in that file will be DESTROYED. A .bak copy is "
+            "kept beside it.",
+            modals.QMessageBox.StandardButton.Yes | modals.QMessageBox.StandardButton.No,
+        )
+        if answer != modals.QMessageBox.StandardButton.Yes:
+            return
+        tab_was_dirty = self._dirty and self._mode == "curated"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.exists():
+                shutil.copy2(path, str(path) + ".bak")
+            path.write_text(bundled, encoding="utf-8")
+        except OSError as exc:
+            modals.QMessageBox.critical(
+                self._shell.window,
+                "Restore Failed",
+                f"Could not write the curated schema:\n\n{exc}",
+            )
+            return
+        # A freshly written file is a new chance for the "no schema at all"
+        # warning to be useful, so the once-per-broken-state latch is dropped
+        # here as well as on a successful load.
+        self._reported_broken_curated = False
+        self.load_curated()
+        if self._mode == "curated":
+            self._loading = True
+            try:
+                self._shell.stage.xsd_editor.setPlainText(bundled)
+            finally:
+                self._loading = False
+            self._set_dirty(False)
+        notice = (
+            f"[Schema] Restored curated.xsd from the bundled schema "
+            f"(v{CURATED_BUNDLED_VERSION}) — {path}"
+        )
+        if tab_was_dirty:
+            notice += " (unsaved XSD tab edits were replaced)"
+        self._shell.audit.addItem(notice)
 
     # -- reporting -----------------------------------------------------------
 
