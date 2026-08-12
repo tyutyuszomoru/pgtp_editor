@@ -1,12 +1,68 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-12 (two batches folded: the **Software
-> settings** consolidation `19c14c5`, and the **second vim increment** `e60e0d0` + `de75617`, plus four
-> bugfixes at `1ff2b11` / `7703eba`) — **four shipped, specified surfaces were RELOCATED out of their menus,
-> and the vim block's own reasoning was falsified in four places by its second increment.** Details in
-> **(O0)** below.
+> **Status:** living document · **Last synthesized:** 2026-08-12 *(later pass)* — `BUG-260812002307` parts
+> B and C (`483a9ad`), `BUG-260812023420` (`03473a7`) and the **shipped half** of `FQ-260812021715`
+> (`c0ab500`) folded. **The spec's own §11 was carrying a six-row TO-DO TABLE for work that landed, which
+> is a quieter kind of rot than a banner.** Details in **(P0)** below.
 >
-> **(O0) THIS PASS — A RELOCATION IS A WITHDRAWAL, AND AN INFERENCE FROM AN ABSENCE IS NOT THE ABSENCE.**
+> **(P0) THIS PASS — AN EXCEPTION IS NOT A RULE WEAKENING, AND AN ESCALATION CAN ESCALATE TO ITSELF.**
+>
+> 1. **§11 gains *The ONE sanctioned overwrite of `curated.xsd`*** — `Schema ▸ Restore Bundled Curated
+>    Schema…` (`BUG-260812002307` part C, `483a9ad`), user-initiated, confirmed, `.bak`-kept, then reloaded.
+>    **`ensure_bootstrap`'s never-overwrite rule is UNTOUCHED and the block says so in those terms**, because
+>    the danger is that a future reader takes the exception for the rule softening. The bootstrap runs
+>    unattended and must never eat a hand curation; this runs because a user named it. *An overwrite ban with
+>    no user-initiated escape hatch is not a strong rule, it is a trap* — without this command a
+>    hand-broken `curated.xsd` is unrecoverable from inside the app. Schema menu: **five items → six**
+>    (§11, §26). **Keyless under DEC-012; `docs/KEYBINDINGS.md` verified untouched by all of this work.**
+> 2. **§11 gains the escalation rule, and it is keyed on *"is there any schema at all?"* — not *"did a load
+>    fail"*.** Missing file audits; a parse failure **with a last good schema live** audits (a modal would
+>    nag — it fires on every save of half-typed XSD text); a parse failure **with no schema live**
+>    additionally warns in a **latched** modal, because completion, hover and the Properties labels are then
+>    running against `None`: *a lost capability, not a lost save.* Both audit paths now **name the resolved
+>    app-data path**, which is the real fix — the whole confusion was *which* `curated.xsd` was in play.
+> 3. **⚠ AND THE REASONING IS FOLDED, NOT JUST THE RULE, BECAUSE THE QUEUE ENTRY WAS WRONG.** It offered a
+>    status-bar message and a modal as **equivalent** escalations. `StaticStatusBar.showMessage` **paints
+>    nothing** since FQ-028 — it journals into the Activity Log, which is **exactly where the `[Schema]`
+>    audit row already routes**. The status-bar option would have moved the message from one journal to the
+>    same journal. **The durable form: name the concrete channel, then check it still paints.** *An
+>    escalation named by surface rather than by mechanism can escalate to itself.*
+> 4. **§7 gains *ONE PRIMITIVE OWNS REVEALING A LEFT-DOCK PANE*** (`BUG-260812023420`, `03473a7`).
+>    `_reveal_left_panel` now un-hides the dock as well as showing and selecting the tab; four duplicated
+>    un-hide calls are deleted. A reveal that forgot it **landed a visible tab inside a hidden dock — the
+>    reveal silently did nothing**, which is *never a silent wrong result* on the navigation side. **Its
+>    counterpart is specified alongside as a SEPARATE MEANING**: `_set_left_panel_visible` touches neither
+>    the dock nor the current tab — *make available, do not touch the user's layout*. **⚠ The caller named
+>    for it in the dispatching prompt was checked and is wrong** — `CoherenceController.refresh_if_open`
+>    does not call the seam; the two real callers both pass `False`, and the `True` direction has **no**
+>    production caller and is kept deliberately. **Without two names one of the two intentions is always
+>    wrong.** The
+>    bottom dock already drew this line (`_reveal_results_dock_tab` vs `_reveal_results_tab`); the left dock
+>    now matches it, and the pairing is stated once for both.
+> 5. **`FQ-260812021715` folded PARTIALLY, and the unshipped half is named rather than described.** Landed:
+>    the Qt-free `ui/theme_model.py`, bundled `resources/themes/{dark,light}.json`, and an **AST guard**
+>    failing on a `#rrggbb` in any module — *including `theme.py` and `theme_model.py`*, because a rule
+>    saying "don't add another table" is one nobody can enforce. **Two durable findings that cost real
+>    investigation:** qdarkstyle's `load_stylesheet(palette=…)` **silently ignores a subclassed palette**
+>    (it re-reads a precompiled resource by `palette.ID` and replaces the caller's palette with the stock
+>    one), which is why the recolour is a single-pass regex substitution and why this document's account of
+>    that function has been **wrong since FQ-005**; and `shared_accent()` **raises** unless every bundled
+>    theme agrees, turning theme-blind `connectivity.py` from invisible into a failing test. **⏳ Theme
+>    SELECTION — `View ▸ Light Theme`'s removal and the `"lightTheme"` boolean's migration to a theme name —
+>    is IN FLIGHT in a concurrent tree and is deliberately not pinned.**
+> 6. **⚠ THE TWELFTH CONSECUTIVE STALE-STATUS RETIREMENT, AND THE FIRST THAT WAS A TO-DO TABLE.** §11
+>    carried a six-row *"Site / Today / Must become"* table for the `v1.2 → v1.3` bump, plus *"nothing today
+>    asserts that the marker and the constant AGREE"*. **All six sites landed, both routed ones landed, and
+>    the guard test exists** (`test_bundled_curated_xsd_marker_agrees_with_the_version_constant`). The rule
+>    is kept; the work list is struck. *A "NOT YET BUILT" banner at least announces itself — a table of
+>    file:line targets reads as reference material, and every line number in it was already wrong.*
+> 7. **`README.md` revisited (standing obligation) — CHECKED, and changed in ONE place only**; see the
+>    report. A file-based theme system is an internal consolidation with no front-page consequence *yet*,
+>    and the curated-schema recovery path is a repair route, not an identity claim.
+>
+> *(Previous pass:)*
+>
+> **(O0) PREVIOUS PASS — A RELOCATION IS A WITHDRAWAL, AND AN INFERENCE FROM AN ABSENCE IS NOT THE ABSENCE.**
 >
 > 1. **`FQ-260812002827` → §7's new *The Software settings dialog* block (SHIPPED `19c14c5`), with FOUR
 >    RELOCATION LEDGER ROWS, one per absorbed surface.** `View ▸ Customize Toolbar…`, `View ▸ Customize
@@ -1260,11 +1316,11 @@
 4. [Technology choices](#4-technology-choices)
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
-7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live. **`FQ-260812002827` (SHIPPED `19c14c5`) adds §7's [Software settings dialog](#the-software-settings-dialog--the-apps-one-configuration-home-fq-260812002827-settled-and-shipped-19c14c5) — the app's ONE configuration home**, absorbing `Customize Toolbar…` / `Customize Shortcuts…` off `View` and `Edit Snippets…` / `Autoformatter settings…` off `Settings`, which is left with **one** entry (`settings.software-settings`, also the launcher Maintenance column's third button). Each pane keeps its own apply/OK contract, **the host adds none** (its only button is `Close`), and the host **rebuilds a pane on its `finished`** so no pane is ever a stale scratch copy. **The four absorbed ids get NO alias rows** — absorbed is not renamed. **Three owner decisions are OPEN with shipped defaults** (`DEC-260812004358`/`-59`/`-4400`), and toolbar/shortcut customization is now **Maintenance-only**. Also here: **Maintenance mode's scope is no longer "menu bar only"** — it prunes the **center stage** too (BUG-260812001640, `1ff2b11`) — and **keyboard focus visibility** is `ui/theme.py`'s, appended to the cached theme QSS from `COLOR_TEXT_1` with no second colour table (BUG-260812002838/-4649, `7703eba`)*
+7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live. **`FQ-260812002827` (SHIPPED `19c14c5`) adds §7's [Software settings dialog](#the-software-settings-dialog--the-apps-one-configuration-home-fq-260812002827-settled-and-shipped-19c14c5) — the app's ONE configuration home**, absorbing `Customize Toolbar…` / `Customize Shortcuts…` off `View` and `Edit Snippets…` / `Autoformatter settings…` off `Settings`, which is left with **one** entry (`settings.software-settings`, also the launcher Maintenance column's third button). Each pane keeps its own apply/OK contract, **the host adds none** (its only button is `Close`), and the host **rebuilds a pane on its `finished`** so no pane is ever a stale scratch copy. **The four absorbed ids get NO alias rows** — absorbed is not renamed. **Three owner decisions are OPEN with shipped defaults** (`DEC-260812004358`/`-59`/`-4400`), and toolbar/shortcut customization is now **Maintenance-only**. Also here: **Maintenance mode's scope is no longer "menu bar only"** — it prunes the **center stage** too (BUG-260812001640, `1ff2b11`) — and **keyboard focus visibility** is `ui/theme.py`'s, appended to the cached theme QSS from `COLOR_TEXT_1` with no second colour table (BUG-260812002838/-4649, `7703eba`). **`BUG-260812023420` (`03473a7`): ONE primitive owns revealing a left-dock pane** — `_reveal_left_panel` un-hides the dock *and* shows *and* selects the tab, four duplicated un-hide calls deleted, because a reveal that forgot it landed a visible tab in a hidden dock and **silently did nothing**; its counterpart `_set_left_panel_visible` deliberately touches neither dock nor current tab (*make available, do not touch the user's layout*, for `CoherenceController.refresh_if_open`), mirroring the bottom dock's existing `_reveal_results_dock_tab`/`_reveal_results_tab` split. **`FQ-260812021715` folded PARTIALLY (`c0ab500`):** a theme is **colours only and a FILE** (`ui/theme_model.py`, Qt-free, over `resources/themes/*.json`), the chrome recolour is a **regex substitution because qdarkstyle's `load_stylesheet(palette=…)` silently ignores a subclassed palette** — correcting a mechanism this document had described wrongly since FQ-005 — an **AST guard** bans a `#rrggbb` anywhere in the package, and `shared_accent()` **raises** unless every theme agrees. **⏳ Theme SELECTION is in flight and deliberately not pinned***
 8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab. **FQ-034 — SHIPPED (`cde65fa`), status-corrected 2026-08-10:** the `Select` menu has **four** entries — `Select Parent Block` became a repeatable **`Expand Selection`** with an expansion stack, extended to the SQL editors, plus **`Shrink Selection`** on `Ctrl+Shift+Z`; the ladder's spans come from two Qt-free `sql/` modules (`blocks.py`, lifted out of `formatter.py`, and `block_spans.py`), and the two halves are hosted by **different mechanisms** because Qt claims `Ctrl+Shift+Z` natively on both schemes. *(This entry read "**FQ-034, target design NOT YET BUILT**" — a survivor the FQ-034 status pass missed, found here.)* **FQ-032 — SHIPPED (`b0c42da`, 2026-08-10):** §8 also owns the **vim editing mode** — `Esc` puts an editable editor into **Command mode** beside ordinary **Edit mode**, per editor, transient, nothing persisted; a pure Qt-free grammar in `pgtp_editor/vim/`, the Qt half in `ui/vim_mode.py`, and **`ui/editor_shared.py`**, the family-agnostic layer its two forced lifts created (one hint/refusal path, one line-wrap toggle). Command mode claims **four `Ctrl` chords**, so the one reset path is a **correctness guarantee** with a test per trigger. **A SECOND VIM INCREMENT SHIPPED 2026-08-12 (`e60e0d0`, `de75617`) and reversed four of that block's own statements:** the `aw`/`iw` **text objects** left "deferred" — and **without touching `sql/`**, falsifying the dependency story §8 told about them; the operators gained a **selection target** through one boolean (`set_selection_active`), which is what keeps `pgtp_editor/vim/` Qt-free; `v`/`V` gained **sticky selection**, so *"the select-with-`v`-then-`d` reflex does not exist here"* is withdrawn while **there is still no visual mode**; and the Command-mode caret is **on a character, painted in a `paintEvent`**, so `$`/`l` no longer rest past the last character (the motions are unchanged — `d$` still takes the newline). Two new keyless `Select` entries, `Sticky Selection` / `Line Selection`*
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
-11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion) — *the `Schema` menu is **Maintenance mode's home menu** (FQ-027, 2026-08-09): the only window-bar menu besides a trimmed `File` and `Help` that survives the mode's filter, whole and ungated; the launcher's Maintenance column is `Edit XSD` + `Import XSD`. **BUG-057 (2026-08-10):** `docs/curated_<YYYYMMDD>.xsd` is the tracked authoritative drop, byte-pinned to the shipped `resources/curated.xsd` by a test — **the date identifies the DROP, the `vX.Y` marker identifies the CONTENT** — and the version rule is now stated: **the marker is the schema's identity, not the app's release counter, so any content change bumps it.** The bundled schema is ruled to **v1.3**; the six code/doc sites are enumerated there and dispatched. **The Maintenance column gained a THIRD button, `Software settings…`, 2026-08-12 (`19c14c5`) — the first one that is not a Schema gesture (§7)***
+11. [Schema: curated XSD, learning & completion](#11-schema-curated-xsd-learning--completion) — *the `Schema` menu is **Maintenance mode's home menu** (FQ-027, 2026-08-09): the only window-bar menu besides a trimmed `File` and `Help` that survives the mode's filter, whole and ungated; the launcher's Maintenance column is `Edit XSD` + `Import XSD`. **BUG-057 (2026-08-10):** `docs/curated_<YYYYMMDD>.xsd` is the tracked authoritative drop, byte-pinned to the shipped `resources/curated.xsd` by a test — **the date identifies the DROP, the `vX.Y` marker identifies the CONTENT** — and the version rule is now stated: **the marker is the schema's identity, not the app's release counter, so any content change bumps it.** The bundled schema is ruled to **v1.3**; the six code/doc sites are enumerated there and dispatched. **The Maintenance column gained a THIRD button, `Software settings…`, 2026-08-12 (`19c14c5`) — the first one that is not a Schema gesture (§7).** **`BUG-260812002307` parts B and C SHIPPED (`483a9ad`):** the Schema menu is **six** items — `Schema ▸ Restore Bundled Curated Schema…` is **the ONE sanctioned overwrite** of the hand-owned `curated.xsd` (confirmed, `.bak`-kept, reloaded; `ensure_bootstrap`'s never-overwrite rule **untouched**, and the exception is what makes that rule survivable rather than a trap) — and a missing/broken schema is no longer silent: the escalation is keyed on **"is there any schema at all?"**, with both audit paths naming the **resolved app-data path** and only the no-schema-live case earning a latched modal, *because the status bar paints nothing and journals to the same place the audit row already goes.* **The `v1.2 → v1.3` six-site TO-DO TABLE is RETIRED — the bump landed and the marker-vs-constant guard test now holds the rule***
 12. [Diff / Merge](#12-diff--merge) — *Compare/Merge is a **MODE** since FQ-021a (**shipped** `75e2cdb`): Raw XML goes read-only via §8's reasons set, `DiffMergePanel` owns the exit, the entry point is `Deployment ▸ Compare/Merge pgtp`. **FQ-021's third leg has now SHIPPED too (`1ccfe9d`, status-corrected 2026-08-10):** `Next Difference` / **`Previous Difference`** (relabelled) and **`Apply Changes to Target`** are **mode-only members of the Editor bar's `Navigation` menu**, off `Tools` entirely, gated on `diff_merge_mode_changed` rather than on the current tab. The unreachable-capability regression §29 recorded is **closed***
 13. [Captions](#13-captions) — *the find/replace **modal is deleted**; the in-panel bar is permanent, with `Replace All` + `Clear filter` + a filter/project scope dropdown (FQ-017, 2026-08-07)*
 14. [Columns](#14-columns)
@@ -1690,6 +1746,11 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 for §8's Command-mode caret, and — since `7703eba` — the app's **only** `:focus` declarations,
 `FOCUS_RULE_SELECTOR` / `focus_tab_selector` / `FOCUS_TAB_EDGES` appended to that cached string from
 `COLOR_TEXT_1`, so keyboard focus is visible and there is no second colour table — §7),
+`theme_model.py` (**`FQ-260812021715`, shipped `c0ab500`** — the **Qt-free** `Theme` value object and its
+loader: `load_theme` / `load_theme_file` / `available_themes` / `theme_for` / `shared_accent` / `duplicate`
+over the six pinned key sets, backed by `pgtp_editor/resources/themes/{dark,light}.json` plus
+`user_themes_dir()`. **The one place a colour comes from**, enforced by an AST guard that fails on a
+`#rrggbb` literal in *any* module including this one and `theme.py` — §7),
 `toolbar_registry.py`, `toolbar_controller.py` (owns the menu-bar
 walk and the toolbar's persistence, §7 — **not** `main_window.py`), `customize_toolbar_dialog.py`,
 `shortcut_registry.py` (FQ-012's **pure, Qt-free** rebinding rules — `toolbar_registry.py`'s twin, §27) /
@@ -2138,6 +2199,51 @@ the incoming prefix differs from the one on screen.
 > a dedicated bookmarks left-dock tab** (§8), which was rejected *only* on the grounds that the Audit dock
 > already was the app's list surface — an objection that dissolves when that dock is being restructured
 > anyway.
+
+##### ONE PRIMITIVE OWNS REVEALING A LEFT-DOCK PANE — and its counterpart owns *not* doing so (`BUG-260812023420`, fixed `03473a7`)
+
+**`MainWindow._reveal_left_panel(panel)` (the `UiShell.reveal_left_panel` seam) owns the WHOLE gesture:
+un-hide the dock, make the tab visible, make it current.** Before `03473a7` the seam did only the tab
+half and the un-hide was copy-pasted at four reveal sites (DDL Explorer, Findings, Contents, Coherence) —
+so **any reveal that forgot it landed a visible tab inside a hidden dock, i.e. the reveal silently did
+nothing.** That is the *never a silent wrong result* invariant applied to navigation: the user asked to be
+taken somewhere and was told nothing. A caller cannot get it half-right any more; the four duplicated
+`_show_left_dock()` / `setVisible(True)` calls are gone, and `_show_left_dock` is **no longer injected
+anywhere** — it exists only because this primitive calls it.
+
+- **Order is load-bearing:** `_show_left_dock()` runs **after** the `indexOf(panel) < 0` guard. A widget
+  that is not a left-dock tab has nothing to reveal, and popping an empty dock for it would be worse than
+  the no-op.
+- **`_on_ddl_explorer_visibility_changed`'s `visible` branch routes through the primitive**; its
+  `not visible` branch stays a plain `setTabVisible(..., False)`. Hiding is not the inverse gesture.
+
+> **THE COUNTERPART IS THE HALF THAT MAKES THE PRIMITIVE SAFE, and it is a separate meaning rather than a
+> weaker version of the same one.** `_set_left_panel_visible(panel, visible)` (`UiShell.set_left_panel_visible`)
+> is **visibility only — no focus, no current-tab change, and deliberately NO dock un-hide**: *make
+> available, do not touch the user's layout.*
+>
+> **Its production callers are both in `CoherenceController`, and today both pass `False`** (verified by
+> name 2026-08-12): `on_coherence_toggled`'s Off branch, and `teardown_for_project_close`. Neither may pop
+> or reshape a dock — one is the user switching a view off, the other is a project closing — and neither
+> may select a tab, because taking a panel away must not decide what the user looks at next. **The `True`
+> direction has no production caller at present and is deliberately kept**: without it, *"make this tab
+> available"* has no expression that is not also *"take the user there"*, and the next lane that needs the
+> quiet form would re-scatter the dock call this bug just collected.
+>
+> **Without two names one of the two intentions is always wrong** — either a requested reveal is silently
+> swallowed, or a background housekeeping step steals the window. *A gesture the user asked for and a
+> gesture the app performs on their behalf are two different gestures even when they move the same widget.*
+> *(Note for anyone tracing this: `CoherenceController.refresh_if_open` does **not** call this seam — it
+> reads `_panel_visible()` and returns early. The reveal path in that lane is `_reveal_panel`, which now
+> goes through `reveal_left_panel` and no longer calls an injected `show_left_dock` first, "a pairing
+> enforced by nothing".)*
+>
+> **The bottom dock already drew this distinction and the left dock now matches it:** `_reveal_results_tab`
+> focuses the Messages tab and pointedly does **not** un-hide the dock (*"a background narration line must
+> not pop a dock the user closed"*), while `_reveal_results_dock_tab` — `View ▸ Messages`, i.e. the user
+> asking — un-hides it first and then delegates. Same pairing, same reason, now stated once for both docks.
+> `_show_audit_dock` keeps its name and stays injected into `FindValidateController` / `CoherenceController`,
+> because on that dock the two lanes genuinely need the un-hide as a separate step.
 
 **The bottom dock is two tabs, and FQ-019's Activity Log is REPOSITIONED into one of them.** FQ-019
 shipped (`bc02d9c`, `1aefc53`, `65a0f1b`) as its **own** dock beside `Audit / Problems`; FQ-028 moves it
@@ -2741,8 +2847,15 @@ History ▸ History… action**
 (`_open_history_jump_list`) is what opens the non-modal newest-first `QListWidget` jump popup, where
 moving back = undo and forward = redo.
 
-**Theme** (`ui/theme.py`): View ▸ "Light Theme" checkable toggles between **two explicit, symmetric,
+**Theme** (`ui/theme.py` + `ui/theme_model.py`): the app ships **two explicit, symmetric,
 platform-independent themes** — there is no third "restore the native/OS style+palette" state.
+
+> **⚠ THEME *SELECTION* IS IN FLIGHT AND IS DELIBERATELY NOT PINNED HERE (2026-08-12).** `FQ-260812021715`
+> shipped **partially** (`c0ab500`): the colour *model* landed, and the removal of `View ▸ Light Theme` plus
+> the migration of the persisted boolean to a theme **name** is being built as this is written. Everything
+> below describes the **colour mechanism**, which is settled; the gesture that picks a theme, and the
+> QSettings key behind it, are whatever the next fold records. Do not read the `light: bool` parameters
+> below as a statement that a boolean is the app's final theme selector — they are the current signature.
 `light_palette()` and `dark_palette()` are pure functions (build and return a fresh `QPalette`,
 mutating nothing) each setting a **complete** role set — every role the app surfaces, including
 `Link`/`LinkVisited` (navy on light, light-cyan on dark, so About-box hyperlinks read on both) and an
@@ -2752,12 +2865,54 @@ the only function that mutates the running QApplication: it **always** sets the 
 honors QPalette fully; many native styles largely ignore it) and applies `light_palette()` when `light`
 is true, `dark_palette()` otherwise — and then sets the application stylesheet **unconditionally, for
 both themes** (BUG-010 for dark; FQ-005, 2026-08-06, extended it to light):
-`app.setStyleSheet(_qdarkstyle_stylesheet(light))`. `_qdarkstyle_stylesheet(light: bool) -> str`
-returns `qdarkstyle.load_stylesheet(qt_api="pyside6", palette=LightPalette if light else DarkPalette)`
-(`qdarkstyle.light.palette.LightPalette` / `qdarkstyle.dark.palette.DarkPalette`, **both passed
-explicitly** — dark no longer relies on qdarkstyle's implicit default), lazily loaded (qdarkstyle warns
-if loaded before a `QApplication` exists) and memoized per theme in the module-global
-`_qss_cache: dict[bool, str]`. Neither theme is palette-only: Fusion + `dark_palette()` alone rendered
+`app.setStyleSheet(_qdarkstyle_stylesheet(light))`. `_qdarkstyle_stylesheet(light: bool) -> str` loads
+qdarkstyle's compiled sheet — `qdarkstyle.load_stylesheet(qt_api="pyside6", palette=base)`, where `base` is
+`LightPalette` or `DarkPalette` per `Theme.qdarkstyle_base`, **both passed explicitly** — and then
+**recolours it by regex substitution** (`_recolour_qss`) from the theme file's 16 `COLOR_*` tokens. Lazily
+loaded (qdarkstyle warns if loaded before a `QApplication` exists) and memoized per theme in the
+module-global `_qss_cache: dict[bool, str]`.
+
+> **⚠ WHY THE RECOLOUR IS A REGEX PASS AND NOT `load_stylesheet(palette=…)` — measured, and it cost real
+> investigation (`FQ-260812021715`).** The obvious mechanism — subclass `qdarkstyle.Palette`, override the
+> colours, pass it in — **does not work in qdarkstyle 3.2.3 and fails SILENTLY.** `_load_stylesheet` reads
+> the QSS out of a **precompiled Qt resource chosen by `palette.ID`**, and then *replaces the caller's
+> palette object* with the stock `DarkPalette`/`LightPalette` for that ID. A subclassed palette is
+> therefore accepted, ignored, and produces stock chrome with no warning. **So the only thing a base
+> palette decides here is WHICH of the two compiled sheets to start from**; every colour in it is then
+> substituted. The negative-lookahead in the `#rrggbb` matcher keeps the sheet's own non-token colours
+> alone, and every **non-colour** token (`SIZE_*`, `BORDER_*`, `OPACITY_*`, `PATH_RESOURCES`) stays at the
+> qdarkstyle default — *"keep the qdarkstyle style, separate the colours, change only colours."*
+
+**A theme is COLOURS ONLY, and it is a FILE** (`ui/theme_model.py`, shipped `c0ab500`). Each theme is one
+JSON document under `pgtp_editor/resources/themes/` (bundled: `dark.json`, `light.json`) or the user themes
+directory (`user_themes_dir()`); dropping a file in either makes a new selectable theme, discovered at
+runtime by `available_themes()`. `theme_model.py` is **Qt-free at module scope** (its one `QStandardPaths`
+lookup is a function-local import), pinned by a test, so the colour model can be loaded, validated, diffed
+and unit-tested without a `QApplication`. Six layers, each with a pinned key set: `chrome` (the 16
+qdarkstyle `COLOR_*` tokens) · `palette` / `palette_disabled` (15 active `QPalette` roles + 3 Disabled) ·
+`accents` (app-authored colours answering to no palette role — the Command-mode caret pair, the results
+strip's warning colour, the connectivity dots) · `modes` (the mode-indicator chips) · `decorations`
+(per-editor line/selection backgrounds and the gutter pair) · `syntax` (8 roles, 3 XML + 5 code, each a
+`SyntaxRole` carrying `color` plus `bold`/`italic`/`underline`). **Syntax highlighting is part of the
+theme by owner ruling**, which removes light-syntax-on-dark-chrome mismatch by construction. Font choice is
+deliberately absent: every editor is already monospaced, and a global editor font is a separate concern.
+
+> **THE ENFORCEMENT IS AN AST GUARD, NOT A RULE.** `tests/ui/test_theme_model.py` walks every module in
+> `pgtp_editor/` and fails if any of them — **including `theme.py` and `theme_model.py` themselves** —
+> declares a `#rrggbb` literal. This codebase grew a second colour table beside the real one repeatedly
+> (`mode_indicator.py`'s docstring exists to record one such mistake; `FQ-260810165518` had to deliberately
+> reuse an existing red rather than derive a third). *A rule saying "don't add another table" is a rule
+> nobody can enforce; one loader plus a package-wide test makes the second table impossible rather than
+> merely discouraged.*
+>
+> **`shared_accent(key)` is how a THEME-BLIND consumer is allowed to read a colour, and it RAISES rather
+> than picking one.** `ui/connectivity.py`'s dots are theme-blind today — one `_RENDERING` table, no palette
+> lookup — and making them theme-aware would change pixels, which this consolidation was explicitly not
+> allowed to do. Rather than let them keep private literals, they read through `shared_accent`, which
+> returns the value only while **every bundled theme agrees** and raises `ThemeError` otherwise. **The day a
+> theme gives the offline dot its own red, the theme-blind reader fails loudly in the suite instead of
+> silently painting the other theme's colour** — *turning an invisible consumer into a failing test is the
+> whole point of the seam.* Neither theme is palette-only: Fusion + `dark_palette()` alone rendered
 checkable menu indicators outlined near-black on the dark menu background (Fusion derives the indicator
 frame from darkened Window/Button roles), and Fusion + `light_palette()` alone rendered as plain stock
 Fusion chrome; the maintained stylesheet styles `QMenu::indicator` and every other widget consistently
@@ -2861,7 +3016,8 @@ output side. Both halves are one mechanism and are specified together:
   spends its length on.
 
 Persisted as QSettings bool `"lightTheme"` in
-`QSettings("MDS","PGTP Editor")`; `MainWindow._restore_theme` applies the persisted theme
+`QSettings("MDS","PGTP Editor")` — **⏳ this key is being migrated to a theme NAME by the in-flight second
+half of `FQ-260812021715`; do not build against the boolean**; `MainWindow._restore_theme` applies the persisted theme
 **unconditionally at startup for both states** (no startup capture of a default palette/style key
 exists). Toolbar icons are re-tinted (`_refresh_toolbar_icons`) on every theme change and on startup
 restore. Tests assert palette roles rather than pixels.
@@ -5681,7 +5837,7 @@ Properties panel.** The vendored learning engine keeps running, but only as a di
 |---|---|---|
 | `curated.xsd` | `curated_xsd_path()` | **Official schema.** Hand-edited only (Edit XSD tab); never machine-written except the one-time first-run seed. Sole feed for completion / hover / Properties labels — **no learned fallback**. |
 | `learned.xsd` | `learned_xsd_path()` | Generated discovery artifact. Regenerated by auto-learning on File ▸ Open; a reference for newly observed elements/attributes/values; never feeds completion; never touches `curated.xsd`. Openable read/write for analysis via **Schema ▸ Edit AutoXSD** in the same center-stage tab as Edit XSD (mode-aware, below). |
-| bundled `resources/curated.xsd` | `storage.bundled_curated_xsd_text()` | **Curated v1.3** shipped with the app (`pgtp_editor/resources/curated.xsd`, in `[tool.setuptools.package-data]`; the element/attribute counts drift with curation and the XSD file itself is the source of truth; hand-commented, curated dialect). Version-marked by the XML comment `<!-- PGTP Editor curated schema v1.3 -->` and `storage.CURATED_BUNDLED_VERSION = "1.3"`. The **primary** seed source for the user's `curated.xsd` on first run. *(**v1.2 → v1.3 is a 2026-08-10 ruling; the code still says `1.2` until `docs/BUGFIX_QUEUE.md`'s BUG-260810141459 lands** — see the version-identity rule below, and re-dispatch `spec-maintainer` to drop this parenthetical once it does.)* |
+| bundled `resources/curated.xsd` | `storage.bundled_curated_xsd_text()` | **Curated v1.3** shipped with the app (`pgtp_editor/resources/curated.xsd`, in `[tool.setuptools.package-data]`; the element/attribute counts drift with curation and the XSD file itself is the source of truth; hand-commented, curated dialect). Version-marked by the XML comment `<!-- PGTP Editor curated schema v1.3 -->` and `storage.CURATED_BUNDLED_VERSION = "1.3"`. The **primary** seed source for the user's `curated.xsd` on first run. *(**v1.2 → v1.3 LANDED — `BUG-260810141459` is closed; verified 2026-08-12 across all six sites.** See the version-identity rule below.)* |
 | `docs/curated_<YYYYMMDD>.xsd` | *(none — repo artifact, not an app path)* | **The tracked, dated curation drops** (BUG-057). The **newest** snapshot and the shipped `resources/curated.xsd` are pinned **byte-for-byte** by `tests/test_curated_xsd_packaging.py::test_shipped_curated_xsd_is_identical_to_the_newest_snapshot`, so the app cannot ship a schema that no drop corresponds to and a drop cannot be added without shipping it. Today's sole snapshot is `docs/curated_20260807.xsd`. **The date identifies the DROP; the `vX.Y` marker identifies the CONTENT** — two different questions, deliberately answered by two different mechanisms |
 | `schema_model.json` | `schema_model_path()` | The learning engine's **private internal state** (counts, enum overflow). Feeds `learned.xsd` only. |
 
@@ -5698,36 +5854,27 @@ Properties panel.** The vendored learning engine keeps running, but only as a di
 > truncated `dateTimeKind` while the app believes they are current). The implementer said v1.3 was arguably
 > right and could not make the spec edit; it is right.
 >
-> **The bump is `1.2` → `1.3`, and it must move as ONE change across six sites** — dispatched to
-> `bug-triager`, not edited here, because two of them are test assertions and two are the byte-pinned pair:
+> **✅ THE BUMP LANDED AND THE RULE NOW HAS ITS MECHANICAL CHECK (`BUG-260810141459`, verified by name
+> 2026-08-12).** The six-site to-do table this block used to carry is retired: `CURATED_BUNDLED_VERSION` is
+> `"1.3"` (`schema_learning/storage.py:27`), **both** halves of the byte-pinned pair carry
+> `<!-- PGTP Editor curated schema v1.3 -->` (`pgtp_editor/resources/curated.xsd:2` and
+> `docs/curated_20260807.xsd:2`), the two `test_storage.py` assertions moved with them, and
+> `ui/xsd_controller.py`'s second copy of the literal was **deleted rather than retyped** — the audit line
+> beside it already interpolates the constant. `pgtp_editor/resources/manual.md` says **Curated v1.3**.
 >
-> | Site | Today | Must become |
-> |---|---|---|
-> | `schema_learning/storage.py:27` | `CURATED_BUNDLED_VERSION = "1.2"` | `"1.3"` |
-> | `pgtp_editor/resources/curated.xsd:2` | `<!-- PGTP Editor curated schema v1.2 -->` | `v1.3` |
-> | `docs/curated_20260807.xsd:2` | same marker | `v1.3` — **the same edit, in the same commit**, or the byte-identity test fails |
-> | `tests/schema_learning/test_storage.py:38` | `assert CURATED_BUNDLED_VERSION == "1.2"` | `"1.3"` |
-> | `tests/schema_learning/test_storage.py:44` | `assert "v1.2" in text` | `"v1.3"` |
-> | `ui/xsd_controller.py:240` | comment *"the schema bundled with the app (Curated v1.2)"* | **delete the literal** rather than retype it — the audit line two lines below already interpolates `CURATED_BUNDLED_VERSION`, so this is the drift-prone second copy and the fix is to stop having one |
+> **The guard §27 demanded for `docs/KEYBINDINGS.md`'s sake exists here too, and it is the durable half of
+> this entry:** `tests/schema_learning/test_storage.py::test_bundled_curated_xsd_marker_agrees_with_the_version_constant`
+> parses `<!--\s*PGTP Editor curated schema v(\d+\.\d+)\s*-->` out of the shipped resource, requires
+> **exactly one** marker, and asserts equality with `CURATED_BUNDLED_VERSION`. Before it, the two literals
+> were pinned *independently* — one by a `"v1.2" in text` substring, one by constant equality — so a
+> curation could move one and not the other and stay green, which is exactly how the defect became
+> possible. **A rule kept by discipline across two files is a rule that has already failed once here.**
+> `tests/test_curated_xsd_packaging.py` still needs no change: it is version-agnostic by construction (it
+> asserts the prefix `<!-- PGTP Editor curated schema v`, never a number), and that is the pattern to copy
+> rather than to add numbers to. `docs/TEST_LOG.md`'s "Curated v1.2" is a **historical record of a
+> 2026-07-31 run and must not be edited.**
 >
-> **THE RULE NEEDS A MECHANICAL CHECK, FOR THE REASON §27 GIVES ABOUT `docs/KEYBINDINGS.md`: nothing today
-> asserts that the marker line and `CURATED_BUNDLED_VERSION` AGREE.** The two literals are pinned
-> independently — one by `test_storage.py:44`'s `"v1.2" in text`, one by `:38`'s constant equality — so a
-> future curation can move one and not the other and stay green, which is exactly how this defect became
-> possible. **A guard that parses `v(\d+\.\d+)` out of the marker and asserts equality with the constant is
-> part of the fix**, not a nice-to-have: a rule kept by discipline across two files is a rule that has
-> already failed once here. `tests/test_curated_xsd_packaging.py` needs no change — it is version-agnostic
-> by construction (it asserts the prefix `<!-- PGTP Editor curated schema v`, never a number), and that is
-> the pattern to copy rather than to add numbers to.
->
-> **Two further sites carry the literal and are routed rather than folded:**
-> `pgtp_editor/resources/manual.md` says *"Curated v1.2, a real hand-commented starting schema"* — genuinely
-> user-facing, so it goes to **`manual-maintainer`** once the bump lands; and
-> `tests/ui/test_curated_feed_wiring.py`'s docstring names v1.2 while its assertion already reads the
-> constant, so it should be made version-agnostic in the same commit for site 6's reason. `docs/TEST_LOG.md`'s
-> "Curated v1.2" is a **historical record of a 2026-07-31 run and must not be edited.**
->
-> *(Noted and deliberately NOT filed: `storage.py:53`'s docstring reads `Curated v{CURATED_BUNDLED_VERSION}`
+> *(Noted and deliberately NOT filed: `storage.py`'s module docstring reads `Curated v{CURATED_BUNDLED_VERSION}`
 > in a plain, non-f-string docstring, so the braces render literally. Harmless — a docstring naming the
 > constant is arguably clearer than a baked number — and fixing it by making it an f-string would be the one
 > change here that could not be verified by a test.)*
@@ -5739,8 +5886,70 @@ app **fall back** to generating from the current learned model, emitting existin
 attributes (`xsd_gen.generate_curated_xsd`; `xsd_gen` gains a label-attribute emit mode). Seeding
 happens **only when `curated.xsd` is absent** and **never overwrites an existing user file** — so
 shipping a newer bundled version does **not** auto-upgrade a user who already has a `curated.xsd` (see
-§29, open). After the seed the app never writes it (Import XSD replaces it wholesale, by explicit user
-action).
+§29, open). After the seed the app never writes it **unless the user asks by name** — Import XSD replaces
+it wholesale, and since `483a9ad` so does **Schema ▸ Restore Bundled Curated Schema…** (below).
+
+#### The ONE sanctioned overwrite of `curated.xsd` — `Schema ▸ Restore Bundled Curated Schema…` (`BUG-260812002307` part C, shipped `483a9ad`)
+
+**`ensure_bootstrap`'s never-overwrite rule is UNTOUCHED, and this must not be read as that rule
+weakening.** The bootstrap runs *unattended at startup* and must never eat a hand curation, so it still
+seeds only when `curated.xsd` is absent. This command is the opposite situation and is specified as the
+**single** sanctioned exception: the user named it, and confirmed a prompt that says what is destroyed.
+**Without it, a curated.xsd the user broke by hand is unrecoverable from inside the app**, because the
+pristine bundled resource is never re-read once a file exists — the exception exists to make the
+never-overwrite rule survivable, not to soften it.
+
+`XsdController.restore_bundled` (`ui/xsd_controller.py`), reached from the Schema menu entry whose label
+is the module constant **`RESTORE_BUNDLED_LABEL = "Restore Bundled Curated Schema…"`** — named as a
+constant because the two load-failure messages below **point the user at it by name**, and *telling
+someone their curated.xsd is broken without naming the way back is half a message*. Sequence:
+
+1. No bundled resource in this build → **"No Bundled Schema"** critical box, nothing written.
+2. `QMessageBox.question` titled **"Restore Bundled Curated Schema"**, naming the resolved app-data path
+   and the bundled version, stating *"Every hand edit in that file will be DESTROYED. A .bak copy is kept
+   beside it."* Anything but `Yes` aborts.
+3. Write: `mkdir(parents=True)`, `shutil.copy2` the existing file to `curated.xsd.bak`, then write the
+   bundled text (UTF-8). `OSError` → **"Restore Failed"** critical box, nothing further.
+4. Clear the once-per-broken-state latch, `load_curated()`, and — only in `"curated"` mode — reload the
+   Edit XSD tab's text under the `_loading` guard and clear its dirty flag.
+5. Audit: `[Schema] Restored curated.xsd from the bundled schema (v{CURATED_BUNDLED_VERSION}) — {path}`,
+   with `" (unsaved XSD tab edits were replaced)"` appended when the tab was dirty in curated mode.
+
+**It mirrors `import_` for the write-then-reload half deliberately, `.bak` included** — the two are the
+same destructive shape and a second shape would be a second set of edge cases. **It carries no keyboard
+shortcut**: it has a command form, so DEC-012 gives it exactly one keyboard host, and a menu entry with no
+chord owes `docs/KEYBINDINGS.md` no row (verified: `RESERVED_SEQUENCES` and the register are untouched by
+this work).
+
+#### The escalation rule for a missing/broken curated schema — decided by *"is there any schema at all?"* (`BUG-260812002307` part B, shipped `483a9ad`)
+
+The reported symptom was *"XSD is not loaded"* with **nothing on screen saying so**. Neither failure is
+silent now, and the escalation is **not** keyed on *"did a load fail"* but on **whether any schema is
+live**, because that is what decides whether the user has lost a capability or merely a save:
+
+| State | Channel |
+|---|---|
+| `curated.xsd` **absent** | Audit only — `[Schema] No curated XSD at {path} — completion, hover and Properties labels have no schema until it is restored (Schema ▸ Restore Bundled Curated Schema…)`. At startup `ensure_bootstrap` has already audited whatever stopped it seeding, so a modal here would be a second voice on one event. |
+| **Parse failure with a last good schema live** | Audit only — `[Schema] Curated XSD has XML errors: {error} — keeping last good schema ({path})`. Completion keeps working, so a modal would be **nagging**: this fires on every save of half-typed XSD text. |
+| **Parse failure with NO schema live** | Audit **plus** a `QMessageBox.warning` titled **"Curated Schema Not Loaded"**, naming the path, the error, and both ways back (`Schema ▸ Edit XSD`, or the restore command). Completion, hover and the Properties labels are running against `None` — a lost capability, not a lost save. |
+
+**Latched, once per broken state:** `_reported_broken_curated` is set when the modal shows and cleared by
+the next successful `load_curated` **and** by a successful restore, so a user who opens six `.pgtp` files
+against a corrupt schema is told once rather than six times.
+
+**Both audit paths NAME THE RESOLVED APP-DATA PATH**, and that is the actual fix rather than a garnish:
+the whole confusion in the report was *which* `curated.xsd` was in play — the pristine bundled resource,
+or the user's hand-owned app-data copy the bootstrap will never overwrite.
+
+> **⚠ THE DURABLE RULE THIS BUG PRODUCED: NAME THE CONCRETE CHANNEL, THEN CHECK IT STILL PAINTS.** The
+> queue entry proposed a status-bar message and a modal as *equivalent* escalations. **They are not.**
+> Since FQ-028 `StaticStatusBar.showMessage` **paints nothing** — it stores the text and journals it into
+> the Activity Log, and `displayed_message()` is permanently `""` — and the Activity Log is exactly where
+> the `[Schema]` audit row already routes (`audit_router.SCHEMA_PREFIX → TO_ACTIVITY`). So *"escalate to
+> the status bar"* would have moved the message **from one journal to the same journal** and left the bug
+> exactly as reported. The modal is taken for the one case that earns it precisely because it is the only
+> channel here that is not the Activity Log. *An escalation named by surface rather than by mechanism can
+> escalate to itself.*
 
 **Dialect** — plain XSD plus three extensions of ours. Nothing external consumes the file; **Verify
 checks our dialect, not W3C validity**:
@@ -5817,7 +6026,9 @@ enumeration row wins; skipped when the labeled atoms exceed `SUMS_MAX_ATOMS = 16
 parse errors). Startup / reload (`_load_curated_schema`, which also catches `XsdLoadError`) emits the
 `[Schema] Curated XSD has XML errors: {error} — keeping last good schema` audit line and keeps the last
 good in-memory schema live; opening the Edit XSD tab or running Verify against the saved file shows a
-status-bar message (`Could not read curated.xsd: {error}`) and aborts.
+status-bar message (`Could not read curated.xsd: {error}`) and aborts. **Which channel a failure reaches
+is governed by the escalation rule above**, not by the failure's type — the audit lines now also name the
+resolved path, and the no-schema-live case additionally warns in a modal.
 
 **Mode-aware Edit XSD / Edit AutoXSD tab** (center stage): a **single** dedicated `CenterStage` tab —
 one second `XmlEditor` instance with its own `FindReplaceBar` (full find/replace/Find All parity with
@@ -5876,7 +6087,7 @@ curated mode, and navigates to the `<xs:attribute name="…">` definition line v
 `element_lines[chain]` (the element's type definition); otherwise a status-bar message. Lines come
 from the **last successful parse** — navigation targets the saved file content, not unsaved tab edits.
 
-**Schema menu — five items** (between View and Database — the menubar build order is File · Edit · View ·
+**Schema menu — six items since `483a9ad`** (between View and Database — the menubar build order is File · Edit · View ·
 Schema · Database · Tools · Bookmarks · Generation · Help; see consolidated menu, §26):
 - **Edit XSD** — open (or switch) the mode-aware tab in curated mode.
 - **Edit AutoXSD** — open (or switch) the same tab in learned mode on `learned.xsd` (analysis).
@@ -5914,15 +6125,17 @@ Schema · Database · Tools · Bookmarks · Generation · Help; see consolidated
   `[Schema] Imported curated XSD from {name}`, with the suffix
   `" (unsaved XSD tab edits were replaced)"` appended when the XSD tab was dirty, followed by the
   verify report. Team sharing = plain file exchange via Export/Import.
+- **Restore Bundled Curated Schema…** (`RESTORE_BUNDLED_LABEL`) — the one sanctioned overwrite, specified
+  above. Keyless.
 
 **The Schema menu is Maintenance mode's home menu** (FQ-027, 2026-08-09; §7/§26). Maintenance mode exists
 for *one-off administrative/setup tasks on the app's own schema*, so it is the **only** window-bar menu
-besides the trimmed `File` and `Help` that stays visible there — **whole, all five items**, unchanged in
+besides the trimmed `File` and `Help` that stays visible there — **whole, all six items**, unchanged in
 behaviour. The launcher's Maintenance column presents the two **Schema entry** gestures, **`Edit XSD`
 (`schema.edit-xsd`)** and **`Import XSD` (`schema.import-xsd`)**, plus — since `19c14c5` — a **third button
 that is not a Schema gesture at all**, `Software settings…` (`settings.software-settings`, §7); `Edit
-AutoXSD`, `Verify XSD` and `Export XSD` are reached from the menu once the mode has landed. Nothing about
-these five actions is gated by the mode — the filter hides other menus, it does not alter Schema. *(`Go To XSD` remains a
+AutoXSD`, `Verify XSD`, `Export XSD` and `Restore Bundled Curated Schema…` are reached from the menu once
+the mode has landed. Nothing about these six actions is gated by the mode — the filter hides other menus, it does not alter Schema. *(`Go To XSD` remains a
 menu-less `Ctrl+L` window action and so cannot be presented by menu path in the launcher.)*
 
 **Editor integration** (mechanics unchanged; source now exclusively `curated.xsd`):
@@ -14413,6 +14626,11 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   in view or not; there is no third posture to check), ☑ Raw XML Panel (checked by
   default), — , Expand All, Collapse All, — ,
   ☐ Light Theme. **The menu ENDS THERE since `19c14c5`.**
+  > **⏳ `Light Theme` IS BEING REMOVED AS THIS IS WRITTEN** — `FQ-260812021715`'s second half replaces the
+  > boolean toggle with a named-theme selection, in a concurrent tree (`main_window.py` already carries the
+  > *"`Light Theme` USED TO BE HERE"* marker). **Do not treat this row as current** and do not re-assert it;
+  > the next fold records what replaced it. Flagged rather than edited because the replacement gesture is
+  > not settled and a spec that guesses at it would be worse than one that says it is in flight.
   > **~~Customize Toolbar…~~ and ~~Customize Shortcuts…~~ ARE GONE FROM THIS MENU** (`FQ-260812002827`,
   > 2026-08-12; ledger §28). Both are now **panes of `Settings ▸ Software settings…`** — see §7's Software
   > settings block for the relocation, its cost (both were reachable at **any** time and are now
@@ -14428,8 +14646,13 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   Coherence view (§17), not an independently toggleable panel.
 - **Bookmarks: moved off this bar** onto the Editor menu bar (FQ-016, 2026-08-07) — see the Editor-menu-bar
   inventory below. It was previously a top-level window menu between Tools and Generation.
-- **Schema:** Edit XSD, Edit AutoXSD, Verify XSD, Export XSD, Import XSD — five items (§11). Verify /
+- **Schema:** Edit XSD, Edit AutoXSD, Verify XSD, Export XSD, Import XSD, **Restore Bundled Curated
+  Schema…** — **six** items since `483a9ad` (§11). Verify /
   Export / Import act on the **active XSD** (curated or learned, per `_xsd_mode`), not curated-only.
+  **Restore Bundled Curated Schema… is the ONE sanctioned overwrite of the hand-owned `curated.xsd`**
+  (`BUG-260812002307` part C) — confirmed, `.bak`-kept, then reloaded; `ensure_bootstrap`'s never-overwrite
+  rule is unchanged. **Keyless**, by DEC-012: it has a command form, so it gets exactly one keyboard host,
+  and no chord was claimed — `docs/KEYBINDINGS.md` owes it no row.
   (Go To XSD is **not** a menu item: it is a window-level Ctrl+L `QAction` added via
   `MainWindow.addAction` plus a Raw XML editor context-menu entry; it always forces curated mode.)
 - **Database:** Connection Setup… (**projectless-mode only** — disabled while a §18.2 project is open,
@@ -15454,6 +15677,11 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-12 *(bugfix fold)* | **§7's Maintenance-mode block: *"Membership — the filter, stated once. Scope is the **window menu bar only**"*, and §29's *"Closed by scoping: a mode affects the **window menu bar only** — not docks, not left-dock tabs, not the toolbar, not the Editor menu bar"*** | **`BUG-260812001640` (fixed `1ff2b11`): ENTERING MAINTENANCE ALSO PRUNES THE CENTER STAGE to the XSD surface.** The report was that a Project session's DDL Explorer survived the mode switch; **the cause was broader — entering a workflow mode had NO center-stage step at all.** Hosted on **`set_workflow_mode`**, not `new_session`: that is where the column is actually picked and is the only production path into a mode, whereas `new_session` runs *before* the pick and would prune the same set whichever column follows — **so the prune fires on EVERY entry into Maintenance**, settling the report's own narrower *"with Project mode previously on"* reading. It hides both DDL Explorer tabs (guarded on `isTabVisible`, because `hide_ddl_explorer` emits unconditionally) and closes every dynamic editor tab through `_close_dynamic_editor_tabs`, **factored out of `new_session` so both callers share one definition of "dynamic"** — reusing the **one** `tabCloseRequested` route, so each kind's unsaved-changes prompt runs and the Quality console's uncommitted-transaction **veto** is honoured for free. **⚠ A save-prompt Cancel keeps that tab and the mode STILL CHANGES**, recorded as a judgement: by then the mode is assigned and the bar refreshed, so the prompt means *"keep this document"*, not *"undo the mode I picked"*; cancellability would have changed `set_workflow_mode`'s unconditional contract and had to abort the launcher's trigger too. **Leaving the mode restores nothing — closed is closed.** **This does not blur rule A and rule B:** the tabs work perfectly well and the app is deciding the user did not mean them, so it is still rule B — what changed is the rule's *surface list*. And §7's requirement that *"extending Rule B to a second surface is an owner ruling"* was honoured in the only way it can be: **the extension came from the owner's own report**, so the ruling and the bug report are the same act. |
 | 2026-08-12 *(bugfix fold — a gap, not an override: THE SPEC HAD NO STATEMENT AT ALL)* | **Nothing in this document said keyboard focus must be visible.** §7's theme block specified palettes, the app-level QSS, the per-widget-override trap and its measured boundary — and never once mentioned `:focus` | **`BUG-260812002838` + `BUG-260812004649` (fixed `7703eba`): KEYBOARD FOCUS IS VISIBLE, AND `ui/theme.py` OWNS IT.** The bundled QDarkStyle sheet styles `QPushButton:hover` but declares **no `:focus` rule**, and its `outline: none` suppresses Qt's native ring — so a `Tab`-traversing user could see neither which button was focused nor that focus had entered a tab bar. **A keyboard user who cannot see focus has no way to know what `Return` will press: this is *never a silent wrong result* on the INPUT side, which is why it belongs in the spec rather than in a stylesheet nobody reads.** Shipped as **two emitters appended to the cached per-theme string** (`_focus_visible_qss` / `_focus_visible_tab_qss`, over `FOCUS_RULE_SELECTOR` and `focus_tab_selector(edge)`/`FOCUS_TAB_EDGES`), so `apply_theme` still does **one** `setStyleSheet`. **Appending is load-bearing** — the rules tie with qdarkstyle's own `:selected`/`:checked` selectors on specificity and **CSS order breaks the tie**. **The colour is `pal.COLOR_TEXT_1` and there is NO second colour table**: it is read off the same palette the sheet was generated from, so it **inverts with the theme for free** — *the strongest form of the per-theme rule this block already carried: instead of two literals that can drift, one expression that cannot.* `COLOR_ACCENT_3` was measured and rejected (1.56:1 dark / 1.06:1 light on buttons); what ships measures 5.98:1 / 9.07:1 on buttons and 4.40:1 / 7.97:1 on tabs. **The box math is preserved rather than merely overridden** (2px border against qdarkstyle's 2px padding; the tab rules recolour the 3px pane-facing border `:selected` already draws). **Placement rule stated so it is not re-solved per panel: focus visibility is a property of the app's CHROME, and a second `:focus` declaration anywhere in `pgtp_editor/` is a defect.** |
 | 2026-08-12 *(status pass — the ELEVENTH "not yet built" retirement, and the first the pass INHERITED rather than wrote)* | **§18.4's `[XML]` refusal seam as UNWIRED, in FOUR places:** part C's ⏳ block (*"THIS HALF IS NOT WIRED YET, and the gap is user-visible: an XML format refusal is SILENT … no production connection exists and `ui/audit_router.py` carries no `XML_PREFIX` and no `DESTINATIONS` entry for it (ten prefixes ship; `[XML]` would be the eleventh)"*), §18.4's status-banner seam table, §18's status table row, §7's prefix table cell (*"NOT YET BUILT (target design, §18.4)"*), the §29 formatter item and the TOC — plus §18.4's *"two seams shipped unwired"* retrospective | **THE SEAM IS WIRED, AND IT WAS CLOSED IN EXACTLY THE TWO STEPS AND THE ONE SHAPE THE BANNER ASKED FOR.** `ui/audit_router.py` carries **`XML_PREFIX = "[XML]"`** and **`DESTINATIONS[XML_PREFIX] = TO_ACTIVITY`** — the eleventh prefix — and `MainWindow._report_xml_format_refusal` is connected to **all three** `XmlEditor` hosts, the FQ-006 draft fragment reaching it through `center_stage.py`. **It did NOT route through `_SQL_REFUSAL_PREFIX`**, the shortcut the banner explicitly forbade, so *an `[SQL]` row saying "this XML selection is mis-nested"* was never shipped. The banner's stated reason for waiting — `audit_router.py` was held by in-flight BUG-060/062 work, *"waiting is cheaper than a dict conflict"* — was **correct and is now spent**. **Recorded as a row because the count is still the argument, and the wrinkle is new: this is the ELEVENTH consecutive pass to find an absence claim over shipped work, and the FIRST where the pass had not written the claim itself — it was inheriting it, in four places, from three earlier passes.** *An absence you did not write is not an absence you may repeat: a banner is a claim about the tree at the moment it is READ, not the moment it was authored.* **And the practice that produced it is still right** — §18.4 stated the gap honestly rather than describing an unreachable dialog as reachable — **so the cost is recorded beside the benefit rather than instead of it: an honest "not wired" note becomes a dead assertion the instant the wiring lands, which makes re-checking every stated absence part of what it costs to state one.** |
+| 2026-08-12 *(bugfix fold — an EXCEPTION to a rule, stated so it is not read as the rule weakening)* | **§11's flat statement that `curated.xsd` is *"Hand-edited only … never machine-written except the one-time first-run seed"*, that seeding *"never overwrites an existing user file"*, and that *"after the seed the app never writes it (Import XSD replaces it wholesale)"*; plus §11's and §26's **five-item** Schema menu** | **`BUG-260812002307` part C (fixed `483a9ad`): `Schema ▸ Restore Bundled Curated Schema…` IS THE ONE SANCTIONED OVERWRITE, and the menu is SIX items.** User-initiated, confirmed by a prompt naming the resolved path and stating *"Every hand edit in that file will be DESTROYED. A .bak copy is kept beside it."*, `shutil.copy2` to `curated.xsd.bak`, write, latch-clear, `load_curated()`, and — in curated mode only — reload the tab under the `_loading` guard. **`ensure_bootstrap`'s never-overwrite rule is UNTOUCHED and the distinction is the whole entry:** the bootstrap runs *unattended at startup* and must never eat a hand curation; this command runs because a user named it. **The exception exists to make the rule SURVIVABLE, not to soften it** — without it a `curated.xsd` broken by hand is unrecoverable from inside the app, since the pristine bundled resource is never re-read once a file exists. *A never-overwrite rule with no user-initiated escape hatch is not a strong rule, it is a trap.* Mirrors `import_`'s write-then-reload shape **including the `.bak`**, deliberately: the two are the same destructive gesture and a second shape would be a second set of edge cases. **No chord** — it has a command form, so DEC-012 gives it exactly one keyboard host and none was claimed; `RESERVED_SEQUENCES` and `docs/KEYBINDINGS.md` are untouched, verified. |
+| 2026-08-12 *(bugfix fold — ⚠ THE QUEUE ENTRY OFFERED TWO ESCALATIONS AS EQUIVALENT AND ONE OF THEM PAINTS NOTHING)* | **§11's disk-read guards as the whole story — *"emits the `[Schema] … keeping last good schema` audit line and keeps the last good in-memory schema live"* with no path named, no missing-file leg at all, and no escalation rule; and `BUG-260812002307`'s own entry proposing a status-bar message **or** a modal as interchangeable ways to make the failure visible** | **`BUG-260812002307` part B (fixed `483a9ad`): THE ESCALATION IS DECIDED BY *"IS THERE ANY SCHEMA AT ALL?"*, NOT *"DID A LOAD FAIL"*.** Missing file → audit naming the path and the way back. Parse failure **with a last good schema live** → audit; completion still works, so a modal would be **nagging** (it fires on every save of half-typed XSD text). Parse failure **with no schema live** → audit **plus** a `QMessageBox.warning`, latched by `_reported_broken_curated` until the next successful load or restore, because completion, hover and the Properties labels are then running against `None` — *a lost capability, not a lost save.* **Both audit paths name the RESOLVED app-data path**, which is the actual fix: the whole confusion in the report was *which* `curated.xsd` was in play, the pristine bundled resource or the hand-owned copy the bootstrap will never overwrite. **⚠ THE DURABLE RULE, AND WHY THE QUEUE ENTRY WAS WRONG: NAME THE CONCRETE CHANNEL, THEN CHECK IT STILL PAINTS.** Since FQ-028 `StaticStatusBar.showMessage` **paints nothing** — it stores the text and journals it, `displayed_message()` is permanently `""` — and the journal it feeds is the Activity Log, which is **exactly where the `[Schema]` row already routes** (`audit_router.SCHEMA_PREFIX → TO_ACTIVITY`). So the entry's status-bar option would have moved the message **from one journal to the same journal** and left the bug precisely as reported; the modal is taken for the one case that earns it because it is the only channel here that is *not* the Activity Log. *An escalation named by surface rather than by mechanism can escalate to itself — and this is the second time in this document that a shipped surface's name outlived what it does.* |
+| 2026-08-12 *(bugfix fold — a duplicated STEP becomes a primitive, and its counterpart is specified alongside)* | **Nothing in §7 said who owns un-hiding the left dock.** The reveal seam did the tab half only, and the un-hide was copy-pasted at four sites (DDL Explorer, Findings, Contents, Coherence) | **`BUG-260812023420` (fixed `03473a7`): `_reveal_left_panel` OWNS THE WHOLE GESTURE — un-hide the dock, show the tab, select it — and the four duplicated calls are DELETED.** A reveal that forgot the un-hide landed a visible tab inside a hidden dock: **the reveal silently did nothing**, which is *never a silent wrong result* applied to navigation — the user asked to be taken somewhere and was told nothing. `_show_left_dock()` runs **after** the `indexOf < 0` guard on purpose (a widget that is not a left tab has nothing to reveal, and popping an empty dock would be worse than the no-op), and `_show_left_dock` is now injected **nowhere** — it exists only because this primitive calls it. **The counterpart is the half that makes it safe and is recorded as a SEPARATE MEANING, not a weaker version:** `_set_left_panel_visible` deliberately touches **neither** the dock nor the current tab — *make available, do not touch the user's layout*. **⚠ A CLAIM IN THE DISPATCHING PROMPT WAS CHECKED AND FOUND WRONG, AND THE CORRECTION IS THE INTERESTING PART:** the caller named for it was `CoherenceController.refresh_if_open`, which **does not call the seam at all** (it reads `_panel_visible()` and returns early). The real callers are `on_coherence_toggled`'s Off branch and `teardown_for_project_close`, and **both pass `False`** — a user switching a view off, and a project closing; neither may pop a dock or decide what the user looks at next. The `True` direction is kept with **no production caller**, deliberately, because without it *"make this tab available"* has no expression that is not also *"take the user there"*, and the next lane needing the quiet form would re-scatter the dock call this fix just collected. *A seam justified by a caller that turns out not to exist still has the right shape — but the spec must say which of those two things it is standing on.* **Without two names one of the two intentions is always wrong.** *A gesture the user asked for and a gesture the app performs on their behalf are two different gestures even when they move the same widget* — which is why the bottom dock already had `_reveal_results_dock_tab` (the user asked; pops the dock) beside `_reveal_results_tab` (background narration; does not). **The left dock now matches the bottom dock, and the pairing is stated once for both.** |
+| 2026-08-12 *(feature fold, PARTIAL — and a MECHANISM this document had described wrongly since FQ-005)* | **§7's theme block: *"`_qdarkstyle_stylesheet(light)` returns `qdarkstyle.load_stylesheet(qt_api="pyside6", palette=LightPalette if light else DarkPalette)`"*, i.e. the palette argument as the colouring mechanism; and §5's `ui/` inventory, which had no `theme_model.py` and no themes directory** | **`FQ-260812021715` SHIPPED PARTIALLY (`c0ab500`) — the colour MODEL landed; theme SELECTION is still being built and is explicitly NOT pinned.** What is folded is the settled half. **(1) A theme is COLOURS ONLY and it is a FILE**: `ui/theme_model.py`, **Qt-free at module scope** (test-pinned), over bundled `pgtp_editor/resources/themes/{dark,light}.json` plus `user_themes_dir()`, with six pinned key sets (`chrome` / `palette`+`palette_disabled` / `accents` / `modes` / `decorations` / `syntax`); syntax highlighting is part of the theme by owner ruling, which kills light-syntax-on-dark-chrome by construction. **(2) The chrome recolour is a single-pass regex substitution, and the reason is a measured qdarkstyle defect worth the ledger row: `load_stylesheet(palette=…)` SILENTLY IGNORES a subclassed palette.** In 3.2.3 `_load_stylesheet` reads a **precompiled Qt resource chosen by `palette.ID`** and then *replaces the caller's palette* with the stock one for that ID — so the obvious mechanism is accepted, ignored, and yields stock chrome with no warning. All a base palette decides is **which of the two compiled sheets to start from**; every colour is then substituted, and every non-colour token stays at the qdarkstyle default. **(3) The second-colour-table rule is now an AST GUARD** that fails on a `#rrggbb` in any module of `pgtp_editor/` — *including `theme.py` and `theme_model.py`* — because a rule saying "don't add another table" is one nobody can enforce, and this codebase grew one repeatedly. **(4) `shared_accent(key)` RAISES rather than picking**: `connectivity.py` is theme-blind (making it theme-aware would change pixels, which this consolidation was not allowed to do), so instead of private literals it reads a value that is returned only while every bundled theme agrees — *turning an invisible consumer into a failing test the day a theme diverges.* **⏳ NOT folded, and named so nobody designs against it: `View ▸ Light Theme`'s removal and the migration of the `"lightTheme"` QSettings boolean to a theme NAME are in flight in a concurrent agent's tree.** |
+| 2026-08-12 *(retroactive cleanup — the TWELFTH stale-status retirement, and this one a TO-DO TABLE rather than a banner)* | **§11's `1.2 → 1.3` block: a six-row *"Site / Today / Must become"* table dispatched to `bug-triager`, the paragraph *"nothing today asserts that the marker line and `CURATED_BUNDLED_VERSION` AGREE"*, the routing note sending `manual.md`'s "Curated v1.2" to `manual-maintainer` *"once the bump lands"*, and the table row's *"the code still says `1.2` until BUG-260810141459 lands"*** | **`BUG-260810141459` LANDED; ALL SIX SITES AND BOTH ROUTED ONES VERIFIED BY NAME.** `CURATED_BUNDLED_VERSION == "1.3"`; both halves of the byte-pinned pair carry `<!-- PGTP Editor curated schema v1.3 -->`; the two `test_storage.py` assertions moved with them; `ui/xsd_controller.py`'s duplicate literal was **deleted rather than retyped**; `manual.md` says **Curated v1.3**. **And the guard the block demanded EXISTS**: `test_bundled_curated_xsd_marker_agrees_with_the_version_constant` parses the marker with `v(\d+\.\d+)`, requires exactly one, and asserts equality with the constant — so the two independently-pinned literals can no longer drift, which is how the defect became possible. **The RULE is kept and only the to-do is struck**, because the rule is the durable part: *the marker is the schema's identity, not the app's release counter.* **The new wrinkle over the previous eleven retirements: a to-do table rots more quietly than a banner.** A "NOT YET BUILT" banner at least announces itself; a table of file:line targets reads as reference material, and every line number in it was already wrong. *If the spec must carry a work list, it must carry the date it was true — or better, be replaced by the name of the test that now holds the rule.* |
 
 ---
 
@@ -15474,15 +15702,16 @@ place, which is why the feature shipped rather than waiting:
 - **`DEC-260812004400` — do the two unbuilt panes appear disabled, or not at all?** Default shipped: **four
   panes; `FQ-260812002828` / `FQ-260812002829` are absent, not stubbed.** Reversal is two list rows.
 
-**From `BUG-260812002307` — parts B and C are NOT built, and the entry stays OPEN.** Part A shipped
-(`pgtp_editor/__main__.py` exists, delegating to `pgtp_editor.main.main`, so `python -m pgtp_editor` works).
-**What does not ship, verified by name 2026-08-12:** `XsdController.load_curated` still returns `False`
-**silently** when `curated.xsd` is absent — the *parse-failure* leg does report (`[Schema] Curated XSD has
-XML errors: … — keeping last good schema`), so the gap is narrower than "silent failure", but every caller
-discards the bool either way; and **there is no Schema-menu restore/reset command** — the menu is exactly
-`Edit XSD` · `Edit AutoXSD` · `Verify XSD` · `Export XSD` · `Import XSD` (`XsdController.build_menu`; note
-there is **no `_build_schema_menu`** in the tree, a name worth not citing). Nothing here is designed; the
-queue entry owns it.
+**~~From `BUG-260812002307` — parts B and C are NOT built, and the entry stays OPEN~~ — FULLY RESOLVED
+(`483a9ad`), nothing here is open.** Struck rather than deleted, because this item was written as an
+honest absence and became a dead assertion the moment the fix landed — the cost §28's eleventh-retirement
+row names. **All three parts verified by name 2026-08-12:** part A, `pgtp_editor/__main__.py` delegating to
+`pgtp_editor.main:main` so `python -m pgtp_editor` works, alongside `[project.gui-scripts]`'s installed
+`pgtp-editor` command and the README's build instructions; part B, the escalation rule in §11 — the missing
+and broken cases both audit **with the resolved path**, and the no-schema-live case additionally warns in a
+latched modal; part C, **`Schema ▸ Restore Bundled Curated Schema…`**, so the menu is now **six** entries
+and §11 records it as the one sanctioned overwrite. *(The note that there is **no `_build_schema_menu`** in
+the tree still holds — the builder is `XsdController.build_menu`, a name worth not mis-citing.)*
 
 **~~From FQ-032 (2026-08-10) — THREE items flagged rather than decided~~ — ALL THREE ANSWERED BY THE OWNER
 2026-08-10, AND ALL THREE WENT AGAINST THE RECOMMENDATION. Nothing about FQ-032 is open.** Struck here rather

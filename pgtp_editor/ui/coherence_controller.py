@@ -84,10 +84,14 @@ never by importing another collaborator:
 
   ``show_left_dock`` was a third, and is **gone** (BUG-260812023420): revealing
   a left-dock pane now un-hides the dock inside ``reveal_left_panel`` itself,
-  so this controller no longer carries half of that gesture. The counterpart
-  ``set_left_panel_visible`` deliberately does *not* touch the dock, which is
-  what ``refresh_if_open`` relies on — it populates without stealing the
-  user's layout.
+  so this controller no longer carries half of that gesture. Its counterpart
+  ``set_left_panel_visible`` deliberately does *not* touch the dock — and note
+  that **both production callers here pass ``False``** (``on_coherence_toggled``
+  and ``teardown_for_project_close``). The ``True`` direction has no caller
+  today; the seam is kept because without it *"make this tab available"* has no
+  expression that is not also *"take the user there"*. ``refresh_if_open`` is
+  NOT that caller — it reads ``panel_visible()`` and returns early, never
+  touching visibility at all.
 """
 from __future__ import annotations
 
