@@ -275,8 +275,12 @@ is the drift this arrangement exists to kill, and a test greps for one.
   **intentionally decoupled by owner ruling**), the curated schema's content
   (`CURATED_BUNDLED_VERSION` — §11: *the marker is the schema's identity, not the app's
   release counter*), the vendor `.pgtp` format (`about.py`), and the snapshot payload format
-  (`SNAPSHOT_VERSION`). Three are visible together in the About box. Conflating the app
-  release with the curated schema has already happened once — label them.
+  (`SNAPSHOT_VERSION`). **Two** are visible together in the About box — the app release and
+  the vendor `.pgtp` format; `CURATED_BUNDLED_VERSION` is *not* rendered there and
+  `about.py` does not import it. (This line said "three" until 2026-08-12, when a manual
+  pass measured it against `about.py`. A count in prose beside a thing that changes is a
+  claim with no way to stay true — the same rot that hit the Alter Table submenu.)
+  Conflating the app release with the curated schema has already happened once — label them.
 
 ## Test environment
 

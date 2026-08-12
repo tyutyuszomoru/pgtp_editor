@@ -1429,8 +1429,9 @@ PGTP Editor's knowledge of the `.pgtp` format lives in one hand-edited file:
 **`curated.xsd`** in the app's data folder. It is the **official schema** and the
 *only* source feeding Ctrl+Space completion, the *Add attribute* menu, hover
 hints, and the value labels in the Properties panel. You maintain it yourself
-through the **Schema** menu, which has exactly five entries: **Edit XSD**,
-**Edit AutoXSD**, **Verify XSD**, **Export XSD**, and **Import XSD**.
+through the **Schema** menu, which has exactly six entries: **Edit XSD**,
+**Edit AutoXSD**, **Verify XSD**, **Export XSD**, **Import XSD**, and
+**Restore Bundled Curated Schema…**.
 
 Alongside it, the editor still **auto-learns** from every project you open:
 **File ▸ Open** scans the file and writes what it finds to a separate reference
@@ -1449,6 +1450,17 @@ hand-commented starting schema). The seed happens only when the file is absent �
 back. (If the bundled schema isn't packaged for some reason, the app falls back
 to generating a starter schema from your learned data, preserving any value
 labels.)
+
+> **There are two `curated.xsd` files, and knowing which is which saves a lot of
+> confusion.** One is **bundled inside the application** and never changes; the
+> other is **your copy in the app's data folder**, written once at that first-run
+> seed and hand-owned from then on. **Everything in the app reads your copy** —
+> completion, hover, the *Add attribute* menu, the Properties labels, **Edit
+> XSD** — and the bundled one is never re-read once your copy exists. So if your
+> copy gets emptied, truncated or broken by a hand edit, the schema feed stops
+> even though a pristine schema is sitting inside the app, unused. **Schema ▸
+> Restore Bundled Curated Schema…** (below) is the way to put the bundled one
+> back.
 
 ### The XSD dialect
 
@@ -1553,6 +1565,51 @@ is in **Edit AutoXSD**.
   completion. If the tab had unsaved edits, they are replaced by the imported
   text and the Activity Log says so; the import's own verification findings land
   in the **Messages** tab like any other Verify run.
+
+### When the schema doesn't load
+
+If your `curated.xsd` cannot be read, the app says so instead of quietly running
+without a schema — and it always **names the file it tried**, since that is the
+whole question when two copies exist:
+
+- **The file is missing.** A `[Schema]` line in the **Activity Log** gives the
+  full path and states that completion, hover and the Properties labels have no
+  schema until it is restored, pointing at **Schema ▸ Restore Bundled Curated
+  Schema…**.
+- **The file is broken, but a schema is still loaded.** This is the mild case —
+  you saved half-typed XSD text, and the last good schema stays in effect, so
+  completion keeps working. You get one `[Schema]` **Activity Log** line with the
+  parse error and the path, and nothing interrupts you.
+- **The file is broken and nothing is loaded.** Completion, hover and the
+  Properties labels are running against nothing, so besides the Activity Log line
+  a **Curated Schema Not Loaded** warning box appears, naming the file, quoting
+  the parser's error, and offering both ways back: fix the file in **Schema ▸
+  Edit XSD**, or replace it with **Schema ▸ Restore Bundled Curated Schema…**.
+  You are told **once** — reopening five more projects with the same broken file
+  will not put the box up five more times. The next successful load arms it
+  again.
+
+### Restoring the bundled schema
+
+**Schema ▸ Restore Bundled Curated Schema…** — the last entry on the Schema menu,
+and the only in-app way back from a `curated.xsd` you broke by hand. It has **no
+keyboard shortcut**: it is a deliberate, rare, destructive recovery step.
+
+It asks first, in a **Restore Bundled Curated Schema** box that names the exact
+file it will replace, says which bundled version it will write, and warns that
+*every hand edit in that file will be DESTROYED*. Say **No** and nothing at all
+happens. Say **Yes** and the app copies your current file aside as
+`curated.xsd.bak`, writes the bundled schema over it, and re-parses it right away
+so completion, hover and the Properties labels come back without a restart. If
+the **Edit XSD** tab is open on the curated schema, it is reloaded with the
+restored text and its unsaved marker cleared — any unsaved edits in it are
+replaced, and the **Activity Log** line recording the restore says so.
+
+This is the one sanctioned exception to "the app never overwrites your
+`curated.xsd`": the rule still holds everywhere else, including at startup, and
+is broken here only because you asked for it by name and confirmed a prompt that
+spelled out the cost. If the build you are running carries no bundled schema at
+all, you get a **No Bundled Schema** box instead and your file is left untouched.
 
 ---
 
@@ -5575,5 +5632,11 @@ containing both logs — attach the newest `debug_*.log` when reporting a
 problem.
 
 **`python -m pgtp_editor` starts the editor**, with or without `--debug`. The
-longer `python -m pgtp_editor.main` is the same thing and keeps working; both
-forms take the same arguments, including `--mcp` (see *The MCP Server*).
+longer `python -m pgtp_editor.main` is the same thing and keeps working. An
+installed copy also puts a **`pgtp-editor`** command on your path, which is the
+shortest way to start it — on Windows it launches without dragging a console
+window along, so it is also what a Start-menu or desktop shortcut should point
+at. All three forms are the same program and take the same arguments, including
+`--debug`. For the headless MCP server, stay with a `python -m …` form so the
+process keeps its standard input and output (see *The MCP Server ▸ Headless,
+instead of the GUI*).
