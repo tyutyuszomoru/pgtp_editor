@@ -19,12 +19,17 @@ What it owns
 ------------
 Everything about *turning the open project into PHP* and nothing else:
 
-* the **Generation menu** (Locate PHP Generator Executable / Generate PHP /
-  Open Output Folder / Locate panGen Runtime / panGen / rePHPgen / Save reJSON)
-  — a menu owned outright by one collaborator moves with it, so this lane builds
-  it;
+* the **Generation menu** (Generate PHP / Open Output Folder / panGen /
+  rePHPgen / Save reJSON) — a menu owned outright by one collaborator moves with
+  it, so this lane builds it;
 * the vendor-executable and re_phpgen-runtime locations on disk (read and
-  written through ``generation/config.py`` under :attr:`config_dir`);
+  written through ``generation/config.py`` under :attr:`config_dir`) — still
+  this lane's to write, but **no longer this lane's to offer**: FQ-260812025705
+  moved both `Locate …` menu items into `Settings ▸ Software settings… ▸
+  External tools`, which drives :meth:`locate_generator` /
+  :meth:`locate_pangen_runtime` from there. What is left here is the gating:
+  :meth:`refresh_tool_affordances` greys the operations whose binary is unset or
+  invalid, which is the cue that replaced those menu items;
 * the single in-flight run: the injected :attr:`runner`, the
   :attr:`is_generating` guard that keeps a second run from orphaning the first
   ``QProcess``, and the ``[PHP]``-prefixed Audit lines the run streams;
@@ -96,6 +101,7 @@ from pgtp_editor.generation.re_runner import (
 from pgtp_editor.generation.runner import GeneratorRunner, build_generate_command
 from pgtp_editor.ui import modals
 from pgtp_editor.ui.file_filters import executable_filter
+from pgtp_editor.ui.software_settings_dialog import EXTERNAL_TOOLS_SETTINGS_PATH
 from pgtp_editor.ui.ui_shell import UiShell
 
 _log = logging.getLogger(__name__)
@@ -144,6 +150,13 @@ class GenerationController(QObject):
         #: The Save reJSON menu action, created by `build_menu` and enabled only
         #: once a gap analysis has succeeded.
         self._save_rejson_action = None
+        #: The three operations FQ-260812025705 gates on an external binary,
+        #: created by `build_menu`. Initialised here so `refresh_tool_affordances`
+        #: is safe to call on a lane whose menu has not been built (a headless
+        #: construction, which every collaborator must support).
+        self._generate_action = None
+        self._pangen_action = None
+        self._re_phpgen_action = None
 
     # -- read/write surface --------------------------------------------------
 
@@ -192,30 +205,119 @@ class GenerationController(QObject):
     @last_gap_json.setter
     def last_gap_json(self, value) -> None:
         self._last_gap_json = value
+        # Save reJSON's enabled state is a function of this plus the runtime
+        # gate, so assigning it must re-derive that state rather than leave the
+        # menu describing the previous one.
+        self.refresh_tool_affordances()
 
     # -- construction --------------------------------------------------------
 
     def build_menu(self, menu_bar) -> None:
-        """Add the Generation menu to `menu_bar`."""
+        """Add the Generation menu to `menu_bar`.
+
+        `Locate PHP Generator Executable…` and `Locate panGen Runtime…` are NOT
+        here any more (FQ-260812025705): both MOVED into
+        `Settings ▸ Software settings… ▸ External tools`, which is now their sole
+        entry point. Moved, not duplicated — the same rule the four surfaces
+        FQ-260812002827 absorbed were held to. `locate_generator` /
+        `locate_pangen_runtime` below survive as the lane's write path, which the
+        pane drives; nothing about how they persist changed.
+
+        What replaces them as the discoverability cue is the ENABLED STATE of
+        the operations: with no binary configured the dependent entries are
+        greyed and say why in their tooltip, instead of being always enabled and
+        erroring at trigger time.
+        """
         menu = menu_bar.addMenu("Generation")
-        locate_action = menu.addAction("Locate PHP Generator Executable...")
-        locate_action.triggered.connect(self.locate_generator)
-        menu.addSeparator()
-        generate_action = menu.addAction("Generate PHP...")
-        generate_action.triggered.connect(self.generate_php)
+        self._generate_action = menu.addAction("Generate PHP...")
+        self._generate_action.triggered.connect(self.generate_php)
         menu.addSeparator()
         open_output_action = menu.addAction("Open Output Folder")
         open_output_action.triggered.connect(self.open_output_folder)
         menu.addSeparator()
-        locate_pangen_action = menu.addAction("Locate panGen Runtime...")
-        locate_pangen_action.triggered.connect(self.locate_pangen_runtime)
-        pangen_action = menu.addAction("panGen (Generate Own PHP)")
-        pangen_action.triggered.connect(self.pangen)
-        re_phpgen_action = menu.addAction("rePHPgen (Analyze Gap)")
-        re_phpgen_action.triggered.connect(self.analyze_gap)
+        self._pangen_action = menu.addAction("panGen (Generate Own PHP)")
+        self._pangen_action.triggered.connect(self.pangen)
+        self._re_phpgen_action = menu.addAction("rePHPgen (Analyze Gap)")
+        self._re_phpgen_action.triggered.connect(self.analyze_gap)
         self._save_rejson_action = menu.addAction("Save reJSON...")
         self._save_rejson_action.triggered.connect(self.save_rejson)
-        self._save_rejson_action.setEnabled(False)
+        self.refresh_tool_affordances()
+
+    # -- external-tool locations, and what depends on them -------------------
+
+    def generator_executable_path(self) -> str | None:
+        """The stored vendor PHP Generator path, or None. Read-only surface for
+        the `External tools` settings pane, so the pane never learns where the
+        store lives (that is `config_dir`'s business, and only this lane's)."""
+        return load_executable_path(base_dir=self._config_dir)
+
+    def pangen_runtime_root(self) -> str | None:
+        """The stored re_phpgen (panGen) repo root, or None."""
+        return load_re_phpgen_root(base_dir=self._config_dir)
+
+    def pangen_runtime_is_valid(self) -> bool:
+        """Whether the stored root still looks like the re_phpgen repo.
+
+        The panGen operations gate on THIS, not merely on "a root is stored": a
+        moved checkout or an unmounted drive leaves a configured-but-dead root,
+        and greying only the empty case would leave the user with three enabled
+        entries that cannot run.
+        """
+        root = self.pangen_runtime_root()
+        return bool(root) and bool(validate_re_phpgen_root(root))
+
+    def refresh_tool_affordances(self) -> None:
+        """Re-evaluate the enabled state of every operation that needs an
+        external binary (FQ-260812025705).
+
+        Called at menu build (so the state is right at startup, not only after a
+        change), and again by `locate_generator` / `locate_pangen_runtime`, which
+        is what makes setting a binary in the settings pane update the menus
+        LIVE. The pane therefore never touches an action: it calls this lane's
+        own locate method, and the lane re-evaluates its own affordances.
+
+        `Save reJSON` keeps its pre-existing extra condition — a gap analysis
+        must have produced a JSON — so it is the conjunction, never a plain
+        overwrite of that state.
+        """
+        exe_ready = self.generator_executable_path() is not None
+        runtime_ready = self.pangen_runtime_is_valid()
+        self._set_gated(
+            self._generate_action,
+            exe_ready,
+            "the PHP Generator executable is not set",
+        )
+        for action in (self._pangen_action, self._re_phpgen_action):
+            self._set_gated(
+                action,
+                runtime_ready,
+                "the panGen runtime is not set, or is no longer valid",
+            )
+        self._set_gated(
+            self._save_rejson_action,
+            runtime_ready and self._last_gap_json is not None,
+            "the panGen runtime is not set, or is no longer valid"
+            if not runtime_ready
+            else "no gap analysis has produced a reJSON yet",
+        )
+
+    @staticmethod
+    def _set_gated(action, enabled: bool, reason: str) -> None:
+        """Enable/disable `action`, and when disabled say WHY in its tooltip.
+
+        FQ-023's principle applied to a greyed entry: the entry stays present
+        and states its reason, rather than leaving the user with a dead command
+        and no explanation — which is what removing the Locate menu items would
+        otherwise cost, since those items used to be the only pointer.
+        """
+        if action is None:  # pragma: no cover - before `build_menu`
+            return
+        action.setEnabled(bool(enabled))
+        action.setToolTip(
+            ""
+            if enabled
+            else f"Unavailable: {reason}. Set it in {EXTERNAL_TOOLS_SETTINGS_PATH}."
+        )
 
     # -- the vendor PHP Generator --------------------------------------------
 
@@ -229,6 +331,9 @@ class GenerationController(QObject):
         if not path:
             return
         save_executable_path(path, base_dir=self._config_dir)
+        # Live gating (FQ-260812025705): the pane calls this method, so setting
+        # the binary must re-enable `Generate PHP` without a restart.
+        self.refresh_tool_affordances()
         self._shell.status(f"PHP Generator set: {Path(path).name}", 5000)
 
     def _project_output_folder_default(self) -> str:
@@ -282,7 +387,8 @@ class GenerationController(QObject):
             modals.QMessageBox.information(
                 self._shell.window,
                 "Generate PHP",
-                "Locate the PHP Generator executable first (Generation > Locate PHP Generator Executable...).",
+                "The PHP Generator executable is not set — set it in "
+                f"{EXTERNAL_TOOLS_SETTINGS_PATH}.",
             )
             return
 
@@ -379,8 +485,8 @@ class GenerationController(QObject):
             modals.QMessageBox.information(
                 self._shell.window,
                 "panGen",
-                "re_phpgen runtime not found. Set it via "
-                "Generation > Locate panGen Runtime...",
+                "re_phpgen runtime not found. Set it in "
+                f"{EXTERNAL_TOOLS_SETTINGS_PATH}.",
             )
             return None
         if not validate_re_phpgen_root(root):
@@ -391,7 +497,7 @@ class GenerationController(QObject):
                 self._shell.window,
                 "panGen",
                 f"The configured panGen runtime is no longer valid:\n{root}\n\n"
-                "Set it via Generation > Locate panGen Runtime...",
+                f"Set it in {EXTERNAL_TOOLS_SETTINGS_PATH}.",
             )
             return None
         python = resolve_re_phpgen_python(root)
@@ -489,7 +595,12 @@ class GenerationController(QObject):
         self._clear_generator_output()
         self._current_output_folder = output_folder
         self._is_generating = True
-        self._save_rejson_action.setEnabled(False)
+        # A run in flight has not produced its JSON yet, so the previous run's
+        # Save reJSON must go away. Through `refresh_tool_affordances` rather
+        # than a bare `setEnabled(False)`, so the binary gate and this run gate
+        # are never expressed in two places that can disagree.
+        self._last_gap_json = None
+        self.refresh_tool_affordances()
         json_path = self.gap_json_work_path()
         pgtp = self._project_path()
         pangen_command = build_pangen_command(python, pgtp, output_folder)
@@ -510,7 +621,7 @@ class GenerationController(QObject):
                 self._shell.status(f"rePHPgen failed (exit {exit_code})", 5000)
                 return
             self._last_gap_json = json_path
-            self._save_rejson_action.setEnabled(True)
+            self.refresh_tool_affordances()
             summary = summarize_gap_json(json_path)
             self._append_generator_output(summary.replace("\n", " | "))
             self._shell.status("rePHPgen: gap analysis complete", 5000)
@@ -585,4 +696,5 @@ class GenerationController(QObject):
             )
             return
         save_re_phpgen_root(root, base_dir=self._config_dir)
+        self.refresh_tool_affordances()
         self._shell.status(f"panGen runtime set: {root}", 5000)

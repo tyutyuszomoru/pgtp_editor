@@ -522,3 +522,27 @@ def test_find_and_bookmark_routing_follow_the_active_explorer(qtbot, tmp_path):
 
     assert window._find_ui.active_find_bar() is stage.ddl_editor_panel.find_replace_bar
     assert window._find_ui.active_bookmark_editor() is stage.ddl_editor_panel.editor
+
+
+def test_a_direct_sandbox_open_from_the_unchecked_state_introspects_once(
+    qtbot, tmp_path
+):
+    """BUG-260812071208 is role-parameterized exactly like the path it lives on
+    (§18.7), so the sandbox instance gets its own regression case rather than a
+    copy of the target one. A bare `_open_ddl_explorer(DDL_EXPLORER_SANDBOX)`
+    runs from the unchecked state, which is the reproducing condition -- driving
+    the menu toggle would be green before and after the fix, because
+    `QAction::activate` checks the action before emitting `toggled`.
+    """
+    window = _window(qtbot, tmp_path)
+    _open_project(window, tmp_path)
+    seen = []
+    window._fetch_ddl_schema = lambda params: (
+        seen.append(params) or _sandbox_schema()
+    )
+    assert _sandbox_action(window).isChecked() is False
+
+    window._open_ddl_explorer(DDL_EXPLORER_SANDBOX)
+
+    assert [p.host for p in seen] == ["sandbox-host"]
+    assert _sandbox_action(window).isChecked() is True

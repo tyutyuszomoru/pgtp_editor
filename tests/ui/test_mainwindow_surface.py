@@ -150,6 +150,10 @@ EXPECTED_HOST_SURFACE = {
     "_ddl_explorer_action",
     "_ddl_explorer_actions",
     "_ddl_explorer_label",
+    # BUG-260812071208's re-entrancy marker: the roles whose menu action the
+    # lockstep handler is currently re-syncing. Host state because both the
+    # lockstep handler and the toggle handler are the host's.
+    "_ddl_explorer_syncing",
     "_ddl_explorer_params",
     "_ddl_project_folder",
     "_ddl_project_settings",
@@ -228,6 +232,9 @@ EXPECTED_HOST_SURFACE = {
     "_inspect_sandbox_provisioning",
     "_install_find_next_action",
     "_is_light_theme",
+    # FQ-260812025705 gates both Tools lint entries on a configured linter, so
+    # the host keeps a handle on the second one to register it with the lane.
+    "_lint_action",
     "_lint_on_save_action",
     "_lint_ui",
     "_live_target_identity",

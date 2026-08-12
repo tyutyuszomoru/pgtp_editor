@@ -8212,7 +8212,7 @@ Gotchas, all of them easy to get wrong:
 ---
 ## BUG-260812103144: the status-bar connectivity dots fail contrast — and the surface they are measured against is not the window chrome
 
-**Status:** OPEN
+**Status:** RESOLVED (cdcba11)
 **Reported:** 2026-08-12
 **Report (verbatim):** "The status-bar connectivity dots fail contrast against the chrome in one theme each. Measured: 2.96:1 for the offline dot on dark, 3.29:1 for the reachable dot on light, against the 3:1 non-text/graphical-object threshold. So one is below the line and the other is barely above it. Carried as a secondary finding inside BUG-260812063745 and explicitly recorded as surviving that fix; it warrants its own id."
 
@@ -8287,5 +8287,37 @@ No `docs/KEYBINDINGS.md` impact: no chord is added, moved or removed.
 3. Worth folding in as a rule while there: **contrast for a status-bar widget is measured against `COLOR_BACKGROUND_4`, not `COLOR_BACKGROUND_1`.** §7 already says *"against the live QDarkStyle chrome"*, and this bug plus BUG-260811021804 are two instances of that sentence being read as *"the window background"*. Naming the specific token per surface is what stops a third.
 
 No `owner-decision` is required to proceed: the threshold, the surface and the failing values are measured facts. The only tunable choices are the exact hex values in the table above and the glyph set — both are pixel-visible, so mention them in the fix report for the owner to adjust, and do not let them block the fix.
+
+**Resolution (cdcba11, 2026-08-12)**
+
+Shipped as proposed, measured against `COLOR_BACKGROUND_4` at the 4.5:1 **text** threshold. Verified in the tree: `pgtp_editor/resources/themes/{dark,light}.json:51-54` now carry per-theme values, `connectivity.py:117` is `dot_rendering(state, light)`, and `connectivity.py:148` is `class ConnectivityIndicator(StatusLabel)`.
+
+| state | dark | light | (was) |
+|---|---|---|---|
+| offline `#F2B8AE` / `#8B1E1E` | **4.58** | **5.20** | 1.46 / 3.06 |
+| reachable `#B6E3C0` / `#14521A` | **5.51** | **5.32** | 2.29 / 1.96 |
+| not_set_up `#FFFFFF` / `#19232D` | **7.85** | **9.07** | 7.85 / 1.75 |
+| unknown `#D2D5D8` / `#293544` | **5.33** | **7.10** | 2.93 / 1.53 |
+
+One new hue was needed: light green `#14521A`, because the theme's existing `#1B5E20` scores **4.49** here — one hundredth short, as the entry anticipated.
+
+Second channel: one glyph per state — `●` reachable, `▲` offline, `□` not configured, `○` not checked (`connectivity.py:78-81`), all from Geometric Shapes, chosen because DejaVu Sans and Segoe UI both cover them; a tofu box would be worse than the colour-only design it replaces. The entry's tentative `✕`/`◻` were the tuning call it said they were. `test_the_three_states_are_told_apart_by_colour` is **superseded in place** with its reason (`tests/ui/test_status_bar_static.py:222`) and now asserts colour, glyph **and** tooltip all differ across all four states.
+
+The import-time freeze is fixed by step 4 as written — inheriting `StatusLabel` rather than copying its pattern — so the repaint-on-flip logic exists once. `_RENDERING` now holds accent **keys**, and `dot_rendering` stays pure and Qt-free.
+
+**Trap to record — step 4 of this entry was wrong as written.** `StatusLabel._palette_is_light()` reads `self.palette()`, which is worthless for a status-bar dot, for two compounding reasons that were **measured, not reasoned**:
+- qdarkstyle's `QStatusBar QLabel { background: transparent }` makes the label's `Base`, `Window` **and** `Button` roles resolve to `#000000` under **both** themes;
+- the widget-level `QLabel { color: … }` this class writes lands in the label's own `Text`/`WindowText` roles, so reading them back returns **the colour just painted** — a circular read.
+
+The first implementation therefore painted dark's salmon onto the light status bar and never repainted on a flip: **the same freeze, relocated.** It now overrides `_palette_is_light()` (`connectivity.py:183`) to read `QApplication.palette()` — still a paint-time read of the live palette, so BUG-260811021804's rule holds. Anyone reusing `StatusLabel` on a transparent-background surface must override this hook.
+
+Also recorded:
+- `shared_accent()` is **kept** (`theme_model.py:564`) but has lost its only production caller; docstring rewritten, plus a new **AST-based** test asserting zero production callers — AST rather than text search, so `status_colours.py`'s docstring naming it *in order to forbid it* is not a false positive.
+- `tests/ui/test_theme_model.py`'s `PRE_REFACTOR` snapshot — which states it "must be corrected by fixing the theme file, never by editing the expectation" — had to lose its two connectivity rows. That is the one place this fix edited an expectation that forbids being edited; it was recorded in the table's own comment (`:385-386`) rather than silently deleted.
+- The new contrast test derives `STATUS_BAR_CHROME` from the theme file and carries an explicit note that `test_sql_results_panel.CHROME` is deliberately **not** imported (`test_status_bar_static.py:234, :272`) — the trap this entry named, which would have let a 1.46:1 dot pass.
+
+Full suite at the time: **8168 passed, 51 skipped**, plus one unrelated failure in `tests/ui/test_mainwindow_surface.py` belonging to a concurrent agent's `main_window.py` work.
+
+**Spec impact still OPEN for `spec-maintainer`:** all three items above stand, and item 2's "surviving example of a theme-blind consumer becomes **none**" is now literally true.
 
 ---

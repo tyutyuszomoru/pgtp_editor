@@ -484,7 +484,12 @@ def test_save_defaults_to_the_opened_path_via_the_stage(qtbot, tmp_path):
 # The service is injected and `_run_async` is replaced with a synchronous
 # stand-in (the project's convention), so no test here spawns `php`, threads,
 # or waits on anything.
-from pgtp_editor.lint.findings import LINT_PREFIX, LintOutcome, LintStatus  # noqa: E402
+from pgtp_editor.lint.findings import (  # noqa: E402
+    EXTERNAL_TOOLS_SETTINGS_PATH,
+    LINT_PREFIX,
+    LintOutcome,
+    LintStatus,
+)
 from pgtp_editor.lint.runner import LintProcessResult  # noqa: E402
 from pgtp_editor.lint.service import LintService  # noqa: E402
 
@@ -537,7 +542,8 @@ def test_request_lint_with_no_service_still_reports_a_lint_line(qtbot):
     lines = _lint_texts(tab)
     assert lines
     assert lines[0].text.startswith(LINT_PREFIX)
-    assert "Locate PHP Linter" in lines[0].text
+    # The remedy moved with the setting (FQ-260812025705).
+    assert EXTERNAL_TOOLS_SETTINGS_PATH in lines[0].text
 
 
 def test_clean_lint_reports_ok(qtbot, tmp_path):

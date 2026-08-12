@@ -55,11 +55,15 @@ def _project_with_connection():
 def _open(window):
     """One DDL open, as a user performs it.
 
-    Deliberately NOT a bare `_open_ddl_explorer()`: revealing the tab checks the
-    Database-menu toggle, whose `toggled` re-enters `_open_ddl_explorer`, so a
-    direct call from the unchecked state fetches (and would report) TWICE. That
-    re-entrancy predates this feature and is not what these tests are about --
-    the toggle and `Reload DDL` are the two real gestures, and each is one open.
+    Drives the toggle / `Reload DDL` because those are the two real gestures,
+    and each is one open.
+
+    This helper used to carry a warning that a bare `_open_ddl_explorer()`
+    fetches TWICE, because the lockstep's `setChecked(True)` re-entered the
+    opener from an unchecked action. That was true and is now FIXED
+    (BUG-260812071208, `_ddl_explorer_syncing`): a direct call is one open too.
+    The comment is corrected rather than kept, so it does not preserve a false
+    fact about the code.
     """
     action = window._ddl_explorer_actions[DDL_EXPLORER_TARGET]
     if action.isChecked():

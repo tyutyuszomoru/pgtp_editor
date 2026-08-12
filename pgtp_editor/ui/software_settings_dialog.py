@@ -31,22 +31,30 @@ Toolbar                     ``customize_toolbar_dialog.CustomizeToolbarDialog``
 Autoformatter               ``autoformat_settings_dialog.AutoformatSettingsDialog``
 Keyboard shortcuts          ``customize_shortcuts_dialog.CustomizeShortcutsDialog``
                             (built and wired by ``MainWindow``)
-Themes                      :class:`ThemesPane` — the ONE pane defined in this
-                            module, because it had no prior dialog to embed
+Themes                      :class:`ThemesPane` — defined in this module,
+                            because it had no prior dialog to embed
                             (FQ-260812021716)
+External tools              :class:`ExternalToolsPane` — likewise new
+                            (FQ-260812025705); the three `Locate …` items it
+                            absorbed were menu commands, not dialogs
 ==========================  ===================================================
 
 Nothing here re-implements a control, re-reads a store, or re-derives a command
 list. The four pre-existing surfaces keep their widgets, their controllers,
-their persistence and their tests; only their **host** changed. The Themes pane
-is the exception that proves the rule — it is new, so it is written here, and it
-still owns its own apply/OK contract rather than borrowing one from the host.
+their persistence and their tests; only their **host** changed. The two panes
+written here are the exception that proves the rule — they are new, so they are
+written here, and each still owns its own apply contract rather than borrowing
+one from the host. `ExternalToolsPane` in particular re-implements none of the
+three stores it edits: each Browse button calls the owning lane's existing
+locate method.
 
 RELOCATION, NOT DUPLICATION (owner-settled)
 -------------------------------------------
-The four commands this dialog absorbs are **gone from their old menus** —
+The commands this dialog absorbs are **gone from their old menus** —
 ``View ▸ Customize Toolbar…``, ``View ▸ Customize Shortcuts…``,
-``Settings ▸ Edit Snippets…`` and ``Settings ▸ Autoformatter settings…`` no
+``Settings ▸ Edit Snippets…``, ``Settings ▸ Autoformatter settings…`` and (with
+FQ-260812025705) ``Generation ▸ Locate PHP Generator Executable…``,
+``Generation ▸ Locate panGen Runtime…`` and ``Tools ▸ Locate PHP Linter…`` no
 longer exist. This dialog is their sole entry point, `Settings` holds exactly one
 entry, and the command is the Maintenance launcher column's third button.
 
@@ -107,11 +115,20 @@ FQ-260812002829) are **SUPERSEDED**, because syntax highlighting is part of the
 theme by owner ruling — two panes editing one `Theme` could be edited into a
 mismatch, and one cannot mismatch itself. It is `_themes_pane` below, and it
 cost exactly one row here.
+
+The sixth, **External tools** (FQ-260812025705), cost one row too — and that is
+the whole evidence for the claim. It also has the consequence FQ-027/DEC-006
+attaches to everything in here: **setting an external binary is now a
+Maintenance-mode gesture**, while the operations that use it run in
+Project/Standalone mode. The same trade already accepted for toolbar, shortcut
+and theme customization; the greyed operation plus its tooltip is what tells a
+user in Project mode where to go.
 """
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -137,6 +154,12 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.ui import theme_model
 from pgtp_editor.ui.autoformat_settings_dialog import build_autoformat_settings_pane
+from pgtp_editor.ui.status_colours import (
+    STATUS_ERROR,
+    STATUS_OK,
+    STATUS_WARNING,
+    StatusLabel,
+)
 from pgtp_editor.ui.theme_model import SyntaxRole, Theme, ThemeError
 
 #: The `Settings` menu's label for this command, and therefore the id the menu
@@ -151,6 +174,15 @@ MENU_LABEL = "Software settings…"
 #: rather than computed so `launcher_dialog.LAUNCHER_GROUPS` stays a table of
 #: literal ids like every other row in it; a test derives it and compares.
 COMMAND_ID = "settings.software-settings"
+
+#: How the rest of the app SPELLS the External-tools pane's address, for the
+#: notices that used to point at the three `Locate …` menu items this pane
+#: absorbed (FQ-260812025705). Kept here, imported by `generation_controller.py`
+#: and `lint_controller.py`, for the same reason `MENU_LABEL` is: three lanes
+#: naming a menu path in their own words is how a moved surface becomes
+#: unfindable. `lint/findings.py` cannot import a UI module and carries the
+#: literal instead — a test pins the two together.
+EXTERNAL_TOOLS_SETTINGS_PATH = "Settings ▸ Software settings… ▸ External tools"
 
 
 @dataclass(frozen=True)
@@ -187,6 +219,10 @@ def _shortcuts_pane(window, parent) -> QDialog:
 
 def _themes_pane(window, parent) -> QDialog:
     return ThemesPane(window, parent)
+
+
+def _external_tools_pane(window, parent) -> QDialog:
+    return ExternalToolsPane(window, parent)
 
 
 #: The colour sections a theme file carries, in the order the pane lays them out:
@@ -594,7 +630,238 @@ class ThemesPane(QDialog):
         self.accept()
 
 
-#: The panes, in list order. FIVE — see the module docstring.
+@dataclass(frozen=True)
+class ExternalTool:
+    """One app-wide external binary the `External tools` pane can locate.
+
+    Every callable takes the host window and delegates to the LANE that owns the
+    store, so this module holds no path, no config key and no validation rule of
+    its own:
+
+    * `locate` — the lane's existing write path (its old `Locate …` menu item's
+      slot). It persists immediately and re-gates its own menus.
+    * `value` — what is stored now, or None.
+    * `resolves` — whether that stored value is still usable. Different per tool
+      on purpose: an executable is a file, the panGen runtime is a repo root
+      (`validate_re_phpgen_root`), and NOTHING here re-derives either.
+    """
+
+    key: str
+    title: str
+    dependents: str
+    locate: Callable[[object], None]
+    value: Callable[[object], str | None]
+    resolves: Callable[[object], bool]
+    broken_note: str
+
+
+def _is_file(path: str | None) -> bool:
+    if not path:
+        return False
+    try:
+        return Path(path).is_file()
+    except OSError:  # pragma: no cover - a path the OS refuses to even stat
+        return False
+
+
+#: The three tools, as data. Adding a fourth is one row — the same property
+#: `SETTINGS_PANES` has, one level down, and the reason this pane is ONE pane
+#: rather than three (all three are app-wide locators over a single
+#: `generator_config.json`; three panes would fragment a grouped concept).
+EXTERNAL_TOOLS: tuple[ExternalTool, ...] = (
+    ExternalTool(
+        key="php_generator",
+        title="PHP Generator executable",
+        dependents="Generation ▸ Generate PHP",
+        locate=lambda window: window._gen_ui.locate_generator(),
+        value=lambda window: window._gen_ui.generator_executable_path(),
+        resolves=lambda window: _is_file(window._gen_ui.generator_executable_path()),
+        broken_note=(
+            "that file is gone or is not a file any more — Generate PHP will "
+            "fail at run time until it is set again"
+        ),
+    ),
+    ExternalTool(
+        key="pangen_runtime",
+        title="panGen runtime (re_phpgen repo root)",
+        dependents="Generation ▸ panGen, rePHPgen and Save reJSON",
+        locate=lambda window: window._gen_ui.locate_pangen_runtime(),
+        value=lambda window: window._gen_ui.pangen_runtime_root(),
+        resolves=lambda window: window._gen_ui.pangen_runtime_is_valid(),
+        broken_note=(
+            "that folder does not look like the re_phpgen repo (no src/re_phpgen) "
+            "— panGen, rePHPgen and Save reJSON stay unavailable"
+        ),
+    ),
+    ExternalTool(
+        key="php_linter",
+        title="PHP linter (`php` executable)",
+        dependents="Tools ▸ Lint Current File and Lint on Save",
+        locate=lambda window: window._lint_ui.locate_linter(),
+        value=lambda window: window._lint_ui.linter_executable_path(),
+        resolves=lambda window: _is_file(window._lint_ui.linter_executable_path()),
+        broken_note=(
+            "that file is gone or is not a file any more — a lint run will "
+            "report it rather than pass silently"
+        ),
+    ),
+)
+
+
+class ExternalToolsPane(QDialog):
+    """`Software settings ▸ External tools` (FQ-260812025705) — the three
+    app-wide external binaries: the vendor PHP Generator, the panGen runtime and
+    the PHP linter.
+
+    RELOCATION, NOT DUPLICATION
+    ---------------------------
+    `Generation ▸ Locate PHP Generator Executable…`,
+    `Generation ▸ Locate panGen Runtime…` and `Tools ▸ Locate PHP Linter…` are
+    **gone**. This pane is their sole home, exactly as this dialog is the sole
+    home of the four surfaces it absorbed first. All three stores are app-wide
+    (`generator_config.json` in the app data dir), which is what puts them here
+    rather than in per-project settings — the sibling per-project PostgreSQL
+    binaries (`FQ-260812025353`) stay in Project settings for the mirror-image
+    reason, and the two must not be unified.
+
+    NOTHING HERE RE-IMPLEMENTS A STORE
+    ----------------------------------
+    Each row's Browse button calls the owning lane's existing locate method, so
+    the file dialog, the validation, the `generator_config.json` write that
+    preserves its sibling keys, and the status-bar line are all the shipped,
+    already-tested code. This pane reads back through the lanes' read-only
+    accessors and never learns where `config_dir` points.
+
+    `resolve_tool` (the per-project PostgreSQL locator's helper) is deliberately
+    NOT reused: it is keyed on a FOLDER holding a known binary name, and two of
+    these three store a full executable PATH. The reusable parts of that feature
+    are its `Which`-shaped seam and its warn-don't-block status line — not its
+    folder semantics.
+
+    THE APPLY CONTRACT — immediate, and that is the pane's own contract
+    ------------------------------------------------------------------
+    **Browse persists immediately**, so this pane has no OK/Cancel and adds none
+    to the host, whose only button stays `Close`. That is not a gap in the
+    dialog's contract, it is the same shape as `ThemesPane`'s *Use this theme*:
+    a single-value pick through a file dialog is already a confirmed gesture, and
+    the picker IS the OK. Buffering it would invent a fifth apply semantics and
+    give a non-modal window a body of unsaved state — the two grounds on which a
+    host-level buffer was rejected in the first place.
+
+    Because nothing is buffered, nothing can go stale: each pick refreshes this
+    pane's status lines, and the lane re-gates its own menu entries in the same
+    call. There is also no `finished` for the host to rebuild on, which is
+    correct — a pane holding no edit buffer has nothing to rebuild from.
+
+    WARN, DO NOT BLOCK
+    ------------------
+    A stored path that no longer resolves is stated in the status line rather
+    than erased or refused. For the panGen runtime the operations really are
+    greyed (an invalid root cannot run), but for the two executables the
+    operation stays reachable and reports the failure itself — §22's lint run in
+    particular diagnoses a missing binary better than this pane can guess.
+    """
+
+    def __init__(self, window, parent=None, *, tools=EXTERNAL_TOOLS):
+        super().__init__(parent)
+        self.setWindowTitle("External tools")
+        self._window = window
+        self._tools = tuple(tools)
+        #: tool key -> its status line. `StatusLabel`, never a hand-rolled
+        #: `setStyleSheet("color: …")`: it remembers the KIND and re-derives the
+        #: colour on a theme flip, which a stored colour cannot (and this dialog
+        #: can be open across a flip, since the Themes pane is one click away).
+        self._status_labels: dict[str, StatusLabel] = {}
+        self._value_labels: dict[str, QLabel] = {}
+
+        layout = QVBoxLayout(self)
+        for tool in self._tools:
+            layout.addWidget(self._build_group(tool))
+        layout.addStretch(1)
+        self.refresh()
+
+    def _build_group(self, tool: ExternalTool) -> QGroupBox:
+        group = QGroupBox(tool.title, self)
+        rows = QVBoxLayout(group)
+        needs = QLabel(f"Needed by: {tool.dependents}.", group)
+        needs.setWordWrap(True)
+        rows.addWidget(needs)
+
+        line = QHBoxLayout()
+        value = QLabel("", group)
+        value.setWordWrap(True)
+        value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._value_labels[tool.key] = value
+        line.addWidget(value, 1)
+        browse = QPushButton("Browse…", group)
+        browse.setAutoDefault(False)
+        browse.clicked.connect(lambda _checked=False, key=tool.key: self.locate(key))
+        line.addWidget(browse)
+        rows.addLayout(line)
+
+        status = StatusLabel("", group)
+        status.setWordWrap(True)
+        self._status_labels[tool.key] = status
+        rows.addWidget(status)
+        return group
+
+    # -- gestures --------------------------------------------------------------
+
+    def locate(self, key: str) -> None:
+        """Run `key`'s locate gesture, then restate what is stored.
+
+        The lane persists and re-gates its own menu entries; this only re-reads.
+        A cancelled file dialog is a no-op in the lane, so the refresh simply
+        redraws the same thing.
+        """
+        tool = self.tool_for(key)
+        if tool is None:
+            return
+        tool.locate(self._window)
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Re-read all three stores and repaint every row."""
+        for tool in self._tools:
+            stored = tool.value(self._window)
+            label = self._value_labels[tool.key]
+            status = self._status_labels[tool.key]
+            if not stored:
+                label.setText("<i>Not set</i>")
+                status.set_status(
+                    f"Not set — {tool.dependents} stay unavailable until it is.",
+                    STATUS_WARNING,
+                )
+                continue
+            label.setText(str(stored))
+            if tool.resolves(self._window):
+                status.set_status("Found.", STATUS_OK)
+            else:
+                status.set_status(tool.broken_note.capitalize() + ".", STATUS_ERROR)
+
+    # -- read-only surface / test seam -----------------------------------------
+
+    def tool_keys(self) -> list[str]:
+        return [tool.key for tool in self._tools]
+
+    def tool_for(self, key: str) -> ExternalTool | None:
+        for tool in self._tools:
+            if tool.key == key:
+                return tool
+        return None
+
+    def stored_value(self, key: str) -> str:
+        """What the row DISPLAYS for `key` — the assertable form of the store."""
+        return self._value_labels[key].text()
+
+    def status_kind(self, key: str) -> str | None:
+        return self._status_labels[key].status_kind()
+
+    def status_text(self, key: str) -> str:
+        return self._status_labels[key].text()
+
+
+#: The panes, in list order. SIX — see the module docstring.
 SETTINGS_PANES: tuple[SettingsPane, ...] = (
     SettingsPane(
         key="snippets",
@@ -631,6 +898,15 @@ SETTINGS_PANES: tuple[SettingsPane, ...] = (
             "duplicate it, and edit its chrome, editor and syntax colours."
         ),
         build=_themes_pane,
+    ),
+    SettingsPane(
+        key="external_tools",
+        title="External tools",
+        blurb=(
+            "Where the app-wide external binaries live: the vendor PHP "
+            "Generator, the panGen runtime, and the PHP linter."
+        ),
+        build=_external_tools_pane,
     ),
 )
 

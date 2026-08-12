@@ -1257,6 +1257,12 @@ class MainWindow(QMainWindow):
         #: reason as the three above, and the same reason for the pair map below.
         self._sandbox_ddl_explorer_action = None
         self._ddl_explorer_actions = {}
+        #: Roles whose menu action is currently being re-synced *by* the lockstep
+        #: handler (`_on_ddl_explorer_visibility_changed`), so
+        #: `_on_ddl_explorer_toggled` can tell that `toggled` apart from a user
+        #: gesture (BUG-260812071208). The lockstep itself is BUG-007's fix and
+        #: stays; only its echo back into the opener is suppressed.
+        self._ddl_explorer_syncing: set[str] = set()
         # `Database ▸ Sandbox Setup…` used to live here. It is DELETED (owner
         # ruling, 2026-08-09): Provision / Reset / "create a sandbox database
         # for me" now live in Project Settings' sandbox group, which is what
@@ -1618,6 +1624,13 @@ class MainWindow(QMainWindow):
         )
         # Reflect the persisted §22 toggle on the menu item built above.
         self._lint_on_save_action.setChecked(self._lint_ui.lint_on_save)
+        # FQ-260812025705: both Tools lint entries are gated on a configured
+        # linter. The lane owns the RULE (it reads the store); the menu items are
+        # the host's, so the host hands them over -- the same split as
+        # `tab_lint_settings`, and it keeps the settings pane out of both.
+        self._lint_ui.register_dependent_actions(
+            self._lint_action, self._lint_on_save_action
+        )
         # §21: files can be dropped onto the window (handled by dragEnterEvent /
         # dropEvent below, which delegate the classification to `_php_tabs`).
         self.setAcceptDrops(True)
@@ -4636,6 +4649,23 @@ class MainWindow(QMainWindow):
         )
 
     def _on_ddl_explorer_toggled(self, checked, role=DDL_EXPLORER_TARGET):
+        """The Database-menu toggle for `role`, and ONLY when a user moved it.
+
+        BUG-260812071208: `_on_ddl_explorer_visibility_changed` keeps the menu
+        entry in lockstep with the tab (BUG-007, §18.1 "Bidirectional
+        lockstep"), and from an UNCHECKED action its `setChecked(True)` emits
+        `toggled` right back here -- which re-entered `_open_ddl_explorer` and
+        ran a second seven-statement introspection round trip per open. That
+        echo is what `_ddl_explorer_syncing` marks; the lockstep stays.
+
+        A menu click never took this path: `QAction::activate` sets `checked`
+        BEFORE emitting `toggled`, so the later `setChecked(True)` was already a
+        silent no-op. The gestures that doubled were the ones that opened from
+        the unchecked state -- `Database ▸ Reload DDL` with the Explorer closed,
+        and a close during an in-flight fetch.
+        """
+        if role in self._ddl_explorer_syncing:
+            return
         if checked:
             self._open_ddl_explorer(role)
         else:
@@ -4851,7 +4881,18 @@ class MainWindow(QMainWindow):
             self.left_tabs.setTabVisible(self._ddl_browser_tab_indexes[role], False)
         action = self._ddl_explorer_actions.get(role)
         if action is not None:
-            action.setChecked(visible)
+            # BUG-260812071208: mark this `setChecked` as the handler's own menu
+            # echo so `_on_ddl_explorer_toggled` does not read it as a user
+            # gesture and open (i.e. re-fetch) again. Deliberately NOT
+            # `QSignalBlocker`/`blockSignals`: those also suppress `changed()`,
+            # and the Main Toolbar pins this very same `QAction`
+            # (`toolbar_controller.py`), so a pinned button would keep a stale
+            # checked look until something else re-emitted it.
+            self._ddl_explorer_syncing.add(role)
+            try:
+                action.setChecked(visible)
+            finally:
+                self._ddl_explorer_syncing.discard(role)
 
     def _refresh_ddl_explorer_affordances(self) -> None:
         """Make the sandbox Explorer's presence follow whether the open project
@@ -8115,20 +8156,25 @@ class MainWindow(QMainWindow):
         # `LEGACY_ID_ALIASES` was updated in the same commit (it is one of the
         # default toolbar buttons).
         #
-        # §22 PHP lint stays HERE, with `Lint on Save` and `Locate PHP Linter…`:
-        # whether all three follow Validate onto Parsing is an open item (§29),
-        # and moving only `Lint Current File` would split lint across two bars.
-        # All three feed the one Audit panel -- `[Lint]`, never `[Validate]`'s or
-        # §18.5's `[Check]` prefix. Lambdas: `_lint_ui` is built after the menu.
-        lint_action = menu.addAction("Lint Current File")
-        lint_action.triggered.connect(lambda: self._lint_ui.lint_active_file())
+        # §22 PHP lint stays HERE, with `Lint on Save`: whether both follow
+        # Validate onto Parsing is an open item (§29), and moving only
+        # `Lint Current File` would split lint across two bars. Both feed the one
+        # Audit panel -- `[Lint]`, never `[Validate]`'s or §18.5's `[Check]`
+        # prefix. Lambdas: `_lint_ui` is built after the menu.
+        #
+        # `Locate PHP Linter…` is NOT here any more (FQ-260812025705): it MOVED
+        # into `Settings ▸ Software settings… ▸ External tools`, the app's one
+        # settings home, together with the two `Generation ▸ Locate …` items.
+        # What replaced it as the cue is these two entries' ENABLED STATE --
+        # registered with the lint lane below (`register_dependent_actions`),
+        # which greys them and states the reason while no linter is configured.
+        self._lint_action = menu.addAction("Lint Current File")
+        self._lint_action.triggered.connect(lambda: self._lint_ui.lint_active_file())
         self._lint_on_save_action = menu.addAction("Lint on Save")
         self._lint_on_save_action.setCheckable(True)
         self._lint_on_save_action.toggled.connect(
             lambda checked: self._lint_ui.set_lint_on_save(checked)
         )
-        locate_linter_action = menu.addAction("Locate PHP Linter…")
-        locate_linter_action.triggered.connect(lambda: self._lint_ui.locate_linter())
         menu.addSeparator()
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._doc_ui.reparse)

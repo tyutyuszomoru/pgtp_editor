@@ -47,6 +47,7 @@ from pgtp_editor.ui.lint_controller import (
     LINT_TARGET_ROLE,
     LintController,
 )
+from pgtp_editor.ui.software_settings_dialog import EXTERNAL_TOOLS_SETTINGS_PATH
 from pgtp_editor.ui.ui_shell import UiShell
 
 
@@ -278,7 +279,8 @@ def test_an_unconfigured_linter_is_reported_not_swallowed(controller):
 
     rows = _rows(built.audit)
     assert rows and "no PHP linter is configured" in rows[0]
-    assert "Locate PHP Linter" in rows[0]
+    # Re-pointed by FQ-260812025705, which removed the menu item this named.
+    assert EXTERNAL_TOOLS_SETTINGS_PATH in rows[0]
 
 
 def test_a_tab_opened_without_a_service_still_lints(controller):
@@ -381,7 +383,7 @@ def test_a_lint_failure_never_unwinds_the_save(controller, tmp_path):
     assert any("could not be started" in row for row in _rows(built.audit))
 
 
-# -- Tools ▸ Locate PHP Linter… ----------------------------------------------
+# -- locating the linter (now driven by Software settings ▸ External tools) ---
 
 
 def test_locate_linter_persists_the_path_into_section_19s_config_file(
@@ -491,8 +493,15 @@ def test_tools_lint_current_file_reports_into_the_audit_panel(qtbot, tmp_path):
     from tests.ui._menu_helpers import find_action
 
     window = _window(qtbot, tmp_path)
+    # FQ-260812025705 gates this entry on a configured linter, and a disabled
+    # QAction does not fire — so the gesture has to be reachable before it can
+    # be driven. Configuring it through the lane's own write path is also what a
+    # user does now (from the External tools pane).
+    window._lint_ui._choose_executable = lambda: "/usr/bin/php"
+    window._lint_ui.locate_linter()
     action = find_action(_tools(window), "Lint Current File")
     assert action is not None
+    assert action.isEnabled() is True
 
     action.trigger()
 
@@ -501,15 +510,57 @@ def test_tools_lint_current_file_reports_into_the_audit_panel(qtbot, tmp_path):
     assert "no custom-PHP tab is active" in rows[-1]
 
 
-def test_tools_locate_php_linter_writes_the_config_key(qtbot, tmp_path):
+def test_tools_no_longer_offers_locate_php_linter(qtbot, tmp_path):
+    """FQ-260812025705 MOVED it into `Settings ▸ Software settings… ▸ External
+    tools`. Removed, not duplicated — so `Tools` must not still carry it."""
+    from tests.ui._menu_helpers import action_labels, find_action
+
+    window = _window(qtbot, tmp_path)
+
+    assert find_action(_tools(window), "Locate PHP Linter…") is None
+    assert not [label for label in action_labels(_tools(window)) if "Locate" in label]
+
+
+def test_both_tools_lint_entries_are_greyed_until_a_linter_is_configured(
+    qtbot, tmp_path
+):
+    """The greyed entry is what REPLACED the Locate menu item as the cue, so it
+    has to carry the address in its tooltip — a dead command with no explanation
+    would be strictly worse than the error-on-trigger it replaced."""
     from tests.ui._menu_helpers import find_action
 
     window = _window(qtbot, tmp_path)
+    entries = [
+        find_action(_tools(window), "Lint Current File"),
+        find_action(_tools(window), "Lint on Save"),
+    ]
+
+    for action in entries:
+        assert action.isEnabled() is False
+        assert EXTERNAL_TOOLS_SETTINGS_PATH in action.toolTip()
+
     window._lint_ui._choose_executable = lambda: "/usr/bin/php"
+    window._lint_ui.locate_linter()  # what the External tools pane calls
 
-    find_action(_tools(window), "Locate PHP Linter…").trigger()
+    for action in entries:
+        assert action.isEnabled() is True
+        # An empty tooltip makes `QAction.toolTip()` fall back to the action's
+        # own text, so the assertion is that the REASON is gone, not that the
+        # string is empty.
+        assert EXTERNAL_TOOLS_SETTINGS_PATH not in action.toolTip()
 
-    assert load_lint_executable_path(tmp_path / "cfg") == "/usr/bin/php"
+
+def test_locating_the_linter_regates_the_entries_without_a_restart(qtbot, tmp_path):
+    """The core of the feature is the LIVE refresh: the pane sets the binary and
+    the menus must follow in the same gesture."""
+    window = _window(qtbot, tmp_path)
+    lint_entry_enabled = lambda: window._lint_action.isEnabled()
+    assert lint_entry_enabled() is False
+
+    window._lint_ui._choose_executable = lambda: "/usr/bin/php"
+    window._lint_ui.locate_linter()
+
+    assert lint_entry_enabled() is True
 
 
 def test_tools_lint_on_save_is_checkable_and_persists(qtbot, tmp_path):

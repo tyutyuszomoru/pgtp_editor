@@ -84,6 +84,7 @@ from pgtp_editor.lint.findings import LINT_AUDIT_TARGET, LINT_PREFIX
 from pgtp_editor.lint.service import LintService
 from pgtp_editor.ui import modals
 from pgtp_editor.ui.file_filters import executable_filter
+from pgtp_editor.ui.software_settings_dialog import EXTERNAL_TOOLS_SETTINGS_PATH
 from pgtp_editor.ui.ui_shell import UiShell
 
 _log = logging.getLogger(__name__)
@@ -101,7 +102,14 @@ LINT_TAB_KEY_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
 class LintController(QObject):
-    """Tools ▸ Lint Current File / Locate PHP Linter… / Lint on Save (§22)."""
+    """Tools ▸ Lint Current File / Lint on Save, plus the linter location (§22).
+
+    The location's own menu item is gone: `Locate PHP Linter…` MOVED to
+    `Settings ▸ Software settings… ▸ External tools` (FQ-260812025705), which
+    drives :meth:`locate_linter` from there. In exchange, the two Tools entries
+    are now GATED on a configured linter (:meth:`refresh_tool_affordances`)
+    instead of being always enabled and reporting `NOT RUN` at trigger time.
+    """
 
     def __init__(
         self,
@@ -126,6 +134,12 @@ class LintController(QObject):
         self._lint_on_save = bool(
             self._settings.value(LINT_ON_SAVE_SETTINGS_KEY, False, type=bool)
         )
+        #: The Tools entries FQ-260812025705 greys while no linter is configured.
+        #: The host BUILDS them (they live on its Tools menu) and registers them
+        #: here, so this lane owns the *rule* without owning the menu -- the same
+        #: split as `tab_lint_settings`, and the reason the pane can stay out of
+        #: both.
+        self._dependent_actions: list = []
 
     # -- read-only surface ----------------------------------------------------
 
@@ -144,6 +158,49 @@ class LintController(QObject):
         `lint_settings` seam, which is how the service reaches a tab without
         either controller importing the other."""
         return self._service, self._lint_on_save
+
+    # -- the linter location, and what depends on it ---------------------------
+
+    def linter_executable_path(self) -> str | None:
+        """The stored `php` path, or None. Read-only surface for the
+        `External tools` settings pane, so the pane never learns which file the
+        path is stored in."""
+        return load_lint_executable_path(base_dir=self._config_dir)
+
+    def linter_is_configured(self) -> bool:
+        """Whether a linter path is stored at all.
+
+        Deliberately NOT "and the file still exists": §22 is advisory, and its
+        `EXECUTABLE_MISSING` outcome already reports a vanished binary as a
+        `[Lint]` row. Greying on existence would make a lint run's own diagnosis
+        unreachable, which is the opposite of stating the reason.
+        """
+        return self.linter_executable_path() is not None
+
+    def register_dependent_actions(self, *actions) -> None:
+        """Hand over the Tools entries that need a linter, and gate them now."""
+        self._dependent_actions = [action for action in actions if action is not None]
+        self.refresh_tool_affordances()
+
+    def refresh_tool_affordances(self) -> None:
+        """Re-evaluate the registered entries' enabled state.
+
+        Called on registration (so startup is gated, not only a later change)
+        and by `locate_linter`, which is what makes setting the linter in the
+        settings pane light the Tools entries up LIVE.
+        """
+        enabled = self.linter_is_configured()
+        for action in self._dependent_actions:
+            action.setEnabled(enabled)
+            # A greyed entry states its reason (FQ-023's principle): the Locate
+            # item that used to be the only pointer has moved, so the tooltip
+            # has to carry the address.
+            action.setToolTip(
+                ""
+                if enabled
+                else "Unavailable: no PHP linter is configured. Set it in "
+                f"{EXTERNAL_TOOLS_SETTINGS_PATH}."
+            )
 
     # -- the on-save toggle ---------------------------------------------------
 
@@ -191,10 +248,14 @@ class LintController(QObject):
             tab.set_lint_service(self._service)
         return bool(tab.request_lint())
 
-    # -- Tools ▸ Locate PHP Linter… ------------------------------------------
+    # -- locating the linter (driven by Software settings ▸ External tools) ----
 
     def locate_linter(self) -> None:
         """Point `lint_executable_path` at a `php` executable.
+
+        No longer a `Tools` menu item: FQ-260812025705 MOVED it into
+        `Settings ▸ Software settings… ▸ External tools`, which is now its sole
+        entry point and calls this method. How it persists did not change.
 
         Writes through `lint/config.py`, which persists into §19's existing
         `generator_config.json` preserving its other keys -- there is
@@ -211,6 +272,9 @@ class LintController(QObject):
                 f"The PHP linter path could not be stored:\n\n{exc}",
             )
             return
+        # Live gating: the pane calls this, so the Tools entries must un-grey
+        # without a restart.
+        self.refresh_tool_affordances()
         self._shell.status(f"PHP linter set: {Path(path).name}", 5000)
 
     def _default_choose_executable(self) -> str:

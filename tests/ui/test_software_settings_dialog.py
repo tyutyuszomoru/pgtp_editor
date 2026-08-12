@@ -34,6 +34,8 @@ and nothing here calls `.exec()`.
 """
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QDialog, QDialogButtonBox
@@ -51,6 +53,7 @@ from pgtp_editor.ui.software_settings_dialog import (
     SETTINGS_PANES,
     SoftwareSettingsDialog,
 )
+from pgtp_editor.ui.status_colours import STATUS_ERROR, STATUS_OK, STATUS_WARNING
 from pgtp_editor.ui.toolbar_registry import command_id_for
 from tests.ui._menu_helpers import find_action, find_top_menu
 
@@ -169,6 +172,14 @@ def test_the_four_absorbed_command_ids_no_longer_ENUMERATE(window):
         "view.customize-shortcuts",
         "settings.edit-snippets",
         "settings.autoformatter-settings",
+        # FQ-260812025705's three, on the same terms: no successor id means
+        # "locate the PHP Generator", so a stored pin naming one is dropped
+        # rather than aliased. (No `RENAMED_ID_ALIASES` row for these — an alias
+        # exists to keep a pinned button working, and there is no command left
+        # for such a button to fire.)
+        "generation.locate-php-generator-executable",
+        "generation.locate-pangen-runtime",
+        "tools.locate-php-linter",
     ):
         assert gone not in commands, gone
     assert COMMAND_ID in commands
@@ -177,7 +188,7 @@ def test_the_four_absorbed_command_ids_no_longer_ENUMERATE(window):
 # -- the panes -----------------------------------------------------------------
 
 
-def test_five_panes_ship_and_the_two_SUPERSEDED_ones_are_ABSENT(window):
+def test_six_panes_ship_and_the_two_SUPERSEDED_ones_are_ABSENT(window):
     """DEC-260812004400 is answered by a REAL fifth pane, not by a stub.
 
     FQ-260812002828 (syntax highlight colors) and FQ-260812002829 (color scheme)
@@ -189,6 +200,9 @@ def test_five_panes_ship_and_the_two_SUPERSEDED_ones_are_ABSENT(window):
     dialog = _open(win)
     assert dialog.pane_keys() == [
         "snippets", "toolbar", "autoformatter", "shortcuts", "themes",
+        # The sixth: FQ-260812025705's three app-wide external-tool locators,
+        # which cost exactly one `SETTINGS_PANES` row.
+        "external_tools",
     ]
     assert dialog.pane_titles() == [
         "Snippets",
@@ -196,6 +210,7 @@ def test_five_panes_ship_and_the_two_SUPERSEDED_ones_are_ABSENT(window):
         "Autoformatter",
         "Keyboard shortcuts",
         "Themes",
+        "External tools",
     ]
     for absent in ("syntax-highlight-colors", "color-scheme", "theme"):
         assert dialog.pane_for(absent) is None
@@ -311,6 +326,7 @@ def test_the_menu_ACTION_opens_the_dialog_on_a_FRESH_window(window):
     assert isinstance(dialog, SoftwareSettingsDialog)
     assert dialog.pane_keys() == [
         "snippets", "toolbar", "autoformatter", "shortcuts", "themes",
+        "external_tools",
     ]
 
 
@@ -778,3 +794,210 @@ def test_the_pane_has_NO_keyboard_shortcut_of_its_own(window, themes):
     assert pane.actions() == []
     assert [s.key().toString() for s in pane.findChildren(__import__(
         "PySide6.QtGui", fromlist=["QShortcut"]).QShortcut)] == []
+
+
+# -- the External tools pane (FQ-260812025705) ---------------------------------
+#
+# One pane holding the three APP-WIDE external-tool locators, which is why they
+# are here and not in Project settings: all three live in `generator_config.json`
+# in the app data dir, while the sibling per-project PostgreSQL binaries
+# (FQ-260812025353) live in `.ddlproject/settings.json`. The scope difference IS
+# the reason for the split, so nothing below may be generalised across it.
+
+
+def _external_tools_pane(win):
+    dialog = _open(win)
+    pane = dialog.pane_widget("external_tools")
+    assert pane is not None
+    return pane
+
+
+def _phpgen_exe(tmp_path):
+    exe = tmp_path / "phpgen.exe"
+    exe.write_text("", encoding="utf-8")
+    return exe
+
+
+def test_the_pane_lists_the_three_app_wide_binaries(window):
+    win = window()
+    pane = _external_tools_pane(win)
+    assert pane.tool_keys() == ["php_generator", "pangen_runtime", "php_linter"]
+
+
+def test_every_unset_binary_reads_as_a_WARNING_naming_what_it_blocks(window):
+    """Warn, do not block, and never silently: the status line is the pane's own
+    account of a store that is empty, and it names the operations the user will
+    find greyed out."""
+    win = window()
+    pane = _external_tools_pane(win)
+
+    for key in pane.tool_keys():
+        assert pane.status_kind(key) == STATUS_WARNING
+        assert "Not set" in pane.status_text(key)
+    assert "Generate PHP" in pane.status_text("php_generator")
+    assert "panGen" in pane.status_text("pangen_runtime")
+    assert "Lint Current File" in pane.status_text("php_linter")
+
+
+def test_a_status_line_is_a_StatusLabel_reading_colours_through_the_theme(window):
+    """No hardcoded colour anywhere in the pane: `StatusLabel` remembers the KIND
+    and re-derives from the live palette, which is what makes a theme flip while
+    this dialog is open (one pane away) come out right."""
+    from pgtp_editor.ui.status_colours import StatusLabel, status_colour
+
+    win = window()
+    pane = _external_tools_pane(win)
+    label = pane._status_labels["php_generator"]
+
+    assert isinstance(label, StatusLabel)
+    assert status_colour(STATUS_WARNING, True) != status_colour(STATUS_WARNING, False)
+
+
+def test_browse_writes_through_the_LANE_and_the_pane_restates_it(window, tmp_path):
+    """The pane re-implements no store: Browse calls the generation lane's own
+    `locate_generator`, which is the shipped, already-tested write path into
+    `generator_config.json`."""
+    from pgtp_editor.generation.config import load_executable_path
+
+    win = window()
+    pane = _external_tools_pane(win)
+    exe = _phpgen_exe(tmp_path)
+    with patch(
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
+        return_value=(str(exe), "Executables (*.exe)"),
+    ):
+        pane.locate("php_generator")
+
+    assert load_executable_path(base_dir=tmp_path) == str(exe)
+    assert pane.stored_value("php_generator") == str(exe)
+    assert pane.status_kind("php_generator") == STATUS_OK
+
+
+def test_a_stored_path_that_no_longer_resolves_reads_as_an_ERROR(window, tmp_path):
+    """Warn-don't-block's other half: a vanished binary is STATED, not erased and
+    not refused. `Generate PHP` stays reachable and reports the failure itself."""
+    from pgtp_editor.generation.config import save_executable_path
+
+    save_executable_path(str(tmp_path / "gone.exe"), base_dir=tmp_path)
+    win = window()
+    pane = _external_tools_pane(win)
+
+    assert pane.status_kind("php_generator") == STATUS_ERROR
+    assert "gone" in pane.stored_value("php_generator")
+
+
+def test_browse_on_the_linter_row_goes_through_the_LINT_lane(window, tmp_path):
+    from pgtp_editor.lint.config import load_lint_executable_path
+
+    win = window()
+    win._lint_ui._choose_executable = lambda: "/usr/bin/php"
+    pane = _external_tools_pane(win)
+
+    pane.locate("php_linter")
+
+    assert load_lint_executable_path(tmp_path) == "/usr/bin/php"
+    assert pane.stored_value("php_linter") == "/usr/bin/php"
+
+
+def test_setting_a_binary_in_the_pane_UNGREYS_its_operations_live(window, tmp_path):
+    """The core of the feature. Setting the binary here must re-enable the
+    dependent menu entries in the same gesture — no restart, and no host-level
+    apply step, because the lane re-gates itself from inside its own locate."""
+    win = window()
+    generation = find_top_menu(win, "Generation")
+    generate = find_action(generation, "Generate PHP...")
+    assert generate.isEnabled() is False
+
+    pane = _external_tools_pane(win)
+    exe = _phpgen_exe(tmp_path)
+    with patch(
+        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
+        return_value=(str(exe), "Executables (*.exe)"),
+    ):
+        pane.locate("php_generator")
+
+    assert generate.isEnabled() is True
+
+
+def test_the_pangen_operations_are_gated_on_a_VALID_root_not_a_stored_one(
+    window, tmp_path
+):
+    """A stored-but-dead root greys panGen/rePHPgen/Save reJSON too, not only an
+    empty one: a moved checkout would otherwise leave three enabled entries that
+    cannot run. The pane says the same thing in its status line."""
+    from pgtp_editor.generation.config import save_re_phpgen_root
+
+    save_re_phpgen_root(str(tmp_path / "not-the-repo"), base_dir=tmp_path)
+    win = window()
+    generation = find_top_menu(win, "Generation")
+    entries = [
+        find_action(generation, "panGen (Generate Own PHP)"),
+        find_action(generation, "rePHPgen (Analyze Gap)"),
+        find_action(generation, "Save reJSON..."),
+    ]
+    for action in entries:
+        assert action.isEnabled() is False
+        assert "panGen runtime" in action.toolTip()
+
+    pane = _external_tools_pane(win)
+    assert pane.status_kind("pangen_runtime") == STATUS_ERROR
+
+    root = tmp_path / "re_phpgen"
+    (root / "src" / "re_phpgen").mkdir(parents=True)
+    with patch(
+        "pgtp_editor.ui.modals.QFileDialog.getExistingDirectory",
+        return_value=str(root),
+    ):
+        pane.locate("pangen_runtime")
+
+    assert pane.status_kind("pangen_runtime") == STATUS_OK
+    assert find_action(generation, "panGen (Generate Own PHP)").isEnabled() is True
+    assert find_action(generation, "rePHPgen (Analyze Gap)").isEnabled() is True
+    # Save reJSON keeps its OWN extra condition -- a gap analysis must have
+    # produced a JSON -- so a valid runtime alone does not enable it.
+    assert find_action(generation, "Save reJSON...").isEnabled() is False
+
+
+def test_the_pane_adds_NO_host_level_apply(window):
+    """The dialog's settled contract: each pane keeps its own apply and the host
+    adds none, its only button being `Close`. This pane's apply is the picker
+    itself — Browse persists immediately, exactly like `ThemesPane`'s
+    *Use this theme* — so it holds NO edit buffer and offers no OK/Cancel that
+    could imply one."""
+    win = window()
+    dialog = _open(win)
+    pane = dialog.pane_widget("external_tools")
+
+    assert pane.findChildren(QDialogButtonBox) == []
+    host_buttons = [
+        dialog.button_box.standardButtons() & flag
+        for flag in (
+            QDialogButtonBox.StandardButton.Ok,
+            QDialogButtonBox.StandardButton.Apply,
+        )
+    ]
+    assert not any(host_buttons)
+
+
+def test_the_pane_claims_NO_keyboard_shortcut(window):
+    """No chord is invented (DEC-012 / the `Settings` convention): the three
+    commands this pane absorbed carried none, so removing them frees none and
+    the pane may claim none."""
+    from PySide6.QtGui import QShortcut
+
+    win = window()
+    pane = _external_tools_pane(win)
+    assert pane.actions() == []
+    assert pane.findChildren(QShortcut) == []
+
+
+def test_lints_own_copy_of_the_settings_ADDRESS_matches_the_dialogs(window):
+    """`lint/findings.py` must not import a UI module, so it carries the address
+    as a literal. This is the test that keeps the copy from drifting — the whole
+    reason a moved surface stays findable."""
+    from pgtp_editor.lint.findings import (
+        EXTERNAL_TOOLS_SETTINGS_PATH as lint_copy,
+    )
+    from pgtp_editor.ui.software_settings_dialog import EXTERNAL_TOOLS_SETTINGS_PATH
+
+    assert lint_copy == EXTERNAL_TOOLS_SETTINGS_PATH

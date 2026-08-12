@@ -685,9 +685,12 @@ def test_tools_menu_contents(qtbot):
         # Caption Management tab's own permanent Find/Replace bar.
         "Manage Captions...", "―",
         # "Validate Project" MOVED to the Editor bar's Parsing menu (FQ-016) --
-        # it is the owner's "validate xml". §22's three lint entries stay here
-        # (§29 open item: whether all three follow it).
-        "Lint Current File", "Lint on Save", "Locate PHP Linter…", "―",
+        # it is the owner's "validate xml". §22's two lint OPERATIONS stay here
+        # (§29 open item: whether both follow it). `Locate PHP Linter…` does NOT:
+        # FQ-260812025705 moved it into `Settings ▸ Software settings… ▸ External
+        # tools` with the two `Generation ▸ Locate …` items, so all three
+        # app-wide binaries are set in one place.
+        "Lint Current File", "Lint on Save", "―",
         "Reparse Raw XML into Tree", "―",
         # NO Compare/Merge command survives here. FQ-020 took
         # `Compare / Merge Two Files...` (-> `Deployment ▸ Compare/Merge pgtp`)
@@ -739,11 +742,12 @@ def test_generation_menu_contents(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Generation")
+    # Operations only: both `Locate …` items left for `Settings ▸ Software
+    # settings… ▸ External tools` (FQ-260812025705). Their leading separators
+    # went with them -- a separator whose group is gone is a stray line.
     assert action_labels(menu) == [
-        "Locate PHP Generator Executable...", "―",
         "Generate PHP...", "―",
         "Open Output Folder", "―",
-        "Locate panGen Runtime...",
         "panGen (Generate Own PHP)",
         "rePHPgen (Analyze Gap)",
         "Save reJSON...",

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from pgtp_editor.generation.config import load_re_phpgen_root, save_re_phpgen_root
 from pgtp_editor.ui.main_window import MainWindow
+from pgtp_editor.ui.software_settings_dialog import EXTERNAL_TOOLS_SETTINGS_PATH
 
 
 class FakeRunner:
@@ -324,7 +325,10 @@ def test_generation_menu_has_new_actions(qtbot, tmp_path):
     window, fake, cfg, root = _configured_window(qtbot, tmp_path)
     menu = find_top_menu(window, "Generation")
 
-    assert find_action(menu, "Locate panGen Runtime...") is not None
+    # `Locate panGen Runtime…` is deliberately ABSENT: FQ-260812025705 moved it
+    # into `Settings ▸ Software settings… ▸ External tools` (moved, not
+    # duplicated), so the Generation menu now carries operations only.
+    assert find_action(menu, "Locate panGen Runtime...") is None
     assert find_action(menu, "panGen (Generate Own PHP)") is not None
     assert find_action(menu, "rePHPgen (Analyze Gap)") is not None
     assert find_action(menu, "Save reJSON...") is not None
@@ -582,7 +586,8 @@ def test_pangen_unconfigured_runtime_names_the_remedy(qtbot, tmp_path):
     assert mock_info.called
     message = mock_info.call_args.args[2]
     assert "runtime not found" in message
-    assert "Locate panGen Runtime" in message
+    # Re-pointed by FQ-260812025705: the menu item this used to name is gone.
+    assert EXTERNAL_TOOLS_SETTINGS_PATH in message
     assert fake.calls == []
 
 
@@ -595,7 +600,7 @@ def test_analyze_unconfigured_runtime_names_the_remedy(qtbot, tmp_path):
 
     assert mock_info.called
     message = mock_info.call_args.args[2]
-    assert "Locate panGen Runtime" in message
+    assert EXTERNAL_TOOLS_SETTINGS_PATH in message
     assert fake.calls == []
 
 
@@ -614,7 +619,7 @@ def test_pangen_stored_but_invalid_runtime_reports_the_stored_path(qtbot, tmp_pa
     message = mock_info.call_args.args[2]
     assert stored in message
     assert "no longer valid" in message
-    assert "Locate panGen Runtime" in message
+    assert EXTERNAL_TOOLS_SETTINGS_PATH in message
     assert fake.calls == []
 
 
