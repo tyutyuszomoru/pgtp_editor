@@ -1,0 +1,107 @@
+{
+  "name": "Light",
+  "light": true,
+  "qdarkstyle_base": "light",
+  "chrome": {
+    "COLOR_BACKGROUND_1": "#FAFAFA",
+    "COLOR_BACKGROUND_2": "#DFE1E2",
+    "COLOR_BACKGROUND_3": "#D2D5D8",
+    "COLOR_BACKGROUND_4": "#C0C4C8",
+    "COLOR_BACKGROUND_5": "#B4B8BC",
+    "COLOR_BACKGROUND_6": "#ACB1B6",
+    "COLOR_TEXT_1": "#19232D",
+    "COLOR_TEXT_2": "#293544",
+    "COLOR_TEXT_3": "#54687A",
+    "COLOR_TEXT_4": "#788D9C",
+    "COLOR_ACCENT_1": "#DAEDFF",
+    "COLOR_ACCENT_2": "#9FCBFF",
+    "COLOR_ACCENT_3": "#73C7FF",
+    "COLOR_ACCENT_4": "#37AEFE",
+    "COLOR_ACCENT_5": "#259AE9",
+    "COLOR_DISABLED": "#9DA9B5"
+  },
+  "palette": {
+    "Window": "#F0F0F0",
+    "WindowText": "#1E1E1E",
+    "Base": "#FFFFFF",
+    "AlternateBase": "#E9E9E9",
+    "ToolTipBase": "#FFFFDC",
+    "ToolTipText": "#1E1E1E",
+    "Text": "#1E1E1E",
+    "Button": "#E8E8E8",
+    "ButtonText": "#1E1E1E",
+    "BrightText": "#FFFFFF",
+    "Highlight": "#3874F2",
+    "HighlightedText": "#FFFFFF",
+    "Link": "#0B3D91",
+    "LinkVisited": "#551A8B",
+    "PlaceholderText": "#8A8A8A"
+  },
+  "palette_disabled": {
+    "Text": "#A0A0A0",
+    "WindowText": "#A0A0A0",
+    "ButtonText": "#A0A0A0"
+  },
+  "accents": {
+    "command_caret_background": "#E56A00",
+    "command_caret_foreground": "#FFFFFF",
+    "status_warning": "#8a5a00",
+    "connectivity_unknown": "#9E9E9E",
+    "connectivity_not_set_up": "#FFFFFF",
+    "connectivity_offline": "#D02020",
+    "connectivity_reachable": "#2E9E4F"
+  },
+  "modes": {
+    "none": [
+      "#E8E8E8",
+      "#3A3A3A"
+    ],
+    "standalone": [
+      "#E3F2FD",
+      "#0D3B66"
+    ],
+    "project": [
+      "#E6F4EA",
+      "#1B5E20"
+    ],
+    "maintenance": [
+      "#FDECEA",
+      "#8B1E1E"
+    ]
+  },
+  "decorations": {
+    "current_line": "#eef1f7",
+    "error_line": "#f7d4d4",
+    "navigation_highlight": "#cfe0ff",
+    "matching_tag": "#d3ecd3",
+    "code_region": "#eef2f5",
+    "gutter_background": "#f0f0f0",
+    "gutter_foreground": "#888888"
+  },
+  "syntax": {
+    "xml_tag": {
+      "color": "#0000ff"
+    },
+    "xml_attr_name": {
+      "color": "#e50000"
+    },
+    "xml_string": {
+      "color": "#a31515"
+    },
+    "code_keyword": {
+      "color": "#569cd6"
+    },
+    "code_string": {
+      "color": "#ce9178"
+    },
+    "code_comment": {
+      "color": "#6a9955"
+    },
+    "code_number": {
+      "color": "#b5cea8"
+    },
+    "code_variable": {
+      "color": "#9cdcfe"
+    }
+  }
+}

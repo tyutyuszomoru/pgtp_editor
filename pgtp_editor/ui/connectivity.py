@@ -45,6 +45,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QLabel
 
 from .project_status_model import QualityState, SandboxState
+from .theme_model import shared_accent
 
 #: The glyph. A filled dot for a known state, a hollow one for "not checked".
 DOT = "●"
@@ -59,14 +60,31 @@ SANDBOX_LABEL = "Sandbox"
 
 #: state -> (colour, glyph, tooltip). White = not set up, red = offline,
 #: green = reachable, grey hollow = not checked yet.
+#:
+#: The four colours come from the theme files' `connectivity_*` accents
+#: (FQ-260812021715), not from literals here. These dots are the app's one
+#: remaining THEME-BLIND colour: `_render` paints a widget-level stylesheet
+#: without consulting the palette's lightness, so there is no per-theme value to
+#: pick. `shared_accent` is therefore the right reader — it returns the value
+#: only while every bundled theme agrees on it, and raises the moment one gives
+#: the offline dot its own red. That converts "this consumer quietly ignores the
+#: theme" from an invisible property into a failing test.
 _RENDERING = {
-    UNKNOWN: ("#9E9E9E", DOT_UNKNOWN, "not checked yet"),
-    QualityState.NOT_SET_UP: ("#FFFFFF", DOT, "no connection configured"),
-    QualityState.OFFLINE: ("#D02020", DOT, "offline"),
-    QualityState.CONNECTION_OK: ("#2E9E4F", DOT, "reachable"),
-    SandboxState.NOT_SET_UP: ("#FFFFFF", DOT, "no sandbox configured"),
-    SandboxState.OFFLINE: ("#D02020", DOT, "offline"),
-    SandboxState.CONNECTED: ("#2E9E4F", DOT, "reachable"),
+    UNKNOWN: (shared_accent("connectivity_unknown"), DOT_UNKNOWN, "not checked yet"),
+    QualityState.NOT_SET_UP: (
+        shared_accent("connectivity_not_set_up"), DOT, "no connection configured",
+    ),
+    QualityState.OFFLINE: (shared_accent("connectivity_offline"), DOT, "offline"),
+    QualityState.CONNECTION_OK: (
+        shared_accent("connectivity_reachable"), DOT, "reachable",
+    ),
+    SandboxState.NOT_SET_UP: (
+        shared_accent("connectivity_not_set_up"), DOT, "no sandbox configured",
+    ),
+    SandboxState.OFFLINE: (shared_accent("connectivity_offline"), DOT, "offline"),
+    SandboxState.CONNECTED: (
+        shared_accent("connectivity_reachable"), DOT, "reachable",
+    ),
 }
 
 

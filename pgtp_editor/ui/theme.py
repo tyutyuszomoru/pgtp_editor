@@ -13,103 +13,83 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Light/Dark theme support (Sub-project D, #9).
+"""Light/Dark theme support (Sub-project D, #9) — the Qt half of the theme.
 
-Kept Qt-light and testable: ``light_palette()`` is pure (builds and returns a
-QPalette without touching any application state) and ``apply_theme`` is the only
-function that mutates the running QApplication. Tests assert palette roles
-rather than pixels.
+**Every colour this module paints comes from a FILE**, via
+`ui/theme_model.py`'s `Theme` object (FQ-260812021715). This module holds no
+colour literal of its own and must never grow one: it turns a `Theme` into the
+three things Qt understands — a `QPalette`, a recoloured qdarkstyle stylesheet,
+and the app-authored focus tail — and `apply_theme` remains the single point
+that mutates the running `QApplication`.
+
+Kept pure where it can be: ``light_palette()``/``dark_palette()`` build and
+return a `QPalette` without touching any application state, so tests assert
+palette roles rather than pixels.
+
+**How chrome recolouring actually works, and why it is NOT qdarkstyle's
+`palette=` argument.** The obvious mechanism — subclass `qdarkstyle.Palette`,
+override the colours, pass it to `load_stylesheet(palette=...)` — **does not
+work in qdarkstyle 3.2.3 and silently does nothing.** Its `_load_stylesheet`
+reads the QSS out of a *precompiled Qt resource* chosen by `palette.ID`, and
+then **replaces the caller's palette object** with the stock `DarkPalette` or
+`LightPalette` for that ID (``elif palette.ID == 'dark': palette =
+DarkPalette``). A subclass's overridden colours are therefore discarded before a
+single one is read; only the ID survives. So the recolouring is a substitution
+pass over the loaded QSS text (`_recolour_qss`), mapping each of the stock
+palette's 16 `COLOR_*` literals to the theme's. A theme names which of the two
+compiled sheets it starts from (`Theme.qdarkstyle_base`) purely to pick the
+resource — never the colours.
+
+Every NON-colour token stays at the qdarkstyle default: no shapes, no border
+radii, no padding, no spacing and no hand-authored widget QSS. "We use the
+qdarkstyle style, separate the colours, change only colours."
 """
-from PySide6.QtGui import QColor, QPalette
+import re
+
+from PySide6.QtGui import QColor, QFont, QPalette
+
+from . import theme_model
+from .theme_model import Theme, theme_for
+
+
+def qpalette_for(theme: Theme) -> QPalette:
+    """Build a COMPLETE `QPalette` from `theme`. Pure: constructs and returns a
+    fresh palette, mutating nothing.
+
+    Every role the app actually surfaces is set explicitly -- including the
+    ``Link`` role (navy in the light theme) so About-box hyperlinks read on
+    white instead of inheriting the dark-theme cyan, and the Disabled colour
+    group so greyed-out controls stay legible under the Fusion style. The role
+    list is `theme_model.PALETTE_ROLES`, and a theme file missing any of them
+    fails to load, so a partially-painted palette cannot ship.
+    """
+    palette = QPalette()
+    role = QPalette.ColorRole
+    for name in theme_model.PALETTE_ROLES:
+        palette.setColor(getattr(role, name), QColor(theme.palette[name]))
+    group = QPalette.ColorGroup.Disabled
+    for name in theme_model.DISABLED_ROLES:
+        palette.setColor(group, getattr(role, name), QColor(theme.palette_disabled[name]))
+    return palette
 
 
 def light_palette() -> QPalette:
-    """Build a COMPLETE, detectably-light QPalette (white/near-white
-    backgrounds, dark text, navy links). Pure: constructs and returns a fresh
-    palette, mutating nothing.
-
-    Every role the app actually surfaces is set explicitly -- including the
-    ``Link`` role (navy) so About-box hyperlinks read on white instead of
-    inheriting the dark-theme cyan, and the Disabled color group so greyed-out
-    controls stay legible under the Fusion style."""
-    palette = QPalette()
-    role = QPalette.ColorRole
-
-    text = QColor(0x1E, 0x1E, 0x1E)
-    palette.setColor(role.Window, QColor(0xF0, 0xF0, 0xF0))
-    palette.setColor(role.WindowText, text)
-    palette.setColor(role.Base, QColor(0xFF, 0xFF, 0xFF))
-    palette.setColor(role.AlternateBase, QColor(0xE9, 0xE9, 0xE9))
-    palette.setColor(role.ToolTipBase, QColor(0xFF, 0xFF, 0xDC))
-    palette.setColor(role.ToolTipText, text)
-    palette.setColor(role.Text, text)
-    palette.setColor(role.Button, QColor(0xE8, 0xE8, 0xE8))
-    palette.setColor(role.ButtonText, text)
-    palette.setColor(role.BrightText, QColor(0xFF, 0xFF, 0xFF))
-    palette.setColor(role.Highlight, QColor(0x38, 0x74, 0xF2))
-    palette.setColor(role.HighlightedText, QColor(0xFF, 0xFF, 0xFF))
-    palette.setColor(role.Link, QColor(0x0B, 0x3D, 0x91))
-    palette.setColor(role.LinkVisited, QColor(0x55, 0x1A, 0x8B))
-    palette.setColor(role.PlaceholderText, QColor(0x8A, 0x8A, 0x8A))
-
-    disabled = QColor(0xA0, 0xA0, 0xA0)
-    group = QPalette.ColorGroup.Disabled
-    palette.setColor(group, role.Text, disabled)
-    palette.setColor(group, role.WindowText, disabled)
-    palette.setColor(group, role.ButtonText, disabled)
-    return palette
+    """The bundled Light theme's `QPalette` -- white/near-white backgrounds,
+    dark text, navy links."""
+    return qpalette_for(theme_for(True))
 
 
 def dark_palette() -> QPalette:
-    """Build a COMPLETE, detectably-dark QPalette (dark backgrounds, light
-    text, light-cyan links) -- the explicit, tested "Light Theme off" state
-    (BUG-004). Previously "off" simply restored whatever the native/OS style
-    happened to render at startup, which only looked dark on the one platform
-    (Windows) the toggle was originally built and tested against; on any
-    other native-style baseline, toggling the light theme off produced no
-    reliably-dark result at all. Mirrors ``light_palette()``'s structure and
-    role coverage so both states are equally complete and tested."""
-    palette = QPalette()
-    role = QPalette.ColorRole
+    """The bundled Dark theme's `QPalette` -- dark backgrounds, light text,
+    light-cyan links: the explicit, tested "Light Theme off" state (BUG-004).
 
-    text = QColor(0xE0, 0xE0, 0xE0)
-    palette.setColor(role.Window, QColor(0x2B, 0x2B, 0x2B))
-    palette.setColor(role.WindowText, text)
-    palette.setColor(role.Base, QColor(0x1E, 0x1E, 0x1E))
-    palette.setColor(role.AlternateBase, QColor(0x2B, 0x2B, 0x2B))
-    palette.setColor(role.ToolTipBase, QColor(0x3A, 0x3A, 0x3A))
-    palette.setColor(role.ToolTipText, text)
-    palette.setColor(role.Text, text)
-    palette.setColor(role.Button, QColor(0x3A, 0x3A, 0x3A))
-    palette.setColor(role.ButtonText, text)
-    palette.setColor(role.BrightText, QColor(0xFF, 0x5C, 0x5C))
-    palette.setColor(role.Highlight, QColor(0x38, 0x74, 0xF2))
-    palette.setColor(role.HighlightedText, QColor(0xFF, 0xFF, 0xFF))
-    palette.setColor(role.Link, QColor(0x6C, 0xB6, 0xFF))
-    palette.setColor(role.LinkVisited, QColor(0xB1, 0x8C, 0xFF))
-    palette.setColor(role.PlaceholderText, QColor(0x8A, 0x8A, 0x8A))
-
-    disabled = QColor(0x6E, 0x6E, 0x6E)
-    group = QPalette.ColorGroup.Disabled
-    palette.setColor(group, role.Text, disabled)
-    palette.setColor(group, role.WindowText, disabled)
-    palette.setColor(group, role.ButtonText, disabled)
-    return palette
-
-
-#: The vim Command-mode block caret's `(background, foreground)`, per theme
-#: (BUG-260812001031). Lives HERE, beside `light_palette()`/`dark_palette()`,
-#: because a per-theme colour table outside this module is how a theme stops
-#: being theme-able -- the mistake `mode_indicator.py`'s docstring records.
-#: `vim_mode.py` defined these locally when the caret shipped only because this
-#: file was owned by a concurrent change at the time.
-#:
-#: Deliberately NOT the selection blue (`Highlight`, `0x3874F2`): the caret must
-#: be readable AS a mode cue while a selection is on screen beside it, which a
-#: second blue would not be. No palette role carries this orange, so it is a
-#: real pair rather than a derivation.
-_COMMAND_CARET_LIGHT = ("#E56A00", "#FFFFFF")
-_COMMAND_CARET_DARK = ("#FFA500", "#1E1E1E")
+    Previously "off" simply restored whatever the native/OS style happened to
+    render at startup, which only looked dark on the one platform (Windows) the
+    toggle was originally built and tested against; on any other native-style
+    baseline, toggling the light theme off produced no reliably-dark result at
+    all. Mirrors ``light_palette()``'s structure and role coverage so both
+    states are equally complete and tested."""
+    return qpalette_for(theme_for(False))
 
 
 def command_caret_colors(light: bool) -> tuple[str, str]:
@@ -118,8 +98,23 @@ def command_caret_colors(light: bool) -> tuple[str, str]:
     Pure -- returns the pair for the theme, mutating nothing, exactly as
     `light_palette()`/`dark_palette()` do with their QPalette and as
     `mode_indicator.mode_colors()` does with its dict.
+
+    Read from the theme file's `accents` (BUG-260812001031 moved it out of
+    `vim_mode.py`; FQ-260812021715 moved it out of this module's source), because
+    a per-theme colour table anywhere but the theme file is how a theme stops
+    being theme-able -- the mistake `mode_indicator.py`'s docstring records.
+
+    Deliberately NOT the selection blue (`Highlight`): the caret must be readable
+    AS a mode cue while a selection is on screen beside it, which a second blue
+    would not be. No palette role carries this orange, so it is a real accent
+    rather than a derivation -- which is why it is in `accents` and not
+    `palette`.
     """
-    return _COMMAND_CARET_LIGHT if light else _COMMAND_CARET_DARK
+    theme = theme_for(light)
+    return (
+        theme.accent("command_caret_background"),
+        theme.accent("command_caret_foreground"),
+    )
 
 
 # Cached QDarkStyleSheet text, one per theme (BUG-010; extended for the light
@@ -262,36 +257,115 @@ def _focus_visible_qss(pal) -> str:
     ) + _focus_visible_tab_qss(pal)
 
 
+def apply_syntax_role(fmt, role) -> None:
+    """Paint one `theme_model.SyntaxRole` onto a `QTextCharFormat`.
+
+    The single place a syntax role becomes Qt state, shared by BOTH highlighters
+    (`xml_editor.XmlSyntaxHighlighter` and `code_editor._CodeHighlighter`) --
+    generalising the `set_colors` seam the XML one already had rather than
+    letting the code one grow a second bespoke mechanism.
+
+    Every flag is set EXPLICITLY, including the `False` cases: these formats are
+    reused across theme flips, so leaving `bold` alone when a theme does not ask
+    for it would make "was italic once" sticky, which is the last-write-wins rule
+    a theme flip needs (`PaletteChange` fires four times per flip).
+    """
+    fmt.setForeground(QColor(role.color))
+    fmt.setFontWeight(QFont.Weight.Bold if role.bold else QFont.Weight.Normal)
+    fmt.setFontItalic(bool(role.italic))
+    fmt.setFontUnderline(bool(role.underline))
+
+
+class _ChromePalette:
+    """A theme's 16 `COLOR_*` chrome tokens, exposed as attributes.
+
+    Only so `_focus_visible_qss` and `_focus_visible_tab_qss` keep reading
+    `pal.COLOR_TEXT_1` unchanged: they were written against a qdarkstyle
+    `Palette` class, and the tail's whole point is that it inverts with the
+    theme for free rather than carrying a second colour table. Not a qdarkstyle
+    `Palette` subclass, because qdarkstyle would ignore one anyway (see the
+    module docstring).
+    """
+
+    def __init__(self, theme: Theme) -> None:
+        for key in theme_model.CHROME_KEYS:
+            setattr(self, key, theme.chrome[key])
+
+
+#: Matches one `#rrggbb` in the qdarkstyle QSS. The negative lookahead keeps a
+#: longer literal (an 8-digit `#rrggbbaa`, or a hex run inside a resource path)
+#: from being truncated into a match.
+_HEX_RE = re.compile(r"#[0-9a-fA-F]{6}(?![0-9a-fA-F])")
+
+
+def _recolour_qss(qss: str, base_palette, theme: Theme) -> str:
+    """Rewrite `qss`'s chrome colours from `base_palette`'s to `theme`'s.
+
+    **This, not `load_stylesheet(palette=...)`, is how a theme recolours the
+    chrome** -- see the module docstring for why qdarkstyle's own argument
+    cannot: it discards the caller's palette and reads a precompiled sheet.
+
+    ONE pass, with every replacement resolved from the ORIGINAL text, so a
+    theme that maps A->B while some other token maps B->C cannot chain the two
+    (a naive sequence of `str.replace` calls does exactly that, and the bug it
+    produces is a single wrong-coloured widget nobody traces back). Literals the
+    stock palette does not define are left alone -- qdarkstyle's sheet carries a
+    few (e.g. inside `border-image` fallbacks) and inventing a mapping for them
+    would change pixels this refactor is not allowed to change.
+
+    For the two BUNDLED themes the mapping is the identity, so the output is
+    byte-identical to today's stylesheet -- which is what a test asserts, and
+    what makes "no colour visibly changes" checkable rather than argued.
+    """
+    mapping = {
+        getattr(base_palette, key).lower(): theme.chrome[key]
+        for key in theme_model.CHROME_KEYS
+    }
+    if all(source == target.lower() for source, target in mapping.items()):
+        return qss
+    return _HEX_RE.sub(lambda m: mapping.get(m.group(0).lower(), m.group(0)), qss)
+
+
 def _qdarkstyle_stylesheet(light: bool) -> str:
     """The QDarkStyleSheet QSS (github.com/ColinDuquesnoy/QDarkStyleSheet, the
-    `qdarkstyle` package) for the given theme -- adopted for BUG-010: Fusion +
-    palette alone left checkable menu indicators outlined near-black on the
-    dark menu background (Fusion derives the indicator frame from darkened
-    Window/Button roles). Rather than hand-tuning per-widget QSS, the
-    maintained stylesheet styles menus (QMenu::indicator included) and every
-    other widget consistently -- for BOTH themes: qdarkstyle ships a
-    `qdarkstyle.light.palette.LightPalette` alongside its `DarkPalette`, so
-    the light theme gets the same professional chrome the dark theme always
-    had, at no new dependency cost."""
+    `qdarkstyle` package) for the given theme, recoloured from the theme file --
+    adopted for BUG-010: Fusion + palette alone left checkable menu indicators
+    outlined near-black on the dark menu background (Fusion derives the
+    indicator frame from darkened Window/Button roles). Rather than hand-tuning
+    per-widget QSS, the maintained stylesheet styles menus (QMenu::indicator
+    included) and every other widget consistently -- for BOTH themes:
+    qdarkstyle ships a `qdarkstyle.light.palette.LightPalette` alongside its
+    `DarkPalette`, so the light theme gets the same professional chrome the dark
+    theme always had, at no new dependency cost.
+
+    `Theme.qdarkstyle_base` picks WHICH of those two compiled sheets is loaded
+    (all its non-colour styling is what the theme inherits); `_recolour_qss`
+    then substitutes the theme's colours into it.
+    """
     if light not in _qss_cache:
         import qdarkstyle
         from qdarkstyle.dark.palette import DarkPalette
         from qdarkstyle.light.palette import LightPalette
 
-        pal = LightPalette if light else DarkPalette
+        theme = theme_for(light)
+        base = LightPalette if theme.qdarkstyle_base == "light" else DarkPalette
         # The app-authored focus tail is folded into the CACHED string, so the
         # "one QSS string per theme" invariant and the cache-identity tests
         # hold unchanged, and apply_theme still does a single setStyleSheet.
-        _qss_cache[light] = qdarkstyle.load_stylesheet(
-            qt_api="pyside6", palette=pal
-        ) + _focus_visible_qss(pal)
+        # The tail is appended AFTER recolouring: it is app-authored and already
+        # spelled in the theme's own colours, so passing it through the
+        # substitution could only map one of them onto a chrome token by
+        # coincidence.
+        _qss_cache[light] = _recolour_qss(
+            qdarkstyle.load_stylesheet(qt_api="pyside6", palette=base), base, theme
+        ) + _focus_visible_qss(_ChromePalette(theme))
     return _qss_cache[light]
 
 
 def apply_theme(app, light: bool) -> None:
-    """Apply the light or dark theme: Fusion + ``light_palette()``/
-    ``dark_palette()`` + the matching QDarkStyleSheet QSS (BUG-010, extended
-    to cover light too).
+    """Apply the light or dark theme: Fusion + the theme's ``QPalette`` + the
+    matching recoloured QDarkStyleSheet QSS (BUG-010, extended to cover light
+    too).
 
     Symmetric by construction (BUG-004 fix): there is no third "restore
     whatever the native/OS style renders" state; both states are real,

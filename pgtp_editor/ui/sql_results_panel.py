@@ -87,6 +87,7 @@ from PySide6.QtWidgets import (
 
 from ..db.sandbox_query import QueryOutcome, QueryResult, error_text, status_line
 from .mode_indicator import MODE_MAINTENANCE, mode_colors
+from .theme_model import theme_for
 
 #: How a NULL prints. Upper-case, and additionally italic + dimmed below, so it
 #: can never be mistaken for the four-character string `'NULL'` either.
@@ -123,7 +124,11 @@ EMPTY_SQL_TEXT = "Nothing to run — type a statement first."
 STATUS_ERROR = "error"
 STATUS_WARNING = "warning"
 
-_WARNING_COLORS = {True: "#8a5a00", False: "#e0a83a"}
+#: Warning's per-theme value, read from the theme file's `status_warning`
+#: accent (FQ-260812021715) rather than spelled here — for exactly the reason
+#: the error pair is imported rather than re-typed one paragraph above.
+def _warning_colour(light: bool) -> str:
+    return theme_for(light).accent("status_warning")
 
 
 def status_colour(kind: str | None, light: bool) -> str | None:
@@ -137,7 +142,7 @@ def status_colour(kind: str | None, light: bool) -> str | None:
     if kind == STATUS_ERROR:
         return mode_colors(light)[MODE_MAINTENANCE][1]
     if kind == STATUS_WARNING:
-        return _WARNING_COLORS[light]
+        return _warning_colour(light)
     return None
 
 

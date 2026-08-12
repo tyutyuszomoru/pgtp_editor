@@ -37,7 +37,6 @@ import re
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import (
-    QColor,
     QFont,
     QFontDatabase,
     QKeyEvent,
@@ -68,6 +67,8 @@ from pgtp_editor.sql.templates import (
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
 from pgtp_editor.ui.editor_shared import SharedEditorMixin
 from pgtp_editor.ui.mode_indicator import ModeIndicator
+from pgtp_editor.ui.theme import apply_syntax_role
+from pgtp_editor.ui.theme_model import theme_for
 from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names)
     CLAIMED_NOT_UNDO_REDO,
     DELETE_CHARACTER,
@@ -454,6 +455,41 @@ class _CodeHighlighter(QSyntaxHighlighter):
     _STATE_NORMAL = 0
     _STATE_IN_BLOCK_COMMENT = 1
 
+    #: The theme file's syntax-role name behind each format attribute. Five of
+    #: the theme's 8 roles, SHARED by SQL/PHP/JS -- per-language colouring is
+    #: deliberately out of scope. The other three are the XML highlighter's
+    #: (`xml_editor.XmlSyntaxHighlighter`), which reads its map the same way.
+    _ROLE_FORMATS = {
+        "code_keyword": "_keyword_format",
+        "code_string": "_string_format",
+        "code_comment": "_comment_format",
+        "code_number": "_number_format",
+        "code_variable": "_variable_format",
+    }
+
+    def apply_syntax_theme(self, light: bool) -> bool:
+        """Load the five code syntax roles from the theme file; return whether
+        anything actually changed.
+
+        **The return value is what keeps this cheap.** Both bundled themes carry
+        the same five values today (this highlighter was THEME-BLIND before
+        FQ-260812021715, and the consolidation was not allowed to change a
+        pixel), so a theme flip resolves to the identical roles and the caller
+        skips the `rehighlight()` -- which reformats the entire document and
+        fires a spurious `textChanged` that dirty-tracking has to be told to
+        ignore (see `XmlEditor.is_applying_theme`). The moment a theme DOES give
+        the code roles their own light variant, this returns True and the
+        rehighlight happens, with no other change needed here.
+        """
+        theme = theme_for(light)
+        roles = {name: theme.role(name) for name in self._ROLE_FORMATS}
+        if roles == self._roles:
+            return False
+        self._roles = roles
+        for name, attribute in self._ROLE_FORMATS.items():
+            apply_syntax_role(getattr(self, attribute), roles[name])
+        return True
+
     def __init__(self, document, language: str):
         super().__init__(document)
         self._language = language
@@ -465,19 +501,14 @@ class _CodeHighlighter(QSyntaxHighlighter):
             self._keywords = _PHP_KEYWORDS
 
         self._keyword_format = QTextCharFormat()
-        self._keyword_format.setForeground(QColor("#569cd6"))
-
         self._string_format = QTextCharFormat()
-        self._string_format.setForeground(QColor("#ce9178"))
-
         self._comment_format = QTextCharFormat()
-        self._comment_format.setForeground(QColor("#6a9955"))
-
         self._number_format = QTextCharFormat()
-        self._number_format.setForeground(QColor("#b5cea8"))
-
         self._variable_format = QTextCharFormat()
-        self._variable_format.setForeground(QColor("#9cdcfe"))
+        self._roles: dict[str, object] = {}
+        # Defaults to the DARK theme's roles, the set this highlighter carried
+        # hardcoded before FQ-260812021715 made it theme-readable.
+        self.apply_syntax_theme(False)
 
         self._keyword_re = re.compile(r"\b[A-Za-z_]\w*\b")
         self._number_re = re.compile(r"\b\d+(?:\.\d+)?\b")
@@ -634,6 +665,7 @@ class CodeEditor(
         # "which editor was in Command mode" map to consult.
         self._init_vim_mode()
         self._apply_gutter_theme_colors(self._palette_is_light())
+        self._apply_syntax_theme_colors(self._palette_is_light())
 
     # --- Shared gutter/bookmark/fold base hooks (§8) -----------------------
     def set_fold_regions(self, regions) -> None:
@@ -655,6 +687,17 @@ class CodeEditor(
     def _palette_is_light(self) -> bool:
         return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
 
+    def _apply_syntax_theme_colors(self, light: bool) -> None:
+        """Re-read the highlighter's syntax roles for the theme, rehighlighting
+        only if they actually differ (see `_CodeHighlighter.apply_syntax_theme`).
+
+        Idempotent and last-write-wins, which a theme flip requires:
+        `PaletteChange` fires four times per flip and the first two report the
+        OLD lightness, so this runs up to four times per flip and the last call
+        is the one that decides."""
+        if self._highlighter.apply_syntax_theme(light):
+            self._highlighter.rehighlight()
+
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() in (
@@ -664,6 +707,7 @@ class CodeEditor(
             # Can fire during base-class construction, before the gutter exists.
             if hasattr(self, "_gutter"):
                 self._apply_gutter_theme_colors(self._palette_is_light())
+                self._apply_syntax_theme_colors(self._palette_is_light())
 
     def navigate_to_line(self, line: int) -> None:
         """Move the caret to `line` (1-based) -- the same public navigation

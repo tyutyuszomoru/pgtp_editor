@@ -1192,10 +1192,10 @@ def test_code_editor_gutter_paints_with_bookmark_and_fold_glyph(qtbot):
 def test_code_editor_gutter_theme_colors_follow_the_palette(qtbot):
     from PySide6.QtGui import QColor, QPalette
 
-    from pgtp_editor.ui.editor_gutter import (
-        _GUTTER_COLORS_DARK,
-        _GUTTER_COLORS_LIGHT,
-    )
+    from pgtp_editor.ui.editor_gutter import _gutter_colors
+
+    _GUTTER_COLORS_LIGHT = _gutter_colors(True)
+    _GUTTER_COLORS_DARK = _gutter_colors(False)
 
     editor = CodeEditor(language="sql")
     qtbot.addWidget(editor)
@@ -1216,7 +1216,9 @@ def test_code_editor_palette_change_event_repaints_the_gutter(qtbot):
     construction) and otherwise re-applies the theme colors."""
     from PySide6.QtGui import QColor, QPalette
 
-    from pgtp_editor.ui.editor_gutter import _GUTTER_COLORS_LIGHT
+    from pgtp_editor.ui.editor_gutter import _gutter_colors
+
+    _GUTTER_COLORS_LIGHT = _gutter_colors(True)
 
     editor = CodeEditor(language="sql")
     qtbot.addWidget(editor)

@@ -83,6 +83,8 @@ from pgtp_editor.ui.code_editor import (
 from pgtp_editor.ui.editor_shared import SharedEditorMixin
 from pgtp_editor.ui.event_body import event_body_line_ranges
 from pgtp_editor.ui.format_settings import current_xml_config
+from pgtp_editor.ui.theme import apply_syntax_role
+from pgtp_editor.ui.theme_model import theme_for
 from pgtp_editor.ui.vim_mode import VimModeMixin
 from pgtp_editor.xmlfmt import format_xml_selection
 
@@ -315,21 +317,43 @@ def _attribute_pair_at(text: str, open_start: int, open_end: int, pos: int):
     return None
 
 class XmlSyntaxHighlighter(QSyntaxHighlighter):
+    #: The theme file's syntax-role name behind each format attribute. Three of
+    #: the theme's 8 roles; the other five are the code highlighter's
+    #: (`code_editor._CodeHighlighter`), which reads its own map the same way.
+    _ROLE_FORMATS = {
+        "xml_tag": "_tag_format",
+        "xml_attr_name": "_attr_name_format",
+        "xml_string": "_string_format",
+    }
+
     def __init__(self, document):
         super().__init__(document)
 
         self._tag_format = QTextCharFormat()
-        self._tag_format.setForeground(QColor("#569cd6"))
-
         self._attr_name_format = QTextCharFormat()
-        self._attr_name_format.setForeground(QColor("#9cdcfe"))
-
         self._string_format = QTextCharFormat()
-        self._string_format.setForeground(QColor("#ce9178"))
+        # Defaults to the DARK theme's roles, matching the editor's own
+        # decoration defaults below; `apply_theme_colors` swaps the whole set.
+        self.apply_syntax_theme(False)
+
+    def apply_syntax_theme(self, light: bool) -> None:
+        """Recolor the three syntax formats (tag, attribute-name, string) from
+        the theme file. The caller rehighlights afterwards.
+
+        Colours AND the bold/italic/underline flags come from the theme's
+        `syntax` roles (FQ-260812021715), so a theme that italicises XML strings
+        works with no code change here."""
+        theme = theme_for(light)
+        for role_name, attribute in self._ROLE_FORMATS.items():
+            apply_syntax_role(getattr(self, attribute), theme.role(role_name))
 
     def set_colors(self, tag: str, attr_name: str, string: str) -> None:
-        """Recolor the three syntax formats (tag, attribute-name, string) for a
-        light or dark theme. The caller rehighlights afterwards."""
+        """Recolor the three syntax formats explicitly.
+
+        Kept as the module's long-standing seam (tests and any caller that wants
+        a one-off colouring drive it), but the app itself now goes through
+        `apply_syntax_theme`, so no colour literal has to be spelled at a call
+        site."""
         self._tag_format.setForeground(QColor(tag))
         self._attr_name_format.setForeground(QColor(attr_name))
         self._string_format.setForeground(QColor(string))
@@ -524,10 +548,8 @@ class XmlEditor(
         # next block number it resumes from. Timer created on first use.
         self._theme_sweep_timer: QTimer | None = None
         self._theme_sweep_block = 0
-        self._current_line_color = QColor("#2d2d30")
-        self._error_line_color = QColor("#5a1d1d")
-        self._navigation_highlight_color = QColor("#264f78")
-        self._matching_tag_color = QColor("#3a5f3a")
+        # The DARK set, read from the theme file; apply_theme_colors swaps it.
+        self._apply_decoration_theme_colors(False)
         self._current_line_selections: list[QTextEdit.ExtraSelection] = []
         self._matching_tag_selections: list[QTextEdit.ExtraSelection] = []
         # Distinct styling for event-handler code bodies (the text between
@@ -537,7 +559,6 @@ class XmlEditor(
         # every text change (see _refresh_code_region_selections); rendered
         # underneath every other extra-selection layer. Read-only-safe:
         # extra selections are purely visual and apply in Caption Mode too.
-        self._code_region_color = QColor("#232a2f")
         self._code_region_font = self._make_monospace_font()
         self._code_region_selections: list[QTextEdit.ExtraSelection] = []
         # One-shot "overriding" indicator used by navigate_to_line,
@@ -691,32 +712,44 @@ class XmlEditor(
         textChanged fires) even though no character of text changed."""
         return self._applying_theme
 
+    #: The theme file's `decorations` key behind each colour attribute. One
+    #: mapping, walked by `_apply_decoration_theme_colors`, so adding a
+    #: decoration means adding a row here and a key to every theme file (which a
+    #: missing-key `ThemeError` enforces) rather than editing two branches that
+    #: can silently disagree -- the shape the old if/else pair had.
+    _DECORATION_ATTRS = {
+        "current_line": "_current_line_color",
+        "error_line": "_error_line_color",
+        "navigation_highlight": "_navigation_highlight_color",
+        "matching_tag": "_matching_tag_color",
+        "code_region": "_code_region_color",
+    }
+
+    def _apply_decoration_theme_colors(self, light: bool) -> None:
+        """Load the editor's five decoration colours from the theme file.
+
+        Idempotent and last-write-wins by construction: it assigns every
+        attribute from the theme every time, which is what a theme flip needs --
+        `PaletteChange` fires four times per flip and the first two report the
+        OLD lightness, so a partial or accumulating update would settle on the
+        wrong set."""
+        theme = theme_for(light)
+        for key, attribute in self._DECORATION_ATTRS.items():
+            setattr(self, attribute, QColor(theme.decoration(key)))
+
     def apply_theme_colors(self, light: bool) -> None:
-        """Swap the editor's color attributes and the syntax highlighter's
-        format colors between a LIGHT set (readable dark-on-white) and the DARK
-        set (the original values), then rehighlight and repaint so the change
-        shows immediately -- gutter, current-line band, matching-tag spans and
-        code-region backgrounds all recolor at once. Wired to run automatically
-        on ApplicationPaletteChange via changeEvent."""
+        """Reload the editor's color attributes and the syntax highlighter's
+        format colors from the LIGHT or DARK theme file, then rehighlight and
+        repaint so the change shows immediately -- gutter, current-line band,
+        matching-tag spans and code-region backgrounds all recolor at once.
+        Wired to run automatically on ApplicationPaletteChange via changeEvent.
+
+        Every value comes from `resources/themes/*.json` (FQ-260812021715);
+        this method holds no colour and the two hardcoded LIGHT/DARK branches it
+        used to carry are gone, so the two sets can no longer drift apart."""
         self._apply_gutter_theme_colors(light)
-        if light:
-            self._current_line_color = QColor("#eef1f7")
-            self._error_line_color = QColor("#f7d4d4")
-            self._navigation_highlight_color = QColor("#cfe0ff")
-            self._matching_tag_color = QColor("#d3ecd3")
-            self._code_region_color = QColor("#eef2f5")
-            self._highlighter.set_colors(
-                tag="#0000ff", attr_name="#e50000", string="#a31515"
-            )
-        else:
-            self._current_line_color = QColor("#2d2d30")
-            self._error_line_color = QColor("#5a1d1d")
-            self._navigation_highlight_color = QColor("#264f78")
-            self._matching_tag_color = QColor("#3a5f3a")
-            self._code_region_color = QColor("#232a2f")
-            self._highlighter.set_colors(
-                tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
-            )
+        self._apply_decoration_theme_colors(light)
+        self._highlighter.apply_syntax_theme(light)
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()

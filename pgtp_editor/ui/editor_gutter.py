@@ -93,6 +93,8 @@ from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QTextBlock, QTextCursor
 from PySide6.QtWidgets import QWidget
 
+from .theme_model import theme_for
+
 # Fixed horizontal allowance reserved for the fold-triangle glyph, added on
 # top of the digit-count-dependent width for line numbers.
 _FOLD_GLYPH_WIDTH = 16
@@ -114,8 +116,19 @@ _BODY_COLUMN_GAP = 7
 _BODY_NUMBER_DIM = 0.45
 
 # The theme-aware gutter colors, shared by every editor that carries the mixin.
-_GUTTER_COLORS_DARK = ("#2b2b2b", "#858585")
-_GUTTER_COLORS_LIGHT = ("#f0f0f0", "#888888")
+# Read from the theme file's `decorations` (FQ-260812021715) rather than spelled
+# here: the gutter is an editor decoration like the current-line band, and a
+# second per-theme table outside the theme file is the mistake
+# `mode_indicator.py`'s docstring records.
+
+
+def _gutter_colors(light: bool) -> tuple[str, str]:
+    """The gutter's `(background, foreground)` for the theme."""
+    theme = theme_for(light)
+    return (
+        theme.decoration("gutter_background"),
+        theme.decoration("gutter_foreground"),
+    )
 
 #: One bookmark was added or removed (a gutter click, a double-click on the line
 #: number, or Ctrl+F2). The set the user *chose* changed, so FQ-013's persistence
@@ -392,8 +405,9 @@ class GutterBookmarkFoldMixin:
         self._body_line_anchor: int | None = None
         # The gutter widget reads these two directly when painting; they
         # default to the DARK set and are swapped by _apply_gutter_theme_colors.
-        self._gutter_bg_color = QColor(_GUTTER_COLORS_DARK[0])
-        self._gutter_fg_color = QColor(_GUTTER_COLORS_DARK[1])
+        _default_bg, _default_fg = _gutter_colors(False)
+        self._gutter_bg_color = QColor(_default_bg)
+        self._gutter_fg_color = QColor(_default_fg)
         self.blockCountChanged.connect(self._update_gutter_width)
         self.updateRequest.connect(self._update_gutter_on_scroll)
         self._update_gutter_width(0)
@@ -673,9 +687,7 @@ class GutterBookmarkFoldMixin:
     def _apply_gutter_theme_colors(self, light: bool) -> None:
         """Swap the gutter's background/foreground between the LIGHT and DARK
         sets and repaint. Hosts call this from their own theme handling."""
-        background, foreground = (
-            _GUTTER_COLORS_LIGHT if light else _GUTTER_COLORS_DARK
-        )
+        background, foreground = _gutter_colors(light)
         self._gutter_bg_color = QColor(background)
         self._gutter_fg_color = QColor(foreground)
         self._gutter.update()

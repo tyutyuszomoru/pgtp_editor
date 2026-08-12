@@ -78,6 +78,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel
 
+from .theme_model import theme_for
+
 #: The three major modes, spelled as `launcher_dialog.MODE_*` does. Imported
 #: lazily by the host (constructing a window must never pull the launcher in),
 #: so they are re-stated here as plain strings rather than imported.
@@ -134,21 +136,14 @@ MODE_SEPARATOR = " · "
 EDITING_EDIT = "Edit mode"
 EDITING_COMMAND = "Command mode — press i to type"
 
-#: Per-mode (background, foreground), per theme. The starting palette FQ-028
-#: proposed, tuned only for the neutral no-mode entry. Keyed by the major mode,
-#: with `None` for "no column picked yet".
-_LIGHT_COLORS = {
-    None: ("#E8E8E8", "#3A3A3A"),
-    MODE_STANDALONE: ("#E3F2FD", "#0D3B66"),
-    MODE_PROJECT: ("#E6F4EA", "#1B5E20"),
-    MODE_MAINTENANCE: ("#FDECEA", "#8B1E1E"),
-}
-
-_DARK_COLORS = {
-    None: ("#3A3A3A", "#D8D8D8"),
-    MODE_STANDALONE: ("#1E3A5F", "#CFE3FF"),
-    MODE_PROJECT: ("#1E3A28", "#B6E3C0"),
-    MODE_MAINTENANCE: ("#3A2320", "#F2B8AE"),
+#: The major mode a chip's colour is keyed by, spelled as the theme file spells
+#: it. `None` ("no launcher column picked yet") is `"none"` on disk, because
+#: JSON has no null-valued object key.
+_THEME_MODE_KEYS: dict[str | None, str] = {
+    None: "none",
+    MODE_STANDALONE: MODE_STANDALONE,
+    MODE_PROJECT: MODE_PROJECT,
+    MODE_MAINTENANCE: MODE_MAINTENANCE,
 }
 
 
@@ -157,9 +152,18 @@ def mode_colors(light: bool) -> dict[str | None, tuple[str, str]]:
 
     Pure — builds and returns a fresh dict, mutating nothing, exactly as
     `theme.py::light_palette()` does with its QPalette.
+
+    **The pairs live in the theme file, not here** (FQ-260812021715). This
+    module's docstring records the exact mistake that made that mandatory: a
+    per-theme colour table beside the real one. The table it once held is now
+    `modes` in `resources/themes/*.json`, and `theme_model` is the only reader.
+    Downstream consumers keep importing THIS function rather than the theme —
+    `sql_results_panel.status_colour` and `ddl_buffer_panel.
+    danger_selection_colors` both derive the app's one red from
+    `MODE_MAINTENANCE`'s foreground (§18.7), and that derivation is the point.
     """
-    source = _LIGHT_COLORS if light else _DARK_COLORS
-    return dict(source)
+    theme = theme_for(light)
+    return {key: theme.mode_pair(name) for key, name in _THEME_MODE_KEYS.items()}
 
 
 def mode_text(
