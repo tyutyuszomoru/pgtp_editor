@@ -78,10 +78,16 @@ never by importing another collaborator:
   method means only the host's one wiring line changes then.
 * ``prompt_missing_connection`` — the shared "no connection configured" reroute
   (BUG-024) belongs to the DDL-explorer area and moves with it.
-* ``show_left_dock`` / ``show_audit_dock`` / ``panel_visible`` — three dock/tab
-  gestures ``UiShell`` has no field for. Revealing the coherence tab must also
-  un-hide the left dock, listing occurrences must un-hide the Audit dock, and
-  the reparse refresh is gated on the tab actually being visible.
+* ``show_audit_dock`` / ``panel_visible`` — two dock/tab gestures ``UiShell``
+  has no field for: listing occurrences must un-hide the Audit dock, and the
+  reparse refresh is gated on the tab actually being visible.
+
+  ``show_left_dock`` was a third, and is **gone** (BUG-260812023420): revealing
+  a left-dock pane now un-hides the dock inside ``reveal_left_panel`` itself,
+  so this controller no longer carries half of that gesture. The counterpart
+  ``set_left_panel_visible`` deliberately does *not* touch the dock, which is
+  what ``refresh_if_open`` relies on — it populates without stealing the
+  user's layout.
 """
 from __future__ import annotations
 
