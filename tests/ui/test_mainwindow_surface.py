@@ -361,6 +361,12 @@ EXPECTED_HOST_SURFACE = {
     "_report_ddl_checkout_drift",
     "_report_ddl_format_refusal",
     "_report_ddl_mode",
+    # FQ-260812022749: a SECOND `[DDL]` row, beside the mode row, when full mode
+    # was chosen and could not be delivered. Deliberately a sibling of
+    # `_report_ddl_mode` rather than a branch inside it -- the mode row is an
+    # owner ruling on every open, and "full mode was chosen but you are looking
+    # at reconstructed DDL" is extra information, not a correction of it.
+    "_report_ddl_degrade",
     "_server_version_divergence",
     # FQ-030: the editor-gesture refusal reporter, the Audit half of
     # `CodeEditor.expansion_refused` (the widget can only show a tooltip).

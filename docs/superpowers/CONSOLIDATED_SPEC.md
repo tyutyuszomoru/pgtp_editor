@@ -1,11 +1,122 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-12 *(later pass)* — `BUG-260812002307` parts
-> B and C (`483a9ad`), `BUG-260812023420` (`03473a7`) and the **shipped half** of `FQ-260812021715`
-> (`c0ab500`) folded. **The spec's own §11 was carrying a six-row TO-DO TABLE for work that landed, which
-> is a quieter kind of rot than a banner.** Details in **(P0)** below.
+> **Status:** living document · **Last synthesized:** 2026-08-12 *(theme-selection / contrast pass)* —
+> `FQ-260812021715`'s **remaining half** and `FQ-260812021716` (`7caf024`), `BUG-260812063745` (`f05cc8b`),
+> `BUG-260812103144` (`cdcba11`), `FQ-260812025836` (`c7c45b3` + `07b83e9`), `FQ-260812025353`
+> (`a852563` + `07b83e9`) and **Part 1 of** `FQ-260812022749` (`a852563`, wired `07b83e9`) folded.
+> **Three of this document's own statements about colour were falsified at once, and the third was a
+> CONSTRAINT the consolidation pass wrote for itself.** Details in **(Q0)** below, which supersedes the
+> status halves of (P0)'s item 5 and of (O0)'s item 5.
 >
-> **(P0) THIS PASS — AN EXCEPTION IS NOT A RULE WEAKENING, AND AN ESCALATION CAN ESCALATE TO ITSELF.**
+> **(Q0) THIS PASS — A CONTRAST MEASUREMENT IS A MEASUREMENT AGAINST A SURFACE, AND "NOT ALLOWED TO CHANGE
+> PIXELS" IS NOT A DESIGN.**
+>
+> 1. **`FQ-260812021715` IS COMPLETE (`7caf024`) and §7's `⏳ THEME SELECTION IS IN FLIGHT` banner is
+>    retired — the thing it refused to guess at is now settled and pinned by name.** `View ▸ Light Theme`
+>    is **gone** (§26). Selection is a **name** in `QSettings` under `theme_model.SETTINGS_KEY =
+>    "themeName"`, applied through the one entry point `MainWindow.apply_theme_named(name, *,
+>    persist=True)`, and `apply_theme(app, source)` now takes a `Theme`, a name **or** the historical
+>    `light: bool`. The migration off `"lightTheme"` is a **one-shot MOVE, not a copy**: translated once by
+>    `theme_model.migrated_theme_name`, then `settings.remove(LEGACY_LIGHT_KEY)` — *two stored answers to
+>    "which theme" is the drift this consolidation exists to kill, and a stale `lightTheme=true` would
+>    resurrect light on the next restart after the user picked dark.*
+> 2. **⚠ AND THE REMOVAL IS WHAT MAKES A THIRD THEME REPRESENTABLE AT ALL.** `MainWindow._is_light_theme`
+>    now reads the **applied `Theme.light`**, not a checkable action's state. A menu checkbox can only
+>    answer *"light or not"*; a theme file's own `light` flag is what lets any number of themes answer
+>    `UiShell.is_light_theme`. **The `light: bool` seam throughout the app is deliberately UNCHANGED** —
+>    `theme_model.theme_for(light)` is the single point where the boolean becomes a `Theme`, and it is
+>    re-read at paint time because a resolved colour cached across a flip is the previous theme's.
+> 3. **`FQ-260812021716` → §7's Software settings block: the FIFTH pane, `Themes`, and `DEC-260812004400`
+>    is satisfied by a real pane rather than a stub.** `FQ-260812002828` (syntax colours) and
+>    `FQ-260812002829` (colour scheme) are **MERGED, not deferred** — syntax highlighting is part of a
+>    theme by owner ruling, and *two panes editing one `Theme` can be edited into a mismatch while one
+>    cannot mismatch itself.* Selection is **Maintenance-only and persisted app-wide by name**, which
+>    **overrides the queue entry's own recommendation** that selection stay always-available: that
+>    recommendation was already answered the other way by `FQ-260812021715`'s recorded ruling.
+> 4. **⚠ ONE LATENT DEFECT FIXED WITH IT, AND IT IS THE PROOF THAT A BOOLEAN WAS THE WRONG KEY ALL ALONG.**
+>    `theme.py::_qss_cache` was keyed on the `light` bool — which **cannot distinguish two dark themes**,
+>    so an edited user theme would have been served the other one's chrome. It is now keyed by
+>    `_qss_key(theme)` = `(qdarkstyle_base,) + the 16 chrome colours`, i.e. **on the sheet's actual
+>    inputs**: two themes with identical chrome share one string, and a theme edited in the Themes pane
+>    gets a fresh entry the moment one chrome colour moves. *A name-keyed cache would have handed back the
+>    pre-edit sheet; a bool-keyed one hands back another theme's.*
+> 5. **`BUG-260812063745` (`f05cc8b`) → §7's new *status kinds* block. The AST guard was WIDENED, because
+>    it had been SATISFIED rather than obeyed.** A `#b8860b` literal failed the `#rrggbb`-only pattern, was
+>    "fixed" by respelling it `color: darkorange`, and **the test went green while the defect stayed.** The
+>    guard now catches **hex of any length** (`#rgb`/`#rgba`/`#rrggbb`/`#rrggbbaa` — `#b33` had been sitting
+>    in plain sight) and **CSS colour NAMES inside a style declaration**, declaration-scoped because a bare
+>    word list over every string constant is unusable (`tan`, `plum`, `linen`, `gold` occur in prose).
+>    New `ui/status_colours.py` — `STATUS_OK`/`STATUS_WARNING`/`STATUS_ERROR`, `status_colour(kind, light)`
+>    and `StatusLabel` — with the DEBUG chip **folded in through theme accents, not exempted**
+>    (`debug_chip_background`/`_foreground`). **One carve-out is deliberate and documented:**
+>    `colour = "green" if ok else "red"` is not statically detectable without dataflow analysis, so **both
+>    sites were DELETED** and the docstring says the guard **must not be made cleverer** — *the way to keep
+>    the indirect form deleted is to review, not to scan.*
+> 6. **`BUG-260812103144` (`cdcba11`) → §7's connectivity-dot block, which is the largest correction in
+>    this pass: THREE current statements were false or superseded at once.** *(a)* The rendering table
+>    (*"white = not set up · red = offline · green = reachable · hollow grey = not checked"*) is replaced —
+>    per-theme values at **4.58–9.07:1**, up from **1.46–3.06:1**. *(b)* The *"theme-blind today"* claim is
+>    withdrawn: the dots read per-theme through `theme_for(light).accent(key)`, resolving **the key, not the
+>    value**, on demand. *(c)* **The consolidation pass's own *"making them theme-aware would change pixels,
+>    which this consolidation was explicitly not allowed to do"* is SUPERSEDED** — the pixels were the
+>    defect. **Colour is no longer the only channel: one shape per state** (`●` reachable · `▲` offline ·
+>    `□` not set up · `○` not checked), all from Unicode Geometric Shapes, *because red-vs-green carried the
+>    most meaning and is the single most common colour-vision confusion, and a tooltip only disambiguates on
+>    hover — which defeats an at-a-glance indicator.* And the threshold is **4.5:1 text, not 3:1
+>    graphical**, because `_render` colours the whole label. `ConnectivityIndicator` now **inherits
+>    `StatusLabel`**. `shared_accent()` **keeps its place and loses its only production caller** — it is now
+>    a *mechanism, not a helper*, pinned by an AST test.
+> 7. **TWO RULES FOLDED AS RULES RATHER THAN AS HISTORY, because each will otherwise be re-derived by the
+>    next person who measures a colour.** *(a)* **A surface's contrast baseline is its own background, not
+>    the window chrome.** The original triage measured the dots against `COLOR_BACKGROUND_1` and got
+>    2.96:1; against the status bar's actual `COLOR_BACKGROUND_4` the worst case is **1.46:1**. Importing
+>    the wrong `CHROME` constant would have shipped a "fix" that was still broken. *(b)* **`StatusLabel`
+>    must not be reused on a transparent-background surface without overriding its palette read.**
+>    `QStatusBar QLabel { background: transparent }` makes `Base`/`Window`/`Button` resolve to `#000000`
+>    under **both** themes, and the widget-level `color:` the class writes lands in its own `Text` role — so
+>    reading it back returns the colour just painted. **A circular read**: the first implementation painted
+>    dark's salmon on the light status bar and never repainted, *the same freeze, relocated.*
+> 8. **`FQ-260812022749` is PART-SHIPPED and is written that way — the buffer's two modes are LANDING, not
+>    built and not unbuilt.** Shipped (`a852563`, wired `07b83e9`): the Qt-free `db/pg_dump_mode.py`
+>    (`DdlMode`, `decide_ddl_mode`, `probe_ddl_mode`, `DdlModeVerdict`, `RESTRICTED_CLONE_WARNING`), the
+>    **`pg_dump` major >= server major** rule, the **four** restricted verdict shapes, and the `[DDL]`
+>    notice on **every** DDL open from a **cached** verdict. **Two facts the wiring established are worth
+>    more than the feature:** *(a)* **there was no quality capability probe anywhere** — `db/sandbox.py::
+>    probe` had only ever been run against the sandbox; *(b)* **the owner's same-version principle was
+>    assumed and never enforced** — `server_version` was produced by that one probe and consumed only by a
+>    PG14 `CREATE OR REPLACE TRIGGER` gate, so **no comparison of the two servers existed**.
+>    `server_major_divergence()` now performs it, and reports *"could not check"* as `None` rather than as
+>    agreement. **⚠ AND THE CLOSING RE-VERIFICATION SHARPENED "LANDING" INTO SOMETHING A READER CAN ACT ON —
+>    the thirteenth consecutive pass on which that rule earned its place.** `build_ddl_buffer`,
+>    `build_full_ddl_text`, `parse_pg_dump` and `fetch_schema_dump` **all exist**, and `main_window.py`
+>    already calls them and reports `degrade_reason` as a second `[DDL]` row; the file is **mid-merge and
+>    conflicted** and the queue entry is still `QUEUED`. So the honest state is not *"specified, unwritten"* —
+>    it is *"written, unmerged"*, and the ⏳ says which. *"In flight" is a claim about a MERGE, not about
+>    whether the code exists, and a reader who conflates the two goes and writes it again.*
+> 9. **`FQ-260812025836` is COMPLETE (`c7c45b3` + `07b83e9`) → §18.1/§18.5: views are editable through the
+>    EXISTING lane, matviews are refused WITH A STATED REASON, and `pg_get_viewdef` is LOAD-BEARING.**
+>    `EDITABLE_SPAN_KINDS` gains `"view"` and deliberately not `"matview"` — there is no `CREATE OR REPLACE
+>    MATERIALIZED VIEW`, so replacing one is `DROP` + `CREATE` that discards stored data. **`db/apply.py`
+>    needed no change at all**, being genuinely kind-agnostic. `DdlObjectRef.is_checkout_eligible` makes
+>    *edit-and-apply-only* a **named fact** rather than an omission. And the source text matters: a
+>    `pg_dump` source would bundle the view's `CREATE TRIGGER`s, so a user's own `DROP VIEW` would silently
+>    take the triggers too — and each of those triggers already owns its own checkout identity.
+> 10. **⚠ THE REMOVAL SWEEP FOUND FOUR USER-VISIBLE SURVIVORS OF `View ▸ Light Theme`, AND THEY WERE READ
+>    BEFORE THEY WERE FILED.** `pgtp_editor/resources/manual.md` still documents the deleted toggle in four
+>    places — the sharpest being *"**Colours are not in here.** … the theme is still **View ▸ Light
+>    Theme**"* inside the Software-settings chapter, which is now false in **both** halves: colours ARE in
+>    there, and that menu entry does not exist. Two stale code docstrings found too, one of them
+>    **contradicted thirty lines below by its own class**. Routed, not fixed here (report). *The last two
+>    passes almost filed against a parallel agent on the strength of a grep count; this one opened every
+>    line first, and all six are real.*
+> 11. **`README.md` revisited (standing obligation) and CHANGED in two places** — the *"Light/Dark themes"*
+>    line this pass's predecessor deliberately left alone is now wrong in kind, not in detail: themes are
+>    **named files a user can pick, duplicate and edit**, which is a capability claim rather than a colour
+>    fact. See the report.
+>
+> *(Previous pass:)*
+>
+> **(P0) PREVIOUS PASS — AN EXCEPTION IS NOT A RULE WEAKENING, AND AN ESCALATION CAN ESCALATE TO ITSELF.**
 >
 > 1. **§11 gains *The ONE sanctioned overwrite of `curated.xsd`*** — `Schema ▸ Restore Bundled Curated
 >    Schema…` (`BUG-260812002307` part C, `483a9ad`), user-initiated, confirmed, `.bak`-kept, then reloaded.
@@ -47,9 +158,10 @@
 >    (it re-reads a precompiled resource by `palette.ID` and replaces the caller's palette with the stock
 >    one), which is why the recolour is a single-pass regex substitution and why this document's account of
 >    that function has been **wrong since FQ-005**; and `shared_accent()` **raises** unless every bundled
->    theme agrees, turning theme-blind `connectivity.py` from invisible into a failing test. **⏳ Theme
->    SELECTION — `View ▸ Light Theme`'s removal and the `"lightTheme"` boolean's migration to a theme name —
->    is IN FLIGHT in a concurrent tree and is deliberately not pinned.**
+>    theme agrees, turning theme-blind `connectivity.py` from invisible into a failing test. ~~**⏳ Theme
+>    SELECTION … is IN FLIGHT in a concurrent tree and is deliberately not pinned.**~~ — **(Q0) items 1–2:
+>    it SHIPPED (`7caf024`) and is pinned. And (Q0) item 6 reverses the `shared_accent` half of this item:
+>    `connectivity.py` is no longer theme-blind, so the seam has no production caller.**
 > 6. **⚠ THE TWELFTH CONSECUTIVE STALE-STATUS RETIREMENT, AND THE FIRST THAT WAS A TO-DO TABLE.** §11
 >    carried a six-row *"Site / Today / Must become"* table for the `v1.2 → v1.3` bump, plus *"nothing today
 >    asserts that the marker and the constant AGREE"*. **All six sites landed, both routed ones landed, and
@@ -1316,7 +1428,7 @@
 4. [Technology choices](#4-technology-choices)
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
-7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live. **`FQ-260812002827` (SHIPPED `19c14c5`) adds §7's [Software settings dialog](#the-software-settings-dialog--the-apps-one-configuration-home-fq-260812002827-settled-and-shipped-19c14c5) — the app's ONE configuration home**, absorbing `Customize Toolbar…` / `Customize Shortcuts…` off `View` and `Edit Snippets…` / `Autoformatter settings…` off `Settings`, which is left with **one** entry (`settings.software-settings`, also the launcher Maintenance column's third button). Each pane keeps its own apply/OK contract, **the host adds none** (its only button is `Close`), and the host **rebuilds a pane on its `finished`** so no pane is ever a stale scratch copy. **The four absorbed ids get NO alias rows** — absorbed is not renamed. **Three owner decisions are OPEN with shipped defaults** (`DEC-260812004358`/`-59`/`-4400`), and toolbar/shortcut customization is now **Maintenance-only**. Also here: **Maintenance mode's scope is no longer "menu bar only"** — it prunes the **center stage** too (BUG-260812001640, `1ff2b11`) — and **keyboard focus visibility** is `ui/theme.py`'s, appended to the cached theme QSS from `COLOR_TEXT_1` with no second colour table (BUG-260812002838/-4649, `7703eba`). **`BUG-260812023420` (`03473a7`): ONE primitive owns revealing a left-dock pane** — `_reveal_left_panel` un-hides the dock *and* shows *and* selects the tab, four duplicated un-hide calls deleted, because a reveal that forgot it landed a visible tab in a hidden dock and **silently did nothing**; its counterpart `_set_left_panel_visible` deliberately touches neither dock nor current tab (*make available, do not touch the user's layout*, for `CoherenceController.refresh_if_open`), mirroring the bottom dock's existing `_reveal_results_dock_tab`/`_reveal_results_tab` split. **`FQ-260812021715` folded PARTIALLY (`c0ab500`):** a theme is **colours only and a FILE** (`ui/theme_model.py`, Qt-free, over `resources/themes/*.json`), the chrome recolour is a **regex substitution because qdarkstyle's `load_stylesheet(palette=…)` silently ignores a subclassed palette** — correcting a mechanism this document had described wrongly since FQ-005 — an **AST guard** bans a `#rrggbb` anywhere in the package, and `shared_accent()` **raises** unless every theme agrees. **⏳ Theme SELECTION is in flight and deliberately not pinned***
+7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live. **`FQ-260812002827` (SHIPPED `19c14c5`) adds §7's [Software settings dialog](#the-software-settings-dialog--the-apps-one-configuration-home-fq-260812002827-settled-and-shipped-19c14c5) — the app's ONE configuration home**, absorbing `Customize Toolbar…` / `Customize Shortcuts…` off `View` and `Edit Snippets…` / `Autoformatter settings…` off `Settings`, which is left with **one** entry (`settings.software-settings`, also the launcher Maintenance column's third button). Each pane keeps its own apply/OK contract, **the host adds none** (its only button is `Close`), and the host **rebuilds a pane on its `finished`** so no pane is ever a stale scratch copy. **The four absorbed ids get NO alias rows** — absorbed is not renamed. **Three owner decisions are OPEN with shipped defaults** (`DEC-260812004358`/`-59`/`-4400`), and toolbar/shortcut customization is now **Maintenance-only**. Also here: **Maintenance mode's scope is no longer "menu bar only"** — it prunes the **center stage** too (BUG-260812001640, `1ff2b11`) — and **keyboard focus visibility** is `ui/theme.py`'s, appended to the cached theme QSS from `COLOR_TEXT_1` with no second colour table (BUG-260812002838/-4649, `7703eba`). **`BUG-260812023420` (`03473a7`): ONE primitive owns revealing a left-dock pane** — `_reveal_left_panel` un-hides the dock *and* shows *and* selects the tab, four duplicated un-hide calls deleted, because a reveal that forgot it landed a visible tab in a hidden dock and **silently did nothing**; its counterpart `_set_left_panel_visible` deliberately touches neither dock nor current tab (*make available, do not touch the user's layout*, for `CoherenceController.refresh_if_open`), mirroring the bottom dock's existing `_reveal_results_dock_tab`/`_reveal_results_tab` split. **`FQ-260812021715` folded PARTIALLY (`c0ab500`):** a theme is **colours only and a FILE** (`ui/theme_model.py`, Qt-free, over `resources/themes/*.json`), the chrome recolour is a **regex substitution because qdarkstyle's `load_stylesheet(palette=…)` silently ignores a subclassed palette** — correcting a mechanism this document had described wrongly since FQ-005 — an **AST guard** bans a colour literal anywhere in the package, and `shared_accent()` **raises** unless every theme agrees. **`FQ-260812021715` is now COMPLETE and `FQ-260812021716` shipped with it (`7caf024`):** `View ▸ Light Theme` is **DELETED**, selection is a **theme NAME** under `themeName` applied through the one `apply_theme_named`, the `lightTheme` boolean is **migrated once and REMOVED**, `_is_light_theme` reads the applied `Theme.light` (which is what lets a *third* theme answer at all), `_qss_cache` is re-keyed on the sheet's actual inputs (a bool key **could not tell two dark themes apart**), and the **`Themes` pane** is `SETTINGS_PANES`' fifth row — closing `DEC-260812004400` and **merging** `FQ-260812002828`/`-829`, since syntax colours are part of a theme. **Theme choice is therefore MAINTENANCE-ONLY, recorded as a withdrawal.** Also here: **`BUG-260812063745`** (`f05cc8b`) — the AST guard widened to **hex of any length and CSS colour names in declarations**, because a literal was "fixed" by respelling it `darkorange` and the test went green; new **`ui/status_colours.py`** (`STATUS_OK`/`WARNING`/`ERROR`, `status_colour`, `StatusLabel`), the DEBUG chip **folded in via theme accents**, and one deliberate carve-out the guard must never chase — and **`BUG-260812103144`** (`cdcba11`) — the connectivity dots become **per-theme (4.58–9.07:1, was 1.46–3.06:1)** with **one shape per state** (`●` `▲` `□` `○`), on the **4.5:1 text** threshold, `ConnectivityIndicator` inheriting `StatusLabel`, and two rules folded as rules: **a surface's contrast baseline is its own background**, and **`StatusLabel` may not be reused on a transparent-background surface without overriding its palette read***
 8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab. **FQ-034 — SHIPPED (`cde65fa`), status-corrected 2026-08-10:** the `Select` menu has **four** entries — `Select Parent Block` became a repeatable **`Expand Selection`** with an expansion stack, extended to the SQL editors, plus **`Shrink Selection`** on `Ctrl+Shift+Z`; the ladder's spans come from two Qt-free `sql/` modules (`blocks.py`, lifted out of `formatter.py`, and `block_spans.py`), and the two halves are hosted by **different mechanisms** because Qt claims `Ctrl+Shift+Z` natively on both schemes. *(This entry read "**FQ-034, target design NOT YET BUILT**" — a survivor the FQ-034 status pass missed, found here.)* **FQ-032 — SHIPPED (`b0c42da`, 2026-08-10):** §8 also owns the **vim editing mode** — `Esc` puts an editable editor into **Command mode** beside ordinary **Edit mode**, per editor, transient, nothing persisted; a pure Qt-free grammar in `pgtp_editor/vim/`, the Qt half in `ui/vim_mode.py`, and **`ui/editor_shared.py`**, the family-agnostic layer its two forced lifts created (one hint/refusal path, one line-wrap toggle). Command mode claims **four `Ctrl` chords**, so the one reset path is a **correctness guarantee** with a test per trigger. **A SECOND VIM INCREMENT SHIPPED 2026-08-12 (`e60e0d0`, `de75617`) and reversed four of that block's own statements:** the `aw`/`iw` **text objects** left "deferred" — and **without touching `sql/`**, falsifying the dependency story §8 told about them; the operators gained a **selection target** through one boolean (`set_selection_active`), which is what keeps `pgtp_editor/vim/` Qt-free; `v`/`V` gained **sticky selection**, so *"the select-with-`v`-then-`d` reflex does not exist here"* is withdrawn while **there is still no visual mode**; and the Command-mode caret is **on a character, painted in a `paintEvent`**, so `$`/`l` no longer rest past the last character (the motions are unchanged — `d$` still takes the newline). Two new keyless `Select` entries, `Sticky Selection` / `Line Selection`*
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
@@ -1328,7 +1440,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database) — includes [the Database/XML Coherence view](#the-databasexml-coherence-view) — *implemented (FQ-003, 2026-08-06): `db/coherence.py`, `ui/coherence_panel.py`, the Database-menu toggle*
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *partly implemented — see each subsection*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap. **`FQ-260810183812`, target design NOT YET BUILT (2026-08-10):** the read-only buffer widens from routines-and-triggers to **ALL object kinds** — synthesized **`CREATE TABLE`**, views and matviews — and **every tree item that has DDL navigates to it**, including new constraint / FK / index nodes. `DdlObjectSpan` **grows kinds** rather than gaining a sibling type; the synthesizer is a **new pure Qt-free `db/` module** beside `ddl_buffer.py`; and because a synthesized `CREATE TABLE` is a **reconstruction** (no identity, `GENERATED`, inheritance or partitioning), **the omission must be VISIBLE IN THE BUFFER** — presenting it as *"the table's DDL"* would be a silent wrong result. Six open questions are flagged, §29. **`FQ-260810180336`, target design NOT YET BUILT (2026-08-11):** a **name-filter bar** above the tree (input · match-mode dropdown · `Filter` · `Clear Filter`) hiding non-matching object rows in **both** Explorer instances, `browse_only` not gating it. The fold's load-bearing finding: the DDL Explorer **already has a `FindReplaceBar`**, so §18.1 now states **which input searches what** — the existing bar searches the DDL **text** and moves the caret; this matches object **names** and hides rows. The Find machinery is deliberately **not** reused (documents vs. tree items); `item.setHidden` and `MODE_LABELS`' shape are, with a **new predicate enum**. No chord in v1. Five open questions flagged*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap. **`FQ-260810183812`, target design NOT YET BUILT (2026-08-10):** the read-only buffer widens from routines-and-triggers to **ALL object kinds** — synthesized **`CREATE TABLE`**, views and matviews — and **every tree item that has DDL navigates to it**, including new constraint / FK / index nodes. `DdlObjectSpan` **grows kinds** rather than gaining a sibling type; the synthesizer is a **new pure Qt-free `db/` module** beside `ddl_buffer.py`; and because a synthesized `CREATE TABLE` is a **reconstruction** (no identity, `GENERATED`, inheritance or partitioning), **the omission must be VISIBLE IN THE BUFFER** — presenting it as *"the table's DDL"* would be a silent wrong result. Six open questions are flagged, §29. **`FQ-260810180336`, target design NOT YET BUILT (2026-08-11):** a **name-filter bar** above the tree (input · match-mode dropdown · `Filter` · `Clear Filter`) hiding non-matching object rows in **both** Explorer instances, `browse_only` not gating it. The fold's load-bearing finding: the DDL Explorer **already has a `FindReplaceBar`**, so §18.1 now states **which input searches what** — the existing bar searches the DDL **text** and moves the caret; this matches object **names** and hides rows. The Find machinery is deliberately **not** reused (documents vs. tree items); `item.setHidden` and `MODE_LABELS`' shape are, with a **new predicate enum**. No chord in v1. Five open questions flagged. **`FQ-260812022749` PART 1 SHIPPED (`a852563`, wired `07b83e9`) — DUAL-MODE DDL:** the Qt-free `db/pg_dump_mode.py` owns the rule and the words only, the rule is one-sided (**`pg_dump` major >= server major** — newer-than-server is *fine*), there is **ONE version rule for both Explorer roles** (owner), **four** RESTRICTED shapes each naming itself, and the `[DDL]` notice fires on **every** DDL open from a verdict probed **once** per quality connection. `RESTRICTED_CLONE_WARNING` turns `DEC-260811022536`'s two structural gaps into a **stated hazard** — the complete DDL is a **clone source**, so restricted text yields a plain table that looks right and runs. **⏳ The buffer's two renderers are LANDING** (`build_ddl_buffer(schema, *, mode, dump_text)`, degrading **whole** with a reason rather than half-parsing). Two facts the wiring established: **there was no quality capability probe anywhere**, and the owner's **same-version principle was assumed, never enforced and never checked** — `server_major_divergence()` now performs it. **`FQ-260812025836` SHIPPED (`c7c45b3`, gated `07b83e9`): VIEWS are editable through the existing §18.5 lane** (`db/apply.py` needed **no** change), **matviews refused WITH THEIR REASON** (no `CREATE OR REPLACE MATERIALIZED VIEW`), `pg_get_viewdef` **load-bearing** as the source (a `pg_dump` source would re-create the trigger double-identity collision), and `DdlObjectRef.is_checkout_eligible` making *edit-and-apply-only* a named fact*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder); **checkout is no longer a separate gesture** and the tab key is **`ref.key` always** (FQ-024, 2026-08-08). **FQ-035 SHIPPED (`82f2be6`, ambiguities ruled and shipped `caed134`):** the New Project dialog has an optional **`.pgtp` attach field** and a **quality/target connection section revealed and auto-populated by it** via `connection_from_tree` — the creation flow is five steps, and `create_project` writes `target` and `pgtp` instead of leaving both at their empty defaults until first open. Both flagged ambiguities are **answered**: checkout happens **at accept through ONE copier** (`check_out_pgtp`, which raises `OSError` rather than deciding), and there is **no quality gate but one advisory**. **BUG-260810173246 is RESOLVED (`73f55c9`):** one `_linked_working_copy` predicate makes *"a recorded path with no file behind it is not a link"* true for all three readers and the writer's guard, and a half-link **self-heals** on the next open of the same source. *(Superseded: "target design NOT YET BUILT" and "two ambiguities are flagged for the owner rather than decided".)**
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *SQL engine implemented, core + **two** consumers: `Ctrl+Alt+F` Format Selection in the DDL object editor (with a context-menu item) and the Sandbox SQL Console (chord only), `[SQL]` Audit refusals wired. **FQ-033 SHIPPED 2026-08-10 (`061e973`), and its four "NOT YET BUILT" banners are retired:** configurable keyword casing (keywords only) + a bounded break/indent rule set (`sql/format_config.py`, which also now OWNS `CLAUSE_STARTERS`/`DEFAULT_INDENT_UNIT`), a separate Qt-free `xmlfmt/` XML engine behind the same gesture on the three `XmlEditor` surfaces, and the `Autoformatter settings…` dialog + `autoformatter` QSettings group (hosts read the config **at gesture time**, so a save reaches an open tab with no notification plumbing). the `Settings ▸ Autoformatter settings…` menu line landed in **`81bf658`** — and was **RE-HOMED 2026-08-12 (`19c14c5`) as the *Autoformatter* pane of `Settings ▸ Software settings…`**, with the id `settings.autoformatter-settings` deleted and no alias row (§7); the dialog and its persistence are unchanged. ~~**ONE SEAM REMAINS UNWIRED … the `[XML]` refusal handler**~~ — **CLOSED: `audit_router.XML_PREFIX` → `TO_ACTIVITY` and `MainWindow._report_xml_format_refusal` on all three `XmlEditor` hosts, verified 2026-08-12. §18.4 has NO unwired seam** (the banner had survived in four places; ledger §28)*
@@ -1347,7 +1459,7 @@
 23. [MCP integration](#23-mcp-integration) — ***fully wired** (re-audited 2026-08-10): `pgtp_editor/mcp/` ships, headless `--mcp` works, and **Tools ▸ ☐ `Start MCP Server`** (`MainWindow._mcp_action`) is the GUI opt-in, unchecked at every launch with no persisted key. §23's *"remaining gap"* banner is **closed**; its *"opt-in in Preferences"* wording named the stub FQ-016 deleted and is corrected*
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
-26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half. **BUG-064 (`a9efb67`): `History`'s two entries are `Undo Project Edit` / `Redo Project Edit` and carry NO shortcut** — they are a project-scoped command, not the menu twin of the focus-scoped `Ctrl+Z`/`Ctrl+Y`, and unlike those chords they **are** rebindable. **2026-08-12: `View` LOSES `Customize Toolbar…` and `Customize Shortcuts…` and `Settings` collapses to ONE entry, `Software settings…`** (`FQ-260812002827`, `19c14c5`, §7) — four ids deleted, **no alias rows**; and the Editor bar's **`Select` menu grows to SIX entries**, the two new ones (`Sticky Selection` / `Line Selection`) **keyless and checkable with re-derived state**, hidden on a read-only editor (`FQ-260812000331`, `de75617`, §8)*
+26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half. **BUG-064 (`a9efb67`): `History`'s two entries are `Undo Project Edit` / `Redo Project Edit` and carry NO shortcut** — they are a project-scoped command, not the menu twin of the focus-scoped `Ctrl+Z`/`Ctrl+Y`, and unlike those chords they **are** rebindable. **2026-08-12: `View` LOSES `Customize Toolbar…` and `Customize Shortcuts…` and `Settings` collapses to ONE entry, `Software settings…`** (`FQ-260812002827`, `19c14c5`, §7) — four ids deleted, **no alias rows**; and the Editor bar's **`Select` menu grows to SIX entries**, the two new ones (`Sticky Selection` / `Line Selection`) **keyless and checkable with re-derived state**, hidden on a read-only editor (`FQ-260812000331`, `de75617`, §8). **2026-08-12 (later): `View` also LOSES `☐ Light Theme` and its trailing separator, so the menu ends on `Collapse All`** (`FQ-260812021715`, `7caf024`, §7) — the id `view.light-theme` **deleted with no alias row**, because nothing means *"toggle to light"* any more; theme choice is the `Themes` pane of `Settings ▸ Software settings…`, which makes it **Maintenance-only**, and §27 gains no row*
 27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through the **Keyboard shortcuts** pane of `Settings ▸ Software settings…` (FQ-012, 2026-08-09; **re-homed off `View` 2026-08-12, `19c14c5` — so rebinding is now MAINTENANCE-ONLY**, `DEC-260812004358` OPEN), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*). **`Ctrl+Shift+Z` gains its first row 2026-08-10** — a second redo key, shipped long before and never written down; it is now **reserved** (BUG-050) and answered by the DDL object tab and the read-only DDL Explorer as well as the XML editors (BUG-048/BUG-053). **The `Ctrl+Shift+B` row is rewritten (BUG-046):** the duplicate `CodeEditor.keyPressEvent` host is **deleted** and its offscreen justification was **measured false** — one host per window, per §8's DEC-012 rule. **The section now opens with DEC-015's governing rule (2026-08-10): a chord means the same thing on every system — bound by this app on every platform, never inherited from Qt's platform table, and NO platform-conditional bindings.** With it: `docs/KEYBINDINGS.md` as the single chord register **kept true by a test, not by transcription**, and the warning that the offscreen suite runs Qt's **Windows** scheme so a Linux-only dead key passes every test. **DEC-015's per-chord consequences ALL SHIPPED (`a9efb67`) and the rows now assert them:** `Ctrl+Y` bound explicitly on both platforms, `Ctrl+Shift+Z` **freed from redo and reclassified `CLAIMED_NOT_UNDO_REDO`** — claimed by all six editing surfaces so Qt's native redo cannot fire, awaiting FQ-034's shrink-selection — and the legacy `Alt+Backspace` / `Alt+Shift+Backspace` pair **SUPPRESSED on both platforms**, the call DEC-014 had left open. **`docs/KEYBINDINGS.md` EXISTS**, with a measured per-scheme appendix, and its **Reserved column is a set equality against `RESERVED_SEQUENCES`**, so a reserved-set change ships with its ledger row in the same commit — **all five of its recorded Known gaps are now CLOSED**. **The owner's X11-chord rulings SHIPPED TOO (`55c2538`):** the uniformity rule's one exception is the **physically-absent-keys carve-out** (`F14`/`F16`/`F18`/`F20`, `F14`'s undo bypass knowingly accepted with its own review trigger); **`Ctrl+Shift+Insert` is paste on both platforms** and is in `EDITOR_PASTE_CHORDS`; **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are app-implemented at all six surfaces** through one `code_editor.apply_editor_operation`, so **Windows gained three gestures** and the app now owns those primitives' edge cases forever. **The table and matcher are `EDITOR_CHORDS` / `classify_editor_chord`** — renamed rather than duplicated, because a second table means a second matcher and two calls per surface, which is the whole BUG-048/049/053/056 family*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
@@ -1528,7 +1640,12 @@ pgtp_editor/
 ├── db/                # PostgreSQL introspection & comparison (Qt-free logic)
 │   ├── config.py, introspect.py (psycopg lazy), compare.py, rename.py
 │   │                  # introspect.py::run_queries is the sole READ seam — read-only, never commits
-│   ├── ddl_buffer.py  # build_ddl_text(schema) → (text, [DdlObjectSpan]) — DDL Explorer buffer (§18.1)
+│   ├── ddl_buffer.py  # build_ddl_text(schema) → (text, [DdlObjectSpan]) — DDL Explorer buffer (§18.1);
+│   │                  # EDITABLE_SPAN_KINDS (+"view" since FQ-260812025836, deliberately NOT "matview") /
+│   │                  # OBJECT_SPAN_KINDS. ⏳ ITS DUAL-MODE ENTRY POINT IS LANDING: build_ddl_buffer(schema,
+│   │                  # *, mode, dump_text) -> DdlBuffer{text, spans, mode, degrade_reason}, RESTRICTED being
+│   │                  # today's renderer unchanged (so BUG-018's proven determinism still covers exactly the
+│   │                  # code it always did) and FULL degrading WHOLE, with a reason, rather than half-parsing
 │   ├── apply.py       # SHIPS and is REACHABLE — the sole DB **write** seam: apply_ddl(target, [sql],
 │   │                  # commit=…) (explicit commit/rollback, ApplyOutcome{results, notices}); the
 │   │                  # codebase's first write path (§18.5). Reached from `Deployment ▸ Apply to
@@ -1557,6 +1674,16 @@ pgtp_editor/
 │   │                  # invariant it amends (§18.5 invariant 1). Deliberately a SEPARATE function, never
 │   │                  # a target= parameter on run_sandbox_query. Reached by Run / Ctrl+Return in the
 │   │                  # Quality SQL Console tab (Database ▸ Quality SQL Console…)
+│   ├── pg_dump_mode.py # SHIPS (FQ-260812022749 Part 1, a852563; wired 07b83e9) — the DUAL-MODE VERDICT
+│   │                  # and NOTHING else: DdlMode(FULL|RESTRICTED), the pure decide_ddl_mode(server_version,
+│   │                  # pg_dump_path, pg_dump_version) -> DdlModeVerdict over FOUR restricted shapes, the
+│   │                  # composing probe_ddl_mode(caps, bin_dir=…, which=…, run=…), RESTRICTED_CLONE_WARNING,
+│   │                  # and server_major_divergence(quality, sandbox) — the quality-vs-sandbox comparison the
+│   │                  # owner's same-version principle required and NOTHING in the app had ever performed.
+│   │                  # Qt-free, renders no DDL, never raises; the pg_dump --version SPAWN stays in sandbox.py
+│   ├── pg_dump_ddl.py # the one pg_dump --schema-only subprocess (fetch_schema_dump) plus the pure dump
+│   │                  # parser (parse_pg_dump -> ParsedDump/DumpStatement, KIND_CONSTRAINT/KIND_INDEX)
+│   │                  # feeding ddl_buffer.py's FULL renderer — ⏳ LANDING with the buffer's two modes
 │   ├── table_ddl.py   # pure synthesized CREATE TABLE / view / matview reconstruction from pg_catalog
 │   │                  # (§18.1, FQ-260810183812): per-table RECONSTRUCTION_NOTICE, identity and
 │   │                  # GENERATED rendered, inheritance + partitioning the two stated gaps
@@ -1746,11 +1873,23 @@ Key `ui/` modules: `main_window.py`, `center_stage.py`, `project_tree.py`, `xml_
 for §8's Command-mode caret, and — since `7703eba` — the app's **only** `:focus` declarations,
 `FOCUS_RULE_SELECTOR` / `focus_tab_selector` / `FOCUS_TAB_EDGES` appended to that cached string from
 `COLOR_TEXT_1`, so keyboard focus is visible and there is no second colour table — §7),
-`theme_model.py` (**`FQ-260812021715`, shipped `c0ab500`** — the **Qt-free** `Theme` value object and its
-loader: `load_theme` / `load_theme_file` / `available_themes` / `theme_for` / `shared_accent` / `duplicate`
-over the six pinned key sets, backed by `pgtp_editor/resources/themes/{dark,light}.json` plus
-`user_themes_dir()`. **The one place a colour comes from**, enforced by an AST guard that fails on a
-`#rrggbb` literal in *any* module including this one and `theme.py` — §7),
+`theme_model.py` (**`FQ-260812021715`, shipped `c0ab500` + `7caf024`** — the **Qt-free** `Theme` value object,
+its loader and the whole of theme **selection**: `load_theme` / `load_theme_file` / `available_themes` /
+`theme_search_path` / `theme_for` / `active_theme` / `set_active_theme` / `resolve_theme` /
+`migrated_theme_name` / `shared_accent` / `duplicate` / `theme_stem` / `is_bundled` / `save_theme`, plus
+`SETTINGS_KEY = "themeName"` and `LEGACY_LIGHT_KEY = "lightTheme"` (read once by the migration, then
+**removed**), over the six pinned key sets, backed by `pgtp_editor/resources/themes/{dark,light}.json` plus
+`user_themes_dir()`. **The one place a colour comes from**, enforced by an AST guard that fails on a hex of
+**any** length *or* a CSS colour name in a style declaration, in *any* module including this one and
+`theme.py` — §7),
+`status_colours.py` (**`BUG-260812063745`, `f05cc8b`** — `STATUS_OK`/`STATUS_WARNING`/`STATUS_ERROR`, the
+pure `status_colour(kind, light)` moved whole out of `sql_results_panel.py` (which re-exports it, so there
+is one definition and no caller moved), and **`StatusLabel`**: the remember-the-KIND, re-derive-on-
+`changeEvent`, paint-by-widget-stylesheet pattern written once, with `_colour_for` as its one overridable
+seam — §7),
+`connectivity.py` (§7's two status-bar dots — `ConnectivityIndicator(StatusLabel)`, `dot_rendering(state,
+light)` resolving an accent **key** per theme, `sandbox_state_for`, and the four one-shape-per-state glyphs;
+it re-derives no state, importing §18.8's own enums),
 `toolbar_registry.py`, `toolbar_controller.py` (owns the menu-bar
 walk and the toolbar's persistence, §7 — **not** `main_window.py`), `customize_toolbar_dialog.py`,
 `shortcut_registry.py` (FQ-012's **pure, Qt-free** rebinding rules — `toolbar_registry.py`'s twin, §27) /
@@ -1801,8 +1940,13 @@ only by `SqlConsolePanel` as the console's bottom half, so it is reachable trans
 export/import lane; `EditSnippetsDialog` emits `export_requested`/`import_requested` and opens no file
 chooser of its own. Reached as the **Snippets pane** of `Settings ▸ Software settings…` since `19c14c5`, via `SnippetController.build_editor` — §7; the standalone `Settings ▸ Edit Snippets…` entry is gone),
 `software_settings_dialog.py` (§7 — the two-pane settings host: `SoftwareSettingsDialog`, `SettingsPane`,
-`SETTINGS_PANES`, `MENU_LABEL`, `COMMAND_ID`. It **imports four pane builders and owns none of them**, and
-its only button is `Close`),
+`SETTINGS_PANES`, `MENU_LABEL`, `COMMAND_ID`. It **imports the four relocated panes' builders and owns none
+of them**, and its only button is `Close`. **Since `7caf024` it also DEFINES one pane, `ThemesPane`**
+(`FQ-260812021716`) — the exception that proves the rule: it is net-new, so it had no prior dialog to embed,
+and it still owns its own apply contract rather than borrowing the host's. Its `_FLAT_SECTIONS` /
+`_MODE_PARTS` / `_SYNTAX_FLAGS` tables are read **off `theme_model`'s own tuples**, so a colour added to the
+model appears in the editor with no change here — *the alternative is a second list of colour names, which
+is the same mistake as a second list of colours*),
 `format_settings.py` / `autoformat_settings_dialog.py` (FQ-033 part D, `061e973` — the `autoformatter`
 QSettings group and its bounded editor; `format_settings.py` is the **only** module that reads or writes
 that group, and it is where the `sql/` and `xmlfmt/` engines' Qt-free configs are constructed, so neither
@@ -2527,8 +2671,9 @@ a second, independently-designed indicator region would grow exactly the rival-i
 feature exists to prevent. Owner: *"FQ-028 is the large scale solution, and FQ-018 is part of that
 solution."* Ledger §28. Its design is carried here whole:
 
-- **Two labelled dots, `Quality ●` and `Sandbox ●`** (`ui/connectivity.py::ConnectivityIndicator`), the
-  labels matching §18.8's **node names** so the two surfaces read alike.
+- **Two labelled dots, `Quality ●` and `Sandbox ▲`** (`ui/connectivity.py::ConnectivityIndicator`) — the
+  glyph is the state's, per the table below — with the labels matching §18.8's **node names** so the two
+  surfaces read alike. `_render` colours **the whole label**, which is why the text threshold governs.
 - **It re-derives nothing.** The states are §18.8's own enums, imported from
   `ui/project_status_model.py`: `QualityState.NOT_SET_UP / OFFLINE / CONNECTION_OK` and
   `SandboxState.NOT_SET_UP / OFFLINE / CONNECTED`. A second, drifting notion of *"connected"* is the
@@ -2538,12 +2683,50 @@ solution."* Ledger §28. Its design is carried here whole:
   lightweight poll does not compute, so the poll's two-fact answer maps onto the **same** enum rather than
   inventing a parallel one.
 - **A fourth rendering state, `UNKNOWN`, belongs to the status bar alone** — the poll has not answered yet
-  (project just opened, window just regained focus, probe in flight). Shown as a **hollow grey dot** with
-  a tooltip saying so. This is the status-bar rule applied literally: *"we have not checked yet"* is a
-  defined fact, and it must not be rendered as a blank or as a stale green. Rendering table:
-  white = not set up · red = offline · green = reachable · hollow grey = not checked.
-  `dot_rendering(state)` falls back to `UNKNOWN` for anything it does not know — **a state this module
-  cannot name is never a reason to claim connectivity.**
+  (project just opened, window just regained focus, probe in flight). This is the status-bar rule applied
+  literally: *"we have not checked yet"* is a defined fact, and it must not be rendered as a blank or as a
+  stale green. `dot_rendering(state, light)` falls back to `UNKNOWN`'s rendering for anything it does not
+  know — **a state this module cannot name is never a reason to claim connectivity.**
+
+> **⚠ THE RENDERING IS PER-THEME, MEASURED AGAINST THE STATUS BAR, AND CARRIES A SECOND CHANNEL
+> (`BUG-260812103144`, fixed `cdcba11`). This supersedes three statements this block previously made.**
+> Struck: the table *"white = not set up · red = offline · green = reachable · hollow grey = not checked"*;
+> the claim that the dots are *"theme-blind today"*; and — from §7's theme block — the constraint that
+> *"making them theme-aware would change pixels, which this consolidation was explicitly not allowed to
+> do."* **The pixels were the defect**: the four values measured **1.46–3.06:1** against the real status-bar
+> background and now measure **4.58–9.07:1**.
+>
+> | State | Glyph | Meaning | Accent key |
+> |---|---|---|---|
+> | reachable | **`●`** filled circle | a live connection | `connectivity_reachable` |
+> | offline | **`▲`** triangle | the universal *"something is wrong"* | `connectivity_offline` |
+> | not set up | **`□`** hollow square | an empty slot — nothing configured | `connectivity_not_set_up` |
+> | not checked (`UNKNOWN`) | **`○`** hollow circle | the open question | `connectivity_unknown` |
+>
+> - **One shape per state, because colour is not a channel every user has.** Until this fix `NOT_SET_UP`,
+>   `OFFLINE` and `CONNECTION_OK` all drew the same filled `●` and were told apart by **hue alone** — and
+>   the pair carrying the most meaning was **red-vs-green, the single most common colour-vision confusion**.
+>   The tooltip disambiguated, but only on hover, *which defeats the whole point of an at-a-glance
+>   indicator*. All four glyphs are from Unicode's Geometric Shapes block, which DejaVu Sans and Segoe UI
+>   both cover — **a glyph that renders as a tofu box is worse than the colour-only design it replaced.**
+> - **`_RENDERING` maps a state to an accent KEY, never to a value**, and `dot_rendering(state, light)`
+>   resolves it through `theme_for(light).accent(key)` on demand. Reading the four values **once at import**
+>   (through `shared_accent`) did two wrong things at once: it forced one value to serve both themes, and it
+>   **froze** them, so a runtime theme flip left the dots painting whichever theme loaded first. `light` has
+>   **no default** on that signature on purpose — a caller that does not know which theme it is painting
+>   under cannot pick a legible colour, and a default would let one silently ship the other theme's value.
+> - **The provisional cue lives in the HOLLOW GLYPH, not in dimness.** The instinct to render *"not checked
+>   yet"* as *dim* is what produced the worst pair in the set: the old `#9E9E9E` scored **2.93:1** on the
+>   dark status bar and **1.53:1** on the light one. `UNKNOWN`'s colour is now a neutral that clears 4.5:1.
+> - **`ConnectivityIndicator` inherits `StatusLabel`**, overriding **`_colour_for`** (a connectivity state
+>   rather than a status kind) and **`_palette_is_light`** (the transparent-status-bar rule above) and
+>   *nothing else* — the re-entrancy bound, the queued re-apply and the context-bound timer are inherited,
+>   each of them a measured failure that hand-rolling a second `changeEvent` here would have hit a third
+>   time. One detail that is easy to lose silently: `StatusLabel` writes `QLabel { color: … }` and nothing
+>   else, where `_render` used to declare `padding: 1px 6px` in the same sheet, so the padding moved to
+>   `setContentsMargins(6, 1, 6, 1)` — dropping it changes the status bar's spacing.
+> - **`ui/connectivity.py` was the original in-repo precedent that DID paint** (§7's per-widget-colour
+>   block cites it as such). That is still true of its technique; what was wrong was its colour table.
 - **BOTH dots are PROJECT-MODE ONLY — FQ-028 overrides FQ-018** (which showed the Quality dot in
   standalone too; ledger §28). They are **present when a project is actually open and absent
   otherwise** — visibility, never a greyed-out third posture. **"Actually open" means
@@ -2571,9 +2754,9 @@ solution."* Ledger §28. Its design is carried here whole:
   rather than to offline, because *"the probe broke"* is not evidence that the database is down. Same rule
   in the pure layer: `connectivity.dot_rendering(state)` returns `UNKNOWN`'s rendering for any state it
   cannot name.
-- **Nothing in this feature is ever blank.** The dots have their own `UNKNOWN` (hollow grey), distinct
-  from all three of §18.8's states; the busy slot reads `Idle`; the mode indicator reads `No Mode`. Three
-  surfaces, one rule.
+- **Nothing in this feature is ever blank.** The dots have their own `UNKNOWN` (the hollow circle `○`),
+  distinct from all three of §18.8's states; the busy slot reads `Idle`; the mode indicator reads
+  `No Mode`. Three surfaces, one rule.
 
 **Document state:** `_dirty` + `_set_dirty()` (title gets " *"); editor `textChanged` marks dirty;
 load/save/revert clears. **Theme toggles never dirty either document:** a theme change re-applies
@@ -2847,30 +3030,109 @@ History ▸ History… action**
 (`_open_history_jump_list`) is what opens the non-modal newest-first `QListWidget` jump popup, where
 moving back = undo and forward = redo.
 
-**Theme** (`ui/theme.py` + `ui/theme_model.py`): the app ships **two explicit, symmetric,
-platform-independent themes** — there is no third "restore the native/OS style+palette" state.
+**Theme** (`ui/theme.py` + `ui/theme_model.py`): the app ships **two bundled, explicit, symmetric,
+platform-independent themes and accepts any number of user ones** — there is no third "restore the
+native/OS style+palette" state, and there is no OS dark-mode *detection* anywhere in `pgtp_editor/`.
 
-> **⚠ THEME *SELECTION* IS IN FLIGHT AND IS DELIBERATELY NOT PINNED HERE (2026-08-12).** `FQ-260812021715`
-> shipped **partially** (`c0ab500`): the colour *model* landed, and the removal of `View ▸ Light Theme` plus
-> the migration of the persisted boolean to a theme **name** is being built as this is written. Everything
-> below describes the **colour mechanism**, which is settled; the gesture that picks a theme, and the
-> QSettings key behind it, are whatever the next fold records. Do not read the `light: bool` parameters
-> below as a statement that a boolean is the app's final theme selector — they are the current signature.
+##### Theme SELECTION — a NAME in QSettings, picked in the Themes pane (`FQ-260812021715` + `FQ-260812021716`, SHIPPED `7caf024`)
+
+*(This block replaces the `⏳ THEME SELECTION IS IN FLIGHT` banner the previous pass deliberately left here
+rather than guess at. It is settled and every name below is verified.)*
+
+- **`View ▸ Light Theme` is DELETED** (§26; ledger §28) — the action, `MainWindow._light_theme_action` and
+  its toggle handler are gone, and `main_window.py` carries a *"`Light Theme` USED TO BE HERE"* marker at
+  the construction site so the row is not re-added by someone reading an old menu listing.
+- **The selection is a theme NAME**, `theme_model.SETTINGS_KEY = "themeName"` in
+  `QSettings("MDS","PGTP Editor")` — the theme's **file stem**, which is what `available_themes()` keys on.
+  **Maintenance-only to change, app-wide and durable once changed**, by owner ruling: a setting altered in
+  Maintenance mode survives restart *and* a new session, so the choice is persisted the moment it is made
+  rather than on an OK.
+- **One entry point: `MainWindow.apply_theme_named(name, *, persist=True) -> str`.** Called by
+  `_restore_theme` at startup (`persist=False`) and by the Themes pane's *Use this theme*. It returns the
+  name **actually applied**, which differs only when `theme_model.resolve_theme` had to fall back to
+  bundled `dark` because the named file no longer loads — and the caller then **writes the fallback down**,
+  because a stored ghost name would make `theme_name()` disagree with what is painted, i.e. the pane's
+  *"— in use"* marker pointing at a row that does not exist. Beyond the palette and the QSS it re-tints the
+  toolbar icons, re-consults the mode chips and re-applies the DEBUG chip; nothing else may call
+  `theme_model.set_active_theme`.
+- **The migration off `"lightTheme"` is a one-shot MOVE, and the removal is the point.**
+  `theme_model.migrated_theme_name(stored, legacy_light)` is Qt-free and testable without a `QSettings`: a
+  stored name wins; with no name, `lightTheme=true` lands on bundled `light` and anything else — `false`, or
+  a genuinely fresh install — on `dark`, which is what the boolean's own default was. `_restore_theme` then
+  **removes `LEGACY_LIGHT_KEY`**. *Two stored answers to "which theme" is exactly the drift this
+  consolidation exists to kill: a stale `lightTheme=true` would resurrect light on the next restart after
+  the user picked dark, and the next reader's guess would be as good as ours.* `migrated_theme_name`
+  deliberately does **not** validate that the name still exists — that fallback belongs at load time
+  (`resolve_theme`), not in the migration.
+- **`MainWindow._is_light_theme` reads the APPLIED `Theme.light`, never a checkable action.** This is what
+  the removal buys: a menu checkbox can only answer *"light or not"*, while a theme file's own `light` flag
+  lets **any number of themes** answer `UiShell.is_light_theme`. `theme_model.theme_for(light)` remains the
+  **single point where the boolean becomes a `Theme`**, so the app's `light: bool` seam is unchanged
+  throughout — and is re-read at paint time, because a resolved colour cached across a flip is the previous
+  theme's (BUG-260811021804). When the active theme does not read the way the caller asked, `theme_for`
+  answers with the **bundled** theme for that side: `PaletteChange` fires four times per flip and the first
+  two report the OLD lightness, so a consumer *will* ask about the side the app is not on.
+- **The `Themes` pane is where a theme is picked, duplicated and edited** — `ui/software_settings_dialog.py
+  ::ThemesPane`, the fifth row of `SETTINGS_PANES` (§7's Software settings block). Its four gestures:
+  **Browse** (`available_themes()`, rescanned on every refresh, deliberately uncached, so a file dropped
+  into the user themes directory needs no restart) · **Use this theme** (applies *and* persists
+  immediately — **not** on OK, and therefore deliberately **not part of the pane's edit buffer**) ·
+  **Duplicate…** (the create path — *"new = copy an existing one"*, so a new theme is a valid `Theme` from
+  the first keystroke and there is no half-defined-theme state to guard; written into the **user** themes
+  directory, which is also what makes it editable) · **OK (Save)** (writes the edited colours to the
+  theme's user file and **re-applies it if it is the theme in use**, which is what makes the edit visible;
+  Cancel discards, and the host rebuilds the pane from disk).
+- **Bundled themes are READ-ONLY, and that is the design, not a limitation.** An install directory is not
+  reliably writable, an upgrade would overwrite the edit anyway, and duplicate-then-edit already exists —
+  so `theme_model.is_bundled` refusals are **stated on screen** (`"… is a bundled theme and is read-only —
+  use *Duplicate…* to make an editable copy."`) rather than failing at write time. A user theme **shadows**
+  a bundled one of the same name (`theme_search_path`), so *"edit the theme I am using"* is reachable
+  without touching the install; `save_theme` therefore always writes the user directory, never
+  `theme.source`.
+- **Edits round-trip through `Theme.from_json`, not through the dataclass.** `ThemesPane.edited_theme()`
+  serialises, patches and re-loads, so the editor's output is **validated by the same loader a file goes
+  through** — an editor that constructed the dataclass directly could produce a theme that cannot be loaded
+  back, which is the worst possible time to find out. Colour values are held as **text**, not `QColor`,
+  for the same reason: `QColor` would quietly normalise (or accept) notations the loader refuses.
+- **Live preview is apply-on-SAVE, not per-keystroke**, and the reason is recorded so it is not read as
+  laziness: a `QColorDialog` slider drag would re-apply the whole app stylesheet on every move and multiply
+  the four-`PaletteChange` cost for nothing a Save does not already give.
+- **`theme_stem(name)`** reduces a display name to a legal unambiguous file stem (lower-cased slug,
+  alphanumerics of any alphabet survive, everything else collapses to `-`, an empty result is **refused
+  loudly** rather than becoming `.json`) — because a theme's identity *is* its stem, so `"My Theme"` and
+  `"my/theme"` must not be able to name one file, escape the directory, or produce a name selection cannot
+  round-trip.
+
 `light_palette()` and `dark_palette()` are pure functions (build and return a fresh `QPalette`,
 mutating nothing) each setting a **complete** role set — every role the app surfaces, including
 `Link`/`LinkVisited` (navy on light, light-cyan on dark, so About-box hyperlinks read on both) and an
 explicit Disabled color group so greyed-out controls stay legible under Fusion. Light = white/near-white
-backgrounds with dark text; dark = dark Window/Base with light text. `apply_theme(app, light: bool)` is
-the only function that mutates the running QApplication: it **always** sets the Fusion style (Fusion
-honors QPalette fully; many native styles largely ignore it) and applies `light_palette()` when `light`
-is true, `dark_palette()` otherwise — and then sets the application stylesheet **unconditionally, for
+backgrounds with dark text; dark = dark Window/Base with light text. **`apply_theme(app, source)`** is
+the only function that mutates the running QApplication, where `source` is a **`Theme`, a theme NAME, or
+the historical `light: bool`** (normalised by `theme_object`) — it stayed the single mutation point when
+themes became named files, so there is still exactly one place the running application's colours change.
+It **records the active theme FIRST** (`theme_model.set_active_theme`), *before* building the palette or the
+sheet, because both are built through `theme_for` and every other colour consumer reads the same seam —
+recording it afterwards would paint one frame's worth of widgets from the previous theme. It then **always**
+sets the Fusion style (Fusion honors QPalette fully; many native styles largely ignore it), applies
+`qpalette_for(theme)`, and sets the application stylesheet **unconditionally, for
 both themes** (BUG-010 for dark; FQ-005, 2026-08-06, extended it to light):
-`app.setStyleSheet(_qdarkstyle_stylesheet(light))`. `_qdarkstyle_stylesheet(light: bool) -> str` loads
+`app.setStyleSheet(_qdarkstyle_stylesheet(theme))`. `_qdarkstyle_stylesheet(source) -> str` loads
 qdarkstyle's compiled sheet — `qdarkstyle.load_stylesheet(qt_api="pyside6", palette=base)`, where `base` is
 `LightPalette` or `DarkPalette` per `Theme.qdarkstyle_base`, **both passed explicitly** — and then
 **recolours it by regex substitution** (`_recolour_qss`) from the theme file's 16 `COLOR_*` tokens. Lazily
-loaded (qdarkstyle warns if loaded before a `QApplication` exists) and memoized per theme in the
-module-global `_qss_cache: dict[bool, str]`.
+loaded (qdarkstyle warns if loaded before a `QApplication` exists) and memoized in the module-global
+`_qss_cache: dict[tuple, str]`.
+
+> **⚠ THE CACHE IS KEYED ON THE SHEET'S INPUTS, NOT ON A BOOLEAN AND NOT ON A NAME — and the bool key was a
+> LATENT DEFECT, fixed with `FQ-260812021716` (`7caf024`).** `_qss_key(theme)` is
+> `(theme.qdarkstyle_base,) + tuple(theme.chrome[k] for k in CHROME_KEYS)`. The old `dict[bool, str]`
+> **cannot distinguish two dark themes**, so the moment a second one was selectable an edited user theme
+> would have been served the *other* theme's chrome — a plausible-looking wrong result with no error
+> anywhere. A **name**-keyed cache fails the other way: it hands back the pre-edit sheet after a Save. Keyed
+> on the actual inputs, two themes with identical chrome share one string (which is why a duplicate that has
+> not been recoloured yet costs nothing) and any chrome edit produces a fresh entry by construction.
+> *A cache key is a claim about what the value depends on; a boolean was a claim that there are two themes.*
 
 > **⚠ WHY THE RECOLOUR IS A REGEX PASS AND NOT `load_stylesheet(palette=…)` — measured, and it cost real
 > investigation (`FQ-260812021715`).** The obvious mechanism — subclass `qdarkstyle.Palette`, override the
@@ -2906,13 +3168,20 @@ deliberately absent: every editor is already monospaced, and a global editor fon
 > merely discouraged.*
 >
 > **`shared_accent(key)` is how a THEME-BLIND consumer is allowed to read a colour, and it RAISES rather
-> than picking one.** `ui/connectivity.py`'s dots are theme-blind today — one `_RENDERING` table, no palette
-> lookup — and making them theme-aware would change pixels, which this consolidation was explicitly not
-> allowed to do. Rather than let them keep private literals, they read through `shared_accent`, which
-> returns the value only while **every bundled theme agrees** and raises `ThemeError` otherwise. **The day a
-> theme gives the offline dot its own red, the theme-blind reader fails loudly in the suite instead of
-> silently painting the other theme's colour** — *turning an invisible consumer into a failing test is the
-> whole point of the seam.* Neither theme is palette-only: Fusion + `dark_palette()` alone rendered
+> than picking one. It has NO production caller, and that is now the point** (superseding this block's
+> earlier account, `BUG-260812103144`, `cdcba11`). Its one caller was `ui/connectivity.py`'s status-bar
+> dots, and the reason given here — *"making them theme-aware would change pixels, which this consolidation
+> was explicitly not allowed to do"* — **is withdrawn: the pixels were the defect.** One value serving both
+> themes is precisely *why* all four dots failed contrast, so they now read per-theme through
+> `theme_for(light).accent(key)` and each bundled theme gives each dot its own value. **The app has no
+> theme-blind colour consumer left**, so the function is kept as a **mechanism, not a helper**: it returns a
+> value only while **every bundled theme agrees** and raises `ThemeError` otherwise, which is what turns
+> *"this consumer quietly ignores the theme"* from an invisible property into a failing test. The next
+> consumer tempted to resolve a colour **once** — at import, in a constructor, into a cached attribute —
+> reads through here and finds out immediately instead of shipping the other theme's pixels; a consumer whose
+> colour **must** differ per theme may not use it at all (see the status-kinds block below). Its
+> caller-less state is pinned by an AST test, so *"nothing calls this, delete it"* fails rather than
+> succeeds. Neither theme is palette-only: Fusion + `dark_palette()` alone rendered
 checkable menu indicators outlined near-black on the dark menu background (Fusion derives the indicator
 frame from darkened Window/Button roles), and Fusion + `light_palette()` alone rendered as plain stock
 Fusion chrome; the maintained stylesheet styles `QMenu::indicator` and every other widget consistently
@@ -3015,12 +3284,91 @@ output side. Both halves are one mechanism and are specified together:
   anywhere in `pgtp_editor/` is a defect** — it would inherit the per-widget-vs-app-sheet trap this block
   spends its length on.
 
-Persisted as QSettings bool `"lightTheme"` in
-`QSettings("MDS","PGTP Editor")` — **⏳ this key is being migrated to a theme NAME by the in-flight second
-half of `FQ-260812021715`; do not build against the boolean**; `MainWindow._restore_theme` applies the persisted theme
-**unconditionally at startup for both states** (no startup capture of a default palette/style key
+Persisted as the QSettings **string** `"themeName"` in `QSettings("MDS","PGTP Editor")` — *(this line read
+`bool "lightTheme"` until `7caf024`; that key is read once by the migration and then **removed**, see the
+selection block above)*. `MainWindow._restore_theme` applies the persisted theme
+**unconditionally at startup for every theme** (no startup capture of a default palette/style key
 exists). Toolbar icons are re-tinted (`_refresh_toolbar_icons`) on every theme change and on startup
-restore. Tests assert palette roles rather than pixels.
+restore, as are the mode chips and the DEBUG chip. Tests assert palette roles rather than pixels.
+
+##### The app's three STATUS COLOURS, and the label that paints one (`ui/status_colours.py`, `BUG-260812063745`, fixed `f05cc8b`)
+
+**A call site knows a KIND — *"this went wrong"* — and never a colour.** `STATUS_OK` / `STATUS_WARNING` /
+`STATUS_ERROR`, resolved by the pure `status_colour(kind, light) -> str | None`, where **`None` means "no
+widget stylesheet at all"** — the ordinary status must render in the theme's own text colour, and an empty
+sheet is the right neutral in both themes rather than a third named colour.
+
+- **No new colour table.** error → `mode_colors(light)[MODE_MAINTENANCE][1]`, the app's one red (§18.7);
+  ok → `mode_colors(light)[MODE_PROJECT][1]`, the app's one green; warning → the theme file's
+  `status_warning` accent. `status_colour` was born in `ui/sql_results_panel.py` and **moved here whole**
+  because seven dialogs need it and *"a dialog importing its colour from a results panel"* is an arrow
+  nobody would draw on purpose; the panel **re-exports** it, so there is exactly one definition and the
+  panel's own callers and tests did not move.
+- **`shared_accent()` is the WRONG reader here and must never be used** — a status colour that is legible in
+  both themes *has* to differ per theme, so `shared_accent("status_ok")` would raise on the day these are
+  correct. The two seams are not interchangeable: one is for colours that cannot differ, the other for
+  colours that must.
+- **`StatusLabel(QLabel)` remembers the kind and re-derives the colour on every `changeEvent`**, painting
+  through a **widget-level stylesheet** (the app-wide QSS beats `QPalette` for every property it declares).
+  It is the pattern written **once** so six dialogs cannot each get it subtly wrong. Three of its
+  mechanisms are measured necessities, not defensiveness: the `_applying` re-entrancy flag (`setStyleSheet`
+  re-polishes, which posts another change event straight back — writing unconditionally is infinite
+  recursion, measured as a `RecursionError` from the very first dialog constructed, and the sheet-equality
+  check alone does **not** bound it because a **hidden** label's palette read flip-flops inside the nested
+  polish); the **queued** second re-apply, because on dark→light the *nested* event is the first one
+  carrying the new palette; and that timer's **mandatory `self` context argument** — without it Qt keeps the
+  bound method alive past the widget's C++ deletion and fires into a dead object (measured: **272** suite
+  failures, all `libshiboken: Internal C++ object (StatusLabel) already deleted`).
+- **The one overridable seam is `_colour_for(light)`**, and it exists for exactly one reason: a consumer
+  that needs all of the above but derives its colour from something other than a status kind (§7's
+  connectivity dots derive it from a connectivity *state*). *Overriding one pure function is what kept
+  `changeEvent` from being written a second time and got subtly wrong a third.*
+
+> **⚠ RULE — `StatusLabel` MAY NOT BE REUSED ON A TRANSPARENT-BACKGROUND SURFACE WITHOUT OVERRIDING ITS
+> PALETTE READ** (`BUG-260812103144`). `StatusLabel._palette_is_light` reads `self.palette()`, which is
+> right for a dialog label and **useless on the status bar**, for two compounding reasons measured together:
+> qdarkstyle declares `QStatusBar QLabel { background: transparent }`, so a child label's `Base`, `Window`
+> **and** `Button` roles all resolve to **`#000000` under BOTH themes**; and the widget-level
+> `QLabel { color: … }` this class writes lands in the label's own `Text`/`WindowText` roles, so **reading
+> them back reports the colour just painted**. That is a **circular read**, and it froze the dots on
+> whichever value was applied first — dark's neutral `#D2D5D8` under the light theme. The fix is to read
+> `QApplication.palette()` (still a paint-time read of the live palette, not a cached lightness), and it
+> lives in the subclass, not in `StatusLabel`. *The first implementation of this very bugfix painted dark's
+> salmon on the light status bar and never repainted: the same freeze, relocated.*
+
+> **⚠ RULE — A SURFACE'S CONTRAST BASELINE IS ITS OWN BACKGROUND, NOT THE WINDOW CHROME.** The triage that
+> found the dot defect measured them against `COLOR_BACKGROUND_1` and reported **2.96:1**; the status bar
+> paints `COLOR_BACKGROUND_4` (`#455364` dark / `#C0C4C8` light), against which the worst case is
+> **1.46:1**. **Importing the wrong `CHROME` constant would have shipped a "fix" that was still broken** —
+> which is why this is a rule and not an anecdote. Corollary: state the threshold *and* which one applies.
+> **4.5:1 (text) governs wherever a colour paints a label's TEXT**, and `_render` colours the whole label,
+> so the graphical 3:1 allowance never applied to the dots at all.
+
+> **THE AST GUARD WAS WIDENED BECAUSE IT HAD BEEN *SATISFIED* RATHER THAN OBEYED.** A `#b8860b` literal
+> failed the original `#rrggbb`-only pattern, was changed to `color: darkorange`, **and the test went green
+> while the defect stayed.** It now detects **(a)** a hex of **any** length anywhere in a string constant
+> (`#rgb`/`#rgba`/`#rrggbb`/`#rrggbbaa` — every notation Qt's stylesheet parser accepts; `#b33`, the DEBUG
+> chip, had been sitting in plain sight) and **(b)** a **CSS colour NAME inside a style declaration**
+> (`[-a-z]*color` / `background*` / `border*` followed by `:`). The name half is **declaration-scoped on
+> purpose**: unscoped, `tan`, `plum`, `linen`, `gold`, `snow` and `orange` all occur in ordinary prose, and
+> `theme_model.py`'s own error string *"expected a colour or a {color: …} map"* would trip a naive scan.
+> `%s` and f-string holes do not match as bare words, which is what lets `mode_stylesheet`'s `color: %s`
+> through — that shape is **correct**, since it resolves from the theme at paint time. Docstrings are
+> excluded (prose about a colour is often the record of *why* it is that colour); comments are excluded for
+> free by the AST. The forbidden-name list lives **in the test**, never in `pgtp_editor/` — *a colour table
+> in the package to enforce "no colour tables in the package" would be the joke writing itself.*
+>
+> **The DEBUG chip was FOLDED IN, not exempted.** The status bar's `color: white; background: #b33` — which
+> §7 already singled out as forbidden to copy because it does not re-theme — is now the
+> `debug_chip_background` / `debug_chip_foreground` accent **pair** (a chip is not text on chrome, so it
+> needs both), applied by `MainWindow._apply_debug_chip_colours` and re-applied by `apply_theme_named`.
+>
+> **⚠ ONE CARVE-OUT IS DELIBERATE, AND THE GUARD MUST NOT BE MADE CLEVERER.** The **indirect** form —
+> `colour = "green" if ok else "red"` followed by `setStyleSheet(f"color: {colour};")` — is **not
+> statically detectable**: the string `"green"` is adjacent to no declaration, and telling it from any other
+> pair of strings needs dataflow analysis, not a regex. **The answer is that both sites were DELETED** (they
+> became a status *kind*), and the way to keep the form deleted is **review, not scanning**. Widening the
+> regex to bare words would make the guard unusable and is what a future reader must not attempt.
 
 **Window-state persistence:** `closeEvent` saves `saveGeometry()`/`saveState()` to QSettings; restored
 on construction (default size on a fresh install). Tests use a temp QSettings scope.
@@ -3653,10 +4001,15 @@ sweep noticed.)*
 > `SnippetController.build_editor`; `autoformat_settings_dialog.build_autoformat_settings_pane`. Verified by
 > name 2026-08-12.**
 >
-> **Three owner decisions are OPEN and shipped with defaults. Read the relevant paragraphs as
-> DEFAULTS-PENDING-ANSWER, not as settled design:** `DEC-260812004358` (Maintenance-only reachability),
-> `DEC-260812004359` (non-modal), `DEC-260812004400` (four panes, not six). Each is isolated to one place,
-> which is why the feature shipped rather than waiting.
+> **Two owner decisions remain OPEN and shipped with defaults. Read the relevant paragraphs as
+> DEFAULTS-PENDING-ANSWER, not as settled design:** `DEC-260812004358` (Maintenance-only reachability) and
+> `DEC-260812004359` (non-modal). Each is isolated to one place, which is why the feature shipped rather
+> than waiting. **`DEC-260812004400` is CLOSED by shipping (`7caf024`)** — see *FIVE panes* below.
+>
+> **⏳ A SIXTH pane, `External tools` (`FQ-260812025705`), is IN FLIGHT in a concurrent tree** — the queue
+> entry is still `QUEUED`. The module already carries an `ExternalToolsPane` and a sixth `SETTINGS_PANES`
+> row, but nothing about it is pinned here and no line number is cited; the next fold records it. **What
+> matters for this block is only that it cost one row**, which is the pane contract working as specified.
 
 **The problem it solves is structural, and naming it is what makes the shape non-arbitrary: a launcher
 button is ONE command, and the app's settings were a whole menu plus two `View` entries.** No single command
@@ -3674,11 +4027,13 @@ entry.** That is the whole design, and every other property follows from it.
 | Toolbar | `toolbar` | `View ▸ Customize Toolbar…` (FQ-004) | `CustomizeToolbarDialog`, via `ToolbarController.build_customize_pane` |
 | Autoformatter | `autoformatter` | `Settings ▸ Autoformatter settings…` (FQ-033, §18.4 part D) | `AutoformatSettingsDialog`, via `build_autoformat_settings_pane` |
 | Keyboard shortcuts | `shortcuts` | `View ▸ Customize Shortcuts…` (FQ-012, §27) | `CustomizeShortcutsDialog`, via `MainWindow.build_customize_shortcuts_pane` |
+| **Themes** | `themes` | **nowhere — net-new** (`FQ-260812021716`, `7caf024`) | **`ThemesPane`, defined in this module** because it had no prior dialog to embed; via `_themes_pane` |
 
 **The host: a `QSplitter` over a `QListWidget` of category titles and a `QStackedWidget` of panes**, titled
 `Software settings` (no ellipsis — the ellipsis belongs to the *menu label*, which promises a dialog, not to
 the dialog itself), 960×640, `currentRowChanged` → `setCurrentIndex`. The pane table is data
-(`SettingsPane(key, title, blurb, build)`), so a fifth pane is one tuple entry and cannot half-exist.
+(`SettingsPane(key, title, blurb, build)`), so a further pane is one tuple entry and cannot half-exist —
+a claim the `Themes` pane then cashed for one row, and a test pins by injecting one.
 
 #### The panes keep the apply/OK contract they already had, and the HOST ADDS NONE
 
@@ -3729,14 +4084,32 @@ changes **nothing** about a shipped surface: `CustomizeShortcutsDialog` was alre
 non-modal shortcut editor is what lets a user try a chord against the live app instead of
 edit → close → test → reopen. **Reversal is one `setModal(True)` plus dropping the raise-and-focus logic.**
 
-#### FOUR panes, not six (`DEC-260812004400` — DEFAULT, pending)
+#### FIVE panes — `DEC-260812004400` is CLOSED, and the two reserved ones are MERGED rather than deferred (`FQ-260812021716`, `7caf024`)
 
-The owner's own list named six categories; panes 5 (**syntax highlight colors**, `FQ-260812002828`) and 6
-(**color scheme**, `FQ-260812002829`) are blocked on owner descriptions and **do not exist in the code at
-all — absent, not stubbed**. The default ships four. The competing precedent is real and was weighed:
-FQ-023's *state your reason rather than vanish* would argue for six with two disabled — but that principle
-governs a gesture whose **siblings are present**, and a settings category nobody has ever been told about
-carries no expectation for its absence to contradict. **Reversal is two list rows.**
+*(This block read **"FOUR panes, not six (`DEC-260812004400` — DEFAULT, pending)"** until 2026-08-12; the
+decision it hedged is answered by a real pane. The reasoning below is kept because it is still the rule for
+the next blocked category.)*
+
+The owner's own list named six. **The answer is FIVE, and the arithmetic is the design finding:** panes 5
+(**syntax highlight colors**, `FQ-260812002828`) and 6 (**color scheme**, `FQ-260812002829`) are
+**SUPERSEDED — merged into the one `Themes` pane**, not deferred and not stubbed. Syntax highlighting is
+**part of a theme** by owner ruling, and the argument is short: *two panes editing one `Theme` can be edited
+into a mismatch, and one cannot mismatch itself.* Light-syntax-on-dark-chrome becomes unrepresentable rather
+than merely discouraged.
+
+- **`DEC-260812004400`'s default was *"absent, not stubbed"*, and shipping a real pane vindicated it.** The
+  competing precedent was weighed and still reads correctly for a future blocked category: FQ-023's *state
+  your reason rather than vanish* argues for showing a disabled row — but that principle governs a gesture
+  whose **siblings are present**, and a settings category nobody has ever been told about carries no
+  expectation for its absence to contradict. *A stub would have had to be deleted to make room for this;
+  an absence did not.*
+- **It cost exactly ONE `SETTINGS_PANES` row**, which is the concrete evidence for this section's
+  *"adding a pane is a data change"* claim — and a test proves it by injecting another pane.
+- **The pane's own apply contract diverges from its four siblings' in one respect, deliberately: theme
+  SELECTION is not part of the edit buffer.** *Use this theme* applies and persists on the spot, because a
+  Maintenance-mode setting is app-wide and durable from the moment it is made (owner ruling); only the
+  colour **edits** are buffered behind OK/Cancel. That is the pane owning its contract, exactly as the host
+  requires — see §7's theme-selection block for the whole gesture set.
 
 #### ⚠ The reachability cost, stated because it is a WITHDRAWAL (`DEC-260812004358` — DEFAULT, pending)
 
@@ -3744,6 +4117,16 @@ carries no expectation for its absence to contradict. **Reversal is two list row
 Maintenance-only.** This is consistent with FQ-027's design — the `Settings` menu is Maintenance-gated for
 exactly the reason that the app is *configured* in Maintenance mode — but it is a real reduction, and it is
 recorded as one rather than as a tidy-up.
+
+> **⚠ AND SINCE `7caf024` THE WITHDRAWAL HAS A THIRD MEMBER, WHICH IS THE MOST VISIBLE OF THE THREE:
+> CHANGING THE THEME.** `View ▸ Light Theme` was a one-click toggle available in every mode; picking a theme
+> is now the `Themes` pane, i.e. Maintenance-only (ledger §28). It is the same trade under the same owner
+> ruling — *settings are changed in Maintenance mode, and what is changed there is app-wide and durable* —
+> and it is called out separately because the other two withdrawals affected surfaces most users never open,
+> while this one affects one they may use daily. `DEC-260812004358` governs all three; if it is answered
+> against the trade, the reversal for this member is **not** a returned `View` toggle (a checkbox cannot
+> select among N themes) but a theme **picker** somewhere always-available, with the pane keeping the
+> editing half.
 
 - **The escape hatch is partial at best, and saying so is the point.** DEC-006 established that Maintenance
   mode **hides rather than prevents**, so an existing chord still fires — but these dialogs have **no chord
@@ -7471,6 +7854,14 @@ triggers**, plus **navigable constraint / FK / index nodes**. Sequences, types a
 > §18.5's *Generate Deployment SQL* block, deliberately: a designer reading either place must meet it there
 > rather than depend on noticing two SQL-comment lines inside a multi-megabyte buffer.
 >
+> **⚠ THE CONSUMER HAS ARRIVED, AND IT IS NAMED IN THE RESTRICTED NOTICE ITSELF (`FQ-260812022749` Part 5,
+> 2026-08-12).** The complete DDL is a **clone source** for tables and matviews, which is precisely
+> *"consuming this buffer as something other than a read-only view"*. So the two gaps' cost is no longer
+> hypothetical: cloning a partitioned or inherited table from restricted text yields **a plain table that
+> looks right and executes fine**. That is why `db/pg_dump_mode.py::RESTRICTED_CLONE_WARNING` is appended to
+> **every** restricted message rather than left to this notice — see *Dual-mode DDL* below.
+> `DEC-260811094437` is the ruling that now has a trigger.
+>
 > **Implementation state: SHIPPED, and re-verified at the close of this pass rather than at its start — which
 > is the only reason this paragraph is right.** *(It read *"⏳ IN FLIGHT, not landed"* thirty minutes earlier,
 > quoting the four-gap notice verbatim; both had changed by the closing check.)* `db/table_ddl.py` renders the
@@ -7623,6 +8014,183 @@ Building either first means revisiting it. **The full order is `FQ-260810183812`
 depths** — one decides which rows the tree HAS, the other decides which of those rows are SHOWN, and a
 hide-predicate written against the narrow node set has to be reopened for every kind the first adds — while
 the third **changes what those rows look like** and therefore has to know the final node set it is painting.
+
+#### DUAL-MODE DDL — full `pg_dump` output when a correctly-versioned `pg_dump` exists, the synthesized restricted DDL otherwise (`FQ-260812022749`, owner ruling 2026-08-12; **PART 1 SHIPPED `a852563`, wired `07b83e9`; the buffer's two renderers ⏳ LANDING**)
+
+> **Read the status literally.** The **verdict**, the **rule**, the **words** and the **`[DDL]` notice** are
+> built and reachable. The **buffer's two renderers** are landing in a concurrent tree as this is written, so
+> nothing below pins a line in `db/ddl_buffer.py`, `db/pg_dump_ddl.py` or `ui/main_window.py` — the shape is
+> specified, the state is *landing*, and it is neither *built* nor *not built*.
+>
+> *Re-verified at the close of this pass rather than at its start, per §31: `build_ddl_buffer`,
+> `build_full_ddl_text`, `parse_pg_dump` and `fetch_schema_dump` all **exist in the working tree**, and
+> `main_window.py` already calls them and reports `degrade_reason` as a second `[DDL]` row — but that file is
+> **mid-merge and conflicted** and the queue entry is still `QUEUED`, which is precisely the state "landing"
+> names. **Do not read the ⏳ as "not written".** The next pass records it as shipped and cites the commit.*
+
+**Why EXTEND §18.1 rather than create anything.** This does not add a buffer, a fetch, a tree or a viewer.
+It answers **one question** — *which renderer fills the one buffer §18.1 already owns?* — and reports the
+answer. Everything downstream (the span index, click-to-DDL, the name filter, §18.7's two roles) is
+unchanged by construction.
+
+**The rule, in one sentence: `pg_dump` major >= server major.** `pg_dump` dumps happily from an *older*
+server and **refuses one newer than itself** (`aborting because of server version mismatch`), so
+newer-than-server is **fine and is not a mismatch** — the comparison is one-sided on purpose, and a
+symmetric "must match" rule would have thrown away the common working case.
+
+**ONE version rule, not two** (owner, 2026-08-12). Quality and sandbox must be the **same PostgreSQL
+major**, so the same `pg_dump`-vs-server comparison answers for **both** Explorer roles; §18.7's two
+instances need no second rule and must not grow one.
+
+`db/pg_dump_mode.py` **owns the rule and the words, and nothing else** — it renders no DDL, touches no
+buffer and imports no Qt, exactly like `db/table_ddl.py` and `db/ddl_buffer.py`. Binary *resolution* and the
+`pg_dump --version` *spawn* stay in `db/sandbox.py`, the module that already owns `DATA_CLONE_TOOLS` and the
+`Which`/`ProcessRunner` seams; this module **composes** them. `decide_ddl_mode(server_version,
+pg_dump_path, pg_dump_version)` is a **pure function of three plain values**, which is what makes every
+branch testable with no server, and `probe_ddl_mode(caps, *, bin_dir, which, run, timeout)` is the composing
+shell.
+
+| Shape | Mode | `reason` | Detected by |
+|---|---|---|---|
+| `pg_dump` not located | `RESTRICTED` | `REASON_ABSENT` | `pg_dump_path is None` |
+| located, `--version` unreadable | `RESTRICTED` | `REASON_UNREADABLE` | version is `None` |
+| server version unknown | `RESTRICTED` | `REASON_UNKNOWN_SERVER` | empty `server_version` |
+| `pg_dump` major **<** server major | `RESTRICTED` | `REASON_OLDER` | the one comparison |
+| anything else, **including NEWER** | `FULL` | `REASON_OK` | — |
+
+- **Degrade, never guess, and never fail.** There is no path from this module to a hard failure: the worst
+  case is a `RESTRICTED` verdict **that says which shape it was**. That fallback is what keeps a **packaged
+  install working at all** — a PyInstaller bundle never ships the client tools.
+- **`reason` is machine-readable BESIDE the human `message`**, so a caller can branch and a test can assert
+  without pattern-matching prose.
+- **Every message names BOTH version numbers**, spelled by one `_spell()` so the two always read alike,
+  *because a version message that omits one of the two is the one that generates the support question.*
+- **The prefix has exactly one home.** `DdlModeVerdict.message` carries the sentence **without** it;
+  `ui/audit_router.py::DDL_PREFIX = "[DDL]"` (routed `TO_RESULTS`, i.e. the **Messages** tab) is the only
+  place it is spelled, which is how a Qt-free producer composes a routed row.
+- **`caps.pg_dump_path` is deliberately NOT trusted as the resolution.** It may have been probed before the
+  project's binaries folder was set, or with a different one — *one stale path is how a "which one is
+  right?" bug is manufactured.* Resolution is re-run against the `bin_dir` **in force now**; the DB round
+  trip is not repeated.
+
+##### `RESTRICTED_CLONE_WARNING` — why the restricted notice is a HAZARD sentence and not a completeness footnote
+
+Every `RESTRICTED` message ends with the same clause, verbatim: `"Showing DDL reconstructed from pg_catalog
+— incomplete for inheritance and partitioning; do not clone a partitioned or inherited table from this
+text."`
+
+**This is `DEC-260811022536`'s two structural gaps meeting a consumer, and it raises their cost.** The
+reconstruction block above records inheritance and partitioning as *"a decided boundary, pending a
+consumer"*. `FQ-260812022749` Part 5 supplies the consumer: **the complete DDL is a CLONE SOURCE.** A
+developer who clones a partitioned or inherited table from restricted text gets **a plain table that looks
+right and executes fine** — a silent wrong result reaching a real database. So the warning is **part of the
+sentence** rather than a footnote elsewhere, and `DEC-260811094437`'s trigger condition (*"the first feature
+that consumes this buffer as anything other than a read-only view"*) is now close enough to name in both
+places.
+
+##### The `[DDL]` notice — probed ONCE per quality connection, reported on EVERY DDL open
+
+- **Computed once, on connecting to the quality server**; every subsequent DDL open reports **from the
+  cached verdict**. *The sentence repeats on purpose — owner: "this way the choice is clear" — but the
+  `pg_dump --version` spawn does not.*
+- **The probe is worker-thread only** (`MainWindow`'s `_probe_quality_ddl_mode`-shaped seam: it opens a
+  connection for the server version *and* spawns `pg_dump --version`), and it **returns**
+  `(capabilities, verdict)` rather than storing anything — **the caller caches on the GUI thread**, so the
+  method holds no state and can never race the window. `_report_ddl_mode` is pure reporting and guards
+  `None`, because an *injected* seam is not bound by the never-raises contracts and **a version notice must
+  not be able to fail a DDL open**.
+
+##### ⚠ TWO FACTS THE WIRING ESTABLISHED THAT ARE WORTH MORE THAN THE FEATURE
+
+1. **There was no quality capability probe anywhere.** `db/sandbox.py::probe` — superuser check,
+   `pg_dump`/`pg_restore` discovery, `server_version`, `degraded_reason` — had only ever been run **against
+   the sandbox**. Part 1 is the first caller to point it at the **quality** server.
+2. **The owner's same-version principle was ASSUMED, never enforced, and never even checked.**
+   `server_version` was produced by that one probe and consumed by exactly one thing:
+   `db/ddl_check.py::needs_trigger_drop`, gating `CREATE OR REPLACE TRIGGER` at PG 14. **No comparison of
+   the two servers existed anywhere in the app** — and §18.5 D2's sandbox is explicitly *bring-your-own
+   local PostgreSQL*, so its major is whatever the user installed. `server_major_divergence(quality,
+   sandbox)` now performs it and its sentence rides with the `[DDL]` row.
+   - **It returns `None` when either version is unknown**, and that is the load-bearing part: *"could not
+     check"* must **never** be reported the way agreement is.
+   - **It never opens a connection.** The sandbox half comes from whichever probe has already run — the
+     session controller's cached capabilities first, the §18 tier probe's second — because
+     `_report_ddl_mode` runs on the GUI thread, and *a version notice may not open a connection.*
+
+##### The buffer's two renderers — ⏳ LANDING, and the refusal shape is the specified part
+
+`build_ddl_buffer(schema, *, mode, dump_text) -> DdlBuffer{text, spans, mode, degrade_reason}`:
+
+- **`mode` is a PARAMETER, deliberately.** The verdict is probed once per quality connection and lives on
+  the window; this layer never reaches for it, never re-probes, and stays testable from two plain values.
+  The same reason `dump_text` arrives as a parameter: the **one** `pg_dump --schema-only` subprocess lives
+  in `db/pg_dump_ddl.py`, so `ddl_buffer.py` stays pure and Qt-free.
+- **`RESTRICTED` is `build_ddl_text` UNCHANGED**, which is why BUG-018's *proven* determinism — the test
+  that permutes `DatabaseSchema` dict order and demands a byte-identical buffer — keeps covering exactly the
+  code it always covered, rather than being weakened to accommodate a second path.
+- **What FULL cannot promise, stated rather than implied.** `pg_dump`'s output depends on the **client's**
+  version (a version-dependent `SET` preamble, and whatever a newer major spells differently), so
+  end-to-end byte-identity in full mode is an **environmental assumption, not a proven property**. What *is*
+  pinned: the **parser** is pure, and the composition orders relations **by name** rather than by
+  `pg_dump`'s walk order, so nothing but the dump text itself can move a line.
+- **And it may REFUSE — whole, with a reason, never half.** The one check that matters is **attribution**:
+  every relation the introspection found must have exactly one `CREATE` statement in the dump. A dump that
+  fails it comes back `RESTRICTED` with `degrade_reason` set (and the clone warning appended) for the
+  `[DDL]` row. **Half-parsing is not a third outcome** — *spans pointing at the wrong lines are worse than
+  restricted DDL*, which is the same ranking §18.1's reconstruction notice already applies to text.
+- The dump is **parsed once** and handed to both the attribution check and the build: a whole-database dump
+  is megabytes, and *a second parse for the same answer is the kind of duplicated work that later gets
+  "optimized" by skipping the check.*
+
+#### VIEWS are editable through the existing §18.5 lane — matviews are REFUSED WITH A REASON (`FQ-260812025836`, **SHIPPED** `c7c45b3`, gated `07b83e9`)
+
+**`db/ddl_buffer.py::EDITABLE_SPAN_KINDS` gains `"view"` and deliberately not `"matview"`, and the asymmetry
+is PostgreSQL's, not a preference.** Everything editable through §18.5 is editable because it has
+`CREATE OR REPLACE` semantics — the apply lane replaces an object in place and its four preconditions are
+written around that. A view has that property. **A materialized view does not:** there is no
+`CREATE OR REPLACE MATERIALIZED VIEW`, so "replacing" one means `DROP` + `CREATE`, which **discards its
+stored data**, needs a `REFRESH` afterwards, and drops its dependents.
+
+> **⚠ DO NOT WIDEN THE SET TO `"matview"` BY ANALOGY.** Every *other* place in this codebase groups the two
+> kinds — the tree branch, `TableInfo.kind`, `pg_get_viewdef`, `table_ddl.build_view_ddl` — so the analogy is
+> unusually inviting here. **This is exactly the shape of carve-out this project has had widened twice
+> already (BUG-052, BUG-063), each time by a comment citing a defensible rule for the wrong gesture.** A
+> test asserts the matview refusal directly.
+
+- **`db/apply.py` needed NO change at all** — it is genuinely kind-agnostic, which is the evidence that this
+  was an extension of the lane rather than a second lane. No new machinery anywhere.
+- **The refusal STATES ITS REASON** (FQ-023's convention). `ddl_buffer_panel.NOT_EDITABLE_REFUSALS` loses
+  its `"view"` row and its `"matview"` row now reads, verbatim: *"Materialized views are read-only here —
+  there is no CREATE OR REPLACE MATERIALIZED VIEW, so replacing one would drop its stored data"*.
+  `edit_refusal_for_span(span)` is shared by **both** right-click surfaces, exactly as `resolve_edit_target`
+  is, so the two can never disagree about which kinds are editable.
+- **`pg_get_viewdef` as the editable source is LOAD-BEARING, not a convenience.** It returns the `SELECT`
+  body **and nothing else**. A view can carry `INSTEAD OF` triggers, and each of those triggers **already
+  owns its own `ddl/*.sql` checkout identity** (`trigger_ddl_path`, keyed `schema.table.name` with the
+  *view* as `table`). Because the editable text contains no `CREATE TRIGGER`, no object ever ends up with
+  two checkout identities — the double-identity collision that blocks *table* editing simply does not arise.
+  **Sourcing this text from `pg_dump` output instead would bring that collision straight back**, and would
+  additionally mean a user's own `DROP VIEW` silently took the triggers with it. It is also exactly what the
+  read-only buffer already shows, so the editable tab opens on the text the user clicked.
+- **A view whose definition the connection could not supply resolves to `None`** — there is nothing to edit,
+  and *inventing a body is the one thing this app does not do.* The `kind`/`view_definition` re-check in
+  `_resolve_view_edit_target` is **the last place a matview can be refused**, not defensive noise.
+- **`DdlObjectRef.is_checkout_eligible` makes *edit-and-apply-only* a NAMED FACT rather than an omission**
+  (`CHECKOUT_KINDS`, `ui/ddl_object_editor.py`). A view is **not** part of §18.2's checkout model, so
+  `Discard local changes` is **absent** on a view rather than offered and then explained — and the reason is
+  recorded: a `ddl/*.sql` path scheme would **collide a view with a same-named function**. Both consumers
+  read the property (`getattr(ref, "is_checkout_eligible", True)`), so the question is not asked at all
+  rather than asked and answered by a colliding scheme.
+- **`DdlObjectRef` grows `kind="view"` with no signature.** `is_routine` (`kind in ROUTINE_KINDS`) is what
+  every rendering asks, rather than `not is_trigger`, because a view is **neither** and must never be
+  spelled with a `(…)` — *an empty `arg_types` renders `()`, which is a lie about a view.* `short_title` is
+  the bare name.
+- **`Add Trigger…` follows the same three-way split** (`DEC-260811025733`, already specified): offered on a
+  table **and on a view** (`INSTEAD OF` is the standard way to make a view updatable, and is squarely what
+  this app is for), and on a matview a **disabled entry carrying the reason** — deliberately unlike
+  `Alter Table ▸`'s silent exclusion, because *one command maps to one sentence, and the gesture is present
+  on both sibling kinds of the very same tree role, so a user who has seen it on a table would read its bare
+  disappearance as the app having forgotten, and go hunting.*
 
 #### The tree NAME FILTER — hiding non-matching objects, in BOTH Explorer trees (`FQ-260810180336`, settled 2026-08-11, **SHIPPED**)
 
@@ -9076,6 +9644,35 @@ projects generally, not only the `ddl/` folder — see also the callout at the t
 - **The merged deploy manifest** — content-hash + deployed commit id per DDL object, **unchanged in
   shape** from the previous `deployed.json` design (see "last-deployed reference," below); only its
   location and its git-tracked-ness change.
+- **`postgres_bin_dir: str = ""` — the PostgreSQL client-binaries folder** (`FQ-260812025353`, **SHIPPED**
+  `a852563`, wired `07b83e9`). Optional, empty by default, on the Connections tab beside the two profiles,
+  and reported by `MainWindow.postgres_bin_dir()`.
+
+> **⚠ THE PRECEDENCE IS *CONFIGURED FOLDER FIRST, `PATH` SECOND*, AND THAT ORDERING IS THE WHOLE FEATURE.**
+> `db/sandbox.py::resolve_tool(name, bin_dir=None, which=shutil.which)` is the one resolver. The setting
+> exists **because `PATH` picks an arbitrary major on a machine with several PostgreSQL installations**, and
+> `pg_dump` refuses a server newer than itself — so **a `PATH`-first order would make the setting a no-op in
+> exactly the situation it was added for** (the tools *are* on `PATH`; they are the wrong ones). The
+> explicit, per-project answer must beat the ambient one.
+>
+> - **Warn, never block.** A folder that is set but does not contain the tool **falls back to `PATH`** rather
+>   than failing: the field is optional, the user may be mid-typing, and `PATH` is still a legitimate answer.
+> - **`bin_dir=""`/`None` is bit-for-bit today's behaviour**, which is what makes the setting safe to add to
+>   every existing project file at once.
+> - **Both `Test` buttons now report the PostgreSQL server version**, which is what made
+>   `FQ-260812022749`'s verdict expressible in the UI at all.
+> - **This is PER-PROJECT and must not be unified with §7's app-wide `External tools` pane.** The
+>   mirror-image reason: the vendor generator, the panGen runtime and the PHP linter are one-per-machine and
+>   live in `generator_config.json`; the PostgreSQL binaries must be able to differ per project because the
+>   *server* does. `resolve_tool` is deliberately **not** reused by that pane either — it is keyed on a
+>   **folder** holding a known binary name, while two of the three app-wide tools store a full executable
+>   **path**.
+> - **`pg_dump_version(path, run, *, timeout=PG_DUMP_VERSION_TIMEOUT_S)` never raises** — a missing binary,
+>   a non-zero exit, a timeout and unparseable output all return `None`, *because every one of them means
+>   the same thing to the caller: degrade.* `parse_pg_dump_version` is pure (the first dotted number on the
+>   first line, which survives packagers' parentheticals). **It is deliberately NOT called from `probe()`:**
+>   `probe`'s tool detection is `shutil.which` only and **spawns nothing**, and folding a subprocess into it
+>   would make every existing probe call site — and every test that stubs `which` — start a process.
 
 **A new, technically-detailed Project Settings dialog** (File menu ▸ **Project Settings…**) exposes
 this JSON's **full contents**, for viewing and editing — not a simplified subset, the whole thing:
@@ -10145,7 +10742,8 @@ case-sensitive."* **`sql_config()` returns `.sanitized()`**, which is what makes
 over sparse — the UI never has to know what "sparse" means.
 
 **Persistence: `QSettings`, and here is why DEC-001 does not govern.** The config lives under the
-`autoformatter` group of the app's existing `QSettings("MDS", "PGTP Editor")`, beside `lightTheme` /
+`autoformatter` group of the app's existing `QSettings("MDS", "PGTP Editor")`, beside `themeName` *(was
+`lightTheme` until `7caf024` — §7)* /
 `toolbarIds` / `toolbarIconIds` / `shortcutOverrides`, with the key constant living in the owning module as
 `AUTOFORMAT_SETTINGS_KEY` — the convention every other key follows.
 
@@ -13750,14 +14348,20 @@ e.g. `quality_connection_ok.svg` / `quality_connection_ok_drk.svg`, `sandbox_con
 `sandbox_connected_drk.svg` (`DARK_SUFFIX = "_drk"`, applied by `asset_filename(stem, dark)`). The
 loading code selects the `_drk` file whenever the app is currently running in its dark theme, and the
 plain file otherwise.
-**Verified against the codebase, not assumed:** the app has no OS/system dark-mode *detection* — theme
-selection is an explicit, user-toggled menu checkbox, **Light Theme** (`MainWindow`, `main_window.py`,
-unchecked by default, i.e. dark-by-default), applied via `ui/theme.py::apply_theme(app, light: bool)`.
-There is no `QStyleHints`/`colorScheme()` OS-preference read anywhere in `pgtp_editor/`. This window's
-`_drk`-vs-plain selection should therefore key off the **same boolean** the Light Theme action already
-tracks (`MainWindow._light_theme_action.isChecked()` / the `light` argument last passed to
-`apply_theme`), not a new or different signal — reusing the existing toggle, not adding a second
-theme-detection mechanism.
+**Verified against the codebase, not assumed:** the app has no OS/system dark-mode *detection* — there is no
+`QStyleHints`/`colorScheme()` OS-preference read anywhere in `pgtp_editor/`. **Theme selection is an
+explicit, persisted theme NAME** (`theme_model.SETTINGS_KEY = "themeName"`, defaulting to bundled `dark`),
+applied via `ui/theme.py::apply_theme(app, source)` — *(this paragraph read "an explicit, user-toggled menu
+checkbox, **Light Theme** … `apply_theme(app, light: bool)`" until `7caf024`; that action and
+`MainWindow._light_theme_action` are **deleted**, §7/§26)*. This window's `_drk`-vs-plain selection keys off
+the **same boolean every other colour consumer asks**, `UiShell.is_light_theme` →
+`MainWindow._is_light_theme`, which now reads the **applied `Theme.light`** rather than an action's checked
+state; `ProjectStatusPanel.set_light_theme(light)` is its mirror and calls `set_dark(not light)`. **That is
+still "reuse the one signal, do not add a second theme-detection mechanism"** — what changed is which signal
+it is, and the change is what lets a third theme answer at all. *(`ProjectStatusPanel.set_dark`'s own
+docstring still says it "takes the same boolean the **Light Theme** menu toggle already tracks", thirty lines
+above the `set_light_theme` docstring that records the deletion — reported as a stale docstring, not a design
+question.)*
 
 **Per-node state enumeration — concrete, from the owner's reference images, now shipped as the enums in
 `ui/project_status_model.py`** (`QualityState`/`AppState`/`SandboxState`/`Sandbox1State`/`Sandbox2State`,
@@ -14624,13 +15228,18 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   real result grid; `view.results → view.messages` is a `RENAMED_ID_ALIASES` row* — then **two
   non-checkable focus entries, `Activity Log` and `Messages`**, each revealing the dock and selecting its tab (a tab is either
   in view or not; there is no third posture to check), ☑ Raw XML Panel (checked by
-  default), — , Expand All, Collapse All, — ,
-  ☐ Light Theme. **The menu ENDS THERE since `19c14c5`.**
-  > **⏳ `Light Theme` IS BEING REMOVED AS THIS IS WRITTEN** — `FQ-260812021715`'s second half replaces the
-  > boolean toggle with a named-theme selection, in a concurrent tree (`main_window.py` already carries the
-  > *"`Light Theme` USED TO BE HERE"* marker). **Do not treat this row as current** and do not re-assert it;
-  > the next fold records what replaced it. Flagged rather than edited because the replacement gesture is
-  > not settled and a spec that guesses at it would be worse than one that says it is in flight.
+  default), — , Expand All, Collapse All. **The menu ENDS THERE since `7caf024`**, on `Collapse All`,
+  with no trailing separator (verified in `_build_view_menu`).
+  > **~~☐ Light Theme~~ IS GONE FROM THIS MENU** (`FQ-260812021715`, `7caf024`; ledger §28) — the action,
+  > `MainWindow._light_theme_action` and its toggle handler are all deleted, and the construction site
+  > carries a *"`Light Theme` USED TO BE HERE"* marker so the row is not re-added by someone reading an
+  > older menu listing. **The trailing separator went with it**, so `View` now ends on `Collapse All`.
+  > Theme choice is the **`Themes` pane of `Settings ▸ Software settings…`** (§7), which makes it
+  > **Maintenance-only** — recorded as a withdrawal, not a relocation, in §7's reachability-cost block.
+  > **The command id `view.light-theme` is DELETED with NO alias row**, by the same rule the four absorbed
+  > ids follow: alias when the successor answers the same request, drop when it does not. Nothing means
+  > *"toggle to light"* any more — a pinned button aliased onto the settings dialog would open a multi-pane
+  > window on whatever pane is first, which is a plausible-looking wrong result. §27 gains no row.
   > **~~Customize Toolbar…~~ and ~~Customize Shortcuts…~~ ARE GONE FROM THIS MENU** (`FQ-260812002827`,
   > 2026-08-12; ledger §28). Both are now **panes of `Settings ▸ Software settings…`** — see §7's Software
   > settings block for the relocation, its cost (both were reachable at **any** time and are now
@@ -15682,25 +16291,45 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-12 *(bugfix fold — a duplicated STEP becomes a primitive, and its counterpart is specified alongside)* | **Nothing in §7 said who owns un-hiding the left dock.** The reveal seam did the tab half only, and the un-hide was copy-pasted at four sites (DDL Explorer, Findings, Contents, Coherence) | **`BUG-260812023420` (fixed `03473a7`): `_reveal_left_panel` OWNS THE WHOLE GESTURE — un-hide the dock, show the tab, select it — and the four duplicated calls are DELETED.** A reveal that forgot the un-hide landed a visible tab inside a hidden dock: **the reveal silently did nothing**, which is *never a silent wrong result* applied to navigation — the user asked to be taken somewhere and was told nothing. `_show_left_dock()` runs **after** the `indexOf < 0` guard on purpose (a widget that is not a left tab has nothing to reveal, and popping an empty dock would be worse than the no-op), and `_show_left_dock` is now injected **nowhere** — it exists only because this primitive calls it. **The counterpart is the half that makes it safe and is recorded as a SEPARATE MEANING, not a weaker version:** `_set_left_panel_visible` deliberately touches **neither** the dock nor the current tab — *make available, do not touch the user's layout*. **⚠ A CLAIM IN THE DISPATCHING PROMPT WAS CHECKED AND FOUND WRONG, AND THE CORRECTION IS THE INTERESTING PART:** the caller named for it was `CoherenceController.refresh_if_open`, which **does not call the seam at all** (it reads `_panel_visible()` and returns early). The real callers are `on_coherence_toggled`'s Off branch and `teardown_for_project_close`, and **both pass `False`** — a user switching a view off, and a project closing; neither may pop a dock or decide what the user looks at next. The `True` direction is kept with **no production caller**, deliberately, because without it *"make this tab available"* has no expression that is not also *"take the user there"*, and the next lane needing the quiet form would re-scatter the dock call this fix just collected. *A seam justified by a caller that turns out not to exist still has the right shape — but the spec must say which of those two things it is standing on.* **Without two names one of the two intentions is always wrong.** *A gesture the user asked for and a gesture the app performs on their behalf are two different gestures even when they move the same widget* — which is why the bottom dock already had `_reveal_results_dock_tab` (the user asked; pops the dock) beside `_reveal_results_tab` (background narration; does not). **The left dock now matches the bottom dock, and the pairing is stated once for both.** |
 | 2026-08-12 *(feature fold, PARTIAL — and a MECHANISM this document had described wrongly since FQ-005)* | **§7's theme block: *"`_qdarkstyle_stylesheet(light)` returns `qdarkstyle.load_stylesheet(qt_api="pyside6", palette=LightPalette if light else DarkPalette)`"*, i.e. the palette argument as the colouring mechanism; and §5's `ui/` inventory, which had no `theme_model.py` and no themes directory** | **`FQ-260812021715` SHIPPED PARTIALLY (`c0ab500`) — the colour MODEL landed; theme SELECTION is still being built and is explicitly NOT pinned.** What is folded is the settled half. **(1) A theme is COLOURS ONLY and it is a FILE**: `ui/theme_model.py`, **Qt-free at module scope** (test-pinned), over bundled `pgtp_editor/resources/themes/{dark,light}.json` plus `user_themes_dir()`, with six pinned key sets (`chrome` / `palette`+`palette_disabled` / `accents` / `modes` / `decorations` / `syntax`); syntax highlighting is part of the theme by owner ruling, which kills light-syntax-on-dark-chrome by construction. **(2) The chrome recolour is a single-pass regex substitution, and the reason is a measured qdarkstyle defect worth the ledger row: `load_stylesheet(palette=…)` SILENTLY IGNORES a subclassed palette.** In 3.2.3 `_load_stylesheet` reads a **precompiled Qt resource chosen by `palette.ID`** and then *replaces the caller's palette* with the stock one for that ID — so the obvious mechanism is accepted, ignored, and yields stock chrome with no warning. All a base palette decides is **which of the two compiled sheets to start from**; every colour is then substituted, and every non-colour token stays at the qdarkstyle default. **(3) The second-colour-table rule is now an AST GUARD** that fails on a `#rrggbb` in any module of `pgtp_editor/` — *including `theme.py` and `theme_model.py`* — because a rule saying "don't add another table" is one nobody can enforce, and this codebase grew one repeatedly. **(4) `shared_accent(key)` RAISES rather than picking**: `connectivity.py` is theme-blind (making it theme-aware would change pixels, which this consolidation was not allowed to do), so instead of private literals it reads a value that is returned only while every bundled theme agrees — *turning an invisible consumer into a failing test the day a theme diverges.* **⏳ NOT folded, and named so nobody designs against it: `View ▸ Light Theme`'s removal and the migration of the `"lightTheme"` QSettings boolean to a theme NAME are in flight in a concurrent agent's tree.** |
 | 2026-08-12 *(retroactive cleanup — the TWELFTH stale-status retirement, and this one a TO-DO TABLE rather than a banner)* | **§11's `1.2 → 1.3` block: a six-row *"Site / Today / Must become"* table dispatched to `bug-triager`, the paragraph *"nothing today asserts that the marker line and `CURATED_BUNDLED_VERSION` AGREE"*, the routing note sending `manual.md`'s "Curated v1.2" to `manual-maintainer` *"once the bump lands"*, and the table row's *"the code still says `1.2` until BUG-260810141459 lands"*** | **`BUG-260810141459` LANDED; ALL SIX SITES AND BOTH ROUTED ONES VERIFIED BY NAME.** `CURATED_BUNDLED_VERSION == "1.3"`; both halves of the byte-pinned pair carry `<!-- PGTP Editor curated schema v1.3 -->`; the two `test_storage.py` assertions moved with them; `ui/xsd_controller.py`'s duplicate literal was **deleted rather than retyped**; `manual.md` says **Curated v1.3**. **And the guard the block demanded EXISTS**: `test_bundled_curated_xsd_marker_agrees_with_the_version_constant` parses the marker with `v(\d+\.\d+)`, requires exactly one, and asserts equality with the constant — so the two independently-pinned literals can no longer drift, which is how the defect became possible. **The RULE is kept and only the to-do is struck**, because the rule is the durable part: *the marker is the schema's identity, not the app's release counter.* **The new wrinkle over the previous eleven retirements: a to-do table rots more quietly than a banner.** A "NOT YET BUILT" banner at least announces itself; a table of file:line targets reads as reference material, and every line number in it was already wrong. *If the spec must carry a work list, it must carry the date it was true — or better, be replaced by the name of the test that now holds the rule.* |
+| 2026-08-12 *(feature fold — the WITHDRAWAL half of `FQ-260812021715`, completing the row above)* | **§7's and §26's `View ▸ ☐ Light Theme` — a checkable toggle available in EVERY mode, with `MainWindow._light_theme_action`, the command id `view.light-theme`, and the persisted QSettings **bool** `"lightTheme"`; plus §18.8's and §29's instruction that the `_drk` asset choice *"should key off the same boolean the Light Theme action already tracks (`_light_theme_action.isChecked()`)"*; plus §7's `apply_theme(app, light: bool)` and `_qss_cache: dict[bool, str]`** | **`View ▸ Light Theme` IS DELETED (`7caf024`) AND THE PERSISTED BOOLEAN IS *MOVED*, NOT COPIED.** Selection is a theme **NAME** under `theme_model.SETTINGS_KEY = "themeName"`, applied through the one entry point `MainWindow.apply_theme_named(name, *, persist=True)`; `apply_theme(app, source)` accepts a `Theme`, a name **or** the historical bool. **The migration is one-shot: `migrated_theme_name` translates `lightTheme` once (`true`→bundled `light`, anything else→`dark`, which was the boolean's own default), then `LEGACY_LIGHT_KEY` is REMOVED** — *two stored answers to "which theme" is the drift this consolidation exists to kill; a stale `lightTheme=true` would resurrect light on the next restart after the user picked dark, and the next reader's guess would be as good as ours.* **The removal is what makes a third theme representable at all:** `_is_light_theme` reads the **applied `Theme.light`**, so any number of themes can answer `UiShell.is_light_theme`, where a checkbox could only answer *"light or not"*. **The `light: bool` seam itself is deliberately UNCHANGED** — `theme_for(light)` remains the single point where the boolean becomes a `Theme`, re-read at paint time, and answering with the **bundled** theme for the other side because `PaletteChange` fires four times per flip with the first two reporting the OLD lightness. **⚠ RECORDED AS A WITHDRAWAL, NOT A RELOCATION, AND IT IS THE MOST VISIBLE OF THE THREE `DEC-260812004358` COVERS:** changing the theme was one click in every mode and is now **Maintenance-only** (the `Themes` pane); unlike toolbar and shortcut customization, this is a surface a user may touch daily. If the owner declines the trade, the reversal is **not** a returned `View` toggle — a checkbox cannot select among N themes — but an always-available **picker**, with the pane keeping the editing half. **The id `view.light-theme` gets NO alias row**, by the rule the four absorbed ids follow: nothing means *"toggle to light"* any more, so an alias would point a pinned button at a multi-pane dialog. **And one LATENT DEFECT was fixed with it, which is the proof the boolean was the wrong key all along: `_qss_cache` is now keyed by `_qss_key(theme)` = `(qdarkstyle_base,) + the 16 chrome colours`.** A bool key **cannot distinguish two dark themes**, so an edited user theme would have been served the other one's chrome — a plausible-looking wrong result with no error anywhere — while a *name* key would hand back the pre-edit sheet after a Save. *A cache key is a claim about what the value depends on; a boolean was a claim that there are two themes.* |
+| 2026-08-12 *(feature fold — `DEC-260812004400` CLOSED by shipping, and two reserved panes MERGED)* | **§7's *"FOUR panes, not six (`DEC-260812004400` — DEFAULT, pending)"* block; the four-row pane table; *"a fifth pane is one tuple entry"*; and `FQ-260812002828` (syntax highlight colours) / `FQ-260812002829` (colour scheme) as two blocked categories awaiting owner descriptions** | **`FQ-260812021716` SHIPPED (`7caf024`): the answer is FIVE, because the two reserved panes are ONE.** `ui/software_settings_dialog.py::ThemesPane` is the fifth row of `SETTINGS_PANES` — **defined in the host module**, the exception that proves the rule, because it is net-new and had no prior dialog to embed. `FQ-260812002828`/`-829` are **SUPERSEDED — merged, not deferred**: syntax highlighting is part of a theme by owner ruling, and *two panes editing one `Theme` can be edited into a mismatch while one cannot mismatch itself*, so light-syntax-on-dark-chrome becomes unrepresentable rather than discouraged. **It cost exactly one tuple row**, which is this section's pane-contract claim cashed and pinned by a test that injects another pane. **`DEC-260812004400`'s *absent, not stubbed* default is vindicated rather than merely unblocked** — a stub would have had to be deleted to make room; an absence did not — and the reasoning is kept for the next blocked category, since FQ-023's *state your reason* governs a gesture whose **siblings are present**. **Four gestures, each with its contract stated:** Browse (`available_themes()` rescanned every refresh, deliberately uncached, so a hand-dropped file needs no restart) · **Use this theme (applies AND persists immediately, and is therefore NOT part of the pane's edit buffer** — a Maintenance-mode setting is app-wide and durable from the moment it is made) · Duplicate… (*"new = copy an existing one"*, so a theme is valid from the first keystroke and there is no half-defined state to guard; written to the **user** directory, which is also what makes it editable) · OK/Save (writes, and **re-applies if it is the theme in use**, which is what makes the edit visible). **Bundled themes are READ-ONLY with the reason on screen** — an install dir is not reliably writable, an upgrade would overwrite the edit, and a user file **shadows** a bundled one of the same name, so *"edit the theme I am using"* needs no write into the install. **Edits round-trip through `Theme.from_json`, never through the dataclass**, so the editor's output is validated by the same loader a file goes through — *the worst possible time to discover an unloadable theme is on the next start.* **Live preview is apply-on-SAVE**, because a `QColorDialog` drag would re-apply the whole app sheet per slider move and multiply the four-`PaletteChange` cost for nothing. **The pane's section list is read off `theme_model`'s own tuples** — *a second list of colour NAMES is the same mistake as a second list of colours.* |
+| 2026-08-12 *(bugfix fold — a guard that had been SATISFIED rather than obeyed, and the fix DELETES the case it cannot detect)* | **§7's AST-guard statement: *"fails if any of them declares a `#rrggbb` literal"*; and the status bar's DEBUG chip, which §7 singled out as a hardcoded `color: white; background: #b33` forbidden to copy** | **`BUG-260812063745` (fixed `f05cc8b`): THE GUARD IS WIDENED, THE CHIP IS FOLDED IN RATHER THAN EXEMPTED, AND THE UNDETECTABLE FORM IS DELETED.** The trigger is the durable part: a `#b8860b` literal **failed** the `#rrggbb`-only pattern, was "fixed" by respelling it **`color: darkorange`**, and **the test went green while the defect stayed** — *a guard can be satisfied by a workaround that is worse than the thing it forbade.* It now detects **(a)** a hex of **any** length anywhere in a string constant (`{3,8}` — every notation Qt's parser accepts; `#b33` had been sitting in plain sight) and **(b)** a **CSS colour NAME inside a style DECLARATION**, declaration-scoped because unscoped `tan`/`plum`/`linen`/`gold`/`snow`/`orange` occur in ordinary prose and `theme_model.py`'s own *"expected a colour or a {color: …} map"* error would trip a naive scan. `%s` and f-string holes do not match, which is what lets `mode_stylesheet`'s `color: %s` through — **that shape is CORRECT**, resolving from the theme at paint time. The forbidden-name list lives **in the test, never in `pgtp_editor/`**: *a colour table in the package to enforce "no colour tables in the package" would be the joke writing itself.* **New `ui/status_colours.py`** — `STATUS_OK`/`STATUS_WARNING`/`STATUS_ERROR`, `status_colour(kind, light)` **moved whole** out of `sql_results_panel.py` (which re-exports it, so one definition and no caller moved — *"a dialog importing its colour from a results panel" is an arrow nobody would draw on purpose*), and **`StatusLabel`**, the remember-the-KIND/re-derive-on-`changeEvent`/paint-by-widget-stylesheet pattern written **once so six dialogs cannot each get it subtly wrong**. The DEBUG chip becomes the `debug_chip_background`/`debug_chip_foreground` accent **pair** (a chip is not text on chrome). **⚠ ONE CARVE-OUT IS DELIBERATE AND THE GUARD MUST NOT BE MADE CLEVERER:** `colour = "green" if ok else "red"` + `setStyleSheet(f"color: {colour};")` is undetectable without dataflow analysis, so **both sites were DELETED** (they became a status kind) and the docstring says so — *the way to keep the indirect form deleted is to review, not to scan.* |
+| 2026-08-12 *(bugfix fold — THREE current statements falsified at once, one of them a CONSTRAINT the previous pass wrote for itself)* | **§7's connectivity-dot rendering table (*"white = not set up · red = offline · green = reachable · hollow grey = not checked"*), `dot_rendering(state)`'s single-argument signature, the claim that the dots are *"theme-blind today"*, and — from the row above — the constraint that *"making them theme-aware would change pixels, which this consolidation was explicitly not allowed to do"*; plus `shared_accent`'s account as the seam `connectivity.py` reads through** | **`BUG-260812103144` (fixed `cdcba11`): THE PIXELS WERE THE DEFECT.** The four values measured **1.46–3.06:1** against the real status-bar background and now measure **4.58–9.07:1**. **`dot_rendering(state, light)`** resolves an accent **KEY, not a value**, through `theme_for(light).accent(key)` **on demand** — reading them once at import through `shared_accent` did two wrong things at once: it forced one value to serve both themes, and it **froze** them, so a runtime flip left the dots painting whichever theme loaded first. `light` has **no default** on purpose: *a caller that does not know which theme it paints under cannot pick a legible colour, and a default would silently ship the other theme's value.* **COLOUR IS NO LONGER THE ONLY CHANNEL — one shape per state** (`●` reachable · `▲` offline · `□` not set up · `○` not checked), all Geometric Shapes covered by DejaVu Sans and Segoe UI, *because a glyph that renders as tofu is worse than the colour-only design it replaced.* Until this fix three states drew the same filled `●` and were told apart by **hue alone**, with the most meaningful pair being **red-vs-green, the commonest colour-vision confusion**; the tooltip disambiguated only on hover, *which defeats an at-a-glance indicator.* **The threshold is 4.5:1 TEXT, not 3:1 graphical**, because `_render` colours the whole label. `ConnectivityIndicator` now **inherits `StatusLabel`**, overriding `_colour_for` and `_palette_is_light` and nothing else. **`shared_accent()` KEEPS ITS PLACE AND LOSES ITS ONLY PRODUCTION CALLER**, pinned by an AST test so *"nothing calls this, delete it"* fails: it is now a **mechanism, not a helper** — the next consumer tempted to resolve a colour once, at import or in a constructor, finds out immediately instead of shipping the other theme's pixels. **TWO RULES FOLDED AS RULES: (1) a surface's contrast baseline is its OWN background** — the triage measured against `COLOR_BACKGROUND_1` and got 2.96:1, while the status bar paints `COLOR_BACKGROUND_4` and the worst case is 1.46:1, *so importing the wrong `CHROME` constant would have shipped a fix that was still broken*; **(2) `StatusLabel` may not be reused on a transparent-background surface without overriding its palette read** — `QStatusBar QLabel { background: transparent }` makes `Base`/`Window`/`Button` resolve to `#000000` under **both** themes, and the widget-level `color:` the class writes lands in its own `Text` role, so **reading it back returns the colour just painted**: a circular read that froze the dots on dark's `#D2D5D8` under the light theme. *The first implementation of this very bugfix painted dark's salmon on the light status bar and never repainted — the same freeze, relocated.* |
+| 2026-08-12 *(feature fold — the boundary of §18.5's editable lane MOVES, for a reason that is PostgreSQL's)* | **§18.1's `NOT_EDITABLE_REFUSALS` including a `"view"` row and `EDITABLE_SPAN_KINDS` as `{function, procedure, trigger}`, i.e. *"tables, views and matviews are in the buffer to be READ"*; and §18.2's checkout model as covering every editable kind** | **`FQ-260812025836` SHIPPED (`c7c45b3`, gated `07b83e9`): VIEWS ARE EDITABLE THROUGH THE EXISTING LANE, MATVIEWS ARE REFUSED WITH THEIR REASON.** `"view"` joins `EDITABLE_SPAN_KINDS`; `"matview"` deliberately does not. **The line is `CREATE OR REPLACE` semantics**, which is what §18.5's apply lane and its four preconditions are built around: a view has them, and a materialized view **does not** — there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so replacing one is `DROP` + `CREATE`, which **discards its stored data**, needs a `REFRESH`, and drops its dependents. **`db/apply.py` needed NO change at all**, which is the evidence this extended the lane rather than adding one. **⚠ DO NOT WIDEN THE SET BY ANALOGY:** every *other* site groups the two kinds (the tree branch, `TableInfo.kind`, `pg_get_viewdef`, `build_view_ddl`), and *this project has had a carve-out widened by analogy twice already (BUG-052, BUG-063), each time by a comment citing a defensible rule for the wrong gesture*; a test asserts the matview refusal directly. **`pg_get_viewdef` as the editable source is LOAD-BEARING, not a convenience:** it returns the `SELECT` body and nothing else, and a view's `INSTEAD OF` triggers each already own their own `ddl/*.sql` checkout identity — so no object ever ends up with two, and **a `pg_dump` source would bring that collision straight back** *and* mean a user's own `DROP VIEW` silently took the triggers with it. **`DdlObjectRef.is_checkout_eligible` makes *edit-and-apply-only* a NAMED FACT** rather than an omission: a view is outside §18.2's checkout model, so `Discard local changes` is **absent** rather than offered-then-explained, and the reason is recorded — a `ddl/*.sql` path scheme would **collide a view with a same-named function**. `is_routine` (not `not is_trigger`) is what every rendering asks, because *an empty `arg_types` renders `()`, which is a lie about a view.* |
+| 2026-08-12 *(feature fold, PARTIAL — and TWO facts the wiring established that are worth more than the feature)* | **§18.1's read-only buffer as having exactly ONE renderer (`build_ddl_text`) with the reconstruction notice as the whole disclosure; §18's silence on whether a `pg_dump` is present or correctly versioned; and the two structural gaps of `DEC-260811022536` recorded as *"pending a consumer"* with no consumer in sight** | **`FQ-260812022749` PART 1 SHIPPED (`a852563`, wired `07b83e9`); the buffer's TWO RENDERERS are ⏳ LANDING and are written as landing — neither built nor unbuilt.** `db/pg_dump_mode.py` owns **the rule and the words and nothing else** (Qt-free, renders no DDL, never raises; the `pg_dump --version` spawn stays in `db/sandbox.py`). **The rule is one-sided on purpose: `pg_dump` major >= server major** — `pg_dump` dumps happily from an older server and **refuses one newer than itself**, so newer-than-server is fine and is **not** a mismatch, and a symmetric "must match" rule would have discarded the common working case. **ONE version rule, not two** (owner): quality and sandbox must be the same major, so the same comparison answers for **both** §18.7 roles. **Four RESTRICTED shapes, each naming which shape it was** (`REASON_ABSENT`/`UNREADABLE`/`UNKNOWN_SERVER`/`OLDER`), machine-readable **beside** the human sentence, and **every message names BOTH version numbers** because *a version message that omits one of the two is the one that generates the support question.* **Degrade, never guess, never fail** — the fallback is what keeps a packaged install (which never bundles the client tools) working at all. **`RESTRICTED_CLONE_WARNING` is appended to every restricted message and is a HAZARD sentence, not a completeness footnote**: Part 5 settles that the complete DDL is a **clone source**, so cloning a partitioned or inherited table from restricted text yields **a plain table that looks right and executes fine** — a silent wrong result reaching a real database, which is why `DEC-260811022536`'s two gaps now have the consumer `DEC-260811094437` was waiting for. **The `[DDL]` notice is computed ONCE per quality connection and reported on EVERY DDL open** (owner: *"this way the choice is clear"*) — the sentence repeats, the subprocess does not; `DDL_PREFIX` has one home in `ui/audit_router.py`. **⚠ TWO FACTS THE WIRING ESTABLISHED: (1) there was no quality capability probe anywhere** — `db/sandbox.py::probe` had only ever been run against the sandbox; **(2) the owner's same-version principle was ASSUMED, NEVER ENFORCED AND NEVER CHECKED** — `server_version` was produced by that one probe and consumed only by `needs_trigger_drop`'s PG14 gate, so **no comparison of the two servers existed**, while §18.5 D2's sandbox is explicitly bring-your-own. **`server_major_divergence()` now performs it**, returns `None` when either version is unknown (*"could not check" must never read like agreement*), and **never opens a connection** — it reads whichever probe already ran, because a version notice may not connect from the GUI thread. |
+| 2026-08-12 *(feature fold — a per-project setting whose PRECEDENCE is the whole feature)* | **§18.2's `settings.json` field list, which had no PostgreSQL-binaries field, and the app's implicit assumption that `shutil.which` is the only way a client tool is found** | **`FQ-260812025353` SHIPPED (`a852563`, wired `07b83e9`): `postgres_bin_dir: str = ""` in the project settings, resolved CONFIGURED FOLDER FIRST, `PATH` SECOND.** `db/sandbox.py::resolve_tool(name, bin_dir, which)` is the one resolver. **The ordering is the feature, not a preference:** the setting exists because `PATH` picks an **arbitrary major** on a multi-installation machine and `pg_dump` refuses a newer server, so **a `PATH`-first order would make the setting a no-op in exactly the situation it was added for** — the tools *are* on `PATH`, they are the wrong ones. **Warn, never block:** a folder set but missing the tool falls back to `PATH` rather than failing (the field is optional and the user may be mid-typing), and `bin_dir=""`/`None` is **bit-for-bit today's behaviour**, which is what makes the field safe to add to every existing project at once. Both `Test` buttons now report the **server version**, which is what made `FQ-260812022749`'s verdict expressible at all. **It must NOT be unified with §7's app-wide `External tools` pane, for the mirror-image reason:** those three binaries are one-per-machine in `generator_config.json`, while the PostgreSQL binaries must differ per project **because the server does** — and `resolve_tool` is not reusable there anyway, being keyed on a **folder** holding a known name where two of those three store a full executable **path**. **`pg_dump_version` never raises** (missing binary, non-zero exit, timeout and unparseable output all return `None`, *because every one means the same thing to the caller: degrade*), and it is **deliberately not called from `probe()`** — `probe`'s detection is `shutil.which` only and **spawns nothing**, so folding a subprocess in would make every existing probe call site, and every test that stubs `which`, start a process. |
 
 ---
 
 ## 29. Open questions
 
-**From `FQ-260812002827` (2026-08-12) — THREE OWNER DECISIONS ARE OPEN AND THE FEATURE SHIPPED WITH DEFAULTS.**
+**From `FQ-260812002827` (2026-08-12) — TWO OWNER DECISIONS REMAIN OPEN AND THE FEATURE SHIPPED WITH DEFAULTS.**
 Listed here because §7's Software settings block states them as *defaults-pending-answer* and a reader must
-be able to find them from this section too. **None of them blocks anything**, and each is isolated to one
+be able to find them from this section too. **Neither blocks anything**, and each is isolated to one
 place, which is why the feature shipped rather than waiting:
 
 - **`DEC-260812004358` — confirm the trade: toolbar and shortcut customization become Maintenance-only.**
-  Default shipped: accept it. **This is a reachability WITHDRAWAL of two surfaces that were available at any
+  Default shipped: accept it. **This is a reachability WITHDRAWAL of surfaces that were available at any
   time**, and DEC-006's *hiding-is-not-preventing* leak does not rescue them because they never had a chord.
   Reversal is two additive `View` actions opening the dialog on a named pane.
+  > **⚠ THE TRADE GREW A THIRD MEMBER ON 2026-08-12, AND IT IS THE ONE MOST LIKELY TO BE FELT: CHANGING THE
+  > THEME.** `View ▸ Light Theme` was one click in every mode; theme selection is now the `Themes` pane, i.e.
+  > Maintenance-only (`FQ-260812021715`/`-716`, `7caf024`; ledger §28). Unlike the other two, this affects a
+  > surface a user may touch daily. **The reversal for this member is NOT a returned `View` toggle** — a
+  > checkbox cannot select among N themes — but an always-available **picker**, with the pane keeping the
+  > editing half. A fourth member is landing with `FQ-260812025705` (the `External tools` pane), where the
+  > operations that *use* a binary run in Project/Standalone mode while *setting* it does not.
 - **`DEC-260812004359` — is the dialog modal?** Default shipped: **non-modal, single-instance**, because it
   is the only option that changes nothing about a shipped surface — a non-modal shortcut editor lets a user
   try a chord against the live app. Reversal is one `setModal(True)` plus dropping the raise-and-focus logic.
-- **`DEC-260812004400` — do the two unbuilt panes appear disabled, or not at all?** Default shipped: **four
-  panes; `FQ-260812002828` / `FQ-260812002829` are absent, not stubbed.** Reversal is two list rows.
+- **~~`DEC-260812004400` — do the two unbuilt panes appear disabled, or not at all?~~ — CLOSED BY SHIPPING
+  (`7caf024`), nothing here is open.** The answer turned out to be *neither*: `FQ-260812002828` and
+  `FQ-260812002829` are **merged** into the one `Themes` pane (`FQ-260812021716`), because syntax
+  highlighting is part of a theme by owner ruling. **The *absent, not stubbed* default is vindicated rather
+  than merely unblocked** — a stub would have had to be deleted to make room for the real pane; an absence
+  did not. Struck rather than deleted, because the reasoning still governs the next blocked category:
+  FQ-023's *state your reason rather than vanish* applies to a gesture whose **siblings are present**, and a
+  category nobody was ever told about carries no expectation for its absence to contradict.
 
 **~~From `BUG-260812002307` — parts B and C are NOT built, and the entry stays OPEN~~ — FULLY RESOLVED
 (`483a9ad`), nothing here is open.** Struck rather than deleted, because this item was written as an
@@ -16140,12 +16769,14 @@ unrecorded — nothing below was invented in the body above:
   3. **Dark-mode asset convention — confirmed reuse, not a new mechanism; shipped.** Every image asset
      gets a `_drk`-suffixed dark-theme counterpart (`quality_connection_ok.svg` /
      `quality_connection_ok_drk.svg` — `.svg`-only per BUG-029, resolved through
-     `ui/project_status_model.py::asset_filename(stem, dark)`). The app's theme selection is the existing user-toggled
-     **Light Theme** menu checkbox (`ui/theme.py::apply_theme`, `MainWindow._light_theme_action`) — there
-     is no OS/system dark-mode *detection* anywhere in `pgtp_editor/` today. The `_drk`-vs-plain asset
-     choice should key off this existing toggle's boolean state, not a new detection mechanism; this is
-     recorded as confirmed-available reuse, not a gap, but is called out here because it was easy to
-     mistake for requiring new OS-theme-detection capability.
+     `ui/project_status_model.py::asset_filename(stem, dark)`). The app's theme selection is a **persisted
+     theme NAME** (`theme_model.SETTINGS_KEY`, `ui/theme.py::apply_theme(app, source)`) — *(this item read
+     "the existing user-toggled **Light Theme** menu checkbox … `MainWindow._light_theme_action`" until
+     `7caf024`, when both were deleted; §7/§26)* — and there is still no OS/system dark-mode *detection*
+     anywhere in `pgtp_editor/`. The `_drk`-vs-plain asset choice keys off `UiShell.is_light_theme`, which
+     reads the applied `Theme.light`, not a new detection mechanism; this is recorded as confirmed-available
+     reuse, not a gap, but is called out here because it was easy to mistake for requiring new
+     OS-theme-detection capability.
 - **`db/routine_refs.py`'s UI consumer (§18.1's remaining gap)** — XML↔routine cross-referencing,
   answering *"which `.pgtp` pages break if I change this function?"* before a deployment script is
   generated. **No other tool can do this**, and it is the XML↔DB sync the owner describes as the point

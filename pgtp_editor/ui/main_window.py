@@ -76,7 +76,8 @@ from pgtp_editor.db.bookmark_store import (
     load_editor_bookmarks,
     store_editor_bookmarks,
 )
-from pgtp_editor.db.ddl_buffer import build_ddl_text
+from pgtp_editor.db.ddl_buffer import build_ddl_buffer, build_ddl_text
+from pgtp_editor.db.pg_dump_ddl import SchemaDumpError, fetch_schema_dump
 from pgtp_editor.db.migration_gen import connection_summary
 from pgtp_editor.db.ddl_project import (
     DeployedObject,
@@ -97,7 +98,11 @@ from pgtp_editor.db.introspect import RoutineInfo, fetch_routines_and_triggers
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.schema_index import SchemaIndex
 from pgtp_editor.db.sandbox import SandboxMode, probe as sandbox_probe
-from pgtp_editor.db.pg_dump_mode import probe_ddl_mode, server_major_divergence
+from pgtp_editor.db.pg_dump_mode import (
+    DdlMode,
+    probe_ddl_mode,
+    server_major_divergence,
+)
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
@@ -4629,6 +4634,22 @@ class MainWindow(QMainWindow):
         if divergence:
             self.audit_panel.addItem(QListWidgetItem(f"{DDL_PREFIX} {divergence}"))
 
+    def _report_ddl_degrade(self, reason: str) -> None:
+        """A SECOND `[DDL]` row, beside the mode row, when full mode was chosen
+        and could not be delivered.
+
+        Deliberately additive rather than a replacement: the mode row is an
+        owner ruling on every open, and *"full mode was chosen but you are
+        looking at reconstructed DDL"* is extra information, not a correction of
+        it. Both appear, in that order.
+
+        The two shapes that reach here are a refused/timed-out `pg_dump` and a
+        dump the parser could not attribute to every relation the introspection
+        found -- the latter also catching introspection-vs-dump skew, since the
+        two are separate connections at separate instants.
+        """
+        self.audit_panel.addItem(QListWidgetItem(f"{DDL_PREFIX} {reason}"))
+
     def _server_version_divergence(self, verdict):
         """`server_major_divergence`'s sentence, or None when it cannot be
         asked (no sandbox probe yet) or the two majors agree.
@@ -4776,6 +4797,11 @@ class MainWindow(QMainWindow):
         probe_mode = role == DDL_EXPLORER_TARGET and self._ddl_mode_verdict_key != (
             self._ddl_mode_cache_key(params)
         )
+        #: Read on the GUI thread and captured, because the worker never touches
+        #: window state (see above). A freshly probed verdict supersedes it
+        #: inside `work`, so the dump decision and the dump itself are taken
+        #: together against ONE verdict rather than two reads that could differ.
+        cached_verdict = self._ddl_mode_verdict
 
         def work():
             schema = self._fetch_ddl_schema(params)
@@ -4785,18 +4811,55 @@ class MainWindow(QMainWindow):
                     probed = self._probe_ddl_mode(params)
                 except Exception as exc:  # noqa: BLE001 -- a notice never fails an open
                     _log.info("db: ddl mode probe failed %s", exc)
-            return schema, probed
+            # §18.5/FQ-260812022749: FULL mode's buffer is a `pg_dump
+            # --schema-only`, taken HERE -- on the worker, in the same fetch as
+            # the introspection, exactly ONCE per Explorer build. A refusal or a
+            # timeout must never fail the open, so it degrades to RESTRICTED
+            # with a named row instead (`degrade_reason`, a SECOND `[DDL]` row
+            # beside the mode row -- the mode is reported on every open by owner
+            # ruling, and a degrade is additional information, not a
+            # replacement).
+            #
+            # RESTRICTED never spawns: no verdict, or a restricted one, means no
+            # `pg_dump` invocation at all.
+            #
+            # The verdict is the QUALITY server's even for the sandbox role, by
+            # the owner's ruling that the two databases must be the same version
+            # and the sandbox gets the same treatment. The DUMP, however, is
+            # taken from `params` -- this role's own connection -- so the
+            # sandbox buffer is never the quality database's text. A genuine
+            # major divergence is already reported by `server_major_divergence`.
+            verdict = probed[1] if probed is not None else cached_verdict
+            dump_text = None
+            dump_error = None
+            if verdict is not None and verdict.full and verdict.pg_dump_path:
+                try:
+                    dump_text = fetch_schema_dump(params, verdict.pg_dump_path)
+                except SchemaDumpError as exc:
+                    dump_error = str(exc)
+                except Exception as exc:  # noqa: BLE001 -- never fails an open
+                    _log.info("db: schema dump failed %s", exc)
+                    dump_error = str(exc)
+            return schema, probed, dump_text, dump_error, verdict
 
         def on_result(outcome):
-            schema, probed = outcome
+            schema, probed, dump_text, dump_error, verdict = outcome
             if probed is not None:
                 self._quality_capabilities, self._ddl_mode_verdict = probed
                 self._ddl_mode_verdict_key = self._ddl_mode_cache_key(params)
             if role == DDL_EXPLORER_TARGET:
                 self._report_ddl_mode(self._ddl_mode_verdict)
-            text, spans = build_ddl_text(schema)
+            buffer = build_ddl_buffer(
+                schema,
+                mode=verdict.mode if verdict is not None else DdlMode.RESTRICTED,
+                dump_text=dump_text,
+            )
+            if dump_error:
+                self._report_ddl_degrade(dump_error)
+            elif buffer.degrade_reason:
+                self._report_ddl_degrade(buffer.degrade_reason)
             self.center_stage.ddl_explorer_panel(role).set_ddl_text(
-                text, spans, schema=schema
+                buffer.text, buffer.spans, schema=schema
             )
             # */! drift markers (§18.2): recomputed fresh on every fetch, never
             # cached -- None (no markers) when no project is open, matching the
@@ -4820,8 +4883,12 @@ class MainWindow(QMainWindow):
                 and self._ddl_project_folder is not None
                 else None
             )
+            # The SAME span list the buffer just rendered, deliberately -- the
+            # tree and the buffer must never disagree about where an object is,
+            # and in full mode the spans come from the dump's statement
+            # boundaries rather than from the synthesizer.
             self._ddl_browser_panels[role].set_schema(
-                schema, spans, drift_markers=drift_markers
+                schema, buffer.spans, drift_markers=drift_markers
             )
             self.center_stage.show_ddl_explorer(role)
             if role == DDL_EXPLORER_TARGET:

@@ -66,6 +66,27 @@ def _offline_ddl_mode_probe(monkeypatch):
         "probe_ddl_mode",
         lambda caps, **k: decide_ddl_mode(caps.server_version, None, None),
     )
+    # A THIRD seam, added when the dual-mode buffer was wired: a FULL verdict
+    # makes `_open_ddl_explorer` call `fetch_schema_dump`, which spawns
+    # `pg_dump --schema-only` against the test's fake host. The stub above
+    # yields RESTRICTED, so most tests never reach it -- but any test that
+    # installs a full verdict on the instance does, and it shelled out for real
+    # until this existed (observed: `could not translate host name "h"`).
+    #
+    # It raises rather than returning canned SQL on purpose. A silent empty
+    # dump would render an empty full-mode buffer and read as a rendering bug;
+    # `SchemaDumpError` is the shipped refusal path, so an unprepared test
+    # degrades to restricted with a named row -- visible, and correct. Tests
+    # about full mode inject their own dump text over this.
+    monkeypatch.setattr(
+        main_window_module,
+        "fetch_schema_dump",
+        lambda params, path, **k: (_ for _ in ()).throw(
+            main_window_module.SchemaDumpError(
+                "no pg_dump was run (test stub); inject dump text to test full mode"
+            )
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)

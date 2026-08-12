@@ -24,6 +24,7 @@ from PySide6.QtCore import QSettings
 from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.introspect import DatabaseSchema
+from pgtp_editor.ui import main_window as main_window_module
 from pgtp_editor.db.pg_dump_mode import DdlMode, decide_ddl_mode
 from pgtp_editor.db.sandbox import SandboxCapabilities
 from pgtp_editor.ui.audit_router import DDL_PREFIX
@@ -100,6 +101,18 @@ def window(qtbot, tmp_path, monkeypatch):
     win.ddl_mode_prober = lambda caps, **kwargs: decide_ddl_mode(
         caps.server_version, "/usr/bin/pg_dump", (16, 4)
     )
+    # This fixture's verdict is FULL, so the buffer layer now asks for a
+    # `pg_dump --schema-only`. Stubbing it keeps the fixture's promise of no I/O
+    # at all (the conftest seam raises, which would add a degrade row and change
+    # what these tests count). The schema is empty, so a preamble-only dump
+    # leaves no relation unattributed and therefore no degrade.
+    win.dumps = []
+
+    def _dump(params, pg_dump_path, **kwargs):
+        win.dumps.append((params, pg_dump_path))
+        return "SET statement_timeout = 0;\n"
+
+    monkeypatch.setattr(main_window_module, "fetch_schema_dump", _dump)
     return win
 
 
