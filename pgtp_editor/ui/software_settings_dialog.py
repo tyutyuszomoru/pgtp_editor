@@ -31,11 +31,16 @@ Toolbar                     ``customize_toolbar_dialog.CustomizeToolbarDialog``
 Autoformatter               ``autoformat_settings_dialog.AutoformatSettingsDialog``
 Keyboard shortcuts          ``customize_shortcuts_dialog.CustomizeShortcutsDialog``
                             (built and wired by ``MainWindow``)
+Themes                      :class:`ThemesPane` — the ONE pane defined in this
+                            module, because it had no prior dialog to embed
+                            (FQ-260812021716)
 ==========================  ===================================================
 
 Nothing here re-implements a control, re-reads a store, or re-derives a command
-list. The four surfaces keep their widgets, their controllers, their persistence
-and their tests; only their **host** changed.
+list. The four pre-existing surfaces keep their widgets, their controllers,
+their persistence and their tests; only their **host** changed. The Themes pane
+is the exception that proves the rule — it is new, so it is written here, and it
+still owns its own apply/OK contract rather than borrowing one from the host.
 
 RELOCATION, NOT DUPLICATION (owner-settled)
 -------------------------------------------
@@ -93,11 +98,15 @@ ADDING A PANE IS A DATA CHANGE
 ------------------------------
 :data:`SETTINGS_PANES` is the whole list: one :class:`SettingsPane` row of
 ``key``, ``title``, ``blurb`` and a ``build(window, parent) -> QDialog``
-callable. Pane 5 (syntax highlight colors, FQ-260812002828) and pane 6 (color
-scheme, FQ-260812002829) are **absent, not stubbed** — both are
-``QUEUED — BLOCKED: DO NOT IMPLEMENT`` pending an owner description
-(DEC-260812004400), and a greyed "coming soon" row is a promise this code is in
-no position to make. When they land they are two more rows here.
+callable.
+
+The fifth row, **Themes** (FQ-260812021716), is the proof of that claim and the
+answer to DEC-260812004400. It arrived as ONE pane where two were reserved:
+pane 5 (syntax highlight colors, FQ-260812002828) and pane 6 (color scheme,
+FQ-260812002829) are **SUPERSEDED**, because syntax highlighting is part of the
+theme by owner ruling — two panes editing one `Theme` could be edited into a
+mismatch, and one cannot mismatch itself. It is `_themes_pane` below, and it
+cost exactly one row here.
 """
 from __future__ import annotations
 
@@ -105,19 +114,30 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QColorDialog,
     QDialog,
     QDialogButtonBox,
+    QGridLayout,
+    QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from pgtp_editor.ui import theme_model
 from pgtp_editor.ui.autoformat_settings_dialog import build_autoformat_settings_pane
+from pgtp_editor.ui.theme_model import SyntaxRole, Theme, ThemeError
 
 #: The `Settings` menu's label for this command, and therefore the id the menu
 #: walk derives from it (`settings.software-settings` — see
@@ -165,7 +185,416 @@ def _shortcuts_pane(window, parent) -> QDialog:
     return window.build_customize_shortcuts_pane(parent)
 
 
-#: The panes, in list order. FOUR, not six — see the module docstring.
+def _themes_pane(window, parent) -> QDialog:
+    return ThemesPane(window, parent)
+
+
+#: The colour sections a theme file carries, in the order the pane lays them out:
+#: `(section key, group heading, the keys in it)`. Read straight off
+#: `theme_model`'s own tuples rather than re-listed, so a colour added to the
+#: model appears in the editor with no change here — the alternative is a second
+#: list of colour names, which is the same mistake as a second list of colours.
+_FLAT_SECTIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("chrome", "Chrome (menus, buttons, tabs, docks, scrollbars)", theme_model.CHROME_KEYS),
+    ("palette", "Widget palette", theme_model.PALETTE_ROLES),
+    ("palette_disabled", "Widget palette — disabled", theme_model.DISABLED_ROLES),
+    ("accents", "Accents", theme_model.ACCENT_KEYS),
+    ("decorations", "Editor decorations", theme_model.DECORATION_KEYS),
+)
+
+#: The two halves of a mode chip, in `Theme.modes`' pair order.
+_MODE_PARTS: tuple[str, ...] = ("background", "foreground")
+
+#: The three weight flags a syntax role carries beside its colour.
+_SYNTAX_FLAGS: tuple[str, ...] = ("bold", "italic", "underline")
+
+
+class _ColorButton(QPushButton):
+    """One editable colour: a swatch that opens `QColorDialog` and remembers the
+    chosen `#rrggbb`.
+
+    The value is held as TEXT, not as a `QColor`, because that is what a theme
+    file holds and what `Theme.from_json` validates — round-tripping through
+    `QColor` would quietly normalise (or accept) notations the loader refuses.
+    """
+
+    def __init__(self, value: str, parent=None):
+        super().__init__(parent)
+        self._value = ""
+        self.setFlat(False)
+        self.setAutoDefault(False)
+        self.set_value(value)
+        self.clicked.connect(self._pick)
+
+    def value(self) -> str:
+        return self._value
+
+    def set_value(self, value: str) -> None:
+        self._value = str(value)
+        self.setText(self._value)
+        colour = QColor(self._value)
+        # Label contrast is computed, not chosen: a fixed label colour would be
+        # unreadable on half the swatches, and a literal here would be a second
+        # colour source (the AST guard in tests/ui/test_theme_model.py forbids
+        # exactly that). `QColor.lightness()` picks black or white by luminance.
+        ink = QColor(Qt.GlobalColor.black if colour.lightness() > 127 else Qt.GlobalColor.white)
+        self.setStyleSheet(
+            f"background-color: {colour.name()}; color: {ink.name()};"
+            " border: 1px solid palette(mid); padding: 3px;"
+        )
+
+    def _pick(self) -> None:
+        chosen = QColorDialog.getColor(QColor(self._value), self, "Pick a colour")
+        if chosen.isValid():
+            self.set_value(chosen.name())
+
+
+class ThemesPane(QDialog):
+    """`Software settings ▸ Themes` (FQ-260812021716) — browse, select,
+    duplicate and edit the file-based themes FQ-260812021715 introduced.
+
+    WHAT EACH GESTURE MEANS
+    -----------------------
+    * **Browse** — the list is `theme_model.available_themes()`, rescanned on
+      every refresh, so a theme file dropped into the user themes directory
+      shows up without a restart. That is the foundation feature's headline
+      requirement, and this pane simply does not cache around it.
+    * **Use this theme** — applies AND persists immediately, through
+      `MainWindow.apply_theme_named`. Not on OK: the owner's ruling is that a
+      theme is marked selected and is app-wide and durable from that moment.
+      Selection is therefore deliberately NOT part of the pane's edit buffer.
+    * **Duplicate…** — the create path. "New = copy an existing one", so a new
+      theme is a valid `Theme` from the first keystroke and there is no
+      half-defined-theme state to guard against. It is written into the USER
+      themes directory, which is also what makes it editable.
+    * **OK (Save)** — writes the edited colours back to the theme's user file,
+      and RE-APPLIES it if it is the theme in use, which is what makes the edit
+      visible. **Cancel** discards the edits, exactly like every other pane
+      here; the host then rebuilds this pane from what is now on disk.
+
+    BUNDLED THEMES ARE READ-ONLY, AND THAT IS THE DESIGN
+    ----------------------------------------------------
+    An install directory is not reliably writable, an upgrade would overwrite
+    the edit anyway, and duplicate-then-edit already exists — so editing a
+    bundled theme is refused with the reason stated on screen rather than
+    silently failing at write time. A duplicate of a bundled theme SHADOWS it if
+    given the same name (`theme_model.theme_search_path`), so "edit the theme I
+    am using" is reachable without touching the install.
+
+    LIVE PREVIEW, HONESTLY SCOPED
+    -----------------------------
+    Apply-on-save, not apply-per-keystroke. A `QColorDialog` interaction would
+    otherwise re-apply the whole app stylesheet on every slider move, and a theme
+    flip fires `PaletteChange` four times — the first two reporting the OLD
+    lightness. Every colour re-read in this app is idempotent and last-write-wins
+    for that reason, and multiplying the flips buys nothing a Save does not.
+    """
+
+    def __init__(self, window, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Themes")
+        self._window = window
+        self._theme: Theme | None = None
+        self._color_buttons: dict[tuple[str, str], _ColorButton] = {}
+        self._syntax_flags: dict[tuple[str, str], QCheckBox] = {}
+
+        layout = QVBoxLayout(self)
+        body = QHBoxLayout()
+        layout.addLayout(body, 1)
+
+        # -- left: the theme list and the two theme-level gestures ------------
+        left = QVBoxLayout()
+        self.theme_list = QListWidget(self)
+        self.theme_list.setMaximumWidth(220)
+        left.addWidget(self.theme_list, 1)
+        self.use_button = QPushButton("Use this theme", self)
+        self.use_button.setAutoDefault(False)
+        self.use_button.clicked.connect(self.use_selected)
+        left.addWidget(self.use_button)
+        self.duplicate_button = QPushButton("Duplicate…", self)
+        self.duplicate_button.setAutoDefault(False)
+        self.duplicate_button.clicked.connect(self._prompt_duplicate)
+        left.addWidget(self.duplicate_button)
+        body.addLayout(left)
+
+        # -- right: the colour editor -----------------------------------------
+        right = QVBoxLayout()
+        self.status_label = QLabel(self)
+        self.status_label.setWordWrap(True)
+        right.addWidget(self.status_label)
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        right.addWidget(self.scroll, 1)
+        body.addLayout(right, 1)
+
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
+        self.button_box.accepted.connect(self._on_save)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+        self.refresh_themes()
+        self.theme_list.currentRowChanged.connect(lambda _row: self._load_selected())
+
+    # -- browsing -------------------------------------------------------------
+
+    def refresh_themes(self, select: str | None = None) -> None:
+        """Rescan the search path and rebuild the list.
+
+        `select` is the name to land on; by default the previously selected one,
+        falling back to the theme in use. The scan is `available_themes()`, which
+        walks the directories on every call — deliberately uncached, so a file
+        written a moment ago (by Duplicate, or by hand) is simply there.
+        """
+        wanted = select or self.selected_theme_name() or self.active_theme_name()
+        self._names = sorted(theme_model.available_themes())
+        blocked = self.theme_list.blockSignals(True)
+        self.theme_list.clear()
+        active = self.active_theme_name()
+        for name in self._names:
+            self.theme_list.addItem(f"{name} — in use" if name == active else name)
+        self.theme_list.blockSignals(blocked)
+        row = self._names.index(wanted) if wanted in self._names else 0
+        if self._names:
+            self.theme_list.setCurrentRow(row)
+        self._load_selected()
+
+    def theme_names(self) -> list[str]:
+        """The theme names on offer, in list order."""
+        return list(self._names)
+
+    def active_theme_name(self) -> str:
+        """The theme the app is currently painted in, as persisted."""
+        return self._window.theme_name()
+
+    def selected_theme_name(self) -> str | None:
+        row = self.theme_list.currentRow()
+        if not 0 <= row < len(getattr(self, "_names", ())):
+            return None
+        return self._names[row]
+
+    def select_theme(self, name: str) -> bool:
+        """Highlight `name` in the list (browsing only — this does not apply it)."""
+        if name not in self._names:
+            return False
+        self.theme_list.setCurrentRow(self._names.index(name))
+        return True
+
+    # -- selection (applies and persists immediately) -------------------------
+
+    def use_selected(self) -> str | None:
+        """Mark the highlighted theme as the app's theme: apply it and persist it.
+
+        Immediate on purpose — see the class docstring. Returns the name actually
+        applied, which `MainWindow.apply_theme_named` may downgrade to the
+        bundled dark theme if the file has become unloadable since the scan.
+        """
+        name = self.selected_theme_name()
+        if name is None:
+            return None
+        applied = self._window.apply_theme_named(name)
+        self.refresh_themes(select=applied)
+        return applied
+
+    # -- duplication (the create path) ----------------------------------------
+
+    def duplicate_selected(self, display_name: str) -> str:
+        """Write a copy of the highlighted theme under `display_name`, and land
+        on it. Returns the new theme's NAME (its file stem).
+
+        The copy is a full `Theme`, not a delta on the original: a theme file
+        that inherits from another would make "delete the file it inherits from"
+        a way to break a working theme, and the whole model is that one file is
+        one complete theme.
+        """
+        source = self._theme
+        if source is None:
+            raise ThemeError("no theme is selected to duplicate")
+        stem = theme_model.theme_stem(display_name)
+        if stem in self._names:
+            raise ThemeError(f"a theme named {stem!r} already exists")
+        theme_model.save_theme(theme_model.duplicate(source, str(display_name).strip()), stem)
+        self.refresh_themes(select=stem)
+        return stem
+
+    def _prompt_duplicate(self) -> None:
+        source = self.selected_theme_name()
+        if source is None:
+            return
+        name, accepted = QInputDialog.getText(
+            self, "Duplicate theme", "Name for the copy:", text=f"{source} copy"
+        )
+        if not accepted:
+            return
+        try:
+            self.duplicate_selected(name)
+        except ThemeError as error:
+            QMessageBox.warning(self, "Duplicate theme", str(error))
+
+    # -- editing --------------------------------------------------------------
+
+    def _load_selected(self) -> None:
+        """Rebuild the colour editor from the highlighted theme's file."""
+        name = self.selected_theme_name()
+        self._color_buttons = {}
+        self._syntax_flags = {}
+        if name is None:
+            self._theme = None
+            self.status_label.setText("No themes were found.")
+            self.scroll.setWidget(QWidget(self))
+            self._set_editable(False)
+            return
+        try:
+            self._theme = theme_model.load_theme(name)
+        except ThemeError as error:
+            self._theme = None
+            self.status_label.setText(str(error))
+            self.scroll.setWidget(QWidget(self))
+            self._set_editable(False)
+            return
+        self.scroll.setWidget(self._build_editor(self._theme))
+        editable = not theme_model.is_bundled(self._theme)
+        self.status_label.setText(
+            f"<b>{self._theme.name}</b>"
+            if editable
+            else f"<b>{self._theme.name}</b> is a bundled theme and is read-only — "
+            "use <i>Duplicate…</i> to make an editable copy."
+        )
+        self._set_editable(editable)
+
+    def _set_editable(self, editable: bool) -> None:
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setEnabled(editable)
+        for widget in list(self._color_buttons.values()) + list(self._syntax_flags.values()):
+            widget.setEnabled(editable)
+
+    def _build_editor(self, theme: Theme) -> QWidget:
+        host = QWidget(self)
+        column = QVBoxLayout(host)
+        for section, heading, keys in _FLAT_SECTIONS:
+            values = getattr(theme, section)
+            column.addWidget(
+                self._colour_group(host, heading, [
+                    (section, key, key, values[key]) for key in keys
+                ])
+            )
+        column.addWidget(
+            self._colour_group(host, "Mode indicator chips", [
+                ("modes", f"{mode}.{part}", f"{mode} ({part})",
+                 theme.modes[mode][index])
+                for mode in theme_model.MODE_KEYS
+                for index, part in enumerate(_MODE_PARTS)
+            ])
+        )
+        column.addWidget(self._syntax_group(host, theme))
+        column.addStretch(1)
+        return host
+
+    def _colour_group(self, parent, heading: str, rows) -> QGroupBox:
+        group = QGroupBox(heading, parent)
+        grid = QGridLayout(group)
+        for row, (section, key, label, value) in enumerate(rows):
+            grid.addWidget(QLabel(label, group), row, 0)
+            button = _ColorButton(value, group)
+            self._color_buttons[(section, key)] = button
+            grid.addWidget(button, row, 1)
+        grid.setColumnStretch(1, 1)
+        return group
+
+    def _syntax_group(self, parent, theme: Theme) -> QGroupBox:
+        """The 8 syntax roles: a colour plus bold/italic/underline each.
+
+        Syntax lives HERE, in the same pane as the chrome, because it is part of
+        the theme (owner ruling) — which is what makes a light-syntax-on-dark-
+        chrome mismatch unrepresentable rather than merely discouraged.
+        """
+        group = QGroupBox("Syntax highlighting", parent)
+        grid = QGridLayout(group)
+        for column, flag in enumerate(_SYNTAX_FLAGS):
+            grid.addWidget(QLabel(flag.title(), group), 0, 2 + column)
+        for row, key in enumerate(theme_model.SYNTAX_ROLES, start=1):
+            role = theme.syntax[key]
+            grid.addWidget(QLabel(key, group), row, 0)
+            button = _ColorButton(role.color, group)
+            self._color_buttons[("syntax", key)] = button
+            grid.addWidget(button, row, 1)
+            for column, flag in enumerate(_SYNTAX_FLAGS):
+                box = QCheckBox(group)
+                box.setChecked(bool(getattr(role, flag)))
+                self._syntax_flags[(key, flag)] = box
+                grid.addWidget(box, row, 2 + column)
+        grid.setColumnStretch(1, 1)
+        return group
+
+    # -- the editor's programmatic surface (also the test seam) ---------------
+
+    def color_value(self, section: str, key: str) -> str:
+        return self._color_buttons[(section, key)].value()
+
+    def set_color_value(self, section: str, key: str, value: str) -> None:
+        self._color_buttons[(section, key)].set_value(value)
+
+    def syntax_flag(self, role: str, flag: str) -> bool:
+        return self._syntax_flags[(role, flag)].isChecked()
+
+    def set_syntax_flag(self, role: str, flag: str, value: bool) -> None:
+        self._syntax_flags[(role, flag)].setChecked(bool(value))
+
+    def edited_theme(self) -> Theme:
+        """The `Theme` the editor currently describes.
+
+        Built by round-tripping through `Theme.from_json`, so the edits are
+        VALIDATED by the same loader a file goes through — an editor that
+        constructed the dataclass directly could produce a theme that cannot be
+        loaded back, which is the worst possible time to find out.
+        """
+        if self._theme is None:
+            raise ThemeError("no theme is selected")
+        data = self._theme.to_json()
+        for (section, key), button in self._color_buttons.items():
+            if section == "syntax":
+                data["syntax"][key]["color"] = button.value()
+            elif section == "modes":
+                mode, part = key.split(".")
+                data["modes"][mode][_MODE_PARTS.index(part)] = button.value()
+            else:
+                data[section][key] = button.value()
+        for (role, flag), box in self._syntax_flags.items():
+            data["syntax"][role][flag] = box.isChecked()
+        return Theme.from_json(data, source=self._theme.source)
+
+    def save_edits(self) -> Theme:
+        """Write the edited theme to its user file, re-applying it if it is in
+        use. Returns the saved `Theme`."""
+        theme = self.edited_theme()
+        name = self.selected_theme_name()
+        if name is None:  # pragma: no cover - `edited_theme` raised already
+            raise ThemeError("no theme is selected")
+        if self._theme is not None and theme_model.is_bundled(self._theme):
+            raise ThemeError(
+                f"{self._theme.name} is a bundled theme and cannot be edited in "
+                "place -- duplicate it first"
+            )
+        theme_model.save_theme(theme, name)
+        if name == self.active_theme_name():
+            # Re-apply so the edit is VISIBLE. `apply_theme_named` re-reads the
+            # file, and `load_theme_file`'s cache is keyed on the file's stat, so
+            # it picks up the write just made rather than the parse from before.
+            self._window.apply_theme_named(name)
+        return theme
+
+    def _on_save(self) -> None:
+        try:
+            self.save_edits()
+        except ThemeError as error:
+            QMessageBox.warning(self, "Save theme", str(error))
+            return
+        self.accept()
+
+
+#: The panes, in list order. FIVE — see the module docstring.
 SETTINGS_PANES: tuple[SettingsPane, ...] = (
     SettingsPane(
         key="snippets",
@@ -193,6 +622,15 @@ SETTINGS_PANES: tuple[SettingsPane, ...] = (
         title="Keyboard shortcuts",
         blurb="The key bound to each menu command, and the keys the app pins.",
         build=_shortcuts_pane,
+    ),
+    SettingsPane(
+        key="themes",
+        title="Themes",
+        blurb=(
+            "Every colour the app paints, as named theme files: pick one, "
+            "duplicate it, and edit its chrome, editor and syntax colours."
+        ),
+        build=_themes_pane,
     ),
 )
 

@@ -217,6 +217,101 @@ def test_shared_accent_RAISES_when_the_themes_disagree(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Named selection, and the migration off the `lightTheme` boolean
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def _no_active_theme():
+    """`theme_for` answers the app's `light: bool` seam with the ACTIVE theme, so
+    a test that sets one must put it back or it leaks into every later palette
+    assertion."""
+    previous = theme_model.active_theme()
+    try:
+        yield
+    finally:
+        theme_model.set_active_theme(previous)
+
+
+def test_theme_for_returns_the_ACTIVE_theme_when_the_lightness_matches(_no_active_theme):
+    """The seam where a boolean becomes a `Theme` is where NAME-based selection
+    drops in: there can be any number of themes but only one active one, so a
+    caller asking about the side the app is on gets the app's actual theme."""
+    midnight = theme_model.replace(load_theme("dark"), name="Midnight")
+    theme_model.set_active_theme(midnight)
+    assert theme_for(False) is midnight
+
+
+def test_theme_for_falls_back_to_the_BUNDLED_pair_for_the_OTHER_side(_no_active_theme):
+    """`PaletteChange` fires four times per flip and the first two report the OLD
+    lightness, so a consumer WILL ask about the side the app is not on. Answering
+    with the active theme's colours there would paint the new theme under the old
+    palette for two events."""
+    theme_model.set_active_theme(load_theme("dark"))
+    assert theme_for(True).name == load_theme("light").name
+    assert theme_for(True).light is True
+
+
+def test_a_stored_NAME_wins_over_the_legacy_boolean():
+    assert theme_model.migrated_theme_name("midnight", True) == "midnight"
+    assert theme_model.migrated_theme_name("midnight", False) == "midnight"
+
+
+def test_the_legacy_boolean_migrates_onto_a_bundled_theme_NAME():
+    """The migration for an existing install: someone with `lightTheme=true`
+    stored must land on the LIGHT theme, not on a default."""
+    assert theme_model.migrated_theme_name(None, True) == "light"
+    assert theme_model.migrated_theme_name("", True) == "light"
+    assert theme_model.migrated_theme_name(None, False) == "dark"
+    assert theme_model.migrated_theme_name(None, None) == "dark"
+
+
+def test_resolve_theme_falls_back_rather_than_raising():
+    """The user deleted or broke the theme file they had selected. The default
+    theme is a far better answer than a startup crash — and the name actually
+    used comes back, so the caller persists what it applied."""
+    assert theme_model.resolve_theme("light")[0] == "light"
+    name, theme = theme_model.resolve_theme("no-such-theme")
+    assert name == "dark" and theme.light is False
+
+
+@pytest.mark.parametrize("display,stem", [
+    ("My Theme", "my-theme"),
+    ("  Solarized   Dark  ", "solarized-dark"),
+    ("../../etc/passwd", "etc-passwd"),
+    ("Ünïcode 2", "ünïcode-2"),  # letters are kept, whatever alphabet
+])
+def test_a_display_name_becomes_a_SAFE_file_stem(display, stem):
+    """A theme's identity IS its file stem — it is what `available_themes` keys
+    on and what QSettings persists — so a name must not be able to escape the
+    themes directory or produce a stem selection cannot round-trip."""
+    assert theme_model.theme_stem(display) == stem
+
+
+def test_an_unusable_name_is_refused_rather_than_becoming_dot_json():
+    with pytest.raises(ThemeError):
+        theme_model.theme_stem("   ")
+
+
+def test_a_saved_theme_lands_in_the_USER_directory_and_loads_back(monkeypatch, tmp_path):
+    """Always the user directory, never `theme.source`: saving a duplicate of a
+    bundled theme must not write into the install."""
+    monkeypatch.setattr(theme_model, "user_themes_dir", lambda: tmp_path)
+    copy = duplicate(load_theme("dark"), "Midnight")
+    path = theme_model.save_theme(copy, "midnight")
+
+    assert path == tmp_path / "midnight.json"
+    assert theme_model.available_themes()["midnight"] == path
+    assert load_theme_file(path).to_json() == copy.to_json()
+
+
+def test_is_bundled_separates_the_install_from_the_users_own(monkeypatch, tmp_path):
+    monkeypatch.setattr(theme_model, "user_themes_dir", lambda: tmp_path)
+    assert theme_model.is_bundled(load_theme("dark")) is True
+    theme_model.save_theme(duplicate(load_theme("dark"), "Midnight"), "midnight")
+    assert theme_model.is_bundled(load_theme("midnight")) is False
+
+
+# ---------------------------------------------------------------------------
 # Faithful extraction: the consolidation changed NO colour
 # ---------------------------------------------------------------------------
 

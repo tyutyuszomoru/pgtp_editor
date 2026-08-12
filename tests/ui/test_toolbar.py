@@ -281,10 +281,10 @@ def test_checkable_menu_toggle_stays_checkable_on_the_toolbar(qtbot, tmp_path):
     checked state in sync between menu and toolbar for free."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_ids(["view.light-theme"])
+    window._toolbar_ui.apply_ids(["view.raw-xml-panel"])
     action = window._toolbar_ui.command_actions[0]
     assert action.isCheckable()
-    assert action is find_action(find_top_menu(window, "View"), "Light Theme")
+    assert action is find_action(find_top_menu(window, "View"), "Raw XML Panel")
 
 
 # -- BUG-027: saved toolbars from before the widening ----------------------
@@ -393,10 +393,10 @@ def test_an_icon_less_command_is_still_addable(qtbot, tmp_path):
     assert action.text() == "Save as new pgtp"
 
 
-def test_toggling_light_theme_keeps_icons_non_null(qtbot, tmp_path):
+def test_selecting_a_theme_keeps_icons_non_null(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._on_light_theme_toggled(True)
+    window.apply_theme_named("light")
     actions = window._toolbar_ui.command_actions
     assert actions
     assert all(not a.icon().isNull() for a in actions)
@@ -449,9 +449,9 @@ def test_menu_walk_keepalive_survives_garbage_collection(qtbot, tmp_path):
     window._toolbar_ui.collect_menu_commands()
     gc.collect()
 
-    light = find_action(find_top_menu(window, "View"), "Light Theme")
-    assert light is not None
-    light.setChecked(light.isChecked())            # would raise if deleted
+    toggle = find_action(find_top_menu(window, "View"), "Raw XML Panel")
+    assert toggle is not None
+    toggle.setChecked(toggle.isChecked())          # would raise if deleted
     # Every walked command is still a usable QAction after the collection.
     for command_id, _label in window._toolbar_ui.all_menu_commands():
         assert window._toolbar_ui.menu_commands[command_id].text()

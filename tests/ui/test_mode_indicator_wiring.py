@@ -309,13 +309,13 @@ def test_a_theme_flip_re_renders_both_surfaces(qtbot, tmp_path):
     window.set_workflow_mode(MODE_PROJECT)
     dark = window._mode_label.colors()
 
-    window._light_theme_action.setChecked(True)  # fires the real toggle slot
+    window.apply_theme_named("light")  # the real selection path
 
     assert window._mode_label.colors() == mode_colors(True)[MODE_PROJECT]
     assert window.toolbar_mode_indicator.colors() == mode_colors(True)[MODE_PROJECT]
     assert window._mode_label.colors() != dark
     # Leave the app palette as the suite found it.
-    window._light_theme_action.setChecked(False)
+    window.apply_theme_named("dark")
     assert QApplication.instance() is not None
 
 

@@ -177,27 +177,34 @@ def test_the_four_absorbed_command_ids_no_longer_ENUMERATE(window):
 # -- the panes -----------------------------------------------------------------
 
 
-def test_four_panes_ship_and_the_two_BLOCKED_ones_are_ABSENT(window):
-    """DEC-260812004400's shipped default. FQ-260812002828 (syntax highlight
-    colors) and FQ-260812002829 (color scheme) are
-    `QUEUED — BLOCKED: DO NOT IMPLEMENT`; a greyed "coming soon" row would be a
-    promise this code cannot make."""
+def test_five_panes_ship_and_the_two_SUPERSEDED_ones_are_ABSENT(window):
+    """DEC-260812004400 is answered by a REAL fifth pane, not by a stub.
+
+    FQ-260812002828 (syntax highlight colors) and FQ-260812002829 (color scheme)
+    were SUPERSEDED by FQ-260812021716: syntax highlighting is part of the theme
+    by owner ruling, so the two reserved panes are ONE `Themes` pane. Neither
+    placeholder key exists — two panes editing one `Theme` is precisely the
+    mismatch the merge removes."""
     win = window()
     dialog = _open(win)
-    assert dialog.pane_keys() == ["snippets", "toolbar", "autoformatter", "shortcuts"]
+    assert dialog.pane_keys() == [
+        "snippets", "toolbar", "autoformatter", "shortcuts", "themes",
+    ]
     assert dialog.pane_titles() == [
         "Snippets",
         "Toolbar",
         "Autoformatter",
         "Keyboard shortcuts",
+        "Themes",
     ]
     for absent in ("syntax-highlight-colors", "color-scheme", "theme"):
         assert dialog.pane_for(absent) is None
 
 
 def test_adding_a_pane_is_a_DATA_change(window):
-    """The category list is built from `SETTINGS_PANES`, so panes five and six
-    are two more rows rather than a rewrite. Proved by injecting a fifth."""
+    """The category list is built from `SETTINGS_PANES`, so a new pane is one
+    more row rather than a rewrite. Proved by injecting an extra one — and
+    demonstrated for real by the `Themes` pane, which cost exactly one row."""
     from pgtp_editor.ui.software_settings_dialog import SettingsPane
 
     win = window()
@@ -302,7 +309,9 @@ def test_the_menu_ACTION_opens_the_dialog_on_a_FRESH_window(window):
 
     dialog = win._software_settings_dialog
     assert isinstance(dialog, SoftwareSettingsDialog)
-    assert dialog.pane_keys() == ["snippets", "toolbar", "autoformatter", "shortcuts"]
+    assert dialog.pane_keys() == [
+        "snippets", "toolbar", "autoformatter", "shortcuts", "themes",
+    ]
 
 
 def test_the_LAUNCHER_BUTTON_CLICK_chooses_this_command(window):
@@ -493,3 +502,279 @@ def test_closing_the_host_mid_edit_discards_only_that_panes_scratch(window, tmp_
 
     assert win._snippet_ui.snippets() == before
     assert not (tmp_path / SNIPPETS_FILENAME).exists()
+
+
+# -- FQ-260812021716: the Themes pane -----------------------------------------
+# The fifth pane, and the one this module DEFINES rather than embeds. It is also
+# the pane whose gestures are not all in the button box: "Use this theme" applies
+# and persists IMMEDIATELY (owner ruling: a Maintenance setting is app-wide and
+# durable from the moment it is marked), while colour edits go through the pane's
+# own OK/Cancel like every other pane here.
+#
+# Every test below redirects `theme_model.user_themes_dir` at tmp_path. That ONE
+# patch covers both halves of the file model — `theme_search_path` (so a written
+# file is discovered) and `save_theme` (so nothing is written into the install) —
+# which is precisely why the two go through the same function in the first place.
+
+
+@pytest.fixture
+def themes(monkeypatch, tmp_path):
+    """A writable user themes directory, and the active theme reset afterwards.
+
+    Resetting is not tidiness: `theme_model.theme_for` answers the app's
+    `light: bool` seam with the ACTIVE theme, so a custom theme left applied
+    would leak its colours into every later test's palette assertions.
+    """
+    from pgtp_editor.ui import theme_model
+
+    directory = tmp_path / "user-themes"
+    directory.mkdir()
+    monkeypatch.setattr(theme_model, "user_themes_dir", lambda: directory)
+    try:
+        yield directory
+    finally:
+        theme_model.set_active_theme(None)
+
+
+def _themes_pane(win):
+    return _open(win).pane_widget("themes")
+
+
+def test_the_pane_LISTS_every_bundled_theme_and_marks_the_one_in_use(window, themes):
+    win = window()
+    pane = _themes_pane(win)
+    assert "dark" in pane.theme_names() and "light" in pane.theme_names()
+    assert pane.active_theme_name() == "dark"
+    assert any("in use" in pane.theme_list.item(row).text()
+               for row in range(pane.theme_list.count()))
+
+
+def test_a_theme_FILE_dropped_in_appears_without_a_restart(window, themes):
+    """The foundation feature's headline requirement, reaching the pane: the
+    list is `available_themes()`, which rescans on every call, so a file written
+    while the dialog is open shows up on the next refresh."""
+    import json
+
+    from pgtp_editor.ui.theme_model import bundled_themes_dir
+
+    win = window()
+    pane = _themes_pane(win)
+    assert "midnight" not in pane.theme_names()
+
+    (themes / "midnight.json").write_text(
+        (bundled_themes_dir() / "dark.json").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    pane.refresh_themes()
+    assert "midnight" in pane.theme_names()
+    assert json.loads((themes / "midnight.json").read_text(encoding="utf-8"))["name"]
+
+
+def test_USE_THIS_THEME_applies_and_PERSISTS_immediately(window, themes):
+    """Not on OK. The owner's ruling is that a theme is app-wide and durable from
+    the moment it is marked selected — which is exactly what makes the
+    Maintenance-only round-trip an acceptable cost and the removed `View` toggle
+    unnecessary."""
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QApplication
+
+    from pgtp_editor.ui import theme_model
+
+    win = window()
+    pane = _themes_pane(win)
+    pane.select_theme("light")
+    assert pane.use_selected() == "light"
+
+    assert win.theme_name() == "light"
+    assert win._settings.value(theme_model.SETTINGS_KEY, "", type=str) == "light"
+    assert QApplication.instance().palette().color(
+        QPalette.ColorRole.Window
+    ).lightness() > 200
+    # ...and the list now marks the new one, not the old.
+    assert "in use" in pane.theme_list.item(pane.theme_names().index("light")).text()
+
+
+def test_a_BUNDLED_theme_is_READ_ONLY_and_says_so(window, themes):
+    win = window()
+    pane = _themes_pane(win)
+    pane.select_theme("dark")
+    assert "read-only" in pane.status_label.text()
+    assert not _button_box(pane).button(QDialogButtonBox.StandardButton.Ok).isEnabled()
+    with pytest.raises(Exception, match="bundled"):
+        pane.save_edits()
+
+
+def test_DUPLICATE_creates_an_editable_copy_in_the_USER_directory(window, themes):
+    """"New = copy an existing one": the copy is a complete, valid `Theme` from
+    the first keystroke, so there is no half-defined-theme state — and it lands
+    in the user directory, which is what makes it editable at all."""
+    win = window()
+    pane = _themes_pane(win)
+    pane.select_theme("dark")
+    assert pane.duplicate_selected("My Theme") == "my-theme"
+
+    assert (themes / "my-theme.json").exists()
+    assert pane.selected_theme_name() == "my-theme"
+    assert "read-only" not in pane.status_label.text()
+    assert _button_box(pane).button(QDialogButtonBox.StandardButton.Ok).isEnabled()
+    # Same colours as its source: a duplicate is a copy, not a delta on it.
+    assert pane.color_value("chrome", "COLOR_BACKGROUND_1") == \
+        pane._theme.chrome["COLOR_BACKGROUND_1"]
+
+
+def test_a_duplicate_may_not_COLLIDE_with_an_existing_theme(window, themes):
+    win = window()
+    pane = _themes_pane(win)
+    pane.select_theme("dark")
+    pane.duplicate_selected("My Theme")
+    pane.select_theme("dark")
+    with pytest.raises(Exception, match="already exists"):
+        pane.duplicate_selected("my theme")  # same stem, different spelling
+
+
+def test_EDITING_a_user_theme_writes_the_colour_and_it_LOADS_back(window, themes):
+    """Round-tripped through the real loader, because the editor builds its
+    result with `Theme.from_json` — an editor that could produce an unloadable
+    theme would only reveal it on the next start."""
+    from pgtp_editor.ui.theme_model import load_theme_file
+
+    win = window()
+    pane = _themes_pane(win)
+    pane.select_theme("dark")
+    pane.duplicate_selected("Midnight")
+
+    pane.set_color_value("decorations", "current_line", "#123456")
+    pane.set_color_value("chrome", "COLOR_BACKGROUND_1", "#010203")
+    pane.set_color_value("modes", "maintenance.background", "#0a0b0c")
+    pane.set_color_value("syntax", "code_comment", "#abcdef")
+    pane.set_syntax_flag("code_comment", "italic", True)
+    _ok(pane)
+
+    saved = load_theme_file(themes / "midnight.json")
+    assert saved.decoration("current_line") == "#123456"
+    assert saved.chrome["COLOR_BACKGROUND_1"] == "#010203"
+    assert saved.modes["maintenance"][0] == "#0a0b0c"
+    assert saved.role("code_comment").color == "#abcdef"
+    assert saved.role("code_comment").italic is True
+
+
+def test_CANCEL_discards_the_edits_and_the_host_REBUILDS_the_pane(window, themes):
+    """The dialog's settled contract: the pane owns Cancel, the host adds
+    nothing, and a finished pane is replaced by a fresh one reading what is now
+    stored — so no pane is ever a stale scratch copy."""
+    win = window()
+    dialog = _open(win)
+    pane = dialog.pane_widget("themes")
+    pane.select_theme("dark")
+    pane.duplicate_selected("Midnight")
+    before = pane.color_value("decorations", "current_line")
+
+    pane.set_color_value("decorations", "current_line", "#123456")
+    _cancel(pane)
+
+    rebuilt = dialog.pane_widget("themes")
+    assert rebuilt is not pane
+    assert rebuilt.select_theme("midnight")
+    assert rebuilt.color_value("decorations", "current_line") == before
+
+
+def test_SAVING_the_theme_IN_USE_re_applies_it_so_the_edit_is_VISIBLE(window, themes):
+    """The pane's live preview, honestly scoped: apply-on-save. The re-apply is
+    what proves `load_theme_file`'s stat-keyed cache picks the write up — a
+    path-keyed cache would hand back the parse from before the save."""
+    from PySide6.QtGui import QColor, QPalette
+    from PySide6.QtWidgets import QApplication
+
+    win = window()
+    pane = _themes_pane(win)
+    pane.select_theme("dark")
+    pane.duplicate_selected("Midnight")
+    pane.use_selected()
+    assert win.theme_name() == "midnight"
+
+    pane.set_color_value("palette", "Window", "#123456")
+    _ok(pane)
+
+    assert QApplication.instance().palette().color(
+        QPalette.ColorRole.Window
+    ).rgb() == QColor("#123456").rgb()
+
+
+def test_an_edited_theme_gets_its_OWN_recoloured_stylesheet(window, themes):
+    """The chrome QSS cache was keyed on the `light` bool before this feature;
+    two dark themes would then have shared one stylesheet and an edit would have
+    painted the OTHER theme's chrome. It is keyed on the chrome colours now."""
+    from PySide6.QtWidgets import QApplication
+
+    win = window()
+    dialog = _open(win)
+    pane = dialog.pane_widget("themes")
+    pane.select_theme("dark")
+    pane.duplicate_selected("Midnight")
+    pane.set_color_value("chrome", "COLOR_BACKGROUND_1", "#010203")
+    _ok(pane)
+    # OK finishes the pane, so the host has already replaced it — drive the NEW
+    # one, exactly as a user would.
+    rebuilt = dialog.pane_widget("themes")
+    rebuilt.select_theme("midnight")
+    rebuilt.use_selected()
+
+    assert "#010203" in QApplication.instance().styleSheet()
+
+
+def test_a_user_theme_that_gives_CODE_SYNTAX_its_own_colours_REHIGHLIGHTS(
+    window, themes, qtbot
+):
+    """`_apply_syntax_theme_colors` is wired but never fires today: both bundled
+    themes carry the same five code roles, so `apply_syntax_theme` finds no
+    change and returns False, and the caller skips the `rehighlight()`. The
+    Themes pane is what can make them differ — so that path goes LIVE, and it is
+    verified here rather than assumed.
+
+    The editor is built BEFORE the new theme is applied, deliberately: built
+    after, its constructor would load the new colours and the assertion would
+    pass without the change path ever running.
+    """
+    from pgtp_editor.ui.code_editor import CodeEditor
+
+    win = window()
+
+    editor = CodeEditor("sql")
+    qtbot.addWidget(editor)
+    editor.setPlainText("select 1;")
+    was = editor._highlighter._keyword_format.foreground().color().name()
+    assert was != "#abcdef"
+
+    dialog = _open(win)
+    pane = dialog.pane_widget("themes")
+    pane.select_theme("dark")
+    pane.duplicate_selected("Midnight")
+    pane.set_color_value("syntax", "code_keyword", "#abcdef")
+    _ok(pane)
+    rebuilt = dialog.pane_widget("themes")
+    rebuilt.select_theme("midnight")
+    rebuilt.use_selected()
+
+    # The LIVE path did it by itself: applying the theme fires `PaletteChange`,
+    # the editor's `changeEvent` calls `_apply_syntax_theme_colors`, and this
+    # time the roles genuinely differ so the rehighlight actually happens.
+    assert editor._highlighter._keyword_format.foreground().color().name() == "#abcdef"
+
+    # ...and it settled: a repeat finds nothing to do, so the FOUR
+    # `PaletteChange` events a flip fires cannot reformat the document four
+    # times, and the first two (which report the OLD lightness) cannot leave the
+    # editor on the previous theme.
+    assert editor._highlighter.apply_syntax_theme(False) is False
+    editor._apply_syntax_theme_colors(False)
+    assert editor._highlighter._keyword_format.foreground().color().name() == "#abcdef"
+
+
+def test_the_pane_has_NO_keyboard_shortcut_of_its_own(window, themes):
+    """DEC-012: a command with a command form has exactly one keyboard host, and
+    the Maintenance-only `Settings` convention gives that host no chord. The
+    pane's controls are dialog widgets, not window chords — nothing here may
+    claim a sequence."""
+    win = window()
+    pane = _themes_pane(win)
+    assert pane.actions() == []
+    assert [s.key().toString() for s in pane.findChildren(__import__(
+        "PySide6.QtGui", fromlist=["QShortcut"]).QShortcut)] == []

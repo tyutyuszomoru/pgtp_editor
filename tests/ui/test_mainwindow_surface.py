@@ -221,7 +221,6 @@ EXPECTED_HOST_SURFACE = {
     "_inspect_sandbox_provisioning",
     "_install_find_next_action",
     "_is_light_theme",
-    "_light_theme_action",
     "_lint_on_save_action",
     "_lint_ui",
     "_live_target_identity",
@@ -260,7 +259,6 @@ EXPECTED_HOST_SURFACE = {
     "_on_editor_line_clicked",
     "_on_editor_text_changed",
     "_on_focus_changed_refresh_mode",
-    "_on_light_theme_toggled",
     "_on_manual_chapter_selected",
     "_on_manual_visibility_changed",
     "_on_mcp_server_toggled",
@@ -434,6 +432,11 @@ EXPECTED_HOST_SURFACE = {
     "_target_apply_available",
     "_target_database_label",
     "_target_is_configured",
+    # FQ-260812021715: the theme is a named FILE now, not a checkable action.
+    # `_theme` is the applied `Theme` (what `_is_light_theme` reads),
+    # `apply_theme_named` the single selection entry point, `theme_name` the
+    # accessor the Themes pane marks its active row from.
+    "_theme",
     "_target_params_for_apply",
     "_target_params_for_fetch",
     "_toolbar_ui",
@@ -533,6 +536,11 @@ EXPECTED_HOST_SURFACE = {
     "vim_command_entries",
     "workflow_mode",
     "tree_dock",
+    # FQ-260812021715: theme SELECTION is a host concern -- it is app-wide,
+    # persisted in the host's own QSettings and applied to the QApplication, and
+    # the Themes pane (a settings-dialog pane, not a lane) calls through here.
+    "apply_theme_named",
+    "theme_name",
 }
 
 

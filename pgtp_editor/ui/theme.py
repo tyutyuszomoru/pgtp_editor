@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Light/Dark theme support (Sub-project D, #9) — the Qt half of the theme.
+"""Theme support (Sub-project D, #9) — the Qt half of the theme.
 
 **Every colour this module paints comes from a FILE**, via
 `ui/theme_model.py`'s `Theme` object (FQ-260812021715). This module holds no
@@ -21,6 +21,14 @@ colour literal of its own and must never grow one: it turns a `Theme` into the
 three things Qt understands — a `QPalette`, a recoloured qdarkstyle stylesheet,
 and the app-authored focus tail — and `apply_theme` remains the single point
 that mutates the running `QApplication`.
+
+**A theme is NAMED, not binary.** `View ▸ Light Theme` is gone
+(FQ-260812021715): `apply_theme` takes a `Theme`, a theme name, or the
+historical `light: bool` (see `theme_object`), and the choice is persisted
+app-wide by name in `MainWindow`. The bool arm survives because every colour
+consumer in the app still asks a boolean question — one derived from the LIVE
+palette's lightness at paint time — and `theme_model.theme_for` is the single
+place that boolean becomes a `Theme`.
 
 Kept pure where it can be: ``light_palette()``/``dark_palette()`` build and
 return a `QPalette` without touching any application state, so tests assert
@@ -117,10 +125,42 @@ def command_caret_colors(light: bool) -> tuple[str, str]:
     )
 
 
-# Cached QDarkStyleSheet text, one per theme (BUG-010; extended for the light
-# QSS below). Loaded lazily -- qdarkstyle warns if loaded before a
-# QApplication exists, and apply_theme always runs with one.
-_qss_cache: dict[bool, str] = {}
+def theme_object(source) -> Theme:
+    """The `Theme` a caller named, whichever of the three ways it named it.
+
+    `apply_theme` and `_qdarkstyle_stylesheet` take a `Theme`, a theme NAME, or
+    the historical `light: bool`, and this is the single place those collapse
+    into one. The boolean arm goes through `theme_model.theme_for`, which is the
+    documented seam where a boolean becomes a `Theme` -- so a bool still means
+    "the theme the app is on, if it reads that way, else the bundled one".
+    """
+    if isinstance(source, Theme):
+        return source
+    if isinstance(source, str):
+        return theme_model.resolve_theme(source)[1]
+    return theme_for(bool(source))
+
+
+def _qss_key(theme: Theme) -> tuple:
+    """The cache identity of a theme's stylesheet: the qdarkstyle sheet it starts
+    from plus the 16 chrome colours substituted into it.
+
+    NOT the theme's name. The QSS is a pure function of exactly these values, so
+    two themes with identical chrome share one string (which is how a duplicate
+    that has not been recoloured yet costs nothing), and a theme EDITED in the
+    Themes pane gets a fresh entry the moment one of its chrome colours moves --
+    a name-keyed cache would hand back the pre-edit sheet.
+    """
+    return (theme.qdarkstyle_base,) + tuple(
+        theme.chrome[key] for key in theme_model.CHROME_KEYS
+    )
+
+
+# Cached QDarkStyleSheet text, one per DISTINCT CHROME (BUG-010; extended for the
+# light QSS, then re-keyed by `_qss_key` when themes became named files). Loaded
+# lazily -- qdarkstyle warns if loaded before a QApplication exists, and
+# apply_theme always runs with one.
+_qss_cache: dict[tuple, str] = {}
 
 #: Marker selector for the app-authored keyboard-focus rule appended to
 #: qdarkstyle's QSS. Tests assert on this rather than re-spelling the text.
@@ -326,7 +366,7 @@ def _recolour_qss(qss: str, base_palette, theme: Theme) -> str:
     return _HEX_RE.sub(lambda m: mapping.get(m.group(0).lower(), m.group(0)), qss)
 
 
-def _qdarkstyle_stylesheet(light: bool) -> str:
+def _qdarkstyle_stylesheet(source) -> str:
     """The QDarkStyleSheet QSS (github.com/ColinDuquesnoy/QDarkStyleSheet, the
     `qdarkstyle` package) for the given theme, recoloured from the theme file --
     adopted for BUG-010: Fusion + palette alone left checkable menu indicators
@@ -341,13 +381,17 @@ def _qdarkstyle_stylesheet(light: bool) -> str:
     `Theme.qdarkstyle_base` picks WHICH of those two compiled sheets is loaded
     (all its non-colour styling is what the theme inherits); `_recolour_qss`
     then substitutes the theme's colours into it.
+
+    `source` is a `Theme`, a theme name, or the historical `light: bool` -- see
+    `theme_object`.
     """
-    if light not in _qss_cache:
+    theme = theme_object(source)
+    key = _qss_key(theme)
+    if key not in _qss_cache:
         import qdarkstyle
         from qdarkstyle.dark.palette import DarkPalette
         from qdarkstyle.light.palette import LightPalette
 
-        theme = theme_for(light)
         base = LightPalette if theme.qdarkstyle_base == "light" else DarkPalette
         # The app-authored focus tail is folded into the CACHED string, so the
         # "one QSS string per theme" invariant and the cache-identity tests
@@ -356,24 +400,35 @@ def _qdarkstyle_stylesheet(light: bool) -> str:
         # spelled in the theme's own colours, so passing it through the
         # substitution could only map one of them onto a chrome token by
         # coincidence.
-        _qss_cache[light] = _recolour_qss(
+        _qss_cache[key] = _recolour_qss(
             qdarkstyle.load_stylesheet(qt_api="pyside6", palette=base), base, theme
         ) + _focus_visible_qss(_ChromePalette(theme))
-    return _qss_cache[light]
+    return _qss_cache[key]
 
 
-def apply_theme(app, light: bool) -> None:
-    """Apply the light or dark theme: Fusion + the theme's ``QPalette`` + the
-    matching recoloured QDarkStyleSheet QSS (BUG-010, extended to cover light
-    too).
+def apply_theme(app, source) -> None:
+    """Apply a theme: Fusion + the theme's ``QPalette`` + the matching
+    recoloured QDarkStyleSheet QSS (BUG-010, extended to cover light too).
+
+    `source` is a `Theme`, a theme NAME, or the historical `light: bool` (see
+    `theme_object`) -- this stayed the single mutation point when themes became
+    named files, so there is still exactly one place the running application's
+    colours change.
+
+    **The active theme is recorded FIRST**, before the palette or the stylesheet
+    is built, because both are built through `theme_model.theme_for` and every
+    other colour consumer reads the same seam: recording it afterwards would
+    paint one frame's worth of widgets from the previous theme.
 
     Symmetric by construction (BUG-004 fix): there is no third "restore
     whatever the native/OS style renders" state; both states are real,
-    tested, and platform-independent, and now both carry a stylesheet.
-    ``light_palette()``/``dark_palette()`` are still applied under the QSS
-    because palette-reading custom widgets (XmlEditor's
-    ``apply_theme_colors`` keys off its palette's Base lightness) and any
-    non-stylesheet-covered rendering must agree with the stylesheet's look."""
+    tested, and platform-independent, and both carry a stylesheet. The theme's
+    ``QPalette`` is applied UNDER the QSS because palette-reading custom widgets
+    (XmlEditor's ``apply_theme_colors`` keys off its palette's Base lightness)
+    and any non-stylesheet-covered rendering must agree with the stylesheet's
+    look."""
+    theme = theme_object(source)
+    theme_model.set_active_theme(theme)
     app.setStyle("Fusion")
-    app.setPalette(light_palette() if light else dark_palette())
-    app.setStyleSheet(_qdarkstyle_stylesheet(light))
+    app.setPalette(qpalette_for(theme))
+    app.setStyleSheet(_qdarkstyle_stylesheet(theme))

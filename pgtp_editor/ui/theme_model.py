@@ -158,6 +158,18 @@ MODE_KEYS: tuple[str, ...] = ("none", "standalone", "project", "maintenance")
 DARK_THEME = "dark"
 LIGHT_THEME = "light"
 
+#: The `QSettings` key holding the selected theme's NAME (its file stem), app-wide
+#: and durable. Maintenance-mode settings are app-wide and persistent by owner
+#: ruling (FQ-260812021715), which is why the theme is remembered across restarts
+#: and new sessions rather than per-session.
+SETTINGS_KEY = "themeName"
+
+#: The key this replaced: a `light=true/false` boolean, back when a theme was a
+#: binary. Read exactly ONCE per install, by `migrated_theme_name`, and then
+#: removed -- a second stored answer to "which theme" is the drift this whole
+#: module exists to prevent.
+LEGACY_LIGHT_KEY = "lightTheme"
+
 
 class ThemeError(ValueError):
     """A theme file is missing, malformed, or missing a required colour.
@@ -460,17 +472,87 @@ def load_theme(name: str, search_path: list[Path] | None = None) -> Theme:
     return load_theme_file(path)
 
 
+#: The theme the running application is currently painted in, set by
+#: `theme.py::apply_theme` -- the ONE piece of global state in this module, and
+#: the reason `theme_for` can answer a boolean question with a *named* theme.
+#: `None` means "nothing applied yet" (a freshly imported process, or a unit test
+#: that never touched a `QApplication`), and every reader falls back to the
+#: bundled pair in that case.
+_active_theme: Theme | None = None
+
+
+def active_theme() -> Theme | None:
+    """The theme `apply_theme` last applied, or `None` before the first apply."""
+    return _active_theme
+
+
+def set_active_theme(theme: Theme | None) -> None:
+    """Record which theme the app is painted in. Called by `theme.py::apply_theme`
+    and by nothing else -- a second caller would let the recorded theme disagree
+    with the applied palette, which is the class of bug the whole consolidation
+    removes."""
+    global _active_theme
+    _active_theme = theme
+
+
 def theme_for(light: bool) -> Theme:
-    """The bundled theme behind the app's existing `light: bool` seam.
+    """The theme behind the app's `light: bool` seam -- **the single point where
+    a boolean becomes a `Theme`**, and therefore where NAME-based selection drops
+    in (FQ-260812021716).
 
     Every colour consumer in the app still asks a boolean question, because that
     boolean is derived from the LIVE palette's lightness at paint time
     (BUG-260811021804's lesson: a resolved colour cached across a theme flip is
-    the old theme's). Selection of a *named* theme lands with the Themes pane
-    (FQ-260812021716); until then this is the single mapping from the boolean to
-    a `Theme`, so there is still exactly one colour source.
+    the old theme's). With named themes there can be any number of themes, but
+    there is only ever ONE active one, so the mapping is: **if the active theme
+    reads the way the caller asked, it IS the answer**; otherwise the caller is
+    mid-flip and asking about the side the app is not on, and the bundled theme
+    for that side is the honest answer.
+
+    That fallback is not defensive padding. `PaletteChange` fires four times per
+    flip and the first two report the OLD lightness, so a consumer WILL ask for
+    the other side during a flip; answering with the active theme's colours there
+    would paint the new theme's values under the old palette for two events.
     """
+    active = _active_theme
+    if active is not None and bool(active.light) == bool(light):
+        return active
     return load_theme(LIGHT_THEME if light else DARK_THEME)
+
+
+def migrated_theme_name(stored: Any, legacy_light: Any) -> str:
+    """The theme name to start on, given what QSettings holds.
+
+    The migration path off the pre-FQ-260812021715 boolean, in one Qt-free
+    function so it can be tested without a `QSettings`: a stored NAME wins; with
+    no name, an existing `lightTheme=true` lands the user on the bundled light
+    theme (not on a default), and anything else -- `false`, or a genuinely fresh
+    install -- lands on dark, which is what `lightTheme`'s own default was.
+
+    Deliberately does NOT validate that the name still exists: a user who deletes
+    the theme file they had selected should get a working app (see
+    `resolve_theme`), not a startup crash, and that fallback belongs at load time
+    rather than in the migration.
+    """
+    name = str(stored or "").strip()
+    if name:
+        return name
+    return LIGHT_THEME if bool(legacy_light) else DARK_THEME
+
+
+def resolve_theme(name: str) -> tuple[str, Theme]:
+    """`(name actually used, theme)` for a selected theme name.
+
+    Falls back to the bundled dark theme when `name` names nothing loadable --
+    the user deleted or broke the JSON file they had selected, and a startup
+    crash is a far worse answer than the default theme. The name is returned
+    alongside so the caller persists what it actually applied rather than a name
+    that resolves to something else on the next start.
+    """
+    try:
+        return name, load_theme(name)
+    except ThemeError:
+        return DARK_THEME, load_theme(DARK_THEME)
 
 
 def shared_accent(key: str) -> str:
@@ -497,3 +579,60 @@ def duplicate(theme: Theme, name: str) -> Theme:
     """A copy of `theme` under a new name and with no `source` — the
     "new = copy an existing one" primitive FQ-260812021716 rides on."""
     return replace(theme, name=name, source=None)
+
+
+def theme_stem(name: str) -> str:
+    """A display name reduced to a legal, unambiguous FILE STEM.
+
+    A theme's identity is its file stem (that is what `available_themes` keys on
+    and what QSettings persists), so "My Theme" and "my/theme" must not be able
+    to name the same file, escape the themes directory, or produce a name the
+    selection cannot round-trip. Lower-cased slug: letters and digits survive in
+    any alphabet, everything else collapses to `-`, and an input with nothing
+    left is refused loudly rather than becoming `.json`.
+    """
+    slug = "".join(
+        character if character.isalnum() else "-" for character in str(name).strip()
+    ).strip("-").lower()
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    if not slug:
+        raise ThemeError(f"{name!r} does not name a theme file")
+    return slug
+
+
+def is_bundled(theme: Theme) -> bool:
+    """Whether `theme` was loaded from the install's own themes directory.
+
+    Bundled themes are READ-ONLY: an install directory is not always writable,
+    an upgrade would overwrite the edit anyway, and "new = copy an existing one"
+    (FQ-260812021716) is the create path precisely so nobody has to edit one.
+    """
+    if theme.source is None:
+        return False
+    try:
+        return Path(theme.source).parent == bundled_themes_dir()
+    except OSError:  # pragma: no cover - a broken resource root
+        return False
+
+
+def save_theme(theme: Theme, stem: str) -> Path:
+    """Write `theme` into the USER themes directory as `<stem>.json`, and return
+    the path.
+
+    Always the user directory, never `theme.source`: saving a duplicate of a
+    bundled theme must not write into the install, and a user theme's own file
+    already lives here. Because a user file SHADOWS a bundled one of the same
+    name (`theme_search_path`), this is also how "edit the theme you are using"
+    works without touching the install.
+    """
+    directory = user_themes_dir()
+    if directory is None:
+        raise ThemeError("no user themes directory is available on this platform")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{stem}.json"
+    path.write_text(
+        json.dumps(theme.to_json(), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return path

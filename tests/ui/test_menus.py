@@ -452,8 +452,9 @@ def test_view_menu_contents(qtbot):
         "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
-        "―",
-        "Light Theme",
+        # FQ-260812021715 REMOVED the trailing separator and `Light Theme` with
+        # it: a theme is a named file selected in the Themes pane of
+        # `Settings ▸ Software settings…`, not a binary toggle on `View`.
         # FQ-260812002827 ENDS the menu here. `Customize Toolbar…` and
         # `Customize Shortcuts…` were the last two entries; both were MOVED into
         # `Settings ▸ Software settings…` and removed from `View`, so the

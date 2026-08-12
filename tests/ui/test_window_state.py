@@ -62,36 +62,44 @@ def test_fresh_store_uses_default_size(qtbot, tmp_path):
     assert window.height() == 900
 
 
-# -- Light Theme toggle wiring ----------------------------------------------
+# -- Theme selection wiring --------------------------------------------------
+# `View ▸ Light Theme` was REMOVED by FQ-260812021715: a theme is a named file,
+# selected in the Themes pane of `Settings ▸ Software settings…` and persisted
+# app-wide by name. These are the same two assertions against that seam.
 
 
-def test_toggling_light_theme_persists_and_applies(qtbot, tmp_path, _reset_app_palette):
+def test_selecting_a_theme_persists_and_applies(qtbot, tmp_path, _reset_app_palette):
+    from pgtp_editor.ui import theme_model
+
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
 
-    window._light_theme_action.setChecked(True)  # fires toggled
-    assert settings.value("lightTheme", False, type=bool) is True
+    window.apply_theme_named("light")
+    assert settings.value(theme_model.SETTINGS_KEY, "", type=str) == "light"
     win_color = QApplication.instance().palette().color(QPalette.ColorRole.Window)
     assert win_color.lightness() > 200
 
 
 def test_light_theme_restored_on_construction(qtbot, tmp_path, _reset_app_palette):
+    from pgtp_editor.ui import theme_model
+
     settings = _ini_settings(tmp_path)
-    settings.setValue("lightTheme", True)
+    settings.setValue(theme_model.SETTINGS_KEY, "light")
     settings.sync()
 
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    assert window._light_theme_action.isChecked() is True
+    assert window.theme_name() == "light"
     win_color = QApplication.instance().palette().color(QPalette.ColorRole.Window)
     assert win_color.lightness() > 200
 
 
-def test_light_theme_action_in_view_menu(qtbot, tmp_path):
+def test_the_light_theme_toggle_is_GONE_from_the_view_menu(qtbot, tmp_path):
+    """Replaced, not relocated as a checkbox. Leaving a second door on `View`
+    would defeat the owner ruling that theme selection is a durable, app-wide
+    Maintenance setting rather than a per-session flip."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
-    action = find_action(view_menu, "Light Theme")
-    assert action is not None
-    assert action.isCheckable()
+    assert find_action(view_menu, "Light Theme") is None

@@ -225,6 +225,7 @@ from pgtp_editor.model.event_handlers import language_for_side
 from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
+from pgtp_editor.ui import theme_model
 from pgtp_editor.ui.theme import apply_theme
 from pgtp_editor.ui.audit_router import AuditRouter
 from pgtp_editor.ui.software_settings_dialog import (
@@ -1342,8 +1343,8 @@ class MainWindow(QMainWindow):
         #: they are bound methods that resolve host state at CALL time, which
         #: is what keeps post-construction seam injection
         #: (`window._run_async = ...`) working for collaborators too -- and is
-        #: why `is_light_theme` may be handed over before `_light_theme_action`
-        #: exists.
+        #: why `is_light_theme` may be handed over before the theme has been
+        #: applied.
         self._shell = UiShell(
             window=self,
             stage=self.center_stage,
@@ -1974,14 +1975,67 @@ class MainWindow(QMainWindow):
             self.restoreState(window_state)
 
     def _restore_theme(self):
-        light = self._settings.value("lightTheme", False, type=bool)
-        self._light_theme_action.setChecked(light)
-        apply_theme(QApplication.instance(), light)
-        # Toolbar was built under the native/default palette; re-tint its
-        # icons to whichever theme was just applied (BUG-004: the "off"
-        # state is now a real, explicit dark palette, not a native/OS
-        # passthrough) so they stay legible.
+        """Apply the persisted theme, migrating the legacy boolean on the way.
+
+        **The migration, stated plainly** (FQ-260812021715): the theme used to be
+        a `lightTheme=true/false` boolean written by `View ▸ Light Theme`. It is
+        now a NAME. On the first start after the upgrade there is no name, so one
+        is derived from the boolean — `true` lands the user on the bundled
+        `light` theme, anything else on `dark` — written under the new key, and
+        the old key is REMOVED. Removing it is the point: two stored answers to
+        "which theme" is exactly the drift the consolidation exists to kill, and
+        leaving a stale `lightTheme=true` behind would make the next reader's
+        guess as good as this one's.
+        """
+        stored = self._settings.value(theme_model.SETTINGS_KEY, "", type=str)
+        if not stored:
+            stored = theme_model.migrated_theme_name(
+                None, self._settings.value(theme_model.LEGACY_LIGHT_KEY, False, type=bool)
+            )
+            self._settings.remove(theme_model.LEGACY_LIGHT_KEY)
+            self._settings.setValue(theme_model.SETTINGS_KEY, stored)
+        applied = self.apply_theme_named(stored, persist=False)
+        if applied != stored:
+            # The stored name no longer loads (deleted or broken theme file) and
+            # `resolve_theme` fell back. Write the fallback down: leaving the
+            # ghost name stored would make `theme_name()` disagree with what is
+            # actually painted, which is the Themes pane's "in use" marker
+            # pointing at a row that does not exist.
+            self._settings.setValue(theme_model.SETTINGS_KEY, applied)
+
+    def apply_theme_named(self, name: str, *, persist: bool = True) -> str:
+        """Apply the theme called `name` app-wide, and persist the choice.
+
+        **The one entry point for theme selection**, used by `_restore_theme` at
+        startup and by the Themes pane (FQ-260812021716) when a theme is marked
+        selected. There is no `View` toggle any more: theme selection is a
+        Maintenance-mode setting, and settings changed in Maintenance mode are
+        app-wide and durable by owner ruling — so the choice is saved the moment
+        it is made and survives both restart and a new session.
+
+        Returns the name actually applied, which differs from `name` only when
+        the named theme no longer loads (`theme_model.resolve_theme` falls back
+        to `dark` rather than crashing the app someone edited a theme file for).
+        """
+        applied, theme = theme_model.resolve_theme(name)
+        self._theme = theme
+        apply_theme(QApplication.instance(), theme)
+        if persist:
+            self._settings.setValue(theme_model.SETTINGS_KEY, applied)
+        # The toolbar's icons were tinted for the PREVIOUS palette (at startup,
+        # for the native/default one) -- re-tint them so they stay legible.
         self._toolbar_ui.refresh_icons()
+        # ...and re-consult the theme's mode chips, so the indicator is never
+        # painted in the other theme's colours.
+        self._refresh_mode_indicator()
+        return applied
+
+    def theme_name(self) -> str:
+        """The selected theme's name, as persisted. The Themes pane reads this to
+        mark which row is active."""
+        return self._settings.value(
+            theme_model.SETTINGS_KEY, theme_model.DARK_THEME, type=str
+        ) or theme_model.DARK_THEME
 
     # -- §21 drag-and-drop ---------------------------------------------------
     # `QMainWindow` gestures, so they stay on the host; every decision about
@@ -2070,14 +2124,12 @@ class MainWindow(QMainWindow):
             return True
         return bool(panel.request_close(what="the window"))
 
-    def _on_light_theme_toggled(self, checked):
-        apply_theme(QApplication.instance(), checked)
-        self._settings.setValue("lightTheme", checked)
-        # The palette flipped -- re-tint the toolbar icons so they stay legible.
-        self._toolbar_ui.refresh_icons()
-        # ...and re-consult `mode_colors(light)`, so the mode chip is never the
-        # DEBUG chip's hardcoded red that reads wrong in one of the two themes.
-        self._refresh_mode_indicator()
+    # `_on_light_theme_toggled` USED TO BE HERE, and FQ-260812021715 removed it
+    # with the `View ▸ Light Theme` action it served. A theme is no longer a
+    # boolean: it is a named file, chosen in the Themes pane of
+    # `Settings ▸ Software settings…`. `apply_theme_named` is what replaced this
+    # slot, and it does the same three things (apply, persist, re-tint) for any
+    # number of themes rather than two.
 
     def _not_implemented(self, label):
         self.statusBar().showMessage(f"Not yet implemented: {label}")
@@ -2420,8 +2472,15 @@ class MainWindow(QMainWindow):
         return self.left_tabs.isTabVisible(self.coherence_tab_index)
 
     def _is_light_theme(self) -> bool:
-        """`UiShell.is_light_theme` -- the View ▸ Light Theme toggle's state."""
-        return self._light_theme_action.isChecked()
+        """`UiShell.is_light_theme` -- whether the SELECTED theme reads as light.
+
+        Reads the theme object rather than a menu toggle (which no longer
+        exists): with named themes there can be any number of light ones, and
+        `Theme.light` is each file's own declaration of which side of the app's
+        `light: bool` seam it sits on.
+        """
+        theme = getattr(self, "_theme", None)
+        return bool(theme.light) if theme is not None else False
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
@@ -3662,12 +3721,16 @@ class MainWindow(QMainWindow):
         collapse_all_action = menu.addAction("Collapse All")
         collapse_all_action.triggered.connect(self.project_tree.collapseAll)
 
-        menu.addSeparator()
-        self._light_theme_action = menu.addAction("Light Theme")
-        self._light_theme_action.setCheckable(True)
-        self._light_theme_action.setChecked(False)
-        self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
-
+        # `Light Theme` USED TO BE HERE, and FQ-260812021715 REMOVED it — not
+        # relocated as a checkbox, replaced. A theme is a named file now, and
+        # selecting one lives in the Themes pane of `Settings ▸ Software
+        # settings…` beside the other app-wide settings. The owner's ruling:
+        # settings changed in Maintenance mode are app-wide and durable, so a
+        # theme is set ONCE as a preference rather than flipped per session,
+        # which is what makes an always-available `View` switcher unnecessary
+        # and the Maintenance round-trip an acceptable cost (the same trade
+        # already accepted for Customize Shortcuts/Toolbar).
+        #
         # `Customize Toolbar…` and `Customize Shortcuts…` USED TO BE HERE, and
         # FQ-260812002827 MOVED them — they are not duplicated into the settings
         # dialog, they are gone from this menu. Both are now panes of
@@ -4940,7 +5003,7 @@ class MainWindow(QMainWindow):
             quality=quality,
             sandbox_schema_present=schema_fact,
             sandbox_data_present=data_fact,
-            dark=not self._light_theme_action.isChecked(),
+            dark=not self._is_light_theme(),
         )
 
     def _inspect_sandbox_provisioning(self, params):
@@ -6429,7 +6492,7 @@ class MainWindow(QMainWindow):
         """
         major, minor = self.current_mode()
         editing = self.focused_editing_mode()
-        light = self._light_theme_action.isChecked() if self._light_theme_action else False
+        light = self._is_light_theme()
         for indicator in (
             getattr(self, "_mode_label", None),
             getattr(self, "toolbar_mode_indicator", None),

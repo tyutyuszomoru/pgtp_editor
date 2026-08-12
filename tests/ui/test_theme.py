@@ -183,16 +183,26 @@ def test_apply_theme_light_keeps_hand_rolled_palette_under_the_qss(qapp, _reset_
 
 def test_qss_cache_holds_one_entry_per_theme(qapp, _reset_app_palette):
     """The BUG-010 single-string cache became a per-theme dict (FQ-005): both
-    variants coexist, keyed by the `light` bool, so neither toggle direction
-    evicts or reloads the other's QSS."""
+    variants coexist, so neither toggle direction evicts or reloads the other's
+    QSS.
+
+    The KEY changed with FQ-260812021716, and deliberately: it was the `light`
+    bool, which cannot tell two dark themes apart, so an edited or duplicated
+    theme would have been served the other one's stylesheet. It is now
+    `_qss_key(theme)` — the qdarkstyle base plus the 16 chrome colours, i.e.
+    exactly the inputs the sheet is a function of."""
     from pgtp_editor.ui import theme as theme_mod
+    from pgtp_editor.ui.theme_model import theme_for
 
     apply_theme(qapp, False)
     apply_theme(qapp, True)
 
-    assert set(theme_mod._qss_cache) == {True, False}
-    assert theme_mod._qss_cache[True] and theme_mod._qss_cache[False]
-    assert theme_mod._qss_cache[True] != theme_mod._qss_cache[False]
+    dark_key = theme_mod._qss_key(theme_for(False))
+    light_key = theme_mod._qss_key(theme_for(True))
+    assert dark_key != light_key
+    assert {dark_key, light_key} <= set(theme_mod._qss_cache)
+    assert theme_mod._qss_cache[dark_key] and theme_mod._qss_cache[light_key]
+    assert theme_mod._qss_cache[dark_key] != theme_mod._qss_cache[light_key]
 
 
 # -- BUG-010 gap coverage: the tests/ui/conftest.py autouse stylesheet reset -

@@ -1,12 +1,19 @@
-"""MainWindow Light/Dark theme toggle: switches the app to Fusion + an
-explicit light or dark palette either way (BUG-004: both states are real,
-tested QPalettes -- there is no third "native/OS passthrough" state), keeping
-the toolbar icons legible either way."""
+"""MainWindow theme selection: switches the app to Fusion + the selected
+theme's palette (BUG-004: every state is a real, tested QPalette -- there is no
+"native/OS passthrough" state), keeping the toolbar icons legible either way.
+
+The `View ▸ Light Theme` toggle this file was written against is GONE
+(FQ-260812021715). A theme is a NAMED FILE now, persisted app-wide under
+`theme_model.SETTINGS_KEY`, applied through `MainWindow.apply_theme_named`, and
+selected in the Themes pane of `Settings ▸ Software settings…`. Every assertion
+below is the same assertion against that seam.
+"""
 import pytest
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+from pgtp_editor.ui import theme_model
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.theme import dark_palette, light_palette
 
@@ -29,7 +36,7 @@ def _reset_app_theme():
         app.setPalette(original_palette)
 
 
-def test_toggle_light_switches_to_fusion_and_keeps_icons(qtbot, _reset_app_theme, monkeypatch):
+def test_selecting_light_switches_to_fusion_and_keeps_icons(qtbot, _reset_app_theme, monkeypatch):
     """Fusion is genuinely requested via QApplication.setStyle("Fusion") --
     asserted via a spy rather than a post-hoc style().objectName() read-back,
     which is unreliable once ANY non-empty app-global stylesheet is applied
@@ -44,7 +51,7 @@ def test_toggle_light_switches_to_fusion_and_keeps_icons(qtbot, _reset_app_theme
     qtbot.addWidget(window)
     calls.clear()  # only care about the toggle below, not MainWindow() construction
 
-    window._on_light_theme_toggled(True)
+    window.apply_theme_named("light")
 
     app = QApplication.instance()
     assert calls == ["Fusion"]
@@ -60,8 +67,8 @@ def test_toggle_light_off_applies_real_dark_palette(qtbot, _reset_app_theme):
     window = MainWindow()
     qtbot.addWidget(window)
 
-    window._on_light_theme_toggled(True)
-    window._on_light_theme_toggled(False)
+    window.apply_theme_named("light")
+    window.apply_theme_named("dark")
 
     app = QApplication.instance()
     # Dark mode wraps the style in QStyleSheetStyle (empty objectName) via the
@@ -73,46 +80,45 @@ def test_toggle_light_off_applies_real_dark_palette(qtbot, _reset_app_theme):
 
 
 def test_fresh_window_defaults_to_explicit_dark_palette(qtbot, _reset_app_theme):
-    """A fresh install (no saved 'lightTheme' setting, default False) must
-    start on the real dark_palette() too, not whatever the native style
-    happened to already be rendering (BUG-004) -- _restore_theme applies the
-    theme unconditionally now, for both True and False."""
+    """A fresh install (no stored theme name at all) must start on the real
+    dark_palette(), not whatever the native style happened to already be
+    rendering (BUG-004) -- _restore_theme applies a theme unconditionally."""
     window = MainWindow()
     qtbot.addWidget(window)
 
     app = QApplication.instance()
-    assert window._light_theme_action.isChecked() is False
+    assert window.theme_name() == "dark"
     assert app.styleSheet()  # dark QSS applied (see note above)
     assert app.palette().color(QPalette.ColorRole.Window).rgb() == dark_palette().color(
         QPalette.ColorRole.Window
     ).rgb()
 
 
-# -- BUG-004 gap coverage: persistence round-trip of the "lightTheme" bool ----
+# -- BUG-004 gap coverage: persistence round-trip of the selected theme NAME -
 
 
 def test_toggle_on_persists_and_restores_light_theme(qtbot, tmp_path, _reset_app_theme, monkeypatch):
-    """Toggling Light Theme on writes lightTheme=True; a NEW window reading
-    the same settings restores the light state (checked action + light
-    palette), i.e. the preference survives an app restart. Fusion is
-    asserted via a setStyle spy rather than style().objectName() read-back,
-    which is unreliable once a non-empty app-global stylesheet is applied
-    (true for light now too -- see test_toggle_light_switches_to_fusion_and_keeps_icons)."""
+    """Selecting the light theme writes its NAME; a NEW window reading the same
+    settings restores it (stored name + light palette), i.e. the preference
+    survives an app restart. Fusion is asserted via a setStyle spy rather than
+    style().objectName() read-back, which is unreliable once a non-empty
+    app-global stylesheet is applied (true for light now too -- see
+    test_selecting_light_switches_to_fusion_and_keeps_icons)."""
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._light_theme_action.setChecked(True)  # fires _on_light_theme_toggled
+    window.apply_theme_named("light")
     settings.sync()
 
     settings2 = _ini_settings(tmp_path)
-    assert settings2.value("lightTheme", False, type=bool) is True
+    assert settings2.value(theme_model.SETTINGS_KEY, "", type=str) == "light"
 
     calls = []
     monkeypatch.setattr(QApplication, "setStyle", lambda self, name: calls.append(name))
     window2 = MainWindow(settings=settings2)
     qtbot.addWidget(window2)
     app = QApplication.instance()
-    assert window2._light_theme_action.isChecked() is True
+    assert window2.theme_name() == "light"
     assert "Fusion" in calls
     assert app.palette().color(QPalette.ColorRole.Window).rgb() == light_palette().color(
         QPalette.ColorRole.Window
@@ -120,33 +126,34 @@ def test_toggle_on_persists_and_restores_light_theme(qtbot, tmp_path, _reset_app
 
 
 def test_toggle_off_persists_false_and_restores_dark(qtbot, tmp_path, _reset_app_theme):
-    """On -> off round-trip: the stored bool flips back to False and a new
-    window restores the explicit dark_palette() (BUG-004: not a native
-    passthrough)."""
+    """light -> dark round-trip: the stored NAME flips back and a new window
+    restores the explicit dark_palette() (BUG-004: not a native passthrough)."""
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._light_theme_action.setChecked(True)
-    window._light_theme_action.setChecked(False)
+    window.apply_theme_named("light")
+    window.apply_theme_named("dark")
     settings.sync()
 
     settings2 = _ini_settings(tmp_path)
-    assert settings2.value("lightTheme", True, type=bool) is False
+    assert settings2.value(theme_model.SETTINGS_KEY, "", type=str) == "dark"
 
     window2 = MainWindow(settings=settings2)
     qtbot.addWidget(window2)
     app = QApplication.instance()
-    assert window2._light_theme_action.isChecked() is False
+    assert window2.theme_name() == "dark"
     assert app.palette().color(QPalette.ColorRole.Window).rgb() == dark_palette().color(
         QPalette.ColorRole.Window
     ).rgb()
 
 
 def test_restore_theme_from_preseeded_light_setting(qtbot, tmp_path, _reset_app_theme, monkeypatch):
-    """A settings file that already says lightTheme=true (written by a prior
-    session) makes a fresh window start light with the menu action checked.
-    Fusion is asserted via a setStyle spy (see note on
-    test_toggle_light_switches_to_fusion_and_keeps_icons for why
+    """**The migration, end to end.** A settings file written by a pre-
+    FQ-260812021715 session holds `lightTheme=true` and no theme name at all.
+    That user must land on the LIGHT theme, not on the default -- which is the
+    whole reason `migrated_theme_name` reads the legacy key rather than ignoring
+    it. Fusion is asserted via a setStyle spy (see note on
+    test_selecting_light_switches_to_fusion_and_keeps_icons for why
     style().objectName() is unreliable here)."""
     seed = _ini_settings(tmp_path)
     seed.setValue("lightTheme", True)
@@ -157,7 +164,7 @@ def test_restore_theme_from_preseeded_light_setting(qtbot, tmp_path, _reset_app_
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     app = QApplication.instance()
-    assert window._light_theme_action.isChecked() is True
+    assert window.theme_name() == "light"
     assert "Fusion" in calls
     assert app.palette().color(QPalette.ColorRole.Window).rgb() == light_palette().color(
         QPalette.ColorRole.Window
@@ -210,7 +217,7 @@ def test_toolbar_icons_retint_dark_text_when_toggled_light(qtbot, _reset_app_the
     palette's dark WindowText -- the re-tint half of the BUG-004 fix."""
     window = MainWindow()
     qtbot.addWidget(window)
-    window._on_light_theme_toggled(True)
+    window.apply_theme_named("light")
     image = _first_icon_image(window)
     dark_text = light_palette().color(QPalette.ColorRole.WindowText)
     light_text = dark_palette().color(QPalette.ColorRole.WindowText)
@@ -222,8 +229,8 @@ def test_toolbar_icons_retint_back_when_toggled_off(qtbot, _reset_app_theme):
     """Light -> dark toggle re-tints icons back to the light-on-dark color."""
     window = MainWindow()
     qtbot.addWidget(window)
-    window._on_light_theme_toggled(True)
-    window._on_light_theme_toggled(False)
+    window.apply_theme_named("light")
+    window.apply_theme_named("dark")
     image = _first_icon_image(window)
     light_text = dark_palette().color(QPalette.ColorRole.WindowText)
     dark_text = light_palette().color(QPalette.ColorRole.WindowText)
@@ -254,3 +261,91 @@ def test_previous_tests_theme_mutation_did_not_leak(qapp):
     NOT still on dark_palette()'s window color."""
     window_color = qapp.palette().color(QPalette.ColorRole.Window)
     assert window_color.rgb() != dark_palette().color(QPalette.ColorRole.Window).rgb()
+
+
+# -- FQ-260812021715: the legacy `lightTheme` boolean is migrated, then GONE ---
+
+
+def test_the_legacy_boolean_is_removed_once_it_has_been_migrated(qtbot, tmp_path,
+                                                                 _reset_app_theme):
+    """Two stored answers to "which theme" is the drift the consolidation exists
+    to kill, so the migration is a MOVE: the name is written and the old key is
+    removed in the same pass.
+
+    The consequence is asserted too, because it is the point of removing it: a
+    second window reading the same file follows the NAME. Flipping to dark and
+    restarting must not resurrect light from a stale `lightTheme=true`."""
+    seed = _ini_settings(tmp_path)
+    seed.setValue("lightTheme", True)
+    seed.sync()
+
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window._settings.sync()
+
+    stored = _ini_settings(tmp_path)
+    assert stored.value(theme_model.SETTINGS_KEY, "", type=str) == "light"
+    assert stored.value("lightTheme", None) is None
+
+    window.apply_theme_named("dark")
+    window._settings.sync()
+    window2 = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window2)
+    assert window2.theme_name() == "dark"
+    assert QApplication.instance().palette().color(
+        QPalette.ColorRole.Window
+    ).rgb() == dark_palette().color(QPalette.ColorRole.Window).rgb()
+
+
+def test_a_stored_name_WINS_over_a_leftover_boolean(qtbot, tmp_path, _reset_app_theme):
+    """The migration reads the boolean only when there is no name. A settings
+    file carrying both (a downgrade, a hand-edit, a half-written sync) must
+    follow the name -- otherwise the boolean silently overrides every later
+    choice."""
+    seed = _ini_settings(tmp_path)
+    seed.setValue("lightTheme", True)
+    seed.setValue(theme_model.SETTINGS_KEY, "dark")
+    seed.sync()
+
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    assert window.theme_name() == "dark"
+    assert window._is_light_theme() is False
+
+
+def test_a_selected_theme_that_no_longer_LOADS_falls_back_instead_of_crashing(
+    qtbot, tmp_path, _reset_app_theme
+):
+    """The user deleted (or broke) the theme file they had selected. A startup
+    crash is a far worse answer than the default theme, and the name actually
+    applied is what gets persisted -- so the next start is not still pointing at
+    a ghost."""
+    seed = _ini_settings(tmp_path)
+    seed.setValue(theme_model.SETTINGS_KEY, "no-such-theme")
+    seed.sync()
+
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    assert window._is_light_theme() is False
+    # ...and the ghost name is written OVER, so `theme_name()` never disagrees
+    # with what is actually painted (which is the Themes pane's "in use" marker
+    # pointing at a row that does not exist).
+    assert window.theme_name() == "dark"
+    assert window.apply_theme_named("no-such-theme") == "dark"
+
+
+def test_is_light_theme_reads_the_THEME_not_a_menu_toggle(qtbot, tmp_path,
+                                                          _reset_app_theme):
+    """`UiShell.is_light_theme` is what every collaborator asks, and its source
+    of truth moved from a checkable QAction to the selected theme's own `light`
+    declaration -- which is what lets a THIRD theme answer it at all."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+
+    window.apply_theme_named("light")
+    assert window._is_light_theme() is True
+    assert window._shell.is_light_theme() is True
+
+    window.apply_theme_named("dark")
+    assert window._is_light_theme() is False
+    assert window._shell.is_light_theme() is False
