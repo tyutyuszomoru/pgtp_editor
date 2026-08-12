@@ -8140,7 +8140,7 @@ Verified as **not** offenders and to be left alone: `ui/mode_indicator.py:195` (
 ---
 
 ## BUG-260812071208: opening a DDL Explorer while its menu toggle is unchecked introspects TWICE
-**Status:** OPEN
+**Status:** RESOLVED (179d5e0)
 **Reported:** 2026-08-12
 **Report (verbatim):** "Opening the DDL Explorer while its Database-menu toggle is unchecked performs the introspection fetch TWICE. `_open_ddl_explorer()` reveals the tab → `_on_ddl_explorer_visibility_changed` fires → it calls `action.setChecked(True)` to keep the menu in sync (that sync is BUG-007's fix, deliberate) → `setChecked` emits `toggled` → which is connected to `_open_ddl_explorer()` → which runs again. The consequence is not cosmetic: it is a double introspection fetch — two full round trips to the database per open — and now also two `[DDL]` rows in Messages, which is how it surfaced. Found by the agent wiring the `[DDL]` mode notice (commit 07b83e9); it predates that work."
 
@@ -8208,6 +8208,30 @@ Gotchas, all of them easy to get wrong:
 - No `docs/KEYBINDINGS.md` impact: no chord is added, moved or removed. `Ctrl+Shift+R` keeps its single panel host (BUG-062/DEC-012) and `Database ▸ Reload DDL` keeps carrying no shortcut.
 
 **Spec impact:** none required, but worth one clarifying sentence — flag for `spec-maintainer` after the fix lands, do not edit the spec from the fix pass. `CONSOLIDATED_SPEC.md` §18.1 ("Database menu & main-window wiring", ~line 7381) specifies the bidirectional lockstep and §18.7 (~line 13409) specifies that the lockstep is role-parameterized; **neither says anything about the toggle-side re-entry**, so the double fetch is an omission rather than an intentional decision. Once fixed, §18.1's lockstep bullet should gain a clause to the effect that the menu-state re-sync must not itself be readable as a user toggle. Nothing here reverses a recorded decision, so no `owner-decision` is needed.
+
+**Resolution (179d5e0) — verified against the tree, 2026-08-12**
+
+*Shipped exactly as proposed, option 1 (the flag), with nothing amended.* `main_window.py:1265` declares `self._ddl_explorer_syncing: set[str] = set()`; `_on_ddl_explorer_visibility_changed` (`:4891-4895`) wraps **only** the final `action.setChecked(visible)` in add/try/finally/discard; `_on_ddl_explorer_toggled` (`:4667`) returns early on `role in self._ddl_explorer_syncing`, with the reason in its docstring (`:4651-4666`). The source change is entirely in `179d5e0` (the flag is absent from its parent `cdcba11`).
+
+*The three "do not get this wrong" gotchas all held.* Not `QSignalBlocker` — the stale-pinned-toolbar-button argument is quoted in the code comment at `:4886-4890`. BUG-007's lockstep `setChecked` is untouched. The `setChecked(False)` spring-back sites were not wrapped. The alternative idempotency check was not taken.
+
+*The `[DDL]` row was deliberately NOT de-duplicated*, as the entry required: one open still emits exactly one row, and `test_the_ddl_row_is_reported_on_every_ddl_open` stayed green **unmodified**. The defect was the double *open*, not the double row.
+
+*Proved by reverting the fix in place, not by reasoning* — 5 failures pre-fix, 0 post. All four doubling gestures are pinned: `Reload DDL` with the Explorer closed (1 fetch **and** 1 `[DDL]` row, two separate cases), a bare `_open_ddl_explorer` from the unchecked state for `DDL_EXPLORER_TARGET` and (in its own §18.7 file) for `DDL_EXPLORER_SANDBOX`, and toggle-off during an in-flight fetch, where exactly one task is ever queued. The three unchanged-behaviour guards are green **both before and after**, deliberately: menu-toggle open is 1 fetch, reload-while-open is still a real re-fetch (BUG-062), tab-✕ still unchecks the entry (BUG-007) leaving `_ddl_explorer_syncing` empty.
+
+*The entry's warning about test shape is the load-bearing part and is recorded in the tests themselves* (`test_ddl_explorer_wiring.py:644-647`): a test driving the menu toggle proves nothing, because `QAction::activate` sets `checked` **before** emitting `toggled`, so it is green before and after. The original report blamed the signal route; the reproduction condition is the **unchecked action**.
+
+*Also corrected in passing:* `tests/ui/test_ddl_mode_wiring.py`'s `_open` helper docstring asserted the double fetch as a fact about the code, so it would have read as intended behaviour to the next reader; it now states the supersession instead.
+
+Full suite at the time: **8169 passed, 51 skipped**.
+
+**One book-keeping discrepancy, non-blocking.** The commit that carries the *source* fix is `179d5e0`, and its tests for the sandbox role (`test_ddl_explorer_sandbox.py:530`), the corrected `_open` docstring and the `_mainwindow_surface` attribute row are in it — but the **target-role** regression file (`tests/ui/test_ddl_explorer_wiring.py:637-754`: the four gesture cases and the three guards) landed one commit later, in `0025113`. Both are on the branch and the tree is green, so nothing is missing; recorded only so a future `git show 179d5e0` that finds no target-role tests is not read as a gap.
+
+**The BUG-034 secondary finding is CLOSED by this fix, not surviving.** The doubled password modal was a strict consequence of the doubled open: `_open_ddl_explorer` calls `_ddl_explorer_params` → `_target_params_for_fetch` (`main_window.py:5087`) exactly **once** per invocation, and the prompt repeated only because the whole opener ran twice from the unchecked state. With the re-entrancy flag there is one open, hence one prompt. The other two callers of that selector are separate lanes with their own single gesture each — `CoherenceController`'s injected `target_params` (`:1579`) and `_target_params_for_apply` (`:7486`) — and neither re-enters the DDL open path. **Judgement: it does not warrant its own id.** What remains is documented design, not a defect: a *cancelled* prompt persists nothing (`:5109-5110`), so a later gesture asks again, which is the stated BUG-034 behaviour ("cancelling leaves the password blank and returns the params anyway").
+
+*Still open and deliberately not folded in:* the stale `on_result` **re-revealing** a tab the user closed mid-flight. The flag stops the extra *fetch*, not the resurrection — `test_a_close_during_an_in_flight_fetch_does_not_queue_a_second_one` says so in its own docstring. It needs an in-flight generation counter per role and is a behaviour change ("a close during load wins"), so it wants a fresh `bug-triager` pass with its own id.
+
+*Spec:* §18.1's lockstep clause still says nothing about the menu-state re-sync not being readable as a user toggle. That one clarifying sentence remains for `spec-maintainer`; it is not a divergence, only an omission.
 
 ---
 ## BUG-260812103144: the status-bar connectivity dots fail contrast — and the surface they are measured against is not the window chrome
