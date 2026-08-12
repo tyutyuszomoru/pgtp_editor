@@ -78,12 +78,20 @@ def _offline_ddl_mode_probe(monkeypatch):
     # `SchemaDumpError` is the shipped refusal path, so an unprepared test
     # degrades to restricted with a named row -- visible, and correct. Tests
     # about full mode inject their own dump text over this.
+    #
+    # The three arguments are not optional: `SchemaDumpError(step, returncode,
+    # stderr)` builds its own message. Constructing it with one argument raised
+    # a `TypeError` from inside this stub, which `_open_ddl_explorer`'s generic
+    # `except Exception` still degraded on -- so the suite stayed green while
+    # this seam was, in fact, never exercising the refusal path it documents.
     monkeypatch.setattr(
         main_window_module,
         "fetch_schema_dump",
         lambda params, path, **k: (_ for _ in ()).throw(
             main_window_module.SchemaDumpError(
-                "no pg_dump was run (test stub); inject dump text to test full mode"
+                "no pg_dump was run (test stub)",
+                1,
+                "inject dump text to test full mode",
             )
         ),
     )

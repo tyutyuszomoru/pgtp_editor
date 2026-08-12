@@ -25,6 +25,7 @@ from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.ddl_project import ProjectSettings, save_settings
 from pgtp_editor.db.introspect import DatabaseSchema
 from pgtp_editor.ui import main_window as main_window_module
+from pgtp_editor.db.pg_dump_ddl import SchemaDumpError
 from pgtp_editor.db.pg_dump_mode import DdlMode, decide_ddl_mode
 from pgtp_editor.db.sandbox import SandboxCapabilities
 from pgtp_editor.ui.audit_router import DDL_PREFIX
@@ -231,3 +232,201 @@ def test_a_failing_mode_probe_never_fails_the_ddl_open(window):
 
     assert _ddl_rows(window) == []
     assert window.center_stage.currentWidget() is not None
+
+
+# ---------------------------------------------------------------------------
+# FQ-260812022749 part 3: the dual-mode BUFFER, wired.
+#
+# The verdict was already reported before this; what these pin is the half that
+# actually spawns and actually changes what the user reads -- when `pg_dump` is
+# invoked, how often, what happens when it refuses, and that the tree and the
+# text agree because they come from ONE buffer.
+# ---------------------------------------------------------------------------
+
+def test_a_RESTRICTED_verdict_SPAWNS_NOTHING(window):
+    """The invariant the whole degrade design rests on: restricted mode is the
+    buffer it always was and costs no subprocess at all. A dump taken and then
+    ignored would be a silent multi-second cost on every open on exactly the
+    servers that cannot use it.
+
+    The verdict deliberately CARRIES a `pg_dump_path`: an old `pg_dump` beside
+    a newer server is restricted *with* a located binary, which is the only
+    shape that can distinguish "the mode decides" from "a path was found". A
+    restriction with no path at all would pass against a gate that never read
+    the mode."""
+    window.ddl_mode_prober = lambda caps, **kwargs: decide_ddl_mode(
+        caps.server_version, "/usr/bin/pg_dump", (14, 1)
+    )
+
+    _open(window)
+    _open(window)
+
+    verdict = window._ddl_mode_verdict
+    assert verdict.mode is DdlMode.RESTRICTED
+    assert verdict.pg_dump_path == "/usr/bin/pg_dump"  # located, and unused
+    assert window.dumps == []
+
+
+def test_an_open_takes_EXACTLY_ONE_dump(window):
+    """One `pg_dump --schema-only` per Explorer build, no more -- and the count
+    is per OPEN, so BUG-260812071208's doubled open would show up here as a
+    doubled dump even though its own regression net counts introspections.
+    That is the point of asserting it on this side too: the dump is the
+    expensive half."""
+    _open(window)
+    assert len(window.dumps) == 1
+
+    _open(window)
+    assert len(window.dumps) == 2
+
+    # ...and it is this connection's own dump, not a cached one from elsewhere.
+    assert {params.database for params, _path in window.dumps} == {"d"}
+    assert {path for _params, path in window.dumps} == {"/usr/bin/pg_dump"}
+
+
+def test_a_REFUSED_dump_degrades_with_a_NAMED_row_and_still_opens(window, monkeypatch):
+    """A refused or timed-out `pg_dump` may never cost the user their Explorer:
+    it degrades to the restricted buffer and SAYS SO, naming the refusal."""
+    def _refuse(params, pg_dump_path, **kwargs):
+        raise SchemaDumpError(
+            "pg_dump --schema-only", 1, "permission denied for schema pr"
+        )
+
+    monkeypatch.setattr(main_window_module, "fetch_schema_dump", _refuse)
+
+    _open(window)
+
+    rows = _ddl_rows(window)
+    assert len(rows) == 2
+    assert "permission denied for schema pr" in rows[1]
+    assert "pg_dump --schema-only" in rows[1]
+    # The Explorer opened anyway, with a real (restricted) buffer in it.
+    assert window.center_stage.currentIndex() == window.center_stage.ddl_tab_index
+    assert window.center_stage.isTabVisible(window.center_stage.ddl_tab_index)
+
+
+def test_the_degrade_row_sits_BESIDE_the_mode_row_not_instead_of_it(window, monkeypatch):
+    """Order and coexistence, both load-bearing: the mode row is an owner ruling
+    on every open and the degrade is additional information, so a degrade must
+    not swallow, replace or precede it."""
+    def _refuse(params, pg_dump_path, **kwargs):
+        raise SchemaDumpError("pg_dump --schema-only", 1, "timed out after 60s")
+
+    monkeypatch.setattr(main_window_module, "fetch_schema_dump", _refuse)
+
+    _open(window)
+
+    rows = _ddl_rows(window)
+    assert "Full DDL via pg_dump 16.4 (server 16.2)." in rows[0]
+    assert "timed out" in rows[1]
+    assert "timed out" not in rows[0]
+
+
+def test_an_unexpected_dump_failure_is_degraded_too_not_raised(window, monkeypatch):
+    """`SchemaDumpError` is the shipped refusal, but the open must survive
+    anything the seam throws -- an OSError from a half-installed binary is not a
+    reason to lose the Explorer."""
+    def _explode(params, pg_dump_path, **kwargs):
+        raise OSError("Permission denied: /usr/bin/pg_dump")
+
+    monkeypatch.setattr(main_window_module, "fetch_schema_dump", _explode)
+
+    _open(window)
+
+    rows = _ddl_rows(window)
+    assert len(rows) == 2
+    assert "/usr/bin/pg_dump" in rows[1]
+    assert window.center_stage.isTabVisible(window.center_stage.ddl_tab_index)
+
+
+# -- the tree and the text are ONE buffer -----------------------------------
+
+_FULL_DUMP = """SET statement_timeout = 0;
+
+CREATE TABLE pr.orders (
+    id integer NOT NULL,
+    tag text
+);
+
+CREATE INDEX ix_tag ON pr.orders USING btree (tag);
+"""
+
+
+def _orders_schema():
+    from pgtp_editor.db.introspect import ColumnInfo, TableInfo
+
+    return DatabaseSchema(
+        tables={
+            "pr.orders": TableInfo(
+                name="pr.orders",
+                kind="table",
+                columns=[
+                    ColumnInfo(
+                        name="id", data_type="integer", is_pk=True, is_fk=False,
+                        is_nullable=False, default=None,
+                    ),
+                    ColumnInfo(
+                        name="tag", data_type="text", is_pk=False, is_fk=False,
+                        is_nullable=True, default=None,
+                    ),
+                ],
+            )
+        }
+    )
+
+
+def test_in_FULL_mode_the_editor_shows_pg_dumps_OWN_text(window, monkeypatch):
+    """The user-visible half of the feature: what is on screen after a full-mode
+    open is the dump's statements, not the synthesizer's reconstruction."""
+    monkeypatch.setattr(window, "_fetch_ddl_schema", lambda params: _orders_schema())
+    monkeypatch.setattr(
+        main_window_module, "fetch_schema_dump", lambda *a, **k: _FULL_DUMP
+    )
+
+    _open(window)
+
+    text = window.center_stage.ddl_editor_panel.editor.toPlainText()
+    assert "CREATE INDEX ix_tag ON pr.orders USING btree (tag);" in text
+    assert "-- NOTE: reconstructed by PGTP Editor" not in text
+    # A dump that attributes every relation degrades nothing, so the mode row
+    # stands alone -- the anchor that keeps the assertion above from passing on
+    # a silently degraded buffer that happened to contain the string.
+    assert len(_ddl_rows(window)) == 1
+
+
+def test_the_TREE_navigates_into_the_SAME_full_mode_buffer(window, monkeypatch):
+    """The tree is handed `buffer.spans` -- the very list the text was rendered
+    with -- so clicking a relation in full mode lands on the DUMP's own
+    `CREATE TABLE`, at a line number derived from the dump. Handing the tree a
+    separately-built span list would put the caret on a plausible wrong line,
+    which is the failure this asserts against by reading the landed line back
+    out of the editor.
+
+    The caret lands on the object's banner, not on `CREATE TABLE` itself: full
+    mode keeps the banner and DELIBERATELY drops containment (owner-settled,
+    2026-08-12), so the table's span is its banner plus the dump's own
+    `CREATE TABLE`, and the separately-emitted index is outside it."""
+    monkeypatch.setattr(window, "_fetch_ddl_schema", lambda params: _orders_schema())
+    monkeypatch.setattr(
+        main_window_module, "fetch_schema_dump", lambda *a, **k: _FULL_DUMP
+    )
+
+    _open(window)
+
+    panel = window._ddl_browser_panels[DDL_EXPLORER_TARGET]
+    table_item = panel.tree.topLevelItem(0).child(0)
+    panel._on_item_clicked(table_item, 0)
+
+    editor = window.center_stage.ddl_editor_panel.editor
+    lines = editor.toPlainText().splitlines()
+    landed = editor.textCursor().blockNumber()  # 0-based
+
+    assert lines[landed] == "-- TABLE pr.orders --"
+    # The text under that banner is the DUMP's statement, verbatim -- the
+    # restricted synthesizer renders the same table with a `NOT NULL` column
+    # list of its own and a reconstruction notice, so this line pair can only
+    # come from the full-mode buffer the tree was handed spans for.
+    following = lines[landed + 1: landed + 6]
+    assert "CREATE TABLE pr.orders (" in following
+    assert "    id integer NOT NULL," in following
+    assert "-- NOTE: reconstructed by PGTP Editor" not in editor.toPlainText()

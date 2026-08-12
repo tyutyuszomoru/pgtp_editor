@@ -205,6 +205,61 @@ def test_qss_cache_holds_one_entry_per_theme(qapp, _reset_app_palette):
     assert theme_mod._qss_cache[dark_key] != theme_mod._qss_cache[light_key]
 
 
+def test_two_DARK_themes_do_not_share_one_stylesheet(qapp, _reset_app_palette):
+    """The claim the test above makes in prose but cannot make in assertions.
+
+    `dark_key != light_key` is true of the OLD `light: bool` key too, so that
+    test passes unchanged against the very implementation FQ-260812021716
+    replaced. The key's whole reason for existing is the case it never
+    exercises: two themes on the SAME side of the light/dark line, differing
+    only in a chrome colour, must not be served each other's sheet -- which is
+    exactly what a duplicated or Themes-pane-edited dark theme is.
+
+    Both halves are asserted, because the cache is a trade-off and only one
+    half is about correctness: a recoloured theme gets its own entry AND its
+    own recoloured text, while a theme whose chrome is untouched deliberately
+    shares one (that is what makes an un-edited duplicate free)."""
+    from pgtp_editor.ui import theme as theme_mod
+    from pgtp_editor.ui.theme_model import load_theme, replace
+
+    dark = load_theme("dark")
+    recoloured = replace(
+        dark,
+        name="Midnight",
+        source=None,
+        chrome={**dark.chrome, "COLOR_BACKGROUND_1": "#101820"},
+    )
+    untouched = replace(dark, name="Twilight", source=None)
+
+    assert theme_mod._qss_key(recoloured) != theme_mod._qss_key(dark)
+    assert theme_mod._qdarkstyle_stylesheet(recoloured) != theme_mod._qdarkstyle_stylesheet(dark)
+    assert "#101820" in theme_mod._qdarkstyle_stylesheet(recoloured)
+    assert "#101820" not in theme_mod._qdarkstyle_stylesheet(dark)
+
+    # ...and identical chrome is one cache entry on purpose.
+    assert theme_mod._qss_key(untouched) == theme_mod._qss_key(dark)
+    assert theme_mod._qdarkstyle_stylesheet(untouched) == theme_mod._qdarkstyle_stylesheet(dark)
+
+
+def test_an_EDIT_to_a_live_themes_chrome_is_not_served_from_the_cache(
+    qapp, _reset_app_palette
+):
+    """The Themes pane edits a theme under its own name. A name-keyed cache
+    would hand back the pre-edit sheet forever; keying on the chrome means the
+    edited value is in the string the moment it changes."""
+    from pgtp_editor.ui import theme as theme_mod
+    from pgtp_editor.ui.theme_model import load_theme, replace
+
+    dark = load_theme("dark")
+    before = theme_mod._qdarkstyle_stylesheet(dark)
+    edited = replace(dark, chrome={**dark.chrome, "COLOR_ACCENT_2": "#7A00FF"})
+
+    after = theme_mod._qdarkstyle_stylesheet(edited)
+    assert edited.name == dark.name  # same identity, different colours
+    assert after != before
+    assert "#7A00FF".lower() in after.lower()
+
+
 # -- BUG-010 gap coverage: the tests/ui/conftest.py autouse stylesheet reset -
 # Same pattern as the palette leak-pair in test_main_window_theme.py: the
 # first test deliberately does NOT use _reset_app_palette and leaves the
