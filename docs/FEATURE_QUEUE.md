@@ -5036,7 +5036,7 @@ Three owner decisions shipped with **defaults, not settled design**, each isolat
 ---
 
 ## FQ-260812002828: [PLACEHOLDER — Software settings pane #5] Syntax highlight color customization — a pane to customize editor syntax-highlight colors
-**Status:** QUEUED — BLOCKED: DO NOT IMPLEMENT (needs owner description)
+**Status:** SUPERSEDED — merged into FQ-260812021716 (Themes pane). Brainstormed 2026-08-12: syntax highlighting is PART OF the theme, so it is NOT a separate pane. The file-based theme object (FQ-260812021715) carries the 8 syntax roles, each with color + bold/italic/underline; the Themes pane (FQ-260812021716) edits them. Do not implement separately. (Original placeholder text kept below for the record.)
 **Requested:** 2026-08-12
 **Idea (verbatim/summarized):** Pane #5 ("5. syntax highlight colors") of the consolidated two-pane **Software settings** dialog (parent: **FQ-260812002827**). The owner's instruction for the not-yet-implemented panes was verbatim: *"Whatever is not implemented yet of these, create an empty feature queue entry with the warning that it must be skipped, because needs owner description to implement."* This is that reserved placeholder. **The queue-resolution pass MUST SKIP this entry** — it has no design yet and needs an owner description before any implementation.
 
@@ -5053,7 +5053,7 @@ Three owner decisions shipped with **defaults, not settled design**, each isolat
 ---
 
 ## FQ-260812002829: [PLACEHOLDER — Software settings pane #6] Color scheme customization — a pane for color-scheme selection beyond the binary light/dark toggle
-**Status:** QUEUED — BLOCKED: DO NOT IMPLEMENT (needs owner description)
+**Status:** SUPERSEDED — merged into FQ-260812021716 (Themes pane). Brainstormed 2026-08-12: "color scheme" became the whole theme. The theme foundation (FQ-260812021715) consolidates every color source into one file-based Theme object (qdarkstyle color tokens + Qt QPalette + accents + editor decorations + syntax), applied via a qdarkstyle Palette subclass that overrides colors only; the Themes pane (FQ-260812021716) selects/duplicates/edits themes. Do not implement separately. (Original placeholder text kept below for the record.)
 **Requested:** 2026-08-12
 **Idea (verbatim/summarized):** Pane #6 ("6. color scheme") of the consolidated two-pane **Software settings** dialog (parent: **FQ-260812002827**). Per the owner's instruction for not-yet-implemented panes — *"create an empty feature queue entry with the warning that it must be skipped, because needs owner description to implement"* — this is that reserved placeholder. **The queue-resolution pass MUST SKIP this entry** — it has no design yet and needs an owner description before any implementation.
 
@@ -5066,5 +5066,78 @@ Three owner decisions shipped with **defaults, not settled design**, each isolat
 **Suggested placement:** A pane WITHIN the FQ-260812002827 "Software settings" consolidated dialog, reusing `ui/theme.py::apply_theme` and the existing `_light_theme_action` for at least the minimal light/dark case. Whether it becomes a §-level feature or an extension of the theming code is deferred to the owner-description pass. Do NOT fold into the spec while blocked.
 
 **Open questions (all open — this is why it is blocked):** Is "color scheme" just the existing light/dark toggle relocated, or a richer concept (named schemes, custom palettes, editor vs. chrome theming)? How does it relate to FQ-260812002828 (syntax highlight colors) — one unified theming pane, or two distinct panes? Persistence and defaults? Should the parent dialog show this pane disabled/"coming soon" or omit it until this is answered (also flagged on FQ-260812002827)? **All require an owner description before this entry is unblocked.**
+
+---
+
+## FQ-260812021715: Consolidate every color source into ONE file-based `Theme` object, loaded at runtime — the theming foundation
+**Status:** QUEUED
+**Requested:** 2026-08-12
+**Idea (verbatim/summarized):** Owner brainstorm outcome (record as settled design, NOT re-challenged): consolidate the scattered color sources into ONE `Theme` object, and do that FIRST as its own feature ("start with that feature"). A theme is **colors only**; each theme is a **separate file**, loaded at **runtime**; adding a new theme file makes a new selectable theme — "new palettes added as variable objects, saved in separate files, picked up on runtime". **Syntax highlighting is PART OF the theme**, not a separate setting: one theme bundles chrome + editor decorations + syntax token colors, which collapses the former panes #5/#6 into one concern and removes the light-syntax-on-dark-chrome mismatch risk by construction. This is the FOUNDATION that Feature B (**FQ-260812021716**, the in-app Themes pane) rides on.
+
+**Problem:** A "theme" today is FOUR color layers spread across THREE places, some theme-aware and some theme-blind, with no single place a theme is defined — so a new scheme cannot be added and the (owner-disliked) light chrome cannot be replaced. Concretely (verified this session):
+1. **Qt QPalette** — `pgtp_editor/ui/theme.py` `light_palette()`/`dark_palette()`: **15 active roles** (Window, WindowText, Base, AlternateBase, ToolTipBase, ToolTipText, Text, Button, ButtonText, BrightText, Highlight `#3874F2`, HighlightedText, Link, LinkVisited, PlaceholderText) **+ 3 Disabled-group roles** (Text, WindowText, ButtonText); two full sets (light/dark). `apply_theme(app, light)` (`theme.py:291`) is the SINGLE mutation point: `setStyle("Fusion")` + `setPalette(...)` + `setStyleSheet(_qdarkstyle_stylesheet(light))`.
+2. **qdarkstyle chrome palette** — external `qdarkstyle` `DarkPalette`/`LightPalette`, consumed at `theme.py::_qdarkstyle_stylesheet` (`:265`) via `load_stylesheet(qt_api="pyside6", palette=pal)` (verified `:281`–`:287`). ~14 COLOR_* tokens drive all chrome (menus/buttons/tabs/docks/scrollbars); the app currently borrows qdarkstyle's two built-ins wholesale. The app also appends an app-authored focus QSS tail (`_focus_visible_qss`/`_focus_visible_tab_qss`) keyed off `pal.COLOR_TEXT_1` (`:287`) — that must keep working when a custom color palette is fed in.
+3. **App chrome accents** — the vim command-caret pair `_COMMAND_CARET_LIGHT/_DARK` (`theme.py:111`–`112`), `command_caret_colors(light)` (`:115`).
+4. **Editor decorations** (per-editor line/selection backgrounds, theme-aware) — `pgtp_editor/ui/xml_editor.py`: current_line, error_line, navigation_highlight, matching_tag, code_region = 5 colors (two sets, swapped at `:703`–`716`); the code editor (`ui/code_editor.py`) has a parallel decoration set.
+
+Syntax token colors are also part of a theme but live apart and inconsistently:
+- **Code highlighter** `_CodeHighlighter` (`ui/code_editor.py:448`), shared by SQL/PHP/JS: keyword `#569cd6`, string `#ce9178`, comment `#6a9955`, number `#b5cea8`, variable `#9cdcfe` = **5 roles**, currently **THEME-BLIND** (one hardcoded set → low-contrast numbers on the light theme; a latent bug the consolidation fixes by giving code roles a light variant).
+- **XML highlighter** (`ui/xml_editor.py:321`–`335`, `set_colors(tag, attr_name, string)`): tag `#569cd6`, attr_name `#9cdcfe`, string `#ce9178` = **3 roles**, already theme-aware.
+- Total **8 syntax roles**, shared across the code languages (SQL/PHP/JS use the same role colors — keep shared for v1; per-language coloring is out of scope).
+
+**Proposed approach (owner-settled shape — do NOT re-challenge the consolidation choice):**
+- **Define ONE `Theme` value object holding EVERY color:** the qdarkstyle color tokens + the 15+3 QPalette roles + the caret accents + the editor-decoration colors + the 8 syntax roles, each syntax role carrying `{color, bold, italic, underline}`. **Monospaced-per-role is DROPPED** — every editor is already monospaced, per-token font-family looks broken, and any global editor-font concern is a SEPARATE global setting, not part of the theme.
+- **Store each theme as a SEPARATE FILE; load at runtime; a new file → a new selectable theme.** Recommend a bundled defaults directory plus a user themes directory, in a simple declarative format (recommend JSON over INT/INI for nested `{color,bold,italic,underline}` role maps; owner to confirm — see Open questions).
+- **Extract today's Dark and Light into the first two bundled theme files, FAITHFULLY** — there are many tested palette values and the focus QSS tail, so extraction must not change pixels. Tests should assert the extracted palette roles/colors and decoration colors match today's values exactly.
+- **Chrome via the qdarkstyle-custom-Palette mechanism (owner-confirmed, pin it exactly):** keep qdarkstyle's STYLE as-is — every NON-color token (shapes, border-radii, line widths, padding, spacing) stays at qdarkstyle defaults. Extract only qdarkstyle's ~14 COLOR tokens into the `Theme`, and apply by **subclassing qdarkstyle's `Palette` overriding ONLY the colors**, then `qdarkstyle.load_stylesheet(qt_api="pyside6", palette=ThemePalette)`. **No hand-authored QSS, no shape changes** — "we use qdarkstyle style, separate the colors, change only colors." The `_focus_visible_qss` tail must keep working off the theme's `COLOR_TEXT_1`.
+- **Route every consumer through the active `Theme`** instead of hardcoding: `theme.py::apply_theme` (extend to accept/apply a `Theme`), both highlighters, both editors' decorations, and the caret.
+- **Fixes the theme-blind code highlighter as a side effect** — routing the 5 code roles through the `Theme` gives them a light variant (record this for the folding pass).
+
+**Reuse (do not reinvent):** `apply_theme` (`theme.py:291`) stays the single mutation seam — extend it to accept/apply a `Theme`. The XML highlighter already has a `set_colors` seam (`xml_editor.py:321`); GENERALIZE the code highlighter (`code_editor.py:448`) to match rather than adding a second bespoke mechanism. Keep the focus-tail QSS (`_focus_visible_qss`, `_qss_cache` at `theme.py:276`) working off the theme's `COLOR_TEXT_1`. Reuse the existing light/dark caret seam `command_caret_colors` (`theme.py:115`).
+
+**Alternatives considered:**
+- **Leave the four color layers where they are and add scheme selection on top** — REJECTED by the brainstorm: without one `Theme` object the theme-blind code highlighter stays a latent light-mode bug, and syntax/chrome/decoration can drift out of sync (the exact light-syntax-on-dark-chrome mismatch the consolidation removes by construction). Consolidation first is the owner's explicit sequencing ("start with that feature").
+- **Hand-author QSS per theme instead of subclassing qdarkstyle's `Palette`** — REJECTED (owner-pinned): it throws away qdarkstyle's maintained non-color styling (menu indicators, scrollbars — the very reason BUG-010 adopted it) and reintroduces per-widget shape tuning. Override colors only.
+- **Keep syntax highlighting as a separate setting from the theme** — REJECTED: syntax is part of the theme by owner ruling, which is what collapses former panes #5/#6 into one Themes pane (Feature B) and prevents the mismatch class of bug.
+
+**Suggested placement:** EXTEND the theme module/section (Sub-project D, #9 — `pgtp_editor/ui/theme.py`); this is largely theming infrastructure. Cross-reference **FQ-260812002827** (the consolidated Software Settings dialog, which will host the UI) and **FQ-260812021716** (Feature B, the in-app Themes pane that consumes these `Theme` objects). Whoever implements it dispatches `spec-maintainer` to fold it into `CONSOLIDATED_SPEC.md`, and should note in the fold that it fixes the theme-blind code highlighter.
+
+**Open questions (for the design/implementation pass):**
+- **Theme file format + location** — bundled-defaults dir + user-themes dir; JSON vs INI (recommend a simple declarative JSON for the nested per-role `{color,bold,italic,underline}` maps). Owner to confirm.
+- **Active-theme SELECTION availability** — RECOMMEND replacing the binary `View ▸ Light Theme` toggle (`ui/main_window.py:3484`, `_on_light_theme_toggled` `:2040`) with a theme picker that stays always-available (switching theme is routine), while theme EDITING is Maintenance-only (Feature B). Owner to confirm this split (shared with FQ-260812021716).
+- **Faithful-extraction verification** — tests assert the extracted palette roles/colors and decoration colors equal today's values (no pixel change).
+- **Migration of the persisted Light-Theme QSettings key** to a named-theme key (what a stored `light=true`/`false` maps to among the bundled theme files).
+
+---
+
+## FQ-260812021716: In-app "Themes" customization pane in Software Settings — browse / select / duplicate / edit file-based themes
+**Status:** QUEUED
+**Requested:** 2026-08-12
+**Idea (verbatim/summarized):** Owner brainstorm outcome (record as settled design): an in-app **"Themes"** pane inside the consolidated **Software settings** dialog (**FQ-260812002827**) to browse, select, **duplicate ("new = copy an existing one")** and edit themes built on Feature A's (**FQ-260812021715**) file-based `Theme` objects — chrome colors plus the 8 syntax roles, each with color + bold/italic/underline. Saves to a Feature-A theme file. Live preview desirable. This pane **MERGES and SUPERSEDES** the two placeholders (below) — because syntax highlighting is part of the theme, there is ONE Themes pane, not two.
+
+**Problem:** Once Feature A (FQ-260812021715) makes themes file-based `Theme` objects, there is no in-app way to browse, select, create or edit them without hand-editing files on disk. The two placeholder panes reserved in the Software Settings dialog (FQ-260812002828 syntax colors, FQ-260812002829 color scheme) were shaped BEFORE the owner settled that syntax highlighting is part of the theme — so as separate panes they now describe one concern split in two.
+
+**Proposed approach:**
+- **One "Themes" pane** inside the consolidated Software Settings dialog (FQ-260812002827) that lets the user **browse / select / duplicate / edit** themes built on Feature A's `Theme` objects. Editing covers chrome colors + the 8 syntax roles, each with color + bold/italic/underline. **"New = copy an existing one"** — duplication of an existing theme is the create path (no blank-theme authoring). Saves to a Feature-A theme file (a user-themes-dir file). **Live preview is desirable** (apply-as-you-edit).
+- **Selection vs. editing split (shared with Feature A):** RECOMMEND theme SELECTION stays always-available (a picker, replacing the binary `View ▸ Light Theme` toggle), while theme EDITING (this pane) is Maintenance-only because the Software Settings dialog is Maintenance-only (FQ-027/DEC-006, FQ-260812002827). Owner to confirm.
+
+**Supersession (state explicitly):** This entry **MERGES and SUPERSEDES `FQ-260812002828`** (syntax highlight colors) **and `FQ-260812002829`** (color scheme). Because syntax highlighting is part of the theme (Feature A), there is ONE Themes pane, not two separate panes. It therefore **refines FQ-260812002827**: the consolidated Software Settings dialog goes from 6 panes to **5** — Snippets, Customize Toolbar, Autoformatter settings, Customize Shortcuts, and **Themes**. (The main session flips FQ-260812002828 / FQ-260812002829 to SUPERSEDED; this entry does not edit them.)
+
+**Depends on:** **FQ-260812021715** (Feature A — the file-based `Theme` object). This pane cannot be built until themes are `Theme` objects saved as files.
+
+**Alternatives considered:**
+- **Keep the two separate panes (syntax colors + color scheme)** — REJECTED: they describe one concern (a theme is colors including syntax) split in two, which is exactly the split Feature A removes; two panes would let syntax colors and chrome scheme be edited into a mismatch. One Themes pane, editing one `Theme`, cannot mismatch itself.
+- **Blank-theme authoring (create from scratch)** — REJECTED in favour of duplicate-then-edit ("new = copy an existing one"): a copy of a working theme is a valid `Theme` from the first keystroke, so there is no half-defined-theme state to guard against.
+- **Edit theme files on disk only, no in-app pane** — REJECTED: the owner asked for an in-app customization surface; hand-editing JSON is not a user-facing feature.
+
+**Keyboard gate (verified against `docs/KEYBINDINGS.md` this session):** **No new chord.** The Themes pane is a command form only inside the Maintenance-only Software Settings dialog (FQ-260812002827) — under **DEC-012** the parent `Software settings…` command has exactly ONE keyboard host, the `QAction`, and per the Maintenance-only Settings-menu convention (FQ-027/DEC-006) it carries NO shortcut. The pane's own internal controls (color pickers, the browse/duplicate/edit list) are dialog widgets, not window chords. I read the full ledger and confirmed nothing here needs a new row and no `RESERVED_SEQUENCES` change is implied.
+
+**Suggested placement:** EXTEND **FQ-260812002827** (the consolidated Software Settings dialog) — add a **Themes** pane and drop the two placeholder panes, taking the dialog from 6 to 5 panes. It consumes Feature A's (**FQ-260812021716**'s dependency) `Theme` objects and their file format. Whoever implements it dispatches `spec-maintainer` to fold it into `CONSOLIDATED_SPEC.md` **with a Supersession Ledger row** for FQ-260812002828 and FQ-260812002829 (merged into this one Themes pane) and a refinement note on FQ-260812002827's pane count.
+
+**Open questions (for the design/implementation pass):**
+- **Selection-always-available vs. editing-Maintenance-only split** (shared with FQ-260812021715) — owner to confirm.
+- **Per-role editing UI** — how the 8 syntax roles (color + bold/italic/underline) and the chrome color tokens are presented for editing.
+- **Live-preview scope** — does editing apply live to the whole running app, only to a preview widget, or only on save?
+- **A user theme file edited on disk while the pane is open** — what happens (reload/conflict/lock)? Tied to Feature A's runtime-load model.
 
 ---
