@@ -121,16 +121,19 @@ because it is where the app is *configured* rather than used — configuring it 
 exactly what you came to Maintenance mode to do, and a distraction the rest of
 the time. It sits between **Generation** and **Help**, and it holds **exactly one
 entry**: **Software settings…**, the dialog that now contains everything the app
-lets you configure — snippets, the toolbar, the autoformatter and your keyboard
-shortcuts (see *Software Settings*).
+lets you configure — snippets, the toolbar, the autoformatter, your keyboard
+shortcuts, the colour themes and the external tool binaries (see *Software
+Settings*).
 
-**Two of those four used to live on View, so they are Maintenance-mode gestures
-now.** **Customize Toolbar…** and **Customize Shortcuts…** were reachable at any
-time from the **View** menu; they are panes of **Software settings…** today,
-which means you enter Maintenance mode to rearrange your toolbar or rebind a key.
-That is the trade taken deliberately: the app is *configured* in this mode, and
-one launcher button can stand for the whole of "settings" only if settings is one
-command.
+**Several of those used to live on other menus, so they are Maintenance-mode
+gestures now.** **Customize Toolbar…** and **Customize Shortcuts…** were
+reachable at any time from the **View** menu, **Locate PHP Generator
+Executable…** and **Locate panGen Runtime…** from **Generation**, and **Locate
+PHP Linter…** from **Tools**; all of them are panes of **Software settings…**
+today, which means you enter Maintenance mode to rearrange your toolbar, rebind a
+key, change the theme or point the app at an external program. That is the trade
+taken deliberately: the app is *configured* in this mode, and one launcher button
+can stand for the whole of "settings" only if settings is one command.
 
 **Nothing on the Settings menu carries a keyboard shortcut, and nothing on it
 ever will.** Hiding a menu does not switch off the keys of the entries inside it
@@ -175,7 +178,7 @@ ordinary work. These are rare, deliberate gestures, reached by opening the menu.
   session: it is not on the menu and its key does nothing. **View**,
   **Database**, **Tools** and **Generation** are hidden *as whole menus*, and
   the commands inside them stay live underneath — so a key you bound to, say,
-  **View ▸ Light Theme** in the **Keyboard shortcuts** pane still fires in
+  **View ▸ Collapse All** in the **Keyboard shortcuts** pane still fires in
   Maintenance mode. That is deliberate and it stays that way: this mode
   exists to tidy the **menu bar**, it leaves the toolbar alone on purpose (see
   *Appearance & Layout ▸ The toolbar*), and a shortcut you deliberately
@@ -664,8 +667,8 @@ can never disagree.
   gets one of its own. Three majors times four sub-states would already be a
   twelve-colour vocabulary, which is exactly what a glance-recognizable chip
   cannot be.
-- **The colours follow the Light/Dark theme** (see *Appearance & Layout*), so the
-  chip stays legible in both.
+- **The colours come from the theme in use** (see *Appearance & Layout*), so the
+  chip stays legible whichever one you picked.
 - **It is passive.** There is no click, no context menu, and no way to change
   mode from it. Mode is set by **picking a launcher column** — at startup, or after
   **File ▸ New Session** brings the launcher back — and the chip only reports it,
@@ -682,33 +685,42 @@ If one long operation starts another, the slot keeps showing the **outer** one
 and only returns to `Idle` when the last of them has finished, so it can never
 claim to be idle while something is still going.
 
-### The two connectivity dots
+### The two connectivity indicators
 
-While a **local DDL-versioning project is open**, two labelled dots report
+While a **local DDL-versioning project is open**, two labelled indicators report
 whether its databases can be reached: **`Quality ●`** and **`Sandbox ●`**.
 
-| Dot | Meaning |
+| Shape | Meaning |
 |---|---|
-| **green ●** | reachable |
-| **red ●** | offline — configured, but it did not answer |
-| **white ●** | no connection configured |
-| **hollow grey ○** | **not checked yet** |
+| **●** filled circle | reachable |
+| **▲** triangle | offline — configured, but it did not answer |
+| **□** hollow square | no connection configured |
+| **○** hollow circle | **not checked yet** |
 
-**The hollow dot is a real state, not a blank.** A project you have just opened,
-or a probe still in flight, has not produced an answer yet — and showing that
-plainly is better than leaving a gap you would read as "fine" or, worse, keeping
-yesterday's green. Each dot's tooltip spells its state out in words.
+**Each state has its own shape, so colour is never the only channel.** The
+colours are still there and still follow the theme in use (see *Appearance &
+Layout*), but you can tell all four states apart with the shape alone — which
+matters most for the pair that carries the most meaning, *reachable* versus
+*offline*, since those two used to be a green dot and a red dot of exactly the
+same shape. Each indicator's tooltip spells its state out in words as well:
+*"Quality: reachable"*, *"Sandbox: no sandbox configured"*.
+
+**The hollow circle is a real state, not a blank.** A project you have just
+opened, or a probe still in flight, has not produced an answer yet — and showing
+that plainly is better than leaving a gap you would read as "fine" or, worse,
+keeping yesterday's green.
 
 - **They are polled every 30 seconds, and only while the editor's window is
   active.** Switch to another application and the polling stops; come back and it
-  polls **immediately**, so you never read a dot that is up to half a minute
-  stale. The check runs off the UI thread, so an unreachable server can't freeze
-  the window twice a minute.
-- **Green means reachable, not fully capable.** The poll is a single lightweight
-  round trip. Whether the sandbox is *usable* — superuser, `pg_dump`/`pg_restore`
-  present, `plpgsql_check` installed — is the **Project Status** window's
-  question, so a dot can be green while that window still reports a degradation.
-- **With no project open there are no dots at all** — absent, not greyed out,
+  polls **immediately**, so you never read an indicator that is up to half a
+  minute stale. The check runs off the UI thread, so an unreachable server can't
+  freeze the window twice a minute.
+- **Reachable is not the same as fully capable.** The poll is a single
+  lightweight round trip. Whether the sandbox is *usable* — superuser,
+  `pg_dump`/`pg_restore` present, `plpgsql_check` installed — is the **Project
+  Status** window's question, so an indicator can read **●** while that window
+  still reports a degradation.
+- **With no project open there are no indicators at all** — absent, not greyed out,
   like every other thing in this app you cannot currently use.
 
 ### The DEBUG chip
@@ -1209,22 +1221,27 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
 
 The **Tools** menu can run PHP's own syntax check over the file in front of you —
 the same kind of gesture as **Parsing ▸ Validate Project** one tier down: this
-file rather than the whole project. All three entries — **Lint Current File**,
-**Lint on Save** and **Locate PHP Linter…** — sit together on **Tools**,
-directly under **Manage Captions…**. They deliberately stayed together when
-Validate Project moved to the Editor menu bar: splitting the three across two
-bars would be worse than either home.
+file rather than the whole project. Both entries — **Lint Current File** and
+**Lint on Save** — sit together on **Tools**, directly under **Manage
+Captions…**. They deliberately stayed together when Validate Project moved to the
+Editor menu bar: splitting them across two bars would be worse than either home.
+(**Locate PHP Linter…** used to sit beside them and is **gone from Tools**: the
+linter is set in **Settings ▸ Software settings… ▸ External tools**.)
 
 Everything here is **advisory**. A lint failure never blocks, delays, or undoes a
 save: by the time the check runs, your bytes are already on disk.
 
 ### Pointing the editor at a PHP executable
 
-The check needs a `php` program to run. **Tools ▸ Locate PHP Linter…** opens a
-file picker for it; the path is remembered with your other tool paths, alongside
-the PHP Generator executable (see *Generating PHP*), so everything you had to
-locate lives in one place. Both a full path and a bare `php` found on your `PATH`
-are accepted.
+The check needs a `php` program to run. **Settings ▸ Software settings… ▸
+External tools** is where you point at it: the **PHP linter (`php` executable)**
+group's **Browse…** button opens a file picker, and the path is stored beside the
+other app-wide tool paths (see *Software Settings ▸ The External tools pane*).
+Both a full path and a bare `php` found on your `PATH` are accepted.
+
+Until one is set, **Tools ▸ Lint Current File** is greyed out and its tooltip
+names that pane; a lint that is attempted with a linter that has since gone
+missing reports the fact as a `[Lint] NOT RUN:` row rather than passing silently.
 
 A newly located linter takes effect **immediately, in tabs that are already
 open** — nothing needs reopening.
@@ -1899,7 +1916,7 @@ ordinary blue, and it stays red whether or not the tree has focus. That is a
 marking and nothing more — it changes no behaviour — but it is the tree whose
 right-click gestures reach the **real** database, so it is the one that looks
 like it. The **Sandbox** tree keeps the normal selection colour, and the
-difference between the two is the point. The red follows the Light/Dark theme
+difference between the two is the point. The red comes from the theme in use
 like every other colour in the app (see *Appearance & Layout*).
 
 Routines under **Functions & Procedures** are listed by their fully-qualified
@@ -2019,8 +2036,11 @@ the only place it appears in the text (see *What the read-only buffer holds*).
 In the **Quality** tree, right-clicking a table node offers **Add Trigger…**
 (see *Creating a new trigger, function, or procedure*, below), **Create Table…**
 and the **Alter Table ▸** submenu (see *Altering a table's columns*, below). A column row
-offers the **Alter Table ▸** submenu alone. **Edit DDL** remains available only on
-routine and trigger rows, because it acts on an object's existing definition. The
+offers the **Alter Table ▸** submenu alone. **Edit DDL** is available on routine,
+trigger and **view** rows, because it acts on an object's existing definition — a
+view's row offers it **above** its creation entries, so one menu holds both. A
+**materialized view** does not offer it, for the reason given in *What the
+read-only buffer holds*. The
 **Sandbox** tree offers none of these — its right-click menu holds **Reload DDL**
 and nothing else (see *The Sandbox Explorer, and how it differs*).
 
@@ -2078,11 +2098,22 @@ which is what a tree click jumps to and what folding collapses.
 > **Views carry no such notice**, and that is deliberate: their body comes back
 > from the database verbatim, so there is nothing incomplete to warn about.
 
-Because these objects are here to be **read**, right-clicking inside one of them
-in the **Quality** buffer does not offer **Edit DDL** — instead it shows a
-greyed-out line saying why, e.g. *"Tables are read-only here — change one with
-Alter Table ▸"*, with the matching sentence for a view, a materialized view, a
-column, a constraint or an index. A refusal you can read beats a menu entry that
+**A view is editable here; a table and a materialized view are not.** Right-click
+inside a **view**'s definition in the **Quality** buffer and you get **Edit DDL**,
+which opens it as a `CREATE OR REPLACE VIEW` you can change and apply — that is
+the whole reason it is allowed: PostgreSQL can replace a view in place. Right-click
+inside anything else that is here to be **read** and there is no Edit DDL;
+instead a greyed-out line says why:
+
+- *"Tables are read-only here — change one with Alter Table ▸"*, and the same
+  sentence for a **column**, a **constraint** and an **index**.
+- *"Materialized views are read-only here — there is no CREATE OR REPLACE
+  MATERIALIZED VIEW, so replacing one would drop its stored data"*. Replacing a
+  matview would mean dropping and recreating it, which throws away the rows it
+  has stored — so the app refuses out loud rather than offering an edit that
+  costs you data.
+
+A refusal you can read beats a menu entry that
 silently isn't there. In the browse-only **Sandbox** buffer neither the entry nor
 the sentence appears, since nothing there is editable in the first place (see
 *The Sandbox Explorer, and how it differs*).
@@ -2247,7 +2278,7 @@ lane owns: the **Ctrl+Space** completion catalog in your open DDL object tabs
 keeps describing the quality database (see *Schema-aware completion in the DDL
 object editor*).
 
-### Editing a single function, procedure, or trigger
+### Editing a single function, procedure, trigger, or view
 
 Both of the **Quality** explorer's browsing surfaces double as an entry point
 into a dedicated, **editable**
@@ -2259,19 +2290,26 @@ reason rather than running when their destination cannot be reached (see *The
 Deployment Menu*). Neither entry point exists in the Sandbox
 explorer (see *The Sandbox Explorer, and how it differs*).
 
-- In the **DDL Objects (Quality)** tree, right-click a routine or trigger row for
-  **Edit DDL**. The row you clicked already names the object, so the entry
+- In the **DDL Objects (Quality)** tree, right-click a routine, trigger or view
+  row for **Edit DDL**. The row you clicked already names the object, so the entry
   doesn't repeat it. Right-clicking an argument-name child row offers no Edit
   action — only object rows open a tab.
 - In the **DDL Explorer (Quality)** tab's read-only buffer, right-click inside a
   routine's or trigger's body for **Edit DDL: `<schema>.<name>(<argtypes>)`** — or
   **Edit
-  DDL: `<schema>.<table>.<name>`** for a trigger. There your click landed
+  DDL: `<schema>.<table>.<name>`** for a trigger, **Edit DDL:
+  `<schema>.<name>`** for a view. There your click landed
   somewhere in a wall of definitions, so the entry spells out which object it
   caught, and two overloads of one name read differently, so you can tell them
-  apart before opening either. A click inside a table's, view's, column's,
-  constraint's or index's DDL answers with a greyed-out reason instead (see
-  *What the read-only buffer holds*).
+  apart before opening either. A click inside a table's, a materialized view's, a
+  column's, a constraint's or an index's DDL answers with a greyed-out reason
+  instead (see *What the read-only buffer holds*).
+
+**A view opens as a `CREATE OR REPLACE VIEW`**, built from the definition the
+database hands back — the same text the read-only buffer shows you, wrapped in
+the statement that replaces it in place. Its `INSTEAD OF` triggers are **not** in
+that text: each trigger is its own object with its own **Edit DDL**, so editing a
+view never silently rewrites them.
 
 **There is one editing gesture, and what you can do with the tab it opens comes
 from whether a project is open** — never from which words you clicked. (The
@@ -2292,6 +2330,13 @@ project state.)
   missing project: editing one object with just a database connection is a
   supported way to work, so there is no "Project Required" prompt in the way of
   every edit.
+- **A view is edit-and-apply only, even with a project open.** Functions,
+  procedures and triggers are what the checkout model holds; a view's tab always
+  behaves like the projectless case above — the live definition, and **Save As…**
+  on the first save — and a view never shows **Discard local change**, because it
+  never had a checked-out file to discard. Editing and applying a view works
+  exactly as it does for a routine; only the local `ddl/*.sql` bookkeeping is
+  absent.
 
 **Re-invoking Edit DDL on an object that is already open focuses the existing
 tab** rather than opening a second one. There is exactly one tab per object,
@@ -3002,7 +3047,7 @@ editor has none"*, *"this buffer is read-only"*), never a generic beep.
 
 **Settings ▸ Software settings… is the one place the app is configured.** It is a
 single dialog with a category list down the left and the settings for the
-selected category on the right, and it holds **four** panes:
+selected category on the right, and it holds **six** panes:
 
 | Pane | What it configures |
 |---|---|
@@ -3010,25 +3055,31 @@ selected category on the right, and it holds **four** panes:
 | **Toolbar** | Which commands sit on the Main Toolbar, in which order, with which icons — see *Appearance & Layout ▸ The toolbar*. |
 | **Autoformatter** | How **Format Selection** rewrites SQL/plpgsql and XML — see *The Autoformatter*. |
 | **Keyboard shortcuts** | The key bound to each menu command, and the keys the app pins — see *Keyboard Shortcuts ▸ Changing a shortcut*. |
+| **Themes** | Every colour the app paints, as named theme files — see *The Themes pane*, below. |
+| **External tools** | Where the app-wide external programs live: the vendor PHP Generator, the panGen runtime and the PHP linter — see *The External tools pane*, below. |
 
-**Those four used to be four separate menu entries and no longer are.** **View ▸
+**Most of these used to be separate menu entries and no longer are.** **View ▸
 Customize Toolbar…**, **View ▸ Customize Shortcuts…**, **Settings ▸ Edit
-Snippets…** and **Settings ▸ Autoformatter settings…** are **gone** — not
-duplicated, not kept as second doors. Each is the same dialog you already knew,
-re-hosted as a pane, with the same controls, the same buttons and the same
-behaviour; only the way in changed.
+Snippets…**, **Settings ▸ Autoformatter settings…**, **Generation ▸ Locate PHP
+Generator Executable…**, **Generation ▸ Locate panGen Runtime…** and **Tools ▸
+Locate PHP Linter…** are **gone** — not duplicated, not kept as second doors.
+The first four are the same dialogs you already knew, re-hosted as panes, with
+the same controls, the same buttons and the same behaviour; only the way in
+changed.
 
 **There are two ways in, and both are the same command.** **Settings ▸ Software
 settings…** — the **Settings** menu's only entry — and the third button in the
 launcher's **Maintenance** column, which reads `Settings › Software settings`.
 
-**Which makes toolbar and shortcut customization Maintenance-mode gestures.** The
-**Settings** menu exists only in Maintenance mode (see *Getting Started ▸
-Maintenance mode*), so rearranging your toolbar or rebinding a key now means
-entering that mode first, where before you could do it at any time from **View**.
-That is deliberate: this is configuring the app rather than using it. As with any
-other command, a **toolbar button** you pin to it opens the dialog outside
-Maintenance mode too.
+**Which makes all of this Maintenance-mode work.** The **Settings** menu exists
+only in Maintenance mode (see *Getting Started ▸ Maintenance mode*), so
+rearranging your toolbar, rebinding a key, changing the theme or pointing the app
+at an external program now means entering that mode first, where before you could
+do the first two at any time from **View**. That is deliberate: this is
+configuring the app rather than using it — and it is why an operation that needs
+a tool you have not located yet is greyed with a tooltip naming this dialog
+rather than offering to locate it on the spot. As with any other command, a
+**toolbar button** you pin to it opens the dialog outside Maintenance mode too.
 
 **The dialog is non-modal and there is only ever one of it.** It stays beside
 your work — which is what lets the **Keyboard shortcuts** pane be open while you
@@ -3042,15 +3093,73 @@ That is the one thing worth reading twice:
   **Cancel** discards exactly what it always discarded.
 - After either, that pane **reloads itself from what is now stored**, so you are
   never looking at a stale scratch copy of something that has moved on.
+- **Two gestures do not wait for an OK at all**, because the picker *is* the
+  confirmation: **Use this theme** in the **Themes** pane, and **Browse…** in the
+  **External tools** pane. Both apply and save the moment you make the choice.
 - **Closing the dialog is never a save.** There is no dialog-level OK, because
-  there is no dialog-level state — the four panes disagree about what "apply"
-  means and each one is right about itself. Close the window with edits sitting
-  unapplied in a pane and they are gone, exactly as closing any one of those four
+  there is no dialog-level state — the panes disagree about what "apply" means
+  and each one is right about itself. Close the window with edits sitting
+  unapplied in a pane and they are gone, exactly as closing any one of those
   dialogs always did.
 
-**Colours are not in here.** Syntax-highlight colours and the app's colour scheme
-are not settings this dialog offers, and it says nothing about them; the theme is
-still **View ▸ Light Theme** (see *Appearance & Layout*).
+### The Themes pane
+
+**A theme is a named file holding every colour the app paints** — the chrome
+(menus, buttons, tabs, docks, scrollbars), the widget palette, the accent colours,
+the mode-indicator chips, the editor decorations, and the eight syntax-highlight
+roles. Two are shipped, `dark` and `light`, and the pane is where you pick one,
+copy it and edit the copy.
+
+- **The list on the left is every theme found**, with the one in use marked
+  `— in use`. It is a directory scan, so **a theme file dropped into your user
+  themes folder appears without restarting the app**, and a file of yours with
+  the same name as a bundled one **shadows** it — which is how you can end up
+  editing "the theme I am using" without touching the installation.
+- **Use this theme** applies the highlighted theme **and remembers it
+  immediately**. It is app-wide and it survives a restart and a new session;
+  there is no separate confirmation to press afterwards.
+- **Duplicate…** asks for a name and writes a full copy into your user themes
+  folder. That is how a new theme is made: a copy is a complete, valid theme from
+  the first keystroke, so there is never a half-defined one.
+- **The colour editor on the right** shows every colour of the highlighted theme
+  as a labelled swatch button; click one to pick a new colour. The syntax section
+  adds **Bold**, **Italic** and **Underline** checkboxes beside each of the eight
+  roles. **Save** writes the theme back to its file and, if it is the theme in
+  use, repaints the app straight away so you can see the change; **Cancel**
+  throws the edits away.
+- **The two bundled themes are read-only, and say so on screen**: *"Dark is a
+  bundled theme and is read-only — use Duplicate… to make an editable copy."*
+  Save is disabled and the swatches are inert until you duplicate it. An install
+  folder is not reliably writable and an upgrade would overwrite your edit
+  anyway, so duplicate-then-edit is the supported path rather than a workaround.
+
+**One honest note about the shipped pair:** the eight syntax roles are three XML
+ones (tag, attribute name, string) and five code ones (keyword, string, comment,
+number, variable). `dark` and `light` recolour the **XML** three, but their
+**five code colours are currently identical** — so switching theme changes the
+chrome and the Raw XML editor's colours, and leaves SQL/plpgsql looking the same.
+If you want SQL coloured differently, duplicate a theme and set those five
+yourself.
+
+### The External tools pane
+
+The three external programs the app can call are set here, each in its own group
+with a **Browse…** button and a status line:
+
+| Tool | Needed by |
+|---|---|
+| **PHP Generator executable** | **Generation ▸ Generate PHP** |
+| **panGen runtime (re_phpgen repo root)** | **Generation ▸ panGen, rePHPgen and Save reJSON** |
+| **PHP linter (`php` executable)** | **Tools ▸ Lint Current File** and **Lint on Save** |
+
+- **Browse… saves as soon as you pick**, so this pane has no OK or Cancel of its
+  own, and a new choice takes effect immediately in tabs that are already open.
+- **The status line states what is stored**: *"Found."*, *"Not set — …stay
+  unavailable until it is."*, or, for a path that has gone missing, a line saying
+  so rather than silently clearing your setting.
+- **These are app-wide**, shared by every project. The **per-project** PostgreSQL
+  client binaries are a different setting, and they live with the project (see
+  *Local DDL-Versioning Projects ▸ Project Settings*).
 
 ---
 
@@ -3616,10 +3725,34 @@ fields are grouped into four tabs:
   me**. Changing the mode re-clones nothing by itself: it takes effect the next
   time you press **Provision sandbox**. See *The Sandbox ▸ Provisioning,
   resetting and creating a sandbox database* for the whole group.
+  This tab also carries the **PostgreSQL binaries** group — see below.
 - **Git** — the same Server / User / Checkout branch fields as New Project.
 - **Deploy manifest** — a table, one row per DDL object, of its `ddl/` path,
   its last-deployed content hash, and its deployed-commit-id (if any), with
   **Add Row** / **Remove Selected Row** buttons.
+
+**The Connections tab also says where this project's PostgreSQL client binaries
+live.** The **PostgreSQL binaries** group has one field, **Locate postgres
+binaries:**, with a **Browse…** button:
+
+- **Leave it empty and nothing changes**: `pg_dump` and `pg_restore` are taken
+  from your `PATH`, exactly as before. The status line under the field says so.
+- **Set it and that folder is searched first**, with `PATH` still there as a
+  fallback. The status line states what the folder currently gives you — *"Found
+  pg_dump and pg_restore in this folder."*, or a warning naming the one that is
+  missing and will fall back to `PATH`. It **warns, it never blocks**: a folder
+  that is incomplete or half-typed does not stop you pressing OK.
+- **Set it when several PostgreSQL versions are installed**, or when the client
+  tools are not on `PATH` at all. `pg_dump` refuses to dump from a server *newer*
+  than itself, so the major version of the binaries has to match this project's
+  server — which is exactly why this setting sits beside the two connection
+  profiles that determine it, and why the **Test** buttons print the server
+  version they found (`Server: PostgreSQL 16.0.3.`) for you to compare against.
+- **It is per project, and it never travels.** It is stored in the project's
+  gitignored settings file, so a machine-specific path is not pushed to anyone
+  else. The app-wide external programs — the PHP Generator, the panGen runtime,
+  the PHP linter — are the opposite case and live in **Settings ▸ Software
+  settings… ▸ External tools** instead.
 
 ### Testing the project's connections
 
@@ -3979,7 +4112,7 @@ way (see *The Status Bar*) and the full report lands when it finishes.
 **Deployment ▸ Apply to quality** executes a DDL object tab's buffer against the
 quality database, behind its own hard preconditions — including a green sandbox
 validation for exactly that text. It is described where it belongs, in *DDL
-Explorer ▸ Editing a single function, procedure, or trigger*. Nothing else in
+Explorer ▸ Editing a single function, procedure, trigger, or view*. Nothing else in
 this chapter can reach anything but the sandbox.
 
 ### Checking an object and rolling back
@@ -4117,7 +4250,7 @@ own separate tab with its own rules; see *The Quality SQL Console*.
   returns no result set, or the database's error message — an error never shows up
   as a silently empty grid. **The strip is coloured for the two states you must
   not miss:** a failed statement is red, and a **TRUNCATED** result — or a refusal
-  such as an empty statement — is amber. Both colours follow the Light/Dark theme.
+  such as an empty statement — is amber. Both colours come from the theme in use.
   `NULL` values in the grid are dimmed and italic, so
   they can't be confused with an empty string or the text `NULL`.
 - **Ctrl+Alt+F** reformats the selection, exactly as in a DDL object editor tab.
@@ -4249,7 +4382,7 @@ the menu entry again probes again rather than just raising the window.
 **Re-check** does the same on demand. Closing the window is never final —
 **File ▸ Project Status…** brings it back, re-probed, as often as you like.
 
-The diagram follows the app's Light/Dark theme automatically (see *Appearance &
+The diagram follows the app's theme automatically (see *Appearance &
 Layout*) and is drawn as vector artwork, so it stays sharp on a high-resolution
 display and at any interface scale.
 
@@ -4429,7 +4562,12 @@ open in a tab, see *Checking PHP Syntax* — one tier down, on the **Tools** men
 The **Generation** menu drives the PHP Generator command-line to compile your
 `.pgtp` into PHP:
 
-1. **Locate PHP Generator Executable…** once (the path is stored for future use).
+1. **Point the app at the generator once**, in **Settings ▸ Software settings… ▸
+   External tools** — the **PHP Generator executable** group (see *Software
+   Settings ▸ The External tools pane*). The path is stored for future use, and
+   until it is set **Generate PHP** is greyed with a tooltip naming that pane.
+   (**Generation ▸ Locate PHP Generator Executable…** used to do this and is
+   gone from the menu.)
 2. **Generate PHP…** — if the project has unsaved changes, a dialog offers
    **Save**, **Save As** or **Cancel** first, so the generator always runs
    against the file on disk. (Those are buttons in that prompt, not menu
@@ -4468,11 +4606,15 @@ simply reads as busy instead of stalled.
 
 ## Appearance & Layout
 
-- **View ▸ Light Theme** is a checkable toggle between the editor's two themes:
-  checked applies the light theme, unchecked applies the dark theme. Both are the
-  editor's own color schemes and look the same on every platform — the app does
+- **The app's colours are a named theme, picked in Settings ▸ Software settings…
+  ▸ Themes.** Two are shipped, `dark` and `light`, and you can duplicate either
+  and recolour it (see *Software Settings ▸ The Themes pane*). The theme is the
+  editor's own colour scheme and looks the same on every platform — the app does
   not follow your operating system's light/dark setting. Toolbar icons re-tint to
-  stay legible in either theme, and your choice is remembered across restarts.
+  stay legible in whichever theme is on, and your choice is remembered across
+  restarts. **The View menu no longer has a theme toggle**: a theme is a setting
+  you pick once, so it lives with the app's other settings, which means changing
+  it is a Maintenance-mode gesture.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
   **Activity Log / Messages Panel** (the bottom dock), and **Raw XML Panel**. Each
   checkbox always reflects whether its panel is currently visible — closing a
@@ -4490,8 +4632,7 @@ simply reads as busy instead of stalled.
   **Settings** menu.
 - **Keyboard focus is visible.** Move focus with **Tab** and the button or tab
   bar that has it is outlined, so you can always tell what **Space** or
-  **Return** would press. It follows the theme in both the light and the dark
-  scheme.
+  **Return** would press. It follows whichever theme is in use.
 - Your window size and position, dock layout, theme, toolbar arrangement, and
   keyboard-shortcut changes are remembered between sessions.
 - **Dialogs open at a size that shows their contents.** **Project Settings…**,
@@ -4548,7 +4689,7 @@ A toolbar button *is* the menu item, not a copy of it. It therefore shares that
 menu item's enabled state (a command disabled in the menu is disabled on the
 toolbar), its checked state for toggles such as **Database ▸ DDL Explorer
 (Quality)** or
-**View ▸ Light Theme**, and its keyboard shortcut — including one you assigned
+**View ▸ Raw XML Panel**, and its keyboard shortcut — including one you assigned
 yourself in the **Keyboard shortcuts** pane, since the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
 are carried over unchanged — including a **DDL Explorer** button you pinned
@@ -4601,7 +4742,7 @@ a cell to pick it and close the dialog, or select it and press **OK**.
 - The icon is shown **only on the toolbar**. The matching menu entry keeps its plain
   text appearance, so decorating a button never changes how the menus look.
 - The preview in the dialog is tinted the same way the real button is, so what you
-  see is what you get under both the light and the dark theme.
+  see is what you get under whichever theme is in use.
 
 Your icon choices are saved with the toolbar arrangement when you press **OK** and
 survive across restarts. Removing a button from the toolbar drops its icon

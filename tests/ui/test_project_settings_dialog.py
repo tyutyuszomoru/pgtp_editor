@@ -808,3 +808,37 @@ def test_a_failed_target_test_never_asks_the_prober_for_a_version(qtbot):
     dialog.test_target()
 
     assert dialog._target_status_label.text() == "refused"
+
+
+def test_the_sandbox_test_names_the_CONFIGURED_FOLDER_when_there_is_one(qtbot, monkeypatch):
+    """`FQ-260812025353` made the binaries folder searched BEFORE `PATH`, which
+    turned "on PATH (not found)" into a sentence that sends a user who set a
+    folder off to edit their PATH instead. Same correction already applied to
+    `determine_project_tier`'s degraded reason and `MissingCloneToolError`.
+
+    Pinning both branches in one test on purpose: the PATH-only wording is what
+    the manual documents, and it must not drift while the folder branch is
+    added beside it.
+    """
+    from pgtp_editor.db.sandbox import SandboxCapabilities
+
+    caps = SandboxCapabilities(is_superuser=True, pg_dump_path=None, pg_restore_path=None)
+
+    dialog = ProjectSettingsDialog(_full_settings())
+    qtbot.addWidget(dialog)
+    # The missing-tools branch is WITH_DATA-only: a schema-only sandbox
+    # needs neither binary, so it never reaches the sentence under test.
+    dialog._sandbox_mode_with_data_radio.setChecked(True)
+
+    dialog._postgres_bin_dir_edit.setText("")
+    dialog._apply_sandbox_probe_result(caps)
+    on_path_only = dialog._sandbox_status_label.text()
+    assert "on PATH (not found)" in on_path_only
+    assert "pg_dump and pg_restore" in on_path_only
+
+    dialog._postgres_bin_dir_edit.setText("/opt/pg16/bin")
+    dialog._apply_sandbox_probe_result(caps)
+    with_folder = dialog._sandbox_status_label.text()
+    assert "/opt/pg16/bin" in with_folder
+    assert "or on PATH" in with_folder
+    assert "pg_dump and pg_restore" in with_folder

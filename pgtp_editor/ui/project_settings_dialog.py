@@ -670,10 +670,19 @@ class ProjectSettingsDialog(QDialog):
                 for name, path in (("pg_dump", caps.pg_dump_path), ("pg_restore", caps.pg_restore_path))
                 if path is None
             ]
+            # Name the CONFIGURED FOLDER when there is one. "on PATH (not
+            # found)" was true before FQ-260812025353 and sends a user who set
+            # a binaries folder off to edit their PATH -- the wrong thing. Same
+            # correction as `determine_project_tier`'s degraded reason and
+            # `MissingCloneToolError`, which already name both places.
+            bin_dir = self.postgres_bin_dir()
+            where = (
+                f"in {bin_dir} or on PATH" if bin_dir else "on PATH"
+            )
             self._sandbox_status_label.setText(
                 _with_server_version(
                     "Connected — superuser, but 'with data' needs "
-                    f"{' and '.join(missing)} on PATH (not found).",
+                    f"{' and '.join(missing)} {where} (not found).",
                     caps,
                 )
             )
