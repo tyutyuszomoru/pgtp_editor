@@ -662,7 +662,10 @@ class SandboxController(QObject):
         invents no reason string. Before any probe, reports the honest
         "not probed yet" degradation."""
         return determine_project_tier(
-            self._capabilities or _NOT_PROBED, self._mode, self._configured
+            self._capabilities or _NOT_PROBED,
+            self._mode,
+            self._configured,
+            bin_dir=self._bin_dir() or "",
         )
 
     @staticmethod
@@ -1348,7 +1351,9 @@ class SandboxController(QObject):
         check is about the machine, and the more specific cause reads better
         first.
         """
-        status = determine_project_tier(caps, self._mode, self._configured)
+        status = determine_project_tier(
+            caps, self._mode, self._configured, bin_dir=self._bin_dir() or ""
+        )
         if not self._configured or caps.probe_error is not None:
             return status.degraded_reason
         if self._require_superuser and not caps.is_superuser:

@@ -8117,3 +8117,75 @@ Verified as **not** offenders and to be left alone: `ui/mode_indicator.py:195` (
 **Spec impact — yes, flag for `spec-maintainer` after the fix lands; do not edit the spec from the fix pass.** `CONSOLIDATED_SPEC.md` §7's theme block states the guard's scope as *"an **AST guard** bans a `#rrggbb` anywhere in the package"* (echoed at `:44` — *"failing on a `#rrggbb` in any module"* — and at `:1753`). That sentence is what this fix widens: after Part 1 the rule is *"any paintable colour — hex of any length, or a CSS colour name in a style declaration — anywhere in the package"*, and the residual carve-out (a colour name reaching a declaration through a variable is not statically detectable, so the indirect form is deleted rather than guarded) is worth one sentence so nobody re-files it. The §7 line about `_debug_label`'s hardcoded red (`:2508`) also needs updating to reflect whichever way Part 1 resolves the DEBUG chip. The current behaviour was **not** an intentional decision — `COLOUR_LITERAL_EXEMPTIONS`' own comment calls its entries *"theme-BLIND panel colours not yet folded in … a mechanical follow-up"*, and the named-colour sites were never considered at all. No `owner-decision` is needed: every choice here is measured rather than chosen, except the DEBUG-chip fold-vs-exempt call, which the fix should decide in favour of folding for the reason stated in Part 1.
 
 ---
+
+## BUG-260812071208: opening a DDL Explorer while its menu toggle is unchecked introspects TWICE
+**Status:** OPEN
+**Reported:** 2026-08-12
+**Report (verbatim):** "Opening the DDL Explorer while its Database-menu toggle is unchecked performs the introspection fetch TWICE. `_open_ddl_explorer()` reveals the tab → `_on_ddl_explorer_visibility_changed` fires → it calls `action.setChecked(True)` to keep the menu in sync (that sync is BUG-007's fix, deliberate) → `setChecked` emits `toggled` → which is connected to `_open_ddl_explorer()` → which runs again. The consequence is not cosmetic: it is a double introspection fetch — two full round trips to the database per open — and now also two `[DDL]` rows in Messages, which is how it surfaced. Found by the agent wiring the `[DDL]` mode notice (commit 07b83e9); it predates that work."
+
+**Root cause:** The re-entrant edge is real and confirmed by measurement (a throwaway harness under `QT_QPA_PLATFORM=offscreen`, counting calls to a stubbed `_fetch_ddl_schema`), but the triggering condition is narrower than the report states, and the report's own naming of the gestures is half wrong. The cycle is:
+
+- `pgtp_editor/ui/main_window.py:4797` — `_open_ddl_explorer.on_result` calls `self.center_stage.show_ddl_explorer(role)`.
+- `pgtp_editor/ui/center_stage.py:538` — `show_ddl_explorer` emits `ddl_explorer_visibility_changed(role, True)` **unconditionally**.
+- `pgtp_editor/ui/main_window.py:4853-4855` — `_on_ddl_explorer_visibility_changed` ends with `action.setChecked(visible)` (BUG-007's bidirectional lockstep, deliberate, spec §18.1 "Bidirectional lockstep").
+- `pgtp_editor/ui/main_window.py:4265` / `:4279` — each role's action has `toggled` connected to `_on_ddl_explorer_toggled(checked, role)` (`:4639`), which on `True` calls `_open_ddl_explorer(role)` a second time.
+
+**The gate on the whole cycle is "was the action already checked when `_open_ddl_explorer` ran".** `QAction::activate(Trigger)` sets `checked` **before** emitting `toggled`, so by the time the handler runs, `isChecked()` is already `True` and the later `setChecked(True)` is a no-op that emits nothing. Measured results, both roles:
+
+| gesture | fetches |
+|---|---|
+| Database ▸ DDL Explorer (Quality) click / `action.setChecked(True)` from unchecked | **1** — no loop |
+| Database ▸ DDL Explorer (Sandbox) click | **1** — no loop |
+| Database ▸ Reload DDL **while the Quality Explorer is closed** (action unchecked; the entry is enabled in that state) | **2**, and two `[DDL]` rows |
+| Reload (menu, panel context item, or `Ctrl+Shift+R`) while the Explorer is **open** | **1** |
+| a bare `window._open_ddl_explorer(role)` from the unchecked state — both `DDL_EXPLORER_TARGET` and `DDL_EXPLORER_SANDBOX` | **2** |
+
+So: **`Database ▸ Reload DDL` with the Explorer closed is the one plain menu gesture that doubles**, and the menu toggle itself does **not**. The panel-hosted reload gestures (`EditorPanel.reload_requested`, `BrowserPanel.reload_requested`, both landing in `reload_ddl_explorer`, `main_window.py:4665`) cannot double in practice, because reaching them requires that role's tab to be visible, which implies its action is checked.
+
+**There is a second, genuinely user-facing instance of the same edge — a race, and it is probably what the reporter met through the toggle:** toggle the Explorer ON and then OFF again while the fetch is still in flight. The stale `on_result` still calls `show_ddl_explorer`, which re-reveals the tab the user just closed, re-checks the action from unchecked, and fires a second fetch. Verified with a deferred `_run_async`: after the first result lands, two tasks have been queued and the tab is visible again despite the user's close. Worth naming in the fix's tests, since it is the only way an ordinary user reaches this without touching Reload.
+
+**Termination:** exactly two fetches, never more — the second `on_result`'s `show_ddl_explorer` re-emits, but the action is checked by then, so `setChecked` is silent.
+
+**What actually re-runs (the cost).** `_fetch_ddl_schema` → `db/introspect.py:906 fetch_routines_and_triggers` → `run_queries` (`introspect.py:669`), which opens a **fresh psycopg connection** (connect + auth + TLS, `connect_timeout=10`) and runs **seven** statements in it: `ROUTINE_TRIGGER_SQL` (2) + `SCHEMA_SQL` (3: relations, columns, constraints) + `INDEX_SQL` (1) + `VIEWDEF_SQL` (1). Nothing about it is cached. On a large schema this is seconds, not milliseconds, and it is doubled. The whole of `on_result` re-runs with it: `build_ddl_text` (span rebuild), `EditorPanel.set_ddl_text`, `compute_drift_markers` (target role only — it re-reads `ddl/*.sql` off disk), `BrowserPanel.set_schema`, `SchemaIndex(schema)` plus the push into every open DDL object tab, and `_report_ddl_mode` → the second `[DDL]` row (confirmed: `['[DDL] mode msg', '[DDL] mode msg']`).
+
+**What does NOT double:** the FQ-260812022749 DDL-mode probe. `on_result` writes `_ddl_mode_verdict_key` (`main_window.py:4760`) *before* `show_ddl_explorer`, so the re-entrant open computes `probe_mode == False` (`:4746`) and does no `sandbox_probe` connection and no `pg_dump --version` spawn. One more conditional double worth a line: for the target role the second open re-evaluates `_ddl_explorer_params` → `_target_params_for_fetch` (`:5047`), whose BUG-034 one-time password prompt fires again whenever the params still arrive password-less (i.e. trust auth, or a target whose password was never stored) — a second modal on one gesture.
+
+**Both roles are affected identically.** The path is role-parameterized (§18.7) and so is the bug; the sandbox action carries the same `toggled` connect at `:4279`.
+
+**Proposed fix:** Add a per-role **re-entrancy guard around the lockstep sync**, in `pgtp_editor/ui/main_window.py`:
+
+1. Beside `self._ddl_explorer_actions` (`:1262` for the reset, `:4284` for the real map) add a companion set, e.g. `self._ddl_explorer_syncing: set[str] = set()`, documented as "roles whose menu action is currently being re-synced *by* the lockstep handler".
+2. In `_on_ddl_explorer_visibility_changed` (`:4836`), wrap only the final `action.setChecked(visible)` (`:4855`):
+   ```python
+   self._ddl_explorer_syncing.add(role)
+   try:
+       action.setChecked(visible)
+   finally:
+       self._ddl_explorer_syncing.discard(role)
+   ```
+3. In `_on_ddl_explorer_toggled` (`:4639`), return immediately when `role in self._ddl_explorer_syncing` — with a comment saying this `toggled` is the handler's own menu-state echo, not a user gesture, and that the sync itself (BUG-007) is deliberately kept.
+
+Gotchas, all of them easy to get wrong:
+
+- **Do not remove or weaken the `setChecked` in `_on_ddl_explorer_visibility_changed`.** It is BUG-007's fix and spec §18.1's "Bidirectional lockstep"; removing it regresses "closing via the tab ✕ unchecks the menu entry".
+- **Do not use `QSignalBlocker`/`action.blockSignals(True)` for this.** It blocks *all* of the action's signals, including `changed()`, and the Main Toolbar adds the **same** `QAction` object (`ui/toolbar_controller.py:340`), so a pinned "DDL Explorer (Quality)" toolbar button would keep a stale checked look until something else re-emitted `changed()`. The flag suppresses exactly one edge; the blocker suppresses more than intended.
+- **Do not wrap the other `setChecked(False)` sites.** `_open_ddl_explorer`'s no-params branch (`:4720`) and its `on_error` (`:4832`) *want* their `toggled(False)` to reach `_on_ddl_explorer_toggled` and hide the tab; that spring-back is the documented never-raises posture.
+- A viable alternative is making `_on_ddl_explorer_toggled` idempotent (`if checked and self.center_stage.isTabVisible(self.center_stage.ddl_explorer_tab_index(role)): return`). It fixes the same cases and is one line, but it also silently swallows a legitimate "re-open" gesture in any future desynced state, and it states the wrong invariant — the flag says *why* the event is being ignored. **Prefer the flag.**
+- The fix de-duplicates the **open**, not the `[DDL]` row. The row on every open is an owner ruling (*"this way the choice is clear"*, `_report_ddl_mode` docstring `:4598`); after this fix one open still emits exactly one row, and `tests/ui/test_ddl_mode_wiring.py::test_the_ddl_row_is_reported_on_every_ddl_open` (two opens → two rows) must stay green untouched.
+- **Out of scope but adjacent, do not silently "fix" it here:** a stale `on_result` re-revealing a tab the user closed mid-flight is a second defect of the same race (the guard stops the extra *fetch*, not the resurrection). If the fix pass wants to address it, the shape is an in-flight generation counter per role checked at the top of `on_result` — but that is a behaviour change ("a close during load wins"), so file it separately rather than folding it in.
+
+**Test impact:**
+- **`tests/ui/test_ddl_mode_wiring.py`** is the file that already knows about this bug and works around it: its `_open` helper (`:55-67`) carries a docstring explaining that a bare `_open_ddl_explorer()` "fetches (and would report) TWICE" and therefore drives the action instead. Once the guard lands, **that workaround comment must be corrected or removed** — leaving it in place preserves a false fact about the code. Its assertions themselves need no change.
+- **`tests/ui/test_ddl_explorer_wiring.py`** owns the open/lockstep wiring (incl. `test_show_ddl_explorer_directly_checks_menu_and_reveals_left_tab`, `:359`) and is the right home for the new regression cases. **`tests/ui/test_ddl_explorer_sandbox.py`** owns the §18.7 second instance; put the sandbox-role case there rather than duplicating the target-role file.
+- New cases needed, all counting calls to a stubbed `_fetch_ddl_schema` with `window._run_async = sync_run` (`tests/ui/_sandbox_stubs.py`):
+  1. `Database ▸ Reload DDL` (`window._reload_ddl_action.trigger()`) with the Explorer **closed** → exactly **one** fetch and exactly **one** `[DDL]` row. This is the direct regression and it fails on today's code (2 / 2).
+  2. The same for `window._open_ddl_explorer(role)` called directly from the unchecked state, for **both** roles → one fetch each.
+  3. The mid-flight race: a deferred `_run_async` that stores `(fn, on_result)`, toggle on, toggle off, then land the first result → exactly one fetch queued in total (assert on the number of deferred tasks, not just the fetch counter).
+  4. Unchanged-behaviour guards, so the guard cannot over-fire: a plain menu-toggle open still fetches once; reload **while open** still fetches once (it must remain a real re-introspection, BUG-062); closing via the tab ✕ still unchecks the menu entry (BUG-007).
+- **Contrary to the report's caveat, a test that calls `_open_ddl_explorer()` directly DOES reproduce this** — that is precisely the unchecked-action state. What does *not* reproduce is driving the menu toggle (`action.trigger()` / `action.setChecked(True)`), because Qt checks the action before emitting `toggled`. Write the cases accordingly; asserting via the toggle would produce a test that is green both before and after the fix.
+- **Name the fixture you will meet:** `tests/ui/conftest.py:35`'s autouse `_offline_ddl_mode_probe` substitutes `sandbox_probe` and the DDL-mode prober with the real rule minus its I/O, because ~40 tests reach `_open_ddl_explorer` while stubbing only `_fetch_ddl_schema`; without it the suite would dial every fake host at a 10 s connect timeout and shell out to `pg_dump --version`. It is why a new test here needs no probe stubbing of its own, and instance-level replacements (`window.probe_quality_capabilities = …`) still win over it.
+- No `docs/KEYBINDINGS.md` impact: no chord is added, moved or removed. `Ctrl+Shift+R` keeps its single panel host (BUG-062/DEC-012) and `Database ▸ Reload DDL` keeps carrying no shortcut.
+
+**Spec impact:** none required, but worth one clarifying sentence — flag for `spec-maintainer` after the fix lands, do not edit the spec from the fix pass. `CONSOLIDATED_SPEC.md` §18.1 ("Database menu & main-window wiring", ~line 7381) specifies the bidirectional lockstep and §18.7 (~line 13409) specifies that the lockstep is role-parameterized; **neither says anything about the toggle-side re-entry**, so the double fetch is an omission rather than an intentional decision. Once fixed, §18.1's lockstep bullet should gain a clause to the effect that the menu-state re-sync must not itself be readable as a user toggle. Nothing here reverses a recorded decision, so no `owner-decision` is needed.
+
+---

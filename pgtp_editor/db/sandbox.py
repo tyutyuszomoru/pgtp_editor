@@ -557,6 +557,7 @@ def determine_project_tier(
     capabilities: SandboxCapabilities,
     sandbox_mode: SandboxMode,
     sandbox_configured: bool = True,
+    bin_dir: str = "",
 ) -> ProjectCapabilityStatus:
     """Decide tier 2 ("quality project") vs. tier 3 ("development project")
     from a capability probe and the project's recorded sandbox mode (top of
@@ -599,7 +600,16 @@ def determine_project_tier(
         return ProjectCapabilityStatus(
             tier=ProjectTier.QUALITY,
             capabilities=capabilities,
-            degraded_reason=f"sandbox unavailable: {' and '.join(missing)} not found on PATH",
+            #: `bin_dir` is named when one is configured, for the same reason
+            #: `MissingCloneToolError` names it: "not found on PATH" is a
+            #: MISLEADING sentence when the user set a folder and the tool
+            #: simply is not in it -- it sends them to fix the wrong thing.
+            degraded_reason=(
+                f"sandbox unavailable: {' and '.join(missing)} not found in the "
+                f"configured PostgreSQL binaries folder ({bin_dir}) or on PATH"
+                if bin_dir
+                else f"sandbox unavailable: {' and '.join(missing)} not found on PATH"
+            ),
         )
     return ProjectCapabilityStatus(tier=ProjectTier.DEVELOPMENT, capabilities=capabilities)
 

@@ -901,7 +901,9 @@ class DdlProjectController(QObject):
                     SandboxCapabilities(), sandbox_mode, sandbox_configured=False
                 )
             caps = self.probe_sandbox_capabilities(sandbox_params, bin_dir=bin_dir)
-            return determine_project_tier(caps, sandbox_mode, sandbox_configured=True)
+            return determine_project_tier(
+                caps, sandbox_mode, sandbox_configured=True, bin_dir=bin_dir or ""
+            )
 
         def on_result(status: ProjectCapabilityStatus) -> None:
             self._capability_status = status

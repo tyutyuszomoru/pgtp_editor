@@ -1618,3 +1618,28 @@ def test_local_postgres_backend_probes_through_the_binaries_folder(tmp_path):
     )
 
     assert backend.capabilities().pg_dump_path == dump
+
+
+def test_the_degraded_reason_names_the_CONFIGURED_FOLDER_when_there_is_one():
+    """`FQ-260812025353`: once a project can point at a binaries folder,
+    "not found on PATH" is a MISLEADING sentence -- it sends a user who set a
+    folder off to edit their PATH, which is the wrong thing. The reason names
+    both places, exactly as `MissingCloneToolError` already did.
+
+    Pinning both branches together on purpose: the PATH-only wording is the
+    one 40-odd existing assertions depend on, and it must not drift while the
+    folder branch is added beside it."""
+    caps = SandboxCapabilities()
+
+    on_path_only = determine_project_tier(caps, SandboxMode.WITH_DATA)
+    assert on_path_only.degraded_reason == (
+        "sandbox unavailable: pg_dump and pg_restore not found on PATH"
+    )
+
+    with_folder = determine_project_tier(
+        caps, SandboxMode.WITH_DATA, bin_dir="/opt/pg16/bin"
+    )
+    assert "/opt/pg16/bin" in with_folder.degraded_reason
+    assert "or on PATH" in with_folder.degraded_reason
+    # The folder branch must not silently drop which tools are missing.
+    assert "pg_dump and pg_restore" in with_folder.degraded_reason
