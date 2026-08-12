@@ -2984,3 +2984,92 @@ def test_the_danger_band_is_visible_AS_a_band_against_the_tree_chrome(light):
     chip_background, _ = mode_colors(light)[MODE_MAINTENANCE]
     if light:
         assert _contrast_ratio(chip_background, chrome) < 3.0
+
+
+# ---------------------------------------------------------------------------
+# FULL mode (`FQ-260812022749`): the tree and the edit seams are unchanged
+# ---------------------------------------------------------------------------
+
+from pgtp_editor.db.ddl_buffer import build_ddl_buffer  # noqa: E402
+from pgtp_editor.db.pg_dump_mode import DdlMode  # noqa: E402
+
+#: A `pg_dump --schema-only` covering exactly `_rich_table_schema()`'s
+#: relations, with the primary key as a standalone `ALTER TABLE` and the index
+#: as its own statement -- i.e. the non-contiguous shape the spans are recovered
+#: from.
+_FULL_DUMP = """SET statement_timeout = 0;
+
+CREATE TABLE pr.orders (
+    id integer NOT NULL,
+    tag text
+);
+
+ALTER TABLE ONLY pr.orders
+    ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+
+CREATE INDEX ix_tag ON pr.orders USING btree (tag);
+
+CREATE VIEW pr.v_orders AS
+ SELECT orders.id
+   FROM pr.orders;
+"""
+
+
+def _full_panel(qtbot):
+    schema = _rich_table_schema()
+    buffer = build_ddl_buffer(schema, mode=DdlMode.FULL, dump_text=_FULL_DUMP)
+    assert buffer.mode is DdlMode.FULL, buffer.degrade_reason
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, buffer.spans)
+    return panel, buffer.text.splitlines()
+
+
+def test_the_tree_needs_no_knowledge_of_the_mode(qtbot):
+    """The tree is built from `DatabaseSchema` and finds each row's span by
+    identity, so a full-mode span list drops straight in -- no second walk, no
+    mode flag reaching the panel."""
+    panel, lines = _full_panel(qtbot)
+    orders = _orders_item(panel)
+    assert orders is not None
+    assert _clicked_line(panel, orders)
+
+
+def test_a_table_click_in_full_mode_lands_on_its_create_table(qtbot):
+    """Owner-settled: *"click should bring to create table."* Pinned here so a
+    later refactor cannot drift it."""
+    panel, lines = _full_panel(qtbot)
+    [line] = _clicked_line(panel, _orders_item(panel))
+    region = "\n".join(lines[line - 1: line + 6])
+    assert "CREATE TABLE pr.orders (" in region
+    assert "ADD CONSTRAINT orders_pkey" not in region
+
+
+def test_a_constraint_click_in_full_mode_lands_on_its_own_statement(qtbot):
+    """Containment is LOST in full mode and that is design: the constraint has
+    a statement of its own, further down the file, and the click resolves to
+    it."""
+    panel, lines = _full_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Constraints")
+    [line] = _clicked_line(panel, group.child(0))
+    assert lines[line - 1] == "ALTER TABLE ONLY pr.orders"
+    assert "ADD CONSTRAINT orders_pkey" in lines[line]
+
+
+def test_full_mode_does_NOT_change_what_the_editable_text_for_a_view_is(qtbot):
+    """LOAD-BEARING (`FQ-260812025836`). A `pg_dump`-sourced editable text would
+    arrive bundled with the view's `CREATE TRIGGER`s, so a user's own
+    `DROP VIEW` would silently take the triggers too. The edit target resolves
+    against `DatabaseSchema` (`pg_get_viewdef`), never against the buffer text
+    -- verified here rather than assumed."""
+    panel, _lines = _full_panel(qtbot)
+    span = _span_of(_relation_item(panel, "pr.v_orders"))
+
+    ref, source = resolve_edit_target(panel._schema, span)
+
+    assert (ref.kind, ref.name) == ("view", "v_orders")
+    assert source == "CREATE OR REPLACE VIEW pr.v_orders AS\nSELECT 1;"
+    assert "CREATE TRIGGER" not in source
+    # ...and that is NOT what the full-mode buffer shows for the same object,
+    # which is exactly why the seam had to be checked.
+    assert "SELECT orders.id" in "\n".join(_lines)

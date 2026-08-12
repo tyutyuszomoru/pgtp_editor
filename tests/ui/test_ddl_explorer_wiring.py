@@ -18,6 +18,7 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     FILTER_MODE_CONTAINS,
     FILTER_PLACEHOLDER,
 )
+from pgtp_editor.ui.center_stage import DDL_EXPLORER_TARGET
 from pgtp_editor.ui.main_window import MainWindow
 
 from ._menu_helpers import action_labels, find_action, find_top_menu
@@ -630,3 +631,124 @@ def _hidden_labels(panel):
     for index in range(panel.tree.topLevelItemCount()):
         walk(panel.tree.topLevelItem(index))
     return sorted(hidden)
+
+
+# ---------------------------------------------------------------------------
+# BUG-260812071208: an open from the UNCHECKED state must fetch exactly ONCE.
+#
+# `_open_ddl_explorer` reveals the tab -> `_on_ddl_explorer_visibility_changed`
+# re-syncs the menu entry (BUG-007's lockstep, kept) -> from unchecked that
+# `setChecked(True)` emitted `toggled` -> `_on_ddl_explorer_toggled` re-entered
+# the opener and ran a SECOND seven-statement introspection round trip.
+#
+# These cases deliberately do NOT drive the menu toggle: `QAction::activate`
+# sets `checked` before emitting `toggled`, so a menu click always found the
+# action already checked and never looped -- a toggle-driven test would be green
+# before and after the fix and would prove nothing.
+# ---------------------------------------------------------------------------
+
+def _counting_window(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    fetches = []
+
+    def fetch(params):
+        fetches.append(params)
+        return _schema()
+
+    window._fetch_ddl_schema = fetch
+    return window, fetches
+
+
+def test_reload_ddl_with_the_explorer_closed_introspects_once(qtbot, tmp_path):
+    """The one plain menu gesture that doubled: `Database ▸ Reload DDL` is
+    enabled while the Explorer is closed, so it opens from the unchecked state.
+    """
+    window, fetches = _counting_window(qtbot, tmp_path)
+    assert window._ddl_explorer_action.isChecked() is False
+
+    window._reload_ddl_action.trigger()
+
+    assert len(fetches) == 1
+    assert window._ddl_explorer_action.isChecked() is True
+
+
+def test_reload_ddl_with_the_explorer_closed_reports_one_ddl_row(qtbot, tmp_path):
+    """The row on every DDL open is an owner ruling and is NOT de-duplicated --
+    one OPEN, one row. The doubled row was the symptom that made the doubled
+    fetch visible, and the fix is on the open."""
+    from pgtp_editor.ui.audit_router import DDL_PREFIX
+
+    window, _fetches = _counting_window(qtbot, tmp_path)
+
+    window._reload_ddl_action.trigger()
+
+    rows = [t for t in window.results_panel.row_texts() if t.startswith(DDL_PREFIX)]
+    assert len(rows) == 1
+
+
+def test_a_direct_open_from_the_unchecked_state_introspects_once(qtbot, tmp_path):
+    """A bare `_open_ddl_explorer()` IS the unchecked state, so it reproduces
+    the double fetch (contrary to the original report's caveat)."""
+    window, fetches = _counting_window(qtbot, tmp_path)
+
+    window._open_ddl_explorer(DDL_EXPLORER_TARGET)
+
+    assert len(fetches) == 1
+
+
+def test_a_close_during_an_in_flight_fetch_does_not_queue_a_second_one(
+    qtbot, tmp_path
+):
+    """The genuinely user-facing instance: toggle ON, toggle OFF while the fetch
+    is still running, then let the result land. The stale `on_result` still
+    re-reveals the tab (that resurrection is a separate defect, out of scope
+    here) -- but it must not re-check the action from unchecked and fire a
+    SECOND fetch."""
+    window, fetches = _counting_window(qtbot, tmp_path)
+    queued = []
+    window._run_async = lambda fn, on_result, on_error=None: queued.append(
+        (fn, on_result)
+    )
+
+    window._ddl_explorer_action.setChecked(True)  # one task queued, nothing run
+    window._ddl_explorer_action.setChecked(False)  # user closes it mid-flight
+    assert len(queued) == 1
+    fn, on_result = queued[0]
+    on_result(fn())  # the stale result lands
+
+    assert len(fetches) == 1
+    assert len(queued) == 1  # no second task was ever queued
+
+
+def test_the_menu_toggle_still_opens_with_exactly_one_fetch(qtbot, tmp_path):
+    """Unchanged-behaviour guard: the guard must not over-fire and swallow the
+    real gesture."""
+    window, fetches = _counting_window(qtbot, tmp_path)
+
+    window._ddl_explorer_action.setChecked(True)
+
+    assert len(fetches) == 1
+    assert window.center_stage.isTabVisible(window.center_stage.ddl_tab_index)
+
+
+def test_reload_while_open_is_still_a_real_single_reintrospection(qtbot, tmp_path):
+    """BUG-062: reload must stay a live re-fetch, not a redraw from cache."""
+    window, fetches = _counting_window(qtbot, tmp_path)
+    window._ddl_explorer_action.setChecked(True)
+    assert len(fetches) == 1
+
+    window._reload_ddl_action.trigger()
+
+    assert len(fetches) == 2
+
+
+def test_closing_via_the_tab_cross_still_unchecks_the_menu_entry(qtbot, tmp_path):
+    """BUG-007's lockstep is deliberately KEPT -- the guard suppresses only the
+    toggled echo, never the `setChecked` itself."""
+    window, _fetches = _counting_window(qtbot, tmp_path)
+    window._ddl_explorer_action.setChecked(True)
+
+    window.center_stage.tabCloseRequested.emit(window.center_stage.ddl_tab_index)
+
+    assert window._ddl_explorer_action.isChecked() is False
+    assert window._ddl_explorer_syncing == set()

@@ -466,3 +466,85 @@ def test_offsets_point_at_the_line_that_renders_each_item():
     assert rendered.lines[rendered.column_offsets["tag"]].strip().startswith("tag text")
     assert "CONSTRAINT pk" in rendered.lines[rendered.constraint_offsets["pk"]]
     assert rendered.lines[rendered.index_offsets["ix_tag"]].startswith("CREATE INDEX")
+
+
+# --- the SERIAL/nextval clone hazard (`FQ-260812022749`, warn-only) -----------
+
+from pgtp_editor.db.table_ddl import (  # noqa: E402
+    SEQUENCE_CLONE_HAZARD,
+    SEQUENCE_CLONE_HAZARD_DETAIL,
+    has_sequence_default,
+    sequence_clone_hazard_lines,
+)
+
+
+def _serial_table():
+    return _table(
+        columns=[
+            _col(
+                "id",
+                "integer",
+                nullable=False,
+                default="nextval('pr.orders_id_seq'::regclass)",
+            ),
+            _col("tag", "text"),
+        ]
+    )
+
+
+def test_a_nextval_default_earns_the_clone_hazard_notice():
+    """Part 5 settled what this text is FOR: a clone source. A copy of it under
+    a new name still draws from the ORIGINAL table's sequence, so the two draw
+    from one counter and dropping the original breaks the clone."""
+    rendered = build_table_ddl(_serial_table())
+    assert SEQUENCE_CLONE_HAZARD in rendered.lines
+    assert SEQUENCE_CLONE_HAZARD_DETAIL in rendered.lines
+
+
+def test_the_hazard_sits_directly_under_the_reconstruction_notice():
+    """Inside the region a whole-object copy takes with it -- a notice the
+    reader has scrolled past is a notice that does not exist."""
+    rendered = build_table_ddl(_serial_table())
+    assert rendered.lines[:4] == [
+        RECONSTRUCTION_NOTICE,
+        RECONSTRUCTION_NOTICE_DETAIL,
+        SEQUENCE_CLONE_HAZARD,
+        SEQUENCE_CLONE_HAZARD_DETAIL,
+    ]
+
+
+def test_the_hazard_does_not_shift_the_column_or_constraint_offsets():
+    """Offsets are derived from `len(lines)`, so an extra notice line must not
+    be able to break click-to-navigate."""
+    rendered = build_table_ddl(_serial_table())
+    for name, offset in rendered.column_offsets.items():
+        assert name in rendered.lines[offset]
+
+
+def test_a_table_with_no_nextval_default_says_nothing():
+    """Warning about every table would train the reader to skip the line."""
+    rendered = build_table_ddl(_table(columns=[_col("tag", "text")]))
+    assert SEQUENCE_CLONE_HAZARD not in rendered.text
+
+
+def test_an_IDENTITY_column_is_not_the_hazard():
+    """Cloning `GENERATED ... AS IDENTITY` creates a NEW implicit sequence for
+    the new table, so the shared-counter hazard does not arise."""
+    table = _table(columns=[_col("id", "integer", nullable=False, identity="a")])
+    assert not has_sequence_default(table)
+    assert sequence_clone_hazard_lines(table) == []
+
+
+def test_a_generated_column_whose_expression_calls_nextval_is_not_the_hazard():
+    """Its `default` IS its expression, not a column default -- and it is not
+    what a clone copies wrongly."""
+    table = _table(
+        columns=[_col("n", "integer", default="nextval('s')", generated="s")]
+    )
+    assert not has_sequence_default(table)
+
+
+def test_views_and_matviews_get_no_table_clone_hazard():
+    """A view is not cloned by copying a `CREATE TABLE`."""
+    view = TableInfo(name="pr.v", kind="view", view_definition="SELECT 1")
+    assert sequence_clone_hazard_lines(view) == []

@@ -113,6 +113,70 @@ RECONSTRUCTION_NOTICE_DETAIL = (
     "table inheritance or partitioning."
 )
 
+#: The `SERIAL`/`nextval` clone hazard, emitted per table **in BOTH modes**
+#: (`FQ-260812022749`, owner ruling: **warn only**).
+#:
+#: Part 5 settled what a table's complete DDL is *for*: it is a **clone
+#: source**, read by a developer who renames it and executes it in the SQL
+#: Console. That makes a `nextval()` default a concrete, checkable defect
+#: generator -- the clone's default still points at the **original** table's
+#: sequence, so the two tables draw from one counter and dropping the original
+#: breaks the clone.
+#:
+#: **Why it applies to full mode too, which is the counter-intuitive half.**
+#: `pg_dump` *does* emit the owned `CREATE SEQUENCE` -- but in a **different
+#: section of the file** from the table, so a developer copying the
+#: `CREATE TABLE` still does not get it. Neither mode is clone-safe here, so
+#: neither mode may be the one that stays quiet.
+#:
+#: **Warn-only, by ruling.** No `CREATE SEQUENCE` span is emitted, and nothing
+#: is restructured to "fix" this -- the correct clone is a judgement call about
+#: whether the two tables should share a counter, and the app does not make it.
+SEQUENCE_CLONE_HAZARD = (
+    "-- WARNING: a column default calls nextval() — a COPY of this statement "
+    "under a new name would draw from"
+)
+SEQUENCE_CLONE_HAZARD_DETAIL = (
+    "--          the ORIGINAL table's sequence. The owned CREATE SEQUENCE is "
+    "not part of this statement; give a clone its own."
+)
+
+#: `nextval('pr.orders_id_seq'::regclass)` -- what a `SERIAL`/`BIGSERIAL`
+#: column's default looks like once PostgreSQL has expanded the macro. Matched
+#: on the catalog's own `pg_attrdef` text, never on the word `SERIAL`, which
+#: never reaches the catalog at all.
+_NEXTVAL_DEFAULT = re.compile(r"\bnextval\s*\(", re.IGNORECASE)
+
+
+def has_sequence_default(table: TableInfo) -> bool:
+    """Does any of `table`'s columns default to `nextval(...)`?
+
+    An **identity** column deliberately does not count: cloning
+    `GENERATED ... AS IDENTITY` creates a *new* implicit sequence for the new
+    table, so the shared-counter hazard does not arise -- warning about it
+    would train the reader to skip the line that matters.
+    """
+    for column in table.columns or []:
+        if column.identity in _IDENTITY_CLAUSE:
+            continue
+        if column.generated == "s":
+            continue
+        if column.default and _NEXTVAL_DEFAULT.search(column.default):
+            return True
+    return False
+
+
+def sequence_clone_hazard_lines(table: TableInfo) -> list[str]:
+    """The two hazard lines for `table`, or `[]`. One home for the wording, so
+    the full-mode and restricted-mode notices cannot drift apart."""
+    if table.kind not in (None, "", "table"):
+        # Views and matviews are not cloned by copying a `CREATE TABLE`, and a
+        # matview's `nextval` default is its base table's business.
+        return []
+    if not has_sequence_default(table):
+        return []
+    return [SEQUENCE_CLONE_HAZARD, SEQUENCE_CLONE_HAZARD_DETAIL]
+
 #: Ordering rank for inline constraints, so a table's rendered DDL is
 #: reproducible across fetches (BUG-018's determinism rule, which is NOT one of
 #: this feature's open questions). Within a rank, by constraint name.
@@ -253,6 +317,9 @@ def build_table_ddl(
     """
     name = qualified_ident(table.name)
     lines: list[str] = [RECONSTRUCTION_NOTICE, RECONSTRUCTION_NOTICE_DETAIL]
+    # The clone hazard rides directly under the incompleteness notice, inside
+    # the region a whole-object copy takes with it (`FQ-260812022749` Part 5).
+    lines.extend(sequence_clone_hazard_lines(table))
     column_offsets: dict[str, int] = {}
     constraint_offsets: dict[str, int] = {}
     index_offsets: dict[str, int] = {}
