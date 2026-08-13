@@ -368,3 +368,75 @@ def test_reparse_refreshes_the_visible_coherence_view(qtbot, tmp_path):
         f"{item.text(0)} {item.text(1)}" for item in _rows(window.coherence_panel)
     ]
     assert any("kb.x_category" in row and "missing in DB" in row for row in text)
+
+
+# ---------------------------------------------------------------------------
+# BUG-260812110307's twin in this lane: a close during an in-flight check wins.
+# ---------------------------------------------------------------------------
+
+def _deferred(window):
+    """Record the task instead of running it, so a close can happen "while the
+    check is out". Returns the list of `(work, on_result)` pairs."""
+    queued = []
+    window._run_async = lambda fn, on_result, on_error=None: queued.append(
+        (fn, on_result)
+    )
+    return queued
+
+
+def _land(entry):
+    fn, on_result = entry
+    on_result(fn())
+
+
+def test_closing_the_coherence_tab_mid_check_leaves_it_closed(qtbot, tmp_path):
+    """`run_check.on_result` did `_populate` → `_reveal_panel` → `setChecked(True)`
+    with exactly the DDL Explorer's race: the stale result revealed the panel the
+    user had just closed and re-checked the menu entry.
+
+    `refresh_if_open` already asks the right question (`_panel_visible()`), but
+    this path cannot: at `on_result` time a NORMAL run has not revealed the panel
+    yet, because `_reveal_panel` below is what does it — so the fix is an epoch,
+    not a visibility test. `test_a_normal_coherence_run_still_reveals_the_tab`
+    below is the case that would go red if anyone reached for the cheap version.
+    """
+    window = _window(qtbot, tmp_path)
+    queued = _deferred(window)
+
+    window._db_ui.toggle_action.setChecked(True)  # the check goes out
+    window._db_ui.toggle_action.setChecked(False)  # the user closes the tab
+    _land(queued[0])
+
+    assert window.left_tabs.isTabVisible(window.coherence_tab_index) is False
+    assert window._db_ui.toggle_action.isChecked() is False
+    assert window.coherence_panel.tree.topLevelItemCount() == 0
+
+
+def test_a_normal_coherence_run_still_reveals_the_tab(qtbot, tmp_path):
+    """The guard against the visibility shortcut, in this lane."""
+    window = _window(qtbot, tmp_path)
+    queued = _deferred(window)
+    assert window.left_tabs.isTabVisible(window.coherence_tab_index) is False
+
+    window._db_ui.toggle_action.setChecked(True)
+    _land(queued[0])
+
+    assert window.left_tabs.isTabVisible(window.coherence_tab_index) is True
+    assert window._db_ui.toggle_action.isChecked() is True
+    assert window.coherence_panel.tree.topLevelItemCount() > 0
+
+
+def test_a_project_close_mid_check_does_not_restore_the_cached_schema(qtbot, tmp_path):
+    """The reason this lane keeps NOTHING from a superseded result, unlike the
+    DDL one: `teardown_for_project_close` drops `last_schema` precisely so a
+    later reparse or rename cannot act on a closed project's state (BUG-011,
+    §17). A stale result writing it back would hand that state straight back."""
+    window = _window(qtbot, tmp_path)
+    queued = _deferred(window)
+    window._db_ui.run_check()
+
+    window._db_ui.teardown_for_project_close()
+    _land(queued[0])
+
+    assert window._db_ui.last_schema is None
+    assert window.left_tabs.isTabVisible(window.coherence_tab_index) is False

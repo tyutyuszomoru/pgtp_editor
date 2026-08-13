@@ -1268,6 +1268,14 @@ class MainWindow(QMainWindow):
         #: gesture (BUG-260812071208). The lockstep itself is BUG-007's fix and
         #: stays; only its echo back into the opener is suppressed.
         self._ddl_explorer_syncing: set[str] = set()
+        #: BUG-260812110307: how many times `role`'s Explorer has been asked to
+        #: load OR to close. `_open_ddl_explorer` captures the value it bumped
+        #: to; a result whose captured epoch no longer matches was superseded by
+        #: a close (or by a later open) and paints nothing visible. Deliberately
+        #: NOT entangled with `_ddl_explorer_syncing` above: that one marks a
+        #: re-entrancy echo within a single gesture, this one orders gestures
+        #: against results that are already in flight.
+        self._ddl_fetch_epoch: dict[str, int] = {}
         # `Database ▸ Sandbox Setup…` used to live here. It is DELETED (owner
         # ruling, 2026-08-09): Provision / Reset / "create a sandbox database
         # for me" now live in Project Settings' sandbox group, which is what
@@ -4788,6 +4796,11 @@ class MainWindow(QMainWindow):
             role,
             debuglog.redacted(params),
         )
+        # BUG-260812110307: taken on the GUI thread, after the params guard (a
+        # refused open started no fetch, so it must not supersede a live one)
+        # and before the task is handed off. Every open bumps too, so two rapid
+        # reloads can no longer paint out of order -- last requested wins.
+        epoch = self._bump_ddl_fetch_epoch(role)
 
         # FQ-260812022749: the quality DDL mode is probed at most ONCE per
         # quality connection, on this worker thread, and REPORTED on every
@@ -4844,9 +4857,80 @@ class MainWindow(QMainWindow):
 
         def on_result(outcome):
             schema, probed, dump_text, dump_error, verdict = outcome
+            # BUG-260812110307: a close that arrived while this fetch was out
+            # WINS. `run_async` has no cancellation -- the task sits in
+            # `_INFLIGHT` until it delivers, the same fact
+            # `tests/ui/test_sandbox_controller.py::test_a_result_landing_after
+            # _the_window_is_gone_is_dropped_not_raised` records for a vanished
+            # window. This is that principle applied to a SURFACE: the result
+            # still lands, it just performs no visible act.
+            #
+            # An epoch, deliberately NOT `center_stage.isTabVisible(...)`: on a
+            # NORMAL open the tab is still hidden right here, because
+            # `show_ddl_explorer` below is what reveals it, so a visibility gate
+            # would suppress the very reveal it exists to perform. Visibility
+            # also cannot tell "the user closed it" apart from the Maintenance
+            # prune or the sandbox-unavailable hide.
+            stale = self._ddl_fetch_epoch.get(role) != epoch
             if probed is not None:
+                # KEPT even when stale: these are CONNECTION-scoped facts, keyed
+                # on `_ddl_mode_cache_key(params)`, which a closed tab cannot
+                # falsify. Dropping them would re-open a probe connection and
+                # re-spawn `pg_dump --version` on the next open for an answer
+                # already in hand.
                 self._quality_capabilities, self._ddl_mode_verdict = probed
                 self._ddl_mode_verdict_key = self._ddl_mode_cache_key(params)
+            if role == DDL_EXPLORER_TARGET:
+                # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
+                # index from this same fetch (now widened to also carry
+                # `.tables`) and push it into every already-open DDL object tab,
+                # exactly like the tree and the read-only buffer are refreshed
+                # below -- built once per connect/refresh, never per keystroke.
+                #
+                # TARGET ONLY, for the same reason the drift markers are: an
+                # open object tab's completions (and FQ-002's trigger-function
+                # candidate list) describe the lane the edit will be applied to,
+                # and a sandbox browse must not silently repoint them at a
+                # different database's object set.
+                #
+                # KEPT even when stale, and this is the emphatic one: §18.5
+                # object-editor tabs are INDEPENDENT surfaces with their own
+                # lifetime. A user who closed the browser still has editable
+                # object tabs open, and their completions must describe the
+                # freshest introspection. Do not "simplify" the block below into
+                # a blanket early return that skips this -- that silently breaks
+                # §18.6 completions in tabs nobody closed.
+                self._ddl_schema_index = SchemaIndex(schema)
+                # Kept alongside the index because FQ-002's creation dialogs need
+                # the raw schema (the trigger-function candidate list), and the
+                # index exposes only its own query surface.
+                self._ddl_schema = schema
+                for panel in self.center_stage.ddl_object_panels():
+                    panel.set_schema_index(self._ddl_schema_index)
+            if stale:
+                # Everything below here is a VISIBLE act -- the `[DDL]` rows, the
+                # buffer install, the tree population and its drift markers, the
+                # reveal (which drags the left tree tab and the menu checkmark
+                # with it through `_on_ddl_explorer_visibility_changed`) and the
+                # object counts. None of them is performed for a surface the
+                # user closed, and none of them is lost either: reopening runs
+                # this same full fetch, so the round trip costs exactly what it
+                # costs today.
+                #
+                # Suppressing the `[DDL]` mode row NARROWS the owner's "report it
+                # on every DDL open" ruling to "every open that REVEALS a panel".
+                # That is a reading of the ruling, not a reversal: a discarded
+                # fetch was not an open, so BUG-260812071208's invariant (one
+                # open, one fetch, one row) is preserved exactly, and the next
+                # real open still emits it -- from the cache kept above, with no
+                # probe.
+                self.statusBar().showMessage(
+                    f"{label}: closed while loading — the fetch was discarded."
+                )
+                _log.info(
+                    "db: ddl explorer load finished role=%s stale=True", role
+                )
+                return
             if role == DDL_EXPLORER_TARGET:
                 self._report_ddl_mode(self._ddl_mode_verdict)
             buffer = build_ddl_buffer(
@@ -4891,25 +4975,9 @@ class MainWindow(QMainWindow):
                 schema, buffer.spans, drift_markers=drift_markers
             )
             self.center_stage.show_ddl_explorer(role)
-            if role == DDL_EXPLORER_TARGET:
-                # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
-                # index from this same fetch (now widened to also carry
-                # `.tables`) and push it into every already-open DDL object tab,
-                # exactly like the tree and the read-only buffer are refreshed
-                # above -- built once per connect/refresh, never per keystroke.
-                #
-                # TARGET ONLY, for the same reason the markers are: an open
-                # object tab's completions (and FQ-002's trigger-function
-                # candidate list) describe the lane the edit will be applied to,
-                # and a sandbox browse must not silently repoint them at a
-                # different database's object set.
-                self._ddl_schema_index = SchemaIndex(schema)
-                # Kept alongside the index because FQ-002's creation dialogs need
-                # the raw schema (the trigger-function candidate list), and the
-                # index exposes only its own query surface.
-                self._ddl_schema = schema
-                for panel in self.center_stage.ddl_object_panels():
-                    panel.set_schema_index(self._ddl_schema_index)
+            # The §18.6 completion index was already rebuilt and pushed above,
+            # BEFORE the stale return, because open object tabs are independent
+            # of this surface.
             self.statusBar().showMessage(
                 f"{label}: {len(schema.routines)} routine(s), "
                 f"{len(schema.triggers)} trigger(s)."
@@ -4922,12 +4990,29 @@ class MainWindow(QMainWindow):
             # down) is REPORTED and the toggle springs back, so the menu entry
             # never lands the user on an empty tree that looks like an empty
             # database.
+            #
+            # DELIBERATELY UNGUARDED by the epoch (BUG-260812110307): this path
+            # reveals nothing, so it cannot resurrect anything -- it writes a
+            # status line and un-checks an action that is already unchecked. A
+            # failed fetch is worth reporting even for a panel the user closed
+            # meanwhile. Do not "complete" the fix by silencing it.
             _log.info("db: ddl explorer load failed role=%s %s", role, exc)
             self.statusBar().showMessage(f"{label} failed: {exc}")
             if action is not None:
                 action.setChecked(False)
 
         self._run_async(work, on_result=on_result, on_error=on_error)
+
+    def _bump_ddl_fetch_epoch(self, role) -> int:
+        """Supersede whatever fetch `role` has in flight, and return the new
+        epoch (BUG-260812110307).
+
+        Called from every OPEN (so the last-requested result is the one that
+        paints) and from every CLOSE — a close during a load wins.
+        """
+        epoch = self._ddl_fetch_epoch.get(role, 0) + 1
+        self._ddl_fetch_epoch[role] = epoch
+        return epoch
 
     def _on_ddl_explorer_visibility_changed(self, role, visible):
         """Keep `role`'s left tree tab and its Database-menu toggle in lockstep
@@ -4945,6 +5030,15 @@ class MainWindow(QMainWindow):
             # site used to do for itself.
             self._reveal_left_panel(self._ddl_browser_panels[role])
         else:
+            # BUG-260812110307: the funnel EVERY close gesture already goes
+            # through -- the tab's ✕, the menu toggle off, the Maintenance prune
+            # of a visible tab, the sandbox-unavailable hide. Superseding here
+            # is what makes "a close during a load wins" true for all of them at
+            # once. It is not enough on its own: a fetch launched from the
+            # unchecked state never reaches this branch, which is why
+            # `_refresh_ddl_explorer_affordances` and the Maintenance prune bump
+            # unconditionally too.
+            self._bump_ddl_fetch_epoch(role)
             self.left_tabs.setTabVisible(self._ddl_browser_tab_indexes[role], False)
         action = self._ddl_explorer_actions.get(role)
         if action is not None:
@@ -4984,6 +5078,15 @@ class MainWindow(QMainWindow):
         action = self._ddl_explorer_actions.get(DDL_EXPLORER_SANDBOX)
         if action is not None:
             action.setVisible(available)
+        if not available:
+            # BUG-260812110307, and UNCONDITIONALLY -- before, and independently
+            # of, the visibility-gated hide below. The hide only fires for a tab
+            # that is already visible, so a sandbox fetch launched from the
+            # unchecked state (`Reload DDL` with the Explorer closed, or a bare
+            # open) never reaches `_on_ddl_explorer_visibility_changed`'s funnel:
+            # without this line the previous project's sandbox schema would
+            # reveal itself after the project switch that took the sandbox away.
+            self._bump_ddl_fetch_epoch(DDL_EXPLORER_SANDBOX)
         if not available and self.center_stage.isTabVisible(
             self.center_stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)
         ):
@@ -7011,6 +7114,13 @@ class MainWindow(QMainWindow):
         """
         stage = self.center_stage
         for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+            # BUG-260812110307, unconditionally and for the same reason
+            # `_refresh_ddl_explorer_affordances` does it: the hide below is
+            # visibility-gated, so an Explorer that is LOADING while invisible
+            # (`Reload DDL` with it closed) would otherwise never supersede its
+            # fetch — and the stale result would re-open an Explorer inside the
+            # mode whose whole point is the XSD-only surface.
+            self._bump_ddl_fetch_epoch(role)
             if stage.isTabVisible(stage.ddl_explorer_tab_index(role)):
                 # Only when visible: `hide_ddl_explorer` emits
                 # `ddl_explorer_visibility_changed` unconditionally, and a

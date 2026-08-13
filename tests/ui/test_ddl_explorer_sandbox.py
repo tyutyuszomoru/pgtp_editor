@@ -546,3 +546,97 @@ def test_a_direct_sandbox_open_from_the_unchecked_state_introspects_once(
 
     assert [p.host for p in seen] == ["sandbox-host"]
     assert _sandbox_action(window).isChecked() is True
+
+
+# --- BUG-260812110307: a close during an in-flight fetch wins, per role ------
+
+def _deferred(window):
+    """Record the task instead of running it, so a gesture can happen "while the
+    fetch is in flight". Returns the list of `(work, on_result)` pairs."""
+    queued = []
+    window._run_async = lambda fn, on_result, on_error=None: queued.append(
+        (fn, on_result)
+    )
+    return queued
+
+
+def _land(entry):
+    fn, on_result = entry
+    on_result(fn())
+
+
+def test_closing_the_sandbox_explorer_mid_fetch_leaves_it_closed(qtbot, tmp_path):
+    """§18.7 parameterizes the whole path by role, so the resurrection was
+    role-parameterized too — and so is its fix. The epoch is per role: closing
+    the sandbox tree must not also discard the quality one's fetch."""
+    window = _window(qtbot, tmp_path)
+    _open_project(window, tmp_path)
+    stage = window.center_stage
+    queued = _deferred(window)
+
+    _sandbox_action(window).setChecked(True)
+    _sandbox_action(window).setChecked(False)
+    _land(queued[0])
+
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)) is False
+    assert window.left_tabs.isTabVisible(window.sandbox_ddl_browser_tab_index) is False
+    assert _sandbox_action(window).isChecked() is False
+
+
+def test_closing_the_sandbox_explorer_does_not_discard_the_quality_fetch(
+    qtbot, tmp_path
+):
+    """The epoch is a per-role dict, not one counter: two independent instances
+    (§18.7) must not supersede each other."""
+    window = _window(qtbot, tmp_path)
+    _open_project(window, tmp_path)
+    stage = window.center_stage
+    queued = _deferred(window)
+
+    window._ddl_explorer_action.setChecked(True)  # quality fetch out
+    _sandbox_action(window).setChecked(True)  # sandbox fetch out
+    _sandbox_action(window).setChecked(False)  # only the sandbox is closed
+    _land(queued[1])  # the sandbox result: discarded
+    _land(queued[0])  # the quality result: still wanted
+
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_TARGET)) is True
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)) is False
+
+
+def test_a_project_switch_mid_flight_cannot_reveal_the_old_sandbox(qtbot, tmp_path):
+    """The row of the report that escapes the close funnel entirely.
+
+    `_refresh_ddl_explorer_affordances` hides the sandbox tab only when it is
+    ALREADY VISIBLE, so a fetch launched from the unchecked state (a bare open,
+    or `Reload DDL` with the Explorer closed) never reaches
+    `_on_ddl_explorer_visibility_changed`. Without an unconditional bump there,
+    the previous project's sandbox schema reveals itself over the new project.
+    """
+    window = _window(qtbot, tmp_path)
+    _open_project(window, tmp_path)
+    stage = window.center_stage
+    queued = _deferred(window)
+    window._open_ddl_explorer(DDL_EXPLORER_SANDBOX)  # from the UNCHECKED state
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)) is False
+
+    _open_project(window, tmp_path / "second", sandbox_host=None)
+    _land(queued[0])
+
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)) is False
+    assert _sandbox_action(window).isVisible() is False
+
+
+def test_a_normal_sandbox_open_still_reveals_the_tab(qtbot, tmp_path):
+    """The sandbox half of the guard against the visibility shortcut: at
+    `on_result` time the tab is still hidden, because `show_ddl_explorer` is
+    what reveals it, so a `isTabVisible` gate would suppress every open."""
+    window = _window(qtbot, tmp_path)
+    _open_project(window, tmp_path)
+    stage = window.center_stage
+    queued = _deferred(window)
+
+    _sandbox_action(window).setChecked(True)
+    _land(queued[0])
+
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)) is True
+    assert _sandbox_action(window).isChecked() is True

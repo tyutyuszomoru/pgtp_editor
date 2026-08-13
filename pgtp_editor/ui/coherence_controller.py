@@ -159,6 +159,14 @@ class CoherenceController(QObject):
         self.last_schema = None
         self.last_summary = None
 
+        #: BUG-260812110307's twin in this lane. How many times the coherence
+        #: view has been asked to run OR to close; `run_check` captures the
+        #: value it bumped to and its `on_result` performs no visible act once
+        #: the two disagree, so a close during an in-flight check WINS. Single
+        #: instance, so a plain int rather than the per-role dict
+        #: `MainWindow._ddl_fetch_epoch` needs.
+        self._check_epoch = 0
+
         #: Replaceable seams -- ATTRIBUTES, not methods. See the module
         #: docstring: the suite assigns over them to keep a live DB connection
         #: and a modal out of the test run.
@@ -242,7 +250,18 @@ class CoherenceController(QObject):
         if checked:
             self.run_check()
         else:
+            self._bump_check_epoch()
             self._shell.set_left_panel_visible(self._panel, False)
+
+    def _bump_check_epoch(self) -> int:
+        """Supersede whatever coherence check is in flight, and return the new
+        epoch (BUG-260812110307).
+
+        Called from every run (last requested wins) and from every close — the
+        menu toggle off and the project-close teardown.
+        """
+        self._check_epoch += 1
+        return self._check_epoch
 
     def run_check(self) -> None:
         # Compare against a model parsed from the CURRENT buffer, not the
@@ -276,9 +295,39 @@ class CoherenceController(QObject):
         # GUI thread, so they may safely touch widgets.
         self._shell.status("Checking database…")
         _log.info("db: coherence check started %s", debuglog.redacted(params))
+        # BUG-260812110307: taken on the GUI thread, after the guards above (a
+        # refused run started no fetch and must not supersede a live one).
+        epoch = self._bump_check_epoch()
 
         def on_result(schema):
             summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
+            # BUG-260812110307, the DDL Explorer's defect in this lane: closing
+            # the Database/XML Coherence tab while its fetch is out used to be
+            # undone by the stale result, which revealed the panel again and
+            # re-checked the menu entry. `refresh_if_open` already asks the right
+            # question (`_panel_visible()`); this path could not, because on a
+            # normal run the panel is still hidden here -- `_reveal_panel` below
+            # is what shows it. Hence an epoch, not a visibility test.
+            #
+            # `on_error` stays deliberately unguarded: it reveals nothing, and a
+            # failed check is worth reporting even for a closed panel.
+            #
+            # Unlike the DDL lane, this one keeps NOTHING from a superseded
+            # result -- `last_schema`/`last_summary` are written below the guard
+            # on purpose. One of the two closing gestures is
+            # `teardown_for_project_close`, which drops that cache precisely so a
+            # later reparse or rename cannot act on a closed project's state
+            # (BUG-011, §17); writing it here would hand it straight back. No
+            # other surface consumes it, so there is no §18.6-shaped reason to
+            # keep it either.
+            if self._check_epoch != epoch:
+                self._shell.status(
+                    "Database/XML Coherence: closed while checking — "
+                    "the result was discarded.",
+                    5000,
+                )
+                _log.info("db: coherence check finished stale=True")
+                return
             self.last_schema = schema
             self.last_summary = summary
             self._populate(schema, project, summary)
@@ -329,6 +378,7 @@ class CoherenceController(QObject):
         leave the still-open project's tab alone, and a revert keeps the project
         loaded so it does not tear down either.
         """
+        self._bump_check_epoch()
         self._shell.set_left_panel_visible(self._panel, False)
         self._panel.clear()
         if self._toggle_action is not None:

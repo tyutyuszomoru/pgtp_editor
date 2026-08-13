@@ -154,6 +154,12 @@ EXPECTED_HOST_SURFACE = {
     # lockstep handler is currently re-syncing. Host state because both the
     # lockstep handler and the toggle handler are the host's.
     "_ddl_explorer_syncing",
+    # BUG-260812110307's sibling marker: the per-role in-flight generation, so a
+    # result that a close (or a later open) superseded paints nothing visible.
+    # Host state for the same reason `_ddl_explorer_syncing` is -- the opener,
+    # the lockstep handler and the Maintenance prune are all the host's.
+    "_ddl_fetch_epoch",
+    "_bump_ddl_fetch_epoch",
     "_ddl_explorer_params",
     "_ddl_project_folder",
     "_ddl_project_settings",

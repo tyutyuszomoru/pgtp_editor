@@ -430,3 +430,57 @@ def test_the_TREE_navigates_into_the_SAME_full_mode_buffer(window, monkeypatch):
     assert "CREATE TABLE pr.orders (" in following
     assert "    id integer NOT NULL," in following
     assert "-- NOTE: reconstructed by PGTP Editor" not in editor.toPlainText()
+
+
+# ---------------------------------------------------------------------------
+# BUG-260812110307: a discarded fetch is not an open.
+# ---------------------------------------------------------------------------
+
+def test_a_fetch_discarded_by_a_close_reports_no_ddl_row(window):
+    """The owner's ruling is "report the mode on EVERY DDL open"; this NARROWS
+    it to "every open that REVEALS a panel", deliberately.
+
+    A fetch the user closed out from under paints nothing, so a mode notice for
+    it would describe a panel that is not there. BUG-260812071208's invariant is
+    preserved exactly rather than reversed: one open, one fetch, one row — and a
+    discarded fetch was not an open.
+    """
+    queued = []
+    window._run_async = lambda fn, on_result, on_error=None: queued.append(
+        (fn, on_result)
+    )
+    action = window._ddl_explorer_actions[DDL_EXPLORER_TARGET]
+
+    action.setChecked(True)
+    action.setChecked(False)  # closed while the fetch is out
+    fn, on_result = queued[0]
+    on_result(fn())
+
+    assert _ddl_rows(window) == []
+
+
+def test_the_next_real_open_after_a_discarded_one_still_reports_exactly_one_row(
+    window,
+):
+    """The other half, and the one that proves the narrowing did not become a
+    swallowed notice: the sentence still appears on the next real open — read
+    from the probe cache the discarded result KEPT, so it costs no second
+    `pg_dump --version` and no second probe connection."""
+    queued = []
+    window._run_async = lambda fn, on_result, on_error=None: queued.append(
+        (fn, on_result)
+    )
+    action = window._ddl_explorer_actions[DDL_EXPLORER_TARGET]
+    action.setChecked(True)
+    action.setChecked(False)
+    fn, on_result = queued[0]
+    on_result(fn())
+    assert len(window.probes) == 1  # the discarded fetch did probe
+
+    window._run_async = sync_run
+    _open(window)
+
+    assert len(_ddl_rows(window)) == 1
+    # No SECOND probe: the verdict cache is connection-scoped and survives the
+    # close, which is why nothing is re-spawned to say the same sentence.
+    assert len(window.probes) == 1

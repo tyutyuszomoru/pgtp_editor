@@ -700,10 +700,14 @@ def test_a_close_during_an_in_flight_fetch_does_not_queue_a_second_one(
     qtbot, tmp_path
 ):
     """The genuinely user-facing instance: toggle ON, toggle OFF while the fetch
-    is still running, then let the result land. The stale `on_result` still
-    re-reveals the tab (that resurrection is a separate defect, out of scope
-    here) -- but it must not re-check the action from unchecked and fire a
-    SECOND fetch."""
+    is still running, then let the result land. It must not re-check the action
+    from unchecked and fire a SECOND fetch.
+
+    The stale `on_result` used to re-reveal the tab as well; that second defect
+    is BUG-260812110307 and is now fixed too, pinned by
+    `test_a_close_during_an_in_flight_fetch_leaves_the_tab_closed` below. This
+    docstring used to assert the resurrection as current behaviour -- corrected
+    here rather than left standing as a false fact."""
     window, fetches = _counting_window(qtbot, tmp_path)
     queued = []
     window._run_async = lambda fn, on_result, on_error=None: queued.append(
@@ -752,3 +756,169 @@ def test_closing_via_the_tab_cross_still_unchecks_the_menu_entry(qtbot, tmp_path
 
     assert window._ddl_explorer_action.isChecked() is False
     assert window._ddl_explorer_syncing == set()
+
+
+# ---------------------------------------------------------------------------
+# BUG-260812110307: a close during an in-flight fetch WINS.
+# ---------------------------------------------------------------------------
+
+def _deferred_window(qtbot, tmp_path):
+    """A window whose `_run_async` only RECORDS the task, so a test can perform
+    a gesture "while the fetch is in flight" and hand the result over
+    afterwards. Returns `(window, fetches, queued)`; each queued entry is the
+    `(work, on_result)` pair, and `_land(queued[i])` delivers it."""
+    window, fetches = _counting_window(qtbot, tmp_path)
+    queued = []
+    window._run_async = lambda fn, on_result, on_error=None: queued.append(
+        (fn, on_result)
+    )
+    return window, fetches, queued
+
+
+def _land(entry):
+    fn, on_result = entry
+    on_result(fn())
+
+
+def test_a_close_during_an_in_flight_fetch_leaves_the_tab_closed(qtbot, tmp_path):
+    """The bug: `on_result` revealed the panel regardless of the user having
+    closed it meanwhile, restoring all THREE surfaces (the center buffer tab,
+    the left "DDL Objects" tree tab and the menu checkmark).
+
+    Asserted on observable state only, and on all three, because one stale
+    result used to restore all three.
+    """
+    window, _fetches, queued = _deferred_window(qtbot, tmp_path)
+    stage = window.center_stage
+
+    window._ddl_explorer_action.setChecked(True)  # fetch out, nothing painted
+    window._ddl_explorer_action.setChecked(False)  # the user closes it
+    _land(queued[0])
+
+    assert stage.isTabVisible(stage.ddl_tab_index) is False
+    assert window.left_tabs.isTabVisible(window.ddl_browser_tab_index) is False
+    assert window._ddl_explorer_action.isChecked() is False
+    # BUG-260812071208's marker must still end empty: the epoch is a separate
+    # mechanism and must not entangle with the re-entrancy flag.
+    assert window._ddl_explorer_syncing == set()
+
+
+def test_closing_via_the_tab_cross_mid_fetch_also_leaves_it_closed(qtbot, tmp_path):
+    """The other real close gesture (`center_stage.py`'s ✕) funnels through the
+    same visibility handler, so it must be covered by the same bump."""
+    window, _fetches, queued = _deferred_window(qtbot, tmp_path)
+    stage = window.center_stage
+    window._ddl_explorer_action.setChecked(True)
+    _land(queued[0])  # the first open completes normally: the tab is open
+    window._reload_ddl_action.trigger()  # a second fetch goes out
+
+    stage.tabCloseRequested.emit(stage.ddl_tab_index)
+    _land(queued[1])
+
+    assert stage.isTabVisible(stage.ddl_tab_index) is False
+    assert window._ddl_explorer_action.isChecked() is False
+
+
+def test_a_normal_open_still_reveals_the_tab(qtbot, tmp_path):
+    """The guard against the CHEAP fix, and the reason this file names it.
+
+    The obvious implementation is a visibility test in `on_result`
+    (`center_stage.isTabVisible(...)`) — and it is not merely fragile, it is
+    broken: on an ordinary open the tab is STILL HIDDEN when `on_result` runs,
+    because `show_ddl_explorer` is what makes it visible. A visibility gate
+    would therefore suppress the very reveal it exists to perform, and this test
+    would go red. Only a per-request epoch distinguishes "not yet revealed" from
+    "revealed and then closed".
+    """
+    window, _fetches, queued = _deferred_window(qtbot, tmp_path)
+    stage = window.center_stage
+    assert stage.isTabVisible(stage.ddl_tab_index) is False  # hidden while loading
+
+    window._ddl_explorer_action.setChecked(True)
+    _land(queued[0])
+
+    assert stage.isTabVisible(stage.ddl_tab_index) is True
+    assert window.left_tabs.isTabVisible(window.ddl_browser_tab_index) is True
+    assert window._ddl_explorer_action.isChecked() is True
+
+
+def test_entering_maintenance_mode_mid_fetch_leaves_the_explorer_closed(
+    qtbot, tmp_path
+):
+    """The sharpest instance (BUG-260812001640): Maintenance mode is DEFINED by
+    its XSD-only surface, and the stale result used to re-open an Explorer
+    inside it."""
+    from pgtp_editor.ui.launcher_dialog import MODE_MAINTENANCE
+
+    window, _fetches, queued = _deferred_window(qtbot, tmp_path)
+    stage = window.center_stage
+    window._ddl_explorer_action.setChecked(True)
+    _land(queued[0])  # open for real, so the prune has something to close
+    window._reload_ddl_action.trigger()  # a reload is in flight
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    _land(queued[1])
+
+    assert stage.isTabVisible(stage.ddl_tab_index) is False
+    assert window._ddl_explorer_action.isChecked() is False
+
+
+def test_maintenance_entry_also_covers_an_invisible_but_loading_explorer(
+    qtbot, tmp_path
+):
+    """`_prune_non_xsd_surfaces_for_maintenance` hides a tab only when it is
+    ALREADY VISIBLE, so a fetch launched from the unchecked state (`Reload DDL`
+    with the Explorer closed) never reaches the close funnel — exactly the hole
+    that `_refresh_ddl_explorer_affordances` has on the sandbox side. The prune
+    therefore supersedes both roles unconditionally, and this is the case that
+    fails if it only bumps what it hides."""
+    from pgtp_editor.ui.launcher_dialog import MODE_MAINTENANCE
+
+    window, _fetches, queued = _deferred_window(qtbot, tmp_path)
+    stage = window.center_stage
+    window._reload_ddl_action.trigger()  # opens from the UNCHECKED state
+    assert stage.isTabVisible(stage.ddl_tab_index) is False
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    _land(queued[0])
+
+    assert stage.isTabVisible(stage.ddl_tab_index) is False
+
+
+def test_a_superseded_result_still_feeds_open_ddl_object_tabs(qtbot, tmp_path):
+    """The KEEP half, and the emphatic one (§18.5/§18.6): object-editor tabs are
+    independent surfaces with their own lifetime. A user who closed the browser
+    still has editable object tabs open, and their `Ctrl+Space` completions must
+    describe the freshest introspection — so the schema index is rebuilt and
+    pushed even when the reveal is dropped."""
+    from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+
+    window, _fetches, queued = _deferred_window(qtbot, tmp_path)
+    panel = window.center_stage.open_ddl_object_tab(
+        DdlObjectRef(kind="function", schema="pr", name="calc_total"),
+        "CREATE FUNCTION pr.calc_total(a integer) ...",
+    )
+    assert panel.schema_index() is None
+
+    window._ddl_explorer_action.setChecked(True)
+    window._ddl_explorer_action.setChecked(False)
+    _land(queued[0])
+
+    assert window._ddl_schema_index is not None
+    assert window._ddl_schema is not None
+    assert panel.schema_index() is window._ddl_schema_index
+
+
+def test_a_superseded_result_keeps_the_ddl_mode_probe_cache(qtbot, tmp_path):
+    """The other KEEP: the DDL-mode verdict is a CONNECTION-scoped fact keyed on
+    the connection identity plus the binaries folder, which a closed tab cannot
+    falsify. Discarding it would re-open a probe connection and re-spawn
+    `pg_dump --version` on the next open for an answer already in hand."""
+    window, _fetches, queued = _deferred_window(qtbot, tmp_path)
+
+    window._ddl_explorer_action.setChecked(True)
+    window._ddl_explorer_action.setChecked(False)
+    _land(queued[0])
+
+    assert window._ddl_mode_verdict is not None
+    assert window._ddl_mode_verdict_key is not None
