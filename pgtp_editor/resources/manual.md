@@ -560,6 +560,10 @@ Its rows are clickable in exactly the same way as the Findings tab's, so a
 `[Validate]`, `[Lint]` or `[Check]` line with a line number still jumps you
 there.
 
+`[DDL]` rows land here too: opening the Quality DDL Explorer always reports
+whether you are reading full or restricted DDL (see *DDL Explorer ▸ Full DDL and
+restricted DDL*). Those rows carry no location, so they are not clickable.
+
 A run that reports into Messages **switches the bottom dock to this tab** so you
 see it — but it will not re-open a dock you closed. **View ▸ Messages** brings it
 back whenever you want it.
@@ -1860,8 +1864,9 @@ explorers are never confusable:
   `-- FUNCTION public.foo(integer) --`, `-- TABLE pr.orders --`) so you can
   always tell where you are.
   The buffer is a live snapshot of the database and cannot be edited — see
-  *What the read-only buffer holds*, below, for what is in it and which part of
-  it is reconstructed rather than original.
+  *Full DDL and restricted DDL*, below, for which of the two renderers produced
+  the text you are looking at, and *What the read-only buffer holds* for what is
+  in it and which part of it is reconstructed rather than original.
 - **Left dock — DDL Objects (Quality)** / **DDL Objects (Sandbox)**: a tree of
   the same objects, grouped from two
   angles, with a **name-filter bar above it** (*Filtering the object tree by
@@ -2044,6 +2049,87 @@ read-only buffer holds*. The
 **Sandbox** tree offers none of these — its right-click menu holds **Reload DDL**
 and nothing else (see *The Sandbox Explorer, and how it differs*).
 
+### Full DDL and restricted DDL
+
+The read-only buffer has **two modes**, and which one you get depends on whether
+this machine has a usable `pg_dump`:
+
+- **Full DDL** — the buffer is `pg_dump`'s own `--schema-only` output, kept
+  verbatim. It is complete in the way only PostgreSQL's own dumper is: table
+  **inheritance** and **partitioning**, identity columns, storage parameters,
+  row-level security, rules — everything the database knows about a relation.
+- **Restricted DDL** — the buffer is the DDL the app reconstructs from
+  `pg_catalog`, which is what the DDL Explorer has always shown. It is honest
+  about what it cannot express: it does **not** cover table inheritance or
+  partitioning, and it says so above every table.
+
+**The app tells you which mode you are in every time you open the Quality
+explorer**, not once per session — as a row on the **Messages** tab prefixed
+**`[DDL]`** (see *Where Output Appears ▸ The Messages tab*). The mode is decided
+once per quality connection and then repeated on every open, so the notice
+costs nothing and is on screen at the moment it matters: when you are about to
+read the text.
+
+**The version rule: `pg_dump` must be at least the server's major version.** A
+`pg_dump` **newer** than the server is perfectly fine and is **not** a mismatch —
+the rule is asymmetric on purpose, because `pg_dump` happily dumps from an older
+server and **refuses** one newer than itself. So `pg_dump 17` against a
+PostgreSQL 16 server gives you full DDL; `pg_dump 15` against that same server
+does not.
+
+In full mode the row reads **`[DDL] Full DDL via pg_dump 17.2 (server 16.4).`**
+Every restricted row names **both** version numbers too, and says which of the
+four shapes it was:
+
+- `pg_dump` was not found — *"Restricted DDL — pg_dump was not found on PATH or
+  in the configured PostgreSQL binaries folder (pg_dump version unknown, server
+  16.4)."*
+- it was found but would not answer — *"Restricted DDL — pg_dump was found at
+  `<path>` but its version could not be read (pg_dump version unknown, server
+  16.4)."*
+- the server's version is unknown, so nothing can be compared — *"Restricted DDL
+  — the server version is unknown, so pg_dump 17.2 cannot be version-checked
+  against it (pg_dump version 17.2, server unknown)."*
+- it is older than the server — *"Restricted DDL — pg_dump 15.6 is older than
+  server 16.4; pg_dump would refuse this server."*
+
+Each of those four sentences ends with the same warning, which is the next
+section's subject: *"Showing DDL reconstructed from pg_catalog — incomplete for
+inheritance and partitioning; do not clone a partitioned or inherited table from
+this text."*
+
+**A second `[DDL]` row appears when full mode was chosen but could not be
+delivered** — `pg_dump` refused or timed out, or its output could not be matched
+to every object the explorer found (which also catches a table created between
+the two reads). It sits **beside** the mode row, not instead of it: the first
+row still says which mode was decided, the second says you are nonetheless
+reading reconstructed DDL and why. Rather than show you a half-built full buffer
+whose navigation would land on the wrong lines, the app falls all the way back to
+restricted DDL and says so.
+
+> **Restricted DDL is not safe to clone from.** The reason a complete
+> `CREATE TABLE` is worth having is that you can copy it, rename it, edit it and
+> run it to make a similar table. Do that with a **partitioned** or **inherited**
+> table out of a restricted-mode buffer and you get a plain table: it looks
+> right, it executes without complaint, and it is wrong — in a real database.
+> Nothing is guessed to paper over this (there is never an invented
+> `PARTITION BY`), which is precisely why the text cannot be trusted as a clone
+> source. If you need to clone such a table, get yourself a correctly-versioned
+> `pg_dump` first and re-open the explorer in full mode.
+
+**Where `pg_dump` is looked for:** in the project's **PostgreSQL binaries**
+folder if one is set (**File ▸ Project Settings… ▸ Connections**), otherwise on
+your `PATH` — the same field, and the same fallback, described in *Local
+DDL-Versioning Projects ▸ Project Settings*. Setting that folder is the fix for
+a restricted verdict on a machine that has several PostgreSQL versions
+installed. Changing it re-decides the mode the next time you open the explorer.
+
+**Routines and triggers are identical in both modes.** Functions, procedures and
+triggers always come from the catalog — PostgreSQL stores their text, so there is
+nothing for `pg_dump` to add — and their **Edit DDL** behaves exactly as
+documented throughout this chapter. Full mode changes **relations**: tables,
+views and materialized views.
+
 ### What the read-only buffer holds
 
 The DDL Explorer buffer holds **every object kind**, in the same order the tree
@@ -2051,7 +2137,11 @@ is grouped: the **relations first** — tables, views and materialized views,
 by schema and name — then the **routines and triggers**. Each object is preceded
 by its banner comment (`-- TABLE pr.orders --`, `-- VIEW pr.v_open --`,
 `-- FUNCTION pr.recalc(integer) --`, `-- TRIGGER pr.trg_audit ON orders --`),
-which is what a tree click jumps to and what folding collapses.
+which is what a tree click jumps to and what folding collapses. The banners, the
+object order and the tree navigation are the same in both modes (*Full DDL and
+restricted DDL*, above); what differs is the text between the banners.
+
+**In restricted mode:**
 
 - A **table** renders as one `CREATE TABLE` with its columns and its constraints
   **inline**, followed by the standalone `CREATE INDEX` statements and any
@@ -2068,7 +2158,28 @@ which is what a tree click jumps to and what folding collapses.
   therefore jumps to that constraint's line, which is the only place it exists in
   this text.
 
-> **A `CREATE TABLE` here is RECONSTRUCTED, not the original statement.**
+**In full mode** the statements are `pg_dump`'s, so they are laid out the way
+`pg_dump` writes them rather than the way the paragraph above describes:
+
+- A **table**'s banner is followed by its `CREATE TABLE`, and then by the
+  statements `pg_dump` emits separately for it — `ALTER TABLE ONLY … ADD
+  CONSTRAINT` for primary keys, unique and foreign keys, `CREATE INDEX` for the
+  rest, plus `COMMENT ON`, `ATTACH PARTITION` and anything else that names that
+  table. `CHECK` constraints stay inside the `CREATE TABLE`, which is where
+  `pg_dump` puts them. So **`ALTER` statements do appear here**, and a
+  constraint's tree row jumps to whichever of the two shapes holds it.
+- The buffer opens with a **`-- DATABASE-LEVEL STATEMENTS (pg_dump
+  --schema-only) --`** section: the schemas, extensions, types, domains and the
+  sequences owned by `SERIAL` columns. They are kept rather than dropped because
+  they are exactly what a copy of a table would otherwise silently need. Nothing
+  in the tree points at them — scroll to the top of the buffer to read them.
+- **Routines and triggers still come from the catalog**, in their own section
+  after the relations, exactly as in restricted mode; `pg_dump`'s own
+  `CREATE FUNCTION` / `CREATE TRIGGER` statements are left out rather than shown
+  a second time.
+
+> **In restricted mode a `CREATE TABLE` is RECONSTRUCTED, not the original
+> statement.**
 > PostgreSQL keeps no stored text for a table the way it does for a function, so
 > the editor builds the statement from the catalog — columns, constraints,
 > indexes and comments — and says so in two SQL-comment lines above every table.
@@ -2093,10 +2204,33 @@ which is what a tree click jumps to and what folding collapses.
 > `SERIAL`. That is deliberate: `SERIAL` is shorthand for *integer + sequence +
 > ownership*, so writing it back would mean guessing which sequence feeds the
 > column, and the spelling you see names the actual one. What is *not* emitted is
-> that sequence's own `CREATE SEQUENCE`, which is a separate catalog object.
+> that sequence's own `CREATE SEQUENCE`, which is a separate catalog object — see
+> the sequence warning below, which applies in **both** modes.
 >
 > **Views carry no such notice**, and that is deliberate: their body comes back
 > from the database verbatim, so there is nothing incomplete to warn about.
+
+> **The sequence hazard, in BOTH modes.** A `SERIAL` column is *integer +
+> sequence + ownership*, and what you see in the buffer is the integer with a
+> `DEFAULT nextval('…'::regclass)`. **Copy that statement under a new name and
+> the new table draws numbers from the ORIGINAL table's sequence** — the two
+> share one counter, and dropping the original breaks the clone. Every affected
+> table therefore carries two warning lines, directly under its banner and inside
+> the region a whole-object copy takes with it:
+> *"WARNING: a column default calls nextval() — a COPY of this statement under a
+> new name would draw from the ORIGINAL table's sequence. The owned CREATE
+> SEQUENCE is not part of this statement; give a clone its own."*
+>
+> Restricted mode never emits a `CREATE SEQUENCE` at all. Full mode does — in the
+> database-level section at the top of the buffer — so copying just the
+> `CREATE TABLE` still leaves it behind. Neither mode is clone-safe here, which
+> is why both warn.
+>
+> **The app warns and does not fix it.** Whether a clone should share the
+> original's counter or get its own sequence is a judgement about your data, so
+> the buffer states the hazard and leaves the decision to you. An **identity**
+> column (`GENERATED … AS IDENTITY`) is not warned about, because cloning one
+> creates a fresh sequence of its own and the hazard does not arise.
 
 **A view is editable here; a table and a materialized view are not.** Right-click
 inside a **view**'s definition in the **Quality** buffer and you get **Edit DDL**,
@@ -2126,7 +2260,11 @@ navigation comforts as the Raw XML editor:
 - **Line numbers** in the gutter.
 - **Folding per DDL object:** a chevron on each object's banner comment line
   collapses that object's body away, leaving the banner visible — handy for
-  skimming a long database's worth of definitions.
+  skimming a long database's worth of definitions. **In full mode a fold hides
+  less:** a table's fold covers its `CREATE TABLE` alone, because `pg_dump`
+  writes that table's constraints and indexes as separate statements below it.
+  Navigation is unaffected — clicking a table still lands on its `CREATE TABLE`,
+  and clicking a constraint or an index lands on that statement.
 - **Bookmarks:** click the bookmark strip at the left edge of the gutter (or
   double-click the line number) to mark a line, or use **Ctrl+F2** / **F2** /
   **Shift+F2** and the **Navigation** menu —
@@ -2256,7 +2394,11 @@ with its columns, the name-filter bar above the tree filters this tree the same
 way, and the buffer's own Find bar, bookmarks, folding and
 **Ctrl+Shift+R** reload behave exactly as in the Quality one. Its buffer holds
 the same object kinds — tables, views, matviews, routines, triggers — under the
-same reconstruction rules (see *What the read-only buffer holds*). Right-clicking
+same reconstruction rules (see *What the read-only buffer holds*). It is
+rendered in the **same mode** the quality connection was judged to be in, from
+its **own** database's dump, so a sandbox buffer never shows you the quality
+database's text; the `[DDL]` mode row itself is announced once, for the Quality
+explorer (see *Full DDL and restricted DDL*). Right-clicking
 inside a table's DDL here shows no **Edit DDL** entry **and** no read-only
 explanation: in a browse-only explorer there is no editing gesture to explain
 away.
@@ -3744,10 +3886,16 @@ binaries:**, with a **Browse…** button:
   that is incomplete or half-typed does not stop you pressing OK.
 - **Set it when several PostgreSQL versions are installed**, or when the client
   tools are not on `PATH` at all. `pg_dump` refuses to dump from a server *newer*
-  than itself, so the major version of the binaries has to match this project's
-  server — which is exactly why this setting sits beside the two connection
-  profiles that determine it, and why the **Test** buttons print the server
-  version they found (`Server: PostgreSQL 16.0.3.`) for you to compare against.
+  than itself, so the binaries' major version must be **at least** this project's
+  server's (a newer `pg_dump` is fine) — which is exactly why this setting sits
+  beside the two connection profiles that determine it, and why the **Test**
+  buttons print the server version they found (`Server: PostgreSQL 16.0.3.`) for
+  you to compare against.
+- **It also decides which DDL you get to read.** The same `pg_dump` is what the
+  DDL Explorer uses for its full-mode buffer; point this field at a
+  correctly-versioned installation and the explorer switches from restricted to
+  full DDL the next time you open it (see *DDL Explorer ▸ Full DDL and restricted
+  DDL*).
 - **It is per project, and it never travels.** It is stored in the project's
   gitignored settings file, so a machine-specific path is not pushed to anyone
   else. The app-wide external programs — the PHP Generator, the panGen runtime,
