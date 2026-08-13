@@ -9,6 +9,14 @@ __pycache__/
 .pytest_cache/
 .coverage
 
+# PyInstaller + Inno Setup release build outputs (see optimized_build.py /
+# docs/installer.iss). Regenerated per release, never tracked — the installer
+# alone is ~28 MB.
+build/
+dist/
+Output/
+*.spec
+
 # Harness-local worktrees/config, never part of the project itself —
 # except agent definitions, which are project workflow and must survive clones
 .claude/*
