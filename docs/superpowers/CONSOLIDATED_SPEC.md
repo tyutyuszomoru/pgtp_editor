@@ -1,15 +1,85 @@
 # PGTP Editor — Consolidated Specification
 
-> **Status:** living document · **Last synthesized:** 2026-08-12 *(theme-selection / contrast pass)* —
-> `FQ-260812021715`'s **remaining half** and `FQ-260812021716` (`7caf024`), `BUG-260812063745` (`f05cc8b`),
-> `BUG-260812103144` (`cdcba11`), `FQ-260812025836` (`c7c45b3` + `07b83e9`), `FQ-260812025353`
-> (`a852563` + `07b83e9`) and **Part 1 of** `FQ-260812022749` (`a852563`, wired `07b83e9`) folded.
-> **Three of this document's own statements about colour were falsified at once, and the third was a
-> CONSTRAINT the consolidation pass wrote for itself.** Details in **(Q0)** below, which supersedes the
-> status halves of (P0)'s item 5 and of (O0)'s item 5.
+> **Status:** living document · **Last synthesized:** 2026-08-13 *(dual-mode buffer / external tools pass)* —
+> `FQ-260812022749` **COMPLETE** (`0025113` + `e6ab9e1`), `FQ-260812025705` (`179d5e0`) and
+> `BUG-260812071208` (`179d5e0`) folded; `BUG-260812110307`'s **rule** folded with its mechanism written as
+> in-tree-unmerged. **The removal sweep for three deleted menu entries found THIRTEEN survivors inside this
+> document**, in six sections. Details in **(R0)** below, which supersedes the status halves of (Q0)'s
+> items 8 and 11.
 >
-> **(Q0) THIS PASS — A CONTRAST MEASUREMENT IS A MEASUREMENT AGAINST A SURFACE, AND "NOT ALLOWED TO CHANGE
-> PIXELS" IS NOT A DESIGN.**
+> **(R0) THIS PASS — A DUMP IS NOT CONTIGUOUS BUT EACH OF ITS STATEMENTS IS, AND THAT IS THE WHOLE FEATURE.**
+>
+> 1. **`FQ-260812022749` IS COMPLETE (`0025113` buffer, `e6ab9e1` wiring) and every ⏳ in §18.1's dual-mode
+>    block is retired.** `db/pg_dump_ddl.py` and `db/ddl_buffer.py::build_ddl_buffer` /
+>    `build_full_ddl_text` are verified by name, and `ui/main_window.py` calls them. **The span-recovery
+>    finding is the one worth keeping:** the first triage called `pg_dump`'s non-contiguity *fatal* to
+>    click-to-navigate and then **retracted it** — in a whole-database `--schema-only` dump each
+>    `CREATE TABLE`, each `ALTER TABLE ONLY … ADD CONSTRAINT` and each `CREATE INDEX` is **individually
+>    contiguous**, so statement boundaries yield regions that fit the **existing** `DdlObjectSpan` and
+>    §18.1's trap 1 (one dataclass, one `kind` field) is intact. **The `-t` route is recorded as a TRAP, not
+>    an option:** ≈300 subprocesses per refresh against a buffer settled as having **no cache**, and `-t`
+>    omits a `SERIAL` column's owned sequence — *the very case the request opened with.*
+> 2. **⚠ TWO FACTS NO QUEUE ENTRY ANTICIPATED, folded as facts about `pg_dump` rather than as history.**
+>    *(a)* **`pg_dump` splits a table's constraints across TWO SHAPES** — `CHECK` inline in the
+>    `CREATE TABLE` body, `PRIMARY KEY`/`UNIQUE`/`FOREIGN KEY` as standalone `ALTER TABLE ONLY … ADD
+>    CONSTRAINT` — so a parser handling only the `ALTER` shape leaves **every CHECK constraint's tree row
+>    clicking into nothing**, the shape of half-working nobody notices until a user clicks one. *(b)*
+>    **Routines and triggers keep coming from the CATALOG in full mode**, the dump's own `CREATE FUNCTION`
+>    left out — because a routine's identity is `schema.name(format_type(proargtypes))` and recovering it
+>    from a header means **re-rendering** a signature with typmods spelled differently on the two sides,
+>    which **BUG-018 forbids**. *Nothing is lost by it: `pg_get_functiondef` is already complete — the
+>    incompleteness full mode exists to fix is a TABLE problem.*
+> 3. **Determinism is stated HONESTLY rather than promised.** End-to-end byte-identity in full mode cannot
+>    be promised — `pg_dump`'s text varies with the **client's** version — and is written down as an
+>    **environmental assumption**. What *is* owned: the parser is pure, and the composition orders relations
+>    **by name** and attachments by **`(kind, name)`**, which removes `pg_dump`'s walk order from the
+>    buffer's identity. *The determinism a layer can own is the determinism it should claim.*
+> 4. **The degrade contract, and it is a SECOND `[DDL]` row beside the mode row, never a replacement.** A
+>    relation the introspection found with no `CREATE` statement degrades the **whole** buffer to
+>    RESTRICTED with a named reason — never a half-parsed buffer with spans on wrong lines — which also
+>    catches **introspection-vs-dump skew**, two connections at two instants.
+> 5. **`FQ-260812025705` SHIPPED (`179d5e0`) → §7: the SIXTH pane, `External tools`, and it DIVERGES FROM
+>    THE PANE CONTRACT DELIBERATELY.** Browse persists immediately through each lane's existing `locate_*`,
+>    so the pane **holds no edit buffer** and therefore correctly has **no OK/Cancel and no `finished` for
+>    the host to rebuild on** — *a pane holding no edit buffer has nothing to rebuild from.* The three moved
+>    commands get **NO alias rows**: there is no successor command a pinned button could fire.
+> 6. **⚠ AND THE REMOVAL SWEEP IS THE LARGEST THIS DOCUMENT HAS HAD: THIRTEEN SURVIVORS OF THREE DELETED
+>    MENU ENTRIES, in §19, §20, §22, §26, §29 and the TOC.** `Generation ▸ Locate PHP Generator Executable…`,
+>    `Generation ▸ Locate panGen Runtime…` and `Tools ▸ Locate PHP Linter…` are **gone**, and this document
+>    still listed them in two menu inventories, quoted a code message that no longer exists, and named one
+>    of them as a rejected launcher candidate. **All corrected here.** *A removal sweep must be run over the
+>    SPEC as well as the package — the spec is a user-visible string too, for the only reader who is asked
+>    to build from it.* One further stale count fell out of the same sweep: §26's Maintenance table still
+>    said the `Schema` menu has **five** items; it has had **six** since `483a9ad`.
+> 7. **`BUG-260812071208` (`179d5e0`) → §18.1's lockstep bullet gains the sentence it was OWED, and it was
+>    recorded as an OMISSION rather than a divergence.** The BUG-007 lockstep's `setChecked` echo is **not
+>    readable as a user toggle**; `_ddl_explorer_syncing` marks it and `_on_ddl_explorer_toggled` returns.
+>    **Deliberately NOT `QSignalBlocker`**, which would suppress `changed()` and leave a pinned toolbar
+>    button stale — *a blocker silences every consumer, and only one of them was the problem.*
+> 8. **`BUG-260812110307`'s RULE is folded; its MECHANISM is WRITTEN-IN-TREE AND UNMERGED, and this says
+>    which.** The rule: **a close during load WINS**, and the narrowing it implies — the `[DDL]` mode row is
+>    reported on **every open that REVEALS**. That is a *reading* of the owner's "every DDL open" ruling,
+>    not a reversal: a discarded fetch was not an open. `main_window.py` already carries `_ddl_fetch_epoch`
+>    and the stale gate, in a file two concurrent agents hold; per (Q0) item 8's own rule, *"in flight" is a
+>    claim about a MERGE, not about whether the code exists.*
+> 9. **One RULE folded because nothing enforces it: A RESOLUTION ORDER STATED IN PROSE HAS TO BE STATED
+>    EVERYWHERE IT IS STATED AT ALL.** After `FQ-260812025353` made a configured folder searchable first,
+>    **three** sites said *"not found on PATH"*; all three now name both places
+>    (`MissingCloneToolError` — already correct — `determine_project_tier`'s degraded reason, and the
+>    sandbox **Test** button's status). *Three independently-worded sentences about one precedence order
+>    have no test that can hold them together, so the rule is written where the order is.*
+> 10. **§30 gains a PROPERTY of the suite that had never been recorded: it opens no socket and spawns
+>    nothing but inspected fresh interpreters.** Verified empirically at `e6ab9e1` — zero connect attempts,
+>    18 spawns, 17 of them `sys.executable` purity probes plus one `ldd`. The register reads **8179 / 51**
+>    and was seven commits behind; it is current, and the README's citation of it is therefore true again.
+> 11. **`README.md` revisited (standing obligation) and CHANGED in two places** — the *Where it is going*
+>    bullet describing full `pg_dump` DDL as *"the half still landing"* is **shipped work described as
+>    future**, the defect class this obligation exists to catch. See the report.
+>
+> *(Previous pass:)*
+>
+> **(Q0) PREVIOUS PASS — A CONTRAST MEASUREMENT IS A MEASUREMENT AGAINST A SURFACE, AND "NOT ALLOWED TO
+> CHANGE PIXELS" IS NOT A DESIGN.**
 >
 > 1. **`FQ-260812021715` IS COMPLETE (`7caf024`) and §7's `⏳ THEME SELECTION IS IN FLIGHT` banner is
 >    retired — the thing it refused to guess at is now settled and pinned by name.** `View ▸ Light Theme`
@@ -76,8 +146,9 @@
 >    under **both** themes, and the widget-level `color:` the class writes lands in its own `Text` role — so
 >    reading it back returns the colour just painted. **A circular read**: the first implementation painted
 >    dark's salmon on the light status bar and never repainted, *the same freeze, relocated.*
-> 8. **`FQ-260812022749` is PART-SHIPPED and is written that way — the buffer's two modes are LANDING, not
->    built and not unbuilt.** Shipped (`a852563`, wired `07b83e9`): the Qt-free `db/pg_dump_mode.py`
+> 8. ~~**`FQ-260812022749` is PART-SHIPPED and is written that way — the buffer's two modes are LANDING**~~
+>    **— (R0) items 1–4: it is COMPLETE (`0025113` + `e6ab9e1`) and every ⏳ is retired. The Part-1 facts
+>    below stand unchanged.** Shipped (`a852563`, wired `07b83e9`): the Qt-free `db/pg_dump_mode.py`
 >    (`DdlMode`, `decide_ddl_mode`, `probe_ddl_mode`, `DdlModeVerdict`, `RESTRICTED_CLONE_WARNING`), the
 >    **`pg_dump` major >= server major** rule, the **four** restricted verdict shapes, and the `[DDL]`
 >    notice on **every** DDL open from a **cached** verdict. **Two facts the wiring established are worth
@@ -1428,7 +1499,7 @@
 4. [Technology choices](#4-technology-choices)
 5. [Package / module layout](#5-package--module-layout)
 6. [Data model](#6-data-model)
-7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live. **`FQ-260812002827` (SHIPPED `19c14c5`) adds §7's [Software settings dialog](#the-software-settings-dialog--the-apps-one-configuration-home-fq-260812002827-settled-and-shipped-19c14c5) — the app's ONE configuration home**, absorbing `Customize Toolbar…` / `Customize Shortcuts…` off `View` and `Edit Snippets…` / `Autoformatter settings…` off `Settings`, which is left with **one** entry (`settings.software-settings`, also the launcher Maintenance column's third button). Each pane keeps its own apply/OK contract, **the host adds none** (its only button is `Close`), and the host **rebuilds a pane on its `finished`** so no pane is ever a stale scratch copy. **The four absorbed ids get NO alias rows** — absorbed is not renamed. **Three owner decisions are OPEN with shipped defaults** (`DEC-260812004358`/`-59`/`-4400`), and toolbar/shortcut customization is now **Maintenance-only**. Also here: **Maintenance mode's scope is no longer "menu bar only"** — it prunes the **center stage** too (BUG-260812001640, `1ff2b11`) — and **keyboard focus visibility** is `ui/theme.py`'s, appended to the cached theme QSS from `COLOR_TEXT_1` with no second colour table (BUG-260812002838/-4649, `7703eba`). **`BUG-260812023420` (`03473a7`): ONE primitive owns revealing a left-dock pane** — `_reveal_left_panel` un-hides the dock *and* shows *and* selects the tab, four duplicated un-hide calls deleted, because a reveal that forgot it landed a visible tab in a hidden dock and **silently did nothing**; its counterpart `_set_left_panel_visible` deliberately touches neither dock nor current tab (*make available, do not touch the user's layout*, for `CoherenceController.refresh_if_open`), mirroring the bottom dock's existing `_reveal_results_dock_tab`/`_reveal_results_tab` split. **`FQ-260812021715` folded PARTIALLY (`c0ab500`):** a theme is **colours only and a FILE** (`ui/theme_model.py`, Qt-free, over `resources/themes/*.json`), the chrome recolour is a **regex substitution because qdarkstyle's `load_stylesheet(palette=…)` silently ignores a subclassed palette** — correcting a mechanism this document had described wrongly since FQ-005 — an **AST guard** bans a colour literal anywhere in the package, and `shared_accent()` **raises** unless every theme agrees. **`FQ-260812021715` is now COMPLETE and `FQ-260812021716` shipped with it (`7caf024`):** `View ▸ Light Theme` is **DELETED**, selection is a **theme NAME** under `themeName` applied through the one `apply_theme_named`, the `lightTheme` boolean is **migrated once and REMOVED**, `_is_light_theme` reads the applied `Theme.light` (which is what lets a *third* theme answer at all), `_qss_cache` is re-keyed on the sheet's actual inputs (a bool key **could not tell two dark themes apart**), and the **`Themes` pane** is `SETTINGS_PANES`' fifth row — closing `DEC-260812004400` and **merging** `FQ-260812002828`/`-829`, since syntax colours are part of a theme. **Theme choice is therefore MAINTENANCE-ONLY, recorded as a withdrawal.** Also here: **`BUG-260812063745`** (`f05cc8b`) — the AST guard widened to **hex of any length and CSS colour names in declarations**, because a literal was "fixed" by respelling it `darkorange` and the test went green; new **`ui/status_colours.py`** (`STATUS_OK`/`WARNING`/`ERROR`, `status_colour`, `StatusLabel`), the DEBUG chip **folded in via theme accents**, and one deliberate carve-out the guard must never chase — and **`BUG-260812103144`** (`cdcba11`) — the connectivity dots become **per-theme (4.58–9.07:1, was 1.46–3.06:1)** with **one shape per state** (`●` `▲` `□` `○`), on the **4.5:1 text** threshold, `ConnectivityIndicator` inheriting `StatusLabel`, and two rules folded as rules: **a surface's contrast baseline is its own background**, and **`StatusLabel` may not be reused on a transparent-background surface without overriding its palette read***
+7. [App shell](#7-app-shell) — *includes the startup launch modal — **THREE columns / the app's three modes since FQ-027 (2026-08-09)**, with the `launcherSuppressed` suppression **deleted** and `Show Launcher…` renamed **`New Session`** — plus **Maintenance mode**, the app's first launch mode (**session-only**, window-menu-bar only) and its **two deliberately distinct hiding rules (capability vs. intent)**; FQ-011 was **never implemented** and is superseded. Also the second, fixed **Editor menu bar** (FQ-016, 2026-08-07 — **five menus since 2026-08-08**). **There is NO app-level save router and `Ctrl+S` is dead app-wide** (FQ-020, 2026-08-08), `File ▸ Revert` is now **`Discard Changes`**, the default toolbar is **five** buttons with no Save, and renames go through the new **`RENAMED_ID_ALIASES`**, never `LEGACY_ID_ALIASES`. **`Parsing` is tab-kind-gated since BUG-039 (2026-08-09)** — `_refresh_editor_menu_affordances` now does **four** things. **FQ-028 (2026-08-10, SHIPPED `69557d2`) rewrites the shell's chrome:** the single `Audit / Problems` dock is **dissolved** into a left-dock **Findings** tab + a two-tab bottom dock (**Activity Log** — FQ-019's panel repositioned — and **Results**), routed by `ui/audit_router.py`; the **status bar becomes static-only** under the *"never a message board"* rule, carrying a colour-coded **major/minor mode indicator** mirrored into the top toolbar, a **busy slot** with a live elapsed counter, and **FQ-018's Quality/Sandbox dots — which ship here as a component, never as a separate feature**. **FQ-030's final slice (2026-08-10, `229dc11`) adds the window bar's EIGHTH menu, `Settings` — the app's first MAINTENANCE-ONLY menu**, carried by `_MAINTENANCE_ONLY_MENU_TITLES` as the **inverse** of the existing survivor list inside the **same** visibility loop, and shortcut-free by rule because **DEC-006** established that hiding a `QMenu` leaves its children's chords live. **`FQ-260812002827` (SHIPPED `19c14c5`) adds §7's [Software settings dialog](#the-software-settings-dialog--the-apps-one-configuration-home-fq-260812002827-settled-and-shipped-19c14c5) — the app's ONE configuration home**, absorbing `Customize Toolbar…` / `Customize Shortcuts…` off `View` and `Edit Snippets…` / `Autoformatter settings…` off `Settings`, which is left with **one** entry (`settings.software-settings`, also the launcher Maintenance column's third button). Each pane keeps its own apply/OK contract, **the host adds none** (its only button is `Close`), and the host **rebuilds a pane on its `finished`** so no pane is ever a stale scratch copy. **The four absorbed ids get NO alias rows** — absorbed is not renamed. **Three owner decisions are OPEN with shipped defaults** (`DEC-260812004358`/`-59`/`-4400`), and toolbar/shortcut customization is now **Maintenance-only**. Also here: **Maintenance mode's scope is no longer "menu bar only"** — it prunes the **center stage** too (BUG-260812001640, `1ff2b11`) — and **keyboard focus visibility** is `ui/theme.py`'s, appended to the cached theme QSS from `COLOR_TEXT_1` with no second colour table (BUG-260812002838/-4649, `7703eba`). **`BUG-260812023420` (`03473a7`): ONE primitive owns revealing a left-dock pane** — `_reveal_left_panel` un-hides the dock *and* shows *and* selects the tab, four duplicated un-hide calls deleted, because a reveal that forgot it landed a visible tab in a hidden dock and **silently did nothing**; its counterpart `_set_left_panel_visible` deliberately touches neither dock nor current tab (*make available, do not touch the user's layout*, for `CoherenceController.refresh_if_open`), mirroring the bottom dock's existing `_reveal_results_dock_tab`/`_reveal_results_tab` split. **`FQ-260812021715` folded PARTIALLY (`c0ab500`):** a theme is **colours only and a FILE** (`ui/theme_model.py`, Qt-free, over `resources/themes/*.json`), the chrome recolour is a **regex substitution because qdarkstyle's `load_stylesheet(palette=…)` silently ignores a subclassed palette** — correcting a mechanism this document had described wrongly since FQ-005 — an **AST guard** bans a colour literal anywhere in the package, and `shared_accent()` **raises** unless every theme agrees. **`FQ-260812021715` is now COMPLETE and `FQ-260812021716` shipped with it (`7caf024`):** `View ▸ Light Theme` is **DELETED**, selection is a **theme NAME** under `themeName` applied through the one `apply_theme_named`, the `lightTheme` boolean is **migrated once and REMOVED**, `_is_light_theme` reads the applied `Theme.light` (which is what lets a *third* theme answer at all), `_qss_cache` is re-keyed on the sheet's actual inputs (a bool key **could not tell two dark themes apart**), and the **`Themes` pane** is `SETTINGS_PANES`' fifth row — closing `DEC-260812004400` and **merging** `FQ-260812002828`/`-829`, since syntax colours are part of a theme. **Theme choice is therefore MAINTENANCE-ONLY, recorded as a withdrawal.** Also here: **`BUG-260812063745`** (`f05cc8b`) — the AST guard widened to **hex of any length and CSS colour names in declarations**, because a literal was "fixed" by respelling it `darkorange` and the test went green; new **`ui/status_colours.py`** (`STATUS_OK`/`WARNING`/`ERROR`, `status_colour`, `StatusLabel`), the DEBUG chip **folded in via theme accents**, and one deliberate carve-out the guard must never chase — and **`BUG-260812103144`** (`cdcba11`) — the connectivity dots become **per-theme (4.58–9.07:1, was 1.46–3.06:1)** with **one shape per state** (`●` `▲` `□` `○`), on the **4.5:1 text** threshold, `ConnectivityIndicator` inheriting `StatusLabel`, and two rules folded as rules: **a surface's contrast baseline is its own background**, and **`StatusLabel` may not be reused on a transparent-background surface without overriding its palette read**. **`FQ-260812025705` SHIPPED (`179d5e0`) — `SETTINGS_PANES` gains a SIXTH row, `External tools`**, absorbing `Generation ▸ Locate PHP Generator Executable…` / `Locate panGen Runtime…` and `Tools ▸ Locate PHP Linter…` (three more ids deleted, **no alias rows**). **It diverges from the pane contract deliberately: Browse persists immediately through each lane's own `locate_*`, so the pane has no edit buffer, no OK/Cancel and no `finished` for the host to rebuild on.** What replaced the deleted menu items is the **enabled state** of the operations that need a binary — greyed, with the new address in the tooltip, from the one `EXTERNAL_TOOLS_SETTINGS_PATH` constant. **`DEC-260812004358`'s withdrawal gains a fourth and widest member: setting a binary is Maintenance-only while the operations using it run in Project/Standalone mode***
 8. [Raw XML editor](#8-raw-xml-editor) — *project-mode-only bookmark persistence (FQ-013) and `List All Bookmarks` (FQ-014) — **both shipped** 2026-08-07; the `Select` menu with trigger-time dispatch (FQ-015) and the permanently visible Find/Replace bar (FQ-016) — **both shipped**. The shared gutter gains a **second, body-relative number column** (FQ-031, **SHIPPED** `c7c34f1`/`6142d73`) — **zero cost when off**, pinned pixel-for-pixel; its only host today is §18.5's DDL object tab. **FQ-034 — SHIPPED (`cde65fa`), status-corrected 2026-08-10:** the `Select` menu has **four** entries — `Select Parent Block` became a repeatable **`Expand Selection`** with an expansion stack, extended to the SQL editors, plus **`Shrink Selection`** on `Ctrl+Shift+Z`; the ladder's spans come from two Qt-free `sql/` modules (`blocks.py`, lifted out of `formatter.py`, and `block_spans.py`), and the two halves are hosted by **different mechanisms** because Qt claims `Ctrl+Shift+Z` natively on both schemes. *(This entry read "**FQ-034, target design NOT YET BUILT**" — a survivor the FQ-034 status pass missed, found here.)* **FQ-032 — SHIPPED (`b0c42da`, 2026-08-10):** §8 also owns the **vim editing mode** — `Esc` puts an editable editor into **Command mode** beside ordinary **Edit mode**, per editor, transient, nothing persisted; a pure Qt-free grammar in `pgtp_editor/vim/`, the Qt half in `ui/vim_mode.py`, and **`ui/editor_shared.py`**, the family-agnostic layer its two forced lifts created (one hint/refusal path, one line-wrap toggle). Command mode claims **four `Ctrl` chords**, so the one reset path is a **correctness guarantee** with a test per trigger. **A SECOND VIM INCREMENT SHIPPED 2026-08-12 (`e60e0d0`, `de75617`) and reversed four of that block's own statements:** the `aw`/`iw` **text objects** left "deferred" — and **without touching `sql/`**, falsifying the dependency story §8 told about them; the operators gained a **selection target** through one boolean (`set_selection_active`), which is what keeps `pgtp_editor/vim/` Qt-free; `v`/`V` gained **sticky selection**, so *"the select-with-`v`-then-`d` reflex does not exist here"* is withdrawn while **there is still no visual mode**; and the Command-mode caret is **on a character, painted in a `paintEvent`**, so `$`/`l` no longer rest past the last character (the motions are unchanged — `d$` still takes the newline). Two new keyless `Select` entries, `Sticky Selection` / `Line Selection`*
 9. [Editor ↔ Tree sync & Reparse](#9-editor--tree-sync--reparse)
 10. [Properties panel](#10-properties-panel)
@@ -1440,7 +1511,7 @@
 16. [Validation](#16-validation)
 17. [Database](#17-database) — includes [the Database/XML Coherence view](#the-databasexml-coherence-view) — *implemented (FQ-003, 2026-08-06): `db/coherence.py`, `ui/coherence_panel.py`, the Database-menu toggle*
 18. [DDL versioning (standalone Postgres mode)](#18-ddl-versioning-standalone-postgres-mode) — *partly implemented — see each subsection*
-    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap. **`FQ-260810183812`, target design NOT YET BUILT (2026-08-10):** the read-only buffer widens from routines-and-triggers to **ALL object kinds** — synthesized **`CREATE TABLE`**, views and matviews — and **every tree item that has DDL navigates to it**, including new constraint / FK / index nodes. `DdlObjectSpan` **grows kinds** rather than gaining a sibling type; the synthesizer is a **new pure Qt-free `db/` module** beside `ddl_buffer.py`; and because a synthesized `CREATE TABLE` is a **reconstruction** (no identity, `GENERATED`, inheritance or partitioning), **the omission must be VISIBLE IN THE BUFFER** — presenting it as *"the table's DDL"* would be a silent wrong result. Six open questions are flagged, §29. **`FQ-260810180336`, target design NOT YET BUILT (2026-08-11):** a **name-filter bar** above the tree (input · match-mode dropdown · `Filter` · `Clear Filter`) hiding non-matching object rows in **both** Explorer instances, `browse_only` not gating it. The fold's load-bearing finding: the DDL Explorer **already has a `FindReplaceBar`**, so §18.1 now states **which input searches what** — the existing bar searches the DDL **text** and moves the caret; this matches object **names** and hides rows. The Find machinery is deliberately **not** reused (documents vs. tree items); `item.setHidden` and `MODE_LABELS`' shape are, with a **new predicate enum**. No chord in v1. Five open questions flagged. **`FQ-260812022749` PART 1 SHIPPED (`a852563`, wired `07b83e9`) — DUAL-MODE DDL:** the Qt-free `db/pg_dump_mode.py` owns the rule and the words only, the rule is one-sided (**`pg_dump` major >= server major** — newer-than-server is *fine*), there is **ONE version rule for both Explorer roles** (owner), **four** RESTRICTED shapes each naming itself, and the `[DDL]` notice fires on **every** DDL open from a verdict probed **once** per quality connection. `RESTRICTED_CLONE_WARNING` turns `DEC-260811022536`'s two structural gaps into a **stated hazard** — the complete DDL is a **clone source**, so restricted text yields a plain table that looks right and runs. **⏳ The buffer's two renderers are LANDING** (`build_ddl_buffer(schema, *, mode, dump_text)`, degrading **whole** with a reason rather than half-parsing). Two facts the wiring established: **there was no quality capability probe anywhere**, and the owner's **same-version principle was assumed, never enforced and never checked** — `server_major_divergence()` now performs it. **`FQ-260812025836` SHIPPED (`c7c45b3`, gated `07b83e9`): VIEWS are editable through the existing §18.5 lane** (`db/apply.py` needed **no** change), **matviews refused WITH THEIR REASON** (no `CREATE OR REPLACE MATERIALIZED VIEW`), `pg_get_viewdef` **load-bearing** as the source (a `pg_dump` source would re-create the trigger double-identity collision), and `DdlObjectRef.is_checkout_eligible` making *edit-and-apply-only* a named fact*
+    - [18.1 Routines & triggers browsing (DDL Explorer)](#181-routines--triggers-browsing-ddl-explorer) — *implemented, including object **creation** (FQ-002, 2026-08-06); the object-row context menu collapses to **one `Edit DDL`** (FQ-024, 2026-08-08); **table ALTERing via the new `Alter Table ▸` submenu and the tree's new column leaves (FQ-025, 2026-08-09 — **twelve** wired operations after slices 1 and 2; slice 3's emitters + dialogs ship with no menu entry yet)**; XML cross-refs' pure layer (`db/routine_refs.py`) shipped — its UI consumer is the remaining gap. **`FQ-260810183812`, target design NOT YET BUILT (2026-08-10):** the read-only buffer widens from routines-and-triggers to **ALL object kinds** — synthesized **`CREATE TABLE`**, views and matviews — and **every tree item that has DDL navigates to it**, including new constraint / FK / index nodes. `DdlObjectSpan` **grows kinds** rather than gaining a sibling type; the synthesizer is a **new pure Qt-free `db/` module** beside `ddl_buffer.py`; and because a synthesized `CREATE TABLE` is a **reconstruction** (no identity, `GENERATED`, inheritance or partitioning), **the omission must be VISIBLE IN THE BUFFER** — presenting it as *"the table's DDL"* would be a silent wrong result. Six open questions are flagged, §29. **`FQ-260810180336`, target design NOT YET BUILT (2026-08-11):** a **name-filter bar** above the tree (input · match-mode dropdown · `Filter` · `Clear Filter`) hiding non-matching object rows in **both** Explorer instances, `browse_only` not gating it. The fold's load-bearing finding: the DDL Explorer **already has a `FindReplaceBar`**, so §18.1 now states **which input searches what** — the existing bar searches the DDL **text** and moves the caret; this matches object **names** and hides rows. The Find machinery is deliberately **not** reused (documents vs. tree items); `item.setHidden` and `MODE_LABELS`' shape are, with a **new predicate enum**. No chord in v1. Five open questions flagged. **`FQ-260812022749` PART 1 SHIPPED (`a852563`, wired `07b83e9`) — DUAL-MODE DDL:** the Qt-free `db/pg_dump_mode.py` owns the rule and the words only, the rule is one-sided (**`pg_dump` major >= server major** — newer-than-server is *fine*), there is **ONE version rule for both Explorer roles** (owner), **four** RESTRICTED shapes each naming itself, and the `[DDL]` notice fires on **every** DDL open from a verdict probed **once** per quality connection. `RESTRICTED_CLONE_WARNING` turns `DEC-260811022536`'s two structural gaps into a **stated hazard** — the complete DDL is a **clone source**, so restricted text yields a plain table that looks right and runs. **`FQ-260812022749` IS NOW COMPLETE (`0025113` + `e6ab9e1`) and every ⏳ is retired:** `build_ddl_buffer(schema, *, mode, dump_text)` degrades **whole**, with a reason, rather than half-parsing, and the reason is a **SECOND `[DDL]` row beside the mode row**. **Spans recover onto the EXISTING `DdlObjectSpan`** — a whole-database dump is not contiguous per object but **each statement is**, so §18.1's trap 1 stands; the per-table `-t` route is a recorded **TRAP** (≈300 spawns per refresh against a no-cache buffer, and it omits a `SERIAL`'s owned sequence). Two facts no entry anticipated: **`pg_dump` splits a table's constraints across TWO shapes** (`CHECK` inline, PK/UNIQUE/FK as `ALTER TABLE`), so handling one leaves every CHECK constraint clicking into nothing; and **routines and triggers keep coming from the CATALOG**, because recovering a signature from a `CREATE FUNCTION` header means re-rendering it, which BUG-018 forbids. **End-to-end byte-identity in FULL mode is an environmental assumption, not a proven property** — what is owned is a pure parser plus ordering by name / `(kind, name)`. Two facts the wiring established: **there was no quality capability probe anywhere**, and the owner's **same-version principle was assumed, never enforced and never checked** — `server_major_divergence()` now performs it. **`BUG-260812071208` (`179d5e0`): the BUG-007 lockstep's `setChecked` echo is NOT readable as a user toggle** (a re-entrancy flag, deliberately **not** `QSignalBlocker`, which would leave a pinned toolbar button stale). **`BUG-260812110307`: a close during load WINS**, which narrows the `[DDL]` row to *every open that **reveals*** — rule folded, mechanism **written in-tree and unmerged**. **`FQ-260812025836` SHIPPED (`c7c45b3`, gated `07b83e9`): VIEWS are editable through the existing §18.5 lane** (`db/apply.py` needed **no** change), **matviews refused WITH THEIR REASON** (no `CREATE OR REPLACE MATERIALIZED VIEW`), `pg_get_viewdef` **load-bearing** as the source (a `pg_dump` source would re-create the trigger double-identity collision), and `DdlObjectRef.is_checkout_eligible` making *edit-and-apply-only* a named fact*
     - [18.2 Projects, checkout & state markers](#182-projects-checkout--state-markers) — *implemented (git integration is an explicit TBD placeholder); **checkout is no longer a separate gesture** and the tab key is **`ref.key` always** (FQ-024, 2026-08-08). **FQ-035 SHIPPED (`82f2be6`, ambiguities ruled and shipped `caed134`):** the New Project dialog has an optional **`.pgtp` attach field** and a **quality/target connection section revealed and auto-populated by it** via `connection_from_tree` — the creation flow is five steps, and `create_project` writes `target` and `pgtp` instead of leaving both at their empty defaults until first open. Both flagged ambiguities are **answered**: checkout happens **at accept through ONE copier** (`check_out_pgtp`, which raises `OSError` rather than deciding), and there is **no quality gate but one advisory**. **BUG-260810173246 is RESOLVED (`73f55c9`):** one `_linked_working_copy` predicate makes *"a recorded path with no file behind it is not a link"* true for all three readers and the writer's guard, and a half-link **self-heals** on the next open of the same source. *(Superseded: "target design NOT YET BUILT" and "two ambiguities are flagged for the owner rather than decided".)**
     - [18.3 Deploy workflow & schema diff/migration](#183-deploy-workflow--schema-diffmigration) — *all the pieces ship (diff/migration engine, `db/schema_snapshot.py`, `db/deploy_bundle.py`, `ui/schema_compare_panel.py`); **none are reachable** — no menu entries, no flow driving them*
     - [18.4 SQL/plpgsql selection formatter](#184-sqlplpgsql-selection-formatter) — *SQL engine implemented, core + **two** consumers: `Ctrl+Alt+F` Format Selection in the DDL object editor (with a context-menu item) and the Sandbox SQL Console (chord only), `[SQL]` Audit refusals wired. **FQ-033 SHIPPED 2026-08-10 (`061e973`), and its four "NOT YET BUILT" banners are retired:** configurable keyword casing (keywords only) + a bounded break/indent rule set (`sql/format_config.py`, which also now OWNS `CLAUSE_STARTERS`/`DEFAULT_INDENT_UNIT`), a separate Qt-free `xmlfmt/` XML engine behind the same gesture on the three `XmlEditor` surfaces, and the `Autoformatter settings…` dialog + `autoformatter` QSettings group (hosts read the config **at gesture time**, so a save reaches an open tab with no notification plumbing). the `Settings ▸ Autoformatter settings…` menu line landed in **`81bf658`** — and was **RE-HOMED 2026-08-12 (`19c14c5`) as the *Autoformatter* pane of `Settings ▸ Software settings…`**, with the id `settings.autoformatter-settings` deleted and no alias row (§7); the dialog and its persistence are unchanged. ~~**ONE SEAM REMAINS UNWIRED … the `[XML]` refusal handler**~~ — **CLOSED: `audit_router.XML_PREFIX` → `TO_ACTIVITY` and `MainWindow._report_xml_format_refusal` on all three `XmlEditor` hosts, verified 2026-08-12. §18.4 has NO unwired seam** (the banner had survived in four places; ledger §28)*
@@ -1455,11 +1526,11 @@
 20. [re_phpgen — own generator & gap loop](#20-re_phpgen--own-generator--gap-loop)
     - [20.4 Production cutover](#204-production-cutover-target-design--not-yet-reached) — *planned*
 21. [Custom PHP editing](#21-custom-php-editing) — *phase 1 built (`ui/php_file_tab.py` + `CenterStage` hosting + `File ▸ Open PHP File…`, verified present 2026-08-07)*
-22. [Lint integration](#22-lint-integration) — ***fully wired** (re-audited 2026-08-10): `pgtp_editor/lint/` ships, `PhpFileTab` emits, and **`ui/lint_controller.py::LintController`** is the host — `Lint Current File`, ☐ `Lint on Save`, `Locate PHP Linter…`, all on Tools. §22's *"remaining gap: the MainWindow host side"* banner is **closed**. `[Lint]` rows now land on FQ-028's **Messages** tab (internal id `TO_RESULTS`) and accumulate*
+22. [Lint integration](#22-lint-integration) — ***fully wired** (re-audited 2026-08-10): `pgtp_editor/lint/` ships, `PhpFileTab` emits, and **`ui/lint_controller.py::LintController`** is the host — `Lint Current File` and ☐ `Lint on Save` on Tools. §22's *"remaining gap: the MainWindow host side"* banner is **closed**. `[Lint]` rows now land on FQ-028's **Messages** tab (internal id `TO_RESULTS`) and accumulate. **2026-08-12 (`179d5e0`, `FQ-260812025705`): `Locate PHP Linter…` is GONE from Tools** — it is a row of `Settings ▸ Software settings… ▸ External tools`, and in exchange the two surviving entries are **greyed with their reason** while no linter is configured*
 23. [MCP integration](#23-mcp-integration) — ***fully wired** (re-audited 2026-08-10): `pgtp_editor/mcp/` ships, headless `--mcp` works, and **Tools ▸ ☐ `Start MCP Server`** (`MainWindow._mcp_action`) is the GUI opt-in, unchecked at every launch with no persisted key. §23's *"remaining gap"* banner is **closed**; its *"opt-in in Preferences"* wording named the stub FQ-016 deleted and is corrected*
 24. [In-app manual](#24-in-app-manual)
 25. [Debug mode](#25-debug-mode)
-26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half. **BUG-064 (`a9efb67`): `History`'s two entries are `Undo Project Edit` / `Redo Project Edit` and carry NO shortcut** — they are a project-scoped command, not the menu twin of the focus-scoped `Ctrl+Z`/`Ctrl+Y`, and unlike those chords they **are** rebindable. **2026-08-12: `View` LOSES `Customize Toolbar…` and `Customize Shortcuts…` and `Settings` collapses to ONE entry, `Software settings…`** (`FQ-260812002827`, `19c14c5`, §7) — four ids deleted, **no alias rows**; and the Editor bar's **`Select` menu grows to SIX entries**, the two new ones (`Sticky Selection` / `Line Selection`) **keyless and checkable with re-derived state**, hidden on a read-only editor (`FQ-260812000331`, `de75617`, §8). **2026-08-12 (later): `View` also LOSES `☐ Light Theme` and its trailing separator, so the menu ends on `Collapse All`** (`FQ-260812021715`, `7caf024`, §7) — the id `view.light-theme` **deleted with no alias row**, because nothing means *"toggle to light"* any more; theme choice is the `Themes` pane of `Settings ▸ Software settings…`, which makes it **Maintenance-only**, and §27 gains no row*
+26. [Consolidated menu bar](#26-consolidated-menu-bar) — ***two** menu bars since FQ-016 (2026-08-07): the window bar, and [the Editor menu bar](#the-editor-menu-bar-fq-016-2026-08-07) (**History · Select · Parsing · Navigation · Deployment** — five since 2026-08-08). `Edit` no longer exists; **File loses `Save`/`Save As…`** and Tools loses **all four** Compare/Merge entries. **2026-08-09: `Parsing` gains the two Check gestures and Database loses them, along with `Open`/`Close Sandbox Session`**. **FQ-027 (2026-08-09):** `File ▸ Show Launcher…` → **`New Session`**, and the window bar gains a **[Maintenance-mode membership table](#window-bar-membership-in-maintenance-mode-fq-027-2026-08-09)** — the app's one **intent**-based filter, distinct from every capability-based *absent, not disabled* rule in this section. **The window bar gains an EIGHTH menu, `Settings`, 2026-08-10 (`229dc11`) — present in Maintenance mode and in NO other**, the filter's first additive half. **BUG-064 (`a9efb67`): `History`'s two entries are `Undo Project Edit` / `Redo Project Edit` and carry NO shortcut** — they are a project-scoped command, not the menu twin of the focus-scoped `Ctrl+Z`/`Ctrl+Y`, and unlike those chords they **are** rebindable. **2026-08-12: `View` LOSES `Customize Toolbar…` and `Customize Shortcuts…` and `Settings` collapses to ONE entry, `Software settings…`** (`FQ-260812002827`, `19c14c5`, §7) — four ids deleted, **no alias rows**; and the Editor bar's **`Select` menu grows to SIX entries**, the two new ones (`Sticky Selection` / `Line Selection`) **keyless and checkable with re-derived state**, hidden on a read-only editor (`FQ-260812000331`, `de75617`, §8). **2026-08-12 (later): `View` also LOSES `☐ Light Theme` and its trailing separator, so the menu ends on `Collapse All`** (`FQ-260812021715`, `7caf024`, §7) — the id `view.light-theme` **deleted with no alias row**, because nothing means *"toggle to light"* any more; theme choice is the `Themes` pane of `Settings ▸ Software settings…`, which makes it **Maintenance-only**, and §27 gains no row. **2026-08-12 (`179d5e0`, `FQ-260812025705`): `Generation` LOSES `Locate PHP Generator Executable…` and `Locate panGen Runtime…` (five entries left) and `Tools` LOSES `Locate PHP Linter…`** — three more ids deleted with **no alias rows**, all three absorbed into the `External tools` pane; what replaced them is the **greyed-with-a-reason** state of the operations that need those binaries. Also corrected here: the Maintenance-mode table said the `Schema` menu has **five** items — it has had **six** since `483a9ad`*
 27. [Consolidated keyboard shortcuts](#27-consolidated-keyboard-shortcuts) — *the table lists **DEFAULTS**, not fixed bindings: every **menu-bar** QAction is user-rebindable through the **Keyboard shortcuts** pane of `Settings ▸ Software settings…` (FQ-012, 2026-08-09; **re-homed off `View` 2026-08-12, `19c14c5` — so rebinding is now MAINTENANCE-ONLY**, `DEC-260812004358` OPEN), on a **steal-or-refuse** conflict rule because Qt fires **neither** of two shortcuts on one chord; the short list of genuinely unrebindable keys is enumerated there. **`Ctrl+S`/`Ctrl+Shift+S` are deliberately unbound app-wide** (stated, not omitted) and now **without any carve-out** — `CodeEditorDialog`'s OK/Cancel pair, the last one, was deleted 2026-08-09 and the dialog answers `Return`/`Escape` instead; **`Ctrl+O` and `Ctrl+W` join them as deliberately unbound 2026-08-09** — but *free* rather than reserved, so a user may rebind either (status-corrected 2026-08-10, superseding *"`Ctrl+W` keeps `File ▸ Close`"*). **`Ctrl+Shift+Z` gains its first row 2026-08-10** — a second redo key, shipped long before and never written down; it is now **reserved** (BUG-050) and answered by the DDL object tab and the read-only DDL Explorer as well as the XML editors (BUG-048/BUG-053). **The `Ctrl+Shift+B` row is rewritten (BUG-046):** the duplicate `CodeEditor.keyPressEvent` host is **deleted** and its offscreen justification was **measured false** — one host per window, per §8's DEC-012 rule. **The section now opens with DEC-015's governing rule (2026-08-10): a chord means the same thing on every system — bound by this app on every platform, never inherited from Qt's platform table, and NO platform-conditional bindings.** With it: `docs/KEYBINDINGS.md` as the single chord register **kept true by a test, not by transcription**, and the warning that the offscreen suite runs Qt's **Windows** scheme so a Linux-only dead key passes every test. **DEC-015's per-chord consequences ALL SHIPPED (`a9efb67`) and the rows now assert them:** `Ctrl+Y` bound explicitly on both platforms, `Ctrl+Shift+Z` **freed from redo and reclassified `CLAIMED_NOT_UNDO_REDO`** — claimed by all six editing surfaces so Qt's native redo cannot fire, awaiting FQ-034's shrink-selection — and the legacy `Alt+Backspace` / `Alt+Shift+Backspace` pair **SUPPRESSED on both platforms**, the call DEC-014 had left open. **`docs/KEYBINDINGS.md` EXISTS**, with a measured per-scheme appendix, and its **Reserved column is a set equality against `RESERVED_SEQUENCES`**, so a reserved-set change ships with its ledger row in the same commit — **all five of its recorded Known gaps are now CLOSED**. **The owner's X11-chord rulings SHIPPED TOO (`55c2538`):** the uniformity rule's one exception is the **physically-absent-keys carve-out** (`F14`/`F16`/`F18`/`F20`, `F14`'s undo bypass knowingly accepted with its own review trigger); **`Ctrl+Shift+Insert` is paste on both platforms** and is in `EDITOR_PASTE_CHORDS`; **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are app-implemented at all six surfaces** through one `code_editor.apply_editor_operation`, so **Windows gained three gestures** and the app now owns those primitives' edge cases forever. **The table and matcher are `EDITOR_CHORDS` / `classify_editor_chord`** — renamed rather than duplicated, because a second table means a second matcher and two calls per surface, which is the whole BUG-048/049/053/056 family*
 28. [Supersession ledger](#28-supersession-ledger)
 29. [Open questions](#29-open-questions)
@@ -1642,8 +1713,9 @@ pgtp_editor/
 │   │                  # introspect.py::run_queries is the sole READ seam — read-only, never commits
 │   ├── ddl_buffer.py  # build_ddl_text(schema) → (text, [DdlObjectSpan]) — DDL Explorer buffer (§18.1);
 │   │                  # EDITABLE_SPAN_KINDS (+"view" since FQ-260812025836, deliberately NOT "matview") /
-│   │                  # OBJECT_SPAN_KINDS. ⏳ ITS DUAL-MODE ENTRY POINT IS LANDING: build_ddl_buffer(schema,
-│   │                  # *, mode, dump_text) -> DdlBuffer{text, spans, mode, degrade_reason}, RESTRICTED being
+│   │                  # OBJECT_SPAN_KINDS. ITS DUAL-MODE ENTRY POINT SHIPS (FQ-260812022749, 0025113 +
+│   │                  # e6ab9e1): build_ddl_buffer(schema, *, mode, dump_text) -> DdlBuffer{text, spans,
+│   │                  # mode, degrade_reason} + build_full_ddl_text(schema, parsed), RESTRICTED being
 │   │                  # today's renderer unchanged (so BUG-018's proven determinism still covers exactly the
 │   │                  # code it always did) and FULL degrading WHOLE, with a reason, rather than half-parsing
 │   ├── apply.py       # SHIPS and is REACHABLE — the sole DB **write** seam: apply_ddl(target, [sql],
@@ -1681,9 +1753,13 @@ pgtp_editor/
 │   │                  # and server_major_divergence(quality, sandbox) — the quality-vs-sandbox comparison the
 │   │                  # owner's same-version principle required and NOTHING in the app had ever performed.
 │   │                  # Qt-free, renders no DDL, never raises; the pg_dump --version SPAWN stays in sandbox.py
-│   ├── pg_dump_ddl.py # the one pg_dump --schema-only subprocess (fetch_schema_dump) plus the pure dump
-│   │                  # parser (parse_pg_dump -> ParsedDump/DumpStatement, KIND_CONSTRAINT/KIND_INDEX)
-│   │                  # feeding ddl_buffer.py's FULL renderer — ⏳ LANDING with the buffer's two modes
+│   ├── pg_dump_ddl.py # SHIPS (FQ-260812022749 Part 3, 0025113) — the one pg_dump --schema-only subprocess
+│   │                  # (fetch_schema_dump, PG_DUMP_SCHEMA_ONLY_ARGS, PG_DUMP_SCHEMA_TIMEOUT_S,
+│   │                  # SchemaDumpError) plus the PURE dump parser: split_statements over a dollar-quote-
+│   │                  # aware line lexer, _classify -> DumpStatement{kind, schema, name, relation, lines,
+│   │                  # column_offsets, constraint_offsets}, parse_pg_dump -> ParsedDump{statements,
+│   │                  # creates, attachments, other}. --no-comments is deliberately NOT passed (it would
+│   │                  # make FULL less complete than RESTRICTED); the per-table -t route is a recorded TRAP
 │   ├── table_ddl.py   # pure synthesized CREATE TABLE / view / matview reconstruction from pg_catalog
 │   │                  # (§18.1, FQ-260810183812): per-table RECONSTRUCTION_NOTICE, identity and
 │   │                  # GENERATED rendered, inheritance + partitioning the two stated gaps
@@ -4006,10 +4082,12 @@ sweep noticed.)*
 > `DEC-260812004359` (non-modal). Each is isolated to one place, which is why the feature shipped rather
 > than waiting. **`DEC-260812004400` is CLOSED by shipping (`7caf024`)** — see *FIVE panes* below.
 >
-> **⏳ A SIXTH pane, `External tools` (`FQ-260812025705`), is IN FLIGHT in a concurrent tree** — the queue
-> entry is still `QUEUED`. The module already carries an `ExternalToolsPane` and a sixth `SETTINGS_PANES`
-> row, but nothing about it is pinned here and no line number is cited; the next fold records it. **What
-> matters for this block is only that it cost one row**, which is the pane contract working as specified.
+> **The SIXTH pane, `External tools` (`FQ-260812025705`), SHIPPED `179d5e0` and is pinned below.** *(This
+> banner read **"⏳ IN FLIGHT in a concurrent tree … nothing about it is pinned here and no line number is
+> cited"** until 2026-08-13.)* Verified by name: `ExternalToolsPane`, `ExternalTool`, `EXTERNAL_TOOLS`
+> (three rows) and `EXTERNAL_TOOLS_SETTINGS_PATH`, plus the sixth `SETTINGS_PANES` entry keyed
+> `external_tools`. **It cost exactly one row**, which is the pane contract working as specified — and it is
+> the *second* independent confirmation of that claim, after `Themes`.
 
 **The problem it solves is structural, and naming it is what makes the shape non-arbitrary: a launcher
 button is ONE command, and the app's settings were a whole menu plus two `View` entries.** No single command
@@ -4028,6 +4106,7 @@ entry.** That is the whole design, and every other property follows from it.
 | Autoformatter | `autoformatter` | `Settings ▸ Autoformatter settings…` (FQ-033, §18.4 part D) | `AutoformatSettingsDialog`, via `build_autoformat_settings_pane` |
 | Keyboard shortcuts | `shortcuts` | `View ▸ Customize Shortcuts…` (FQ-012, §27) | `CustomizeShortcutsDialog`, via `MainWindow.build_customize_shortcuts_pane` |
 | **Themes** | `themes` | **nowhere — net-new** (`FQ-260812021716`, `7caf024`) | **`ThemesPane`, defined in this module** because it had no prior dialog to embed; via `_themes_pane` |
+| **External tools** | `external_tools` | **three menu entries at once** — `Generation ▸ Locate PHP Generator Executable…`, `Generation ▸ Locate panGen Runtime…`, `Tools ▸ Locate PHP Linter…` (`FQ-260812025705`, `179d5e0`) | **`ExternalToolsPane`, defined in this module** — same exception, same reason: it had no prior dialog; via `_external_tools_pane` |
 
 **The host: a `QSplitter` over a `QListWidget` of category titles and a `QStackedWidget` of panes**, titled
 `Software settings` (no ellipsis — the ellipsis belongs to the *menu label*, which promises a dialog, not to
@@ -4084,7 +4163,11 @@ changes **nothing** about a shipped surface: `CustomizeShortcutsDialog` was alre
 non-modal shortcut editor is what lets a user try a chord against the live app instead of
 edit → close → test → reopen. **Reversal is one `setModal(True)` plus dropping the raise-and-focus logic.**
 
-#### FIVE panes — `DEC-260812004400` is CLOSED, and the two reserved ones are MERGED rather than deferred (`FQ-260812021716`, `7caf024`)
+#### `DEC-260812004400` is CLOSED, and the two reserved panes are MERGED rather than deferred (`FQ-260812021716`, `7caf024`)
+
+*(Heading count note: this block answers **the owner's original six-item list with FIVE panes**. `SETTINGS_PANES`
+itself has **SIX** rows since `179d5e0` — the sixth, `External tools`, is net-new and outside that list.
+Two different counts, both true, so both are spelled.)*
 
 *(This block read **"FOUR panes, not six (`DEC-260812004400` — DEFAULT, pending)"** until 2026-08-12; the
 decision it hedged is answered by a real pane. The reasoning below is kept because it is still the rule for
@@ -4110,6 +4193,106 @@ than merely discouraged.
   Maintenance-mode setting is app-wide and durable from the moment it is made (owner ruling); only the
   colour **edits** are buffered behind OK/Cancel. That is the pane owning its contract, exactly as the host
   requires — see §7's theme-selection block for the whole gesture set.
+
+#### The SIXTH pane — `External tools`, and it diverges from the pane contract DELIBERATELY (`FQ-260812025705`, SHIPPED `179d5e0`)
+
+**Three app-wide external binaries, in one pane:** the vendor **PHP Generator executable**
+(needed by `Generation ▸ Generate PHP`), the **panGen runtime** — the `re_phpgen` repo root — (needed by
+`Generation ▸ panGen, rePHPgen and Save reJSON`), and the **PHP linter** `php` executable (needed by
+`Tools ▸ Lint Current File and Lint on Save`). Each row shows what is stored, a `Browse…` button and a
+status line.
+
+**RELOCATION, NOT DUPLICATION.** `Generation ▸ Locate PHP Generator Executable…`,
+`Generation ▸ Locate panGen Runtime…` and `Tools ▸ Locate PHP Linter…` are **gone from their menus**; this
+pane is their sole home, exactly as this dialog is the sole home of the four surfaces it absorbed first.
+
+**Why ONE pane and not three.** All three are app-wide locators over a single `generator_config.json`, so
+three panes would fragment a grouped concept. `EXTERNAL_TOOLS` is a **tuple of three `ExternalTool` rows**
+(`locate` / `value` / `resolves` / `dependents` / `broken_note`), so a fourth binary is one row — the same
+property `SETTINGS_PANES` has, one level down.
+
+**NOTHING HERE RE-IMPLEMENTS A STORE.** Each row's Browse calls **the owning lane's existing locate method**
+(`GenerationController.locate_generator` / `locate_pangen_runtime`, `LintController.locate_linter`) — their
+old menu items' own slots. The file dialog, the validation, the `generator_config.json` write that preserves
+its sibling keys, and the status-bar line are all shipped, already-tested code; this pane reads back through
+the lanes' read-only accessors and **never learns where `config_dir` points**.
+
+> **⚠ THE APPLY CONTRACT DIVERGES FROM THE OTHER FIVE PANES, AND THAT IS THE DESIGN RATHER THAN A GAP.**
+> **Browse persists immediately**, so this pane has **no OK/Cancel** — and adds none to the host, whose only
+> button stays `Close`. It is the same shape as `ThemesPane`'s *Use this theme*: **a single-value pick
+> through a file dialog is already a confirmed gesture, and the picker IS the OK.** Buffering it would
+> invent a *seventh* apply semantics and give a non-modal window a body of unsaved state — the two grounds
+> on which a host-level buffer was rejected in the first place.
+>
+> **The consequence is what makes the divergence safe, and it is stated because a reader will otherwise
+> file it as a bug: there is no `finished` for the host to rebuild this pane on.** The host's
+> rebuild-on-`finished` mechanic exists to stop a pane being a **stale scratch copy** — and *a pane holding
+> no edit buffer has nothing to rebuild from*. Because nothing is buffered, nothing can go stale: each pick
+> refreshes this pane's own status lines, and the lane re-gates its own menu entries **in the same call**.
+
+**`resolve_tool` is deliberately NOT reused here**, and §18.2's per-project `postgres_bin_dir` is deliberately
+**not** unified with this pane — the two are mirror images and the reasons are recorded in both places. These
+three binaries are **one per machine**; the PostgreSQL client binaries must differ **per project because the
+server does**. And `resolve_tool` is keyed on a **folder** holding a known binary name, while two of these
+three store a full executable **path**. What *was* reusable from that feature is its `Which`-shaped seam and
+its warn-don't-block status line — not its folder semantics.
+
+**WARN, DO NOT BLOCK.** A stored path that no longer resolves is **stated in the status line rather than
+erased or refused**. `resolves` differs per tool on purpose: an executable is a file (`Path.is_file`), the
+panGen runtime is a repo root (`validate_re_phpgen_root`), and nothing here re-derives either. For the
+panGen runtime the dependent operations really are greyed — an invalid root cannot run — but for the two
+executables **the operation stays reachable and reports the failure itself**; §22's lint run in particular
+diagnoses a missing binary better than this pane can guess.
+
+##### What replaced the deleted menu items as the discoverability cue: the operations' ENABLED STATE
+
+Removing three `Locate …` entries removed the only pointer the app had to *"where do I set this?"*. The
+replacement is **FQ-023's convention applied to a greyed entry** — the entry stays present and states its
+reason:
+
+| Operation | Gated on | Tooltip while unavailable |
+|---|---|---|
+| `Generation ▸ Generate PHP...` | a stored generator path | *"Unavailable: the PHP Generator executable is not set. Set it in `Settings ▸ Software settings… ▸ External tools`."* |
+| `Generation ▸ panGen (Generate Own PHP)` · `rePHPgen (Analyze Gap)` | `pangen_runtime_is_valid()` | *"Unavailable: the panGen runtime is not set, or is no longer valid. Set it in …"* |
+| `Generation ▸ Save reJSON...` | the **conjunction** of that and a produced gap JSON | the runtime sentence, else *"no gap analysis has produced a reJSON yet"* |
+| `Tools ▸ Lint Current File` · ☐ `Lint on Save` | `linter_is_configured()` | *"Unavailable: no PHP linter is configured. Set it in …"* |
+
+- **The address has ONE home.** `software_settings_dialog.EXTERNAL_TOOLS_SETTINGS_PATH` is the string; both
+  controllers import it, *because three lanes naming a menu path in their own words is how a moved surface
+  becomes unfindable*. `lint/findings.py` cannot import a UI module and carries the literal — **a test pins
+  the two together.**
+- **The lane owns the RULE, the host owns the MENU.** The Tools entries are built by `main_window.py` and
+  handed to `LintController.register_dependent_actions(...)`, which gates them **at registration** (so
+  startup is gated, not only a later change) and again from `locate_linter` — which is what makes setting a
+  binary in the pane light the menus up **live**. The pane therefore **never touches an action**: it calls
+  the lane's locate method and the lane re-evaluates its own affordances.
+- **`linter_is_configured` is deliberately *"a path is stored"* and NOT *"and the file still exists"*.** §22
+  is advisory, and its `EXECUTABLE_MISSING` outcome already reports a vanished binary as a `[Lint]` row —
+  *greying on existence would make a lint run's own diagnosis unreachable, which is the opposite of stating
+  the reason.* `pangen_runtime_is_valid` goes the other way, and for the opposite reason: a moved checkout
+  leaves a configured-but-dead root, and greying only the empty case would leave three enabled entries that
+  cannot run.
+- **`GenerationController` also owns its `Generation` menu outright** and calls `refresh_tool_affordances()`
+  at build, so the state is right at startup rather than after the first change.
+
+##### The three absorbed command ids get NO alias rows either — the same rule, third application
+
+`generation.locate-php-generator-executable`, `generation.locate-pangen-runtime` and
+`tools.locate-php-linter` no longer exist, and **no `RENAMED_ID_ALIASES` row is added for any of them**;
+`resolve_ids` drops them from a stored `toolbarIds` / `toolbarIconIds`. **The rule is the one stated for the
+four absorbed ids above — alias when the successor answers the same request, drop when it does not** — and
+here there is no successor command meaning *"locate the PHP linter"*. Aliasing all three onto
+`settings.software-settings` would additionally collapse **three distinct buttons into one**, which is a
+plausible-looking wrong result rather than a lost button.
+
+##### ⚠ The reachability withdrawal has a FOURTH member, and it is the widest one yet (`DEC-260812004358`)
+
+**Setting an external binary is now a Maintenance-mode gesture, while the operations that USE it run in
+Project/Standalone mode.** That is a sharper split than the other three members of this withdrawal: toolbar
+customization, shortcut rebinding and theme choice are all *configuration whose effect is also
+configuration*, whereas here a user in Project mode hits a greyed `Generate PHP` and must leave their
+session to fix it. **The greyed entry plus its tooltip is what makes that survivable**, and it is the whole
+mitigation — recorded as such rather than as a feature. `DEC-260812004358` governs this member too.
 
 #### ⚠ The reachability cost, stated because it is a WITHDRAWAL (`DEC-260812004358` — DEFAULT, pending)
 
@@ -7766,6 +7949,55 @@ commit `956e8fb`, tested); the UI consumer is the remaining §18.1 gap — nothi
   `_on_ddl_explorer_visibility_changed(visible)`, which shows/hides the left "DDL Objects" tab (making
   the tree dock visible and current when shown) **and** re-syncs the menu action's checked state, so
   closing via the tab ✕ unchecks the menu and vice versa.
+  > **⚠ THE LOCKSTEP'S RE-SYNC IS NOT READABLE AS A USER TOGGLE, and this document owed that sentence**
+  > (`BUG-260812071208`, fixed `179d5e0`; recorded as an **omission**, not a divergence — nothing here had
+  > ever said which direction the echo travels). From an **unchecked** action the lockstep's
+  > `setChecked(True)` emits `toggled` straight back into `_on_ddl_explorer_toggled`, which re-entered
+  > `_open_ddl_explorer` and ran **a second seven-statement introspection round trip per open**.
+  > `self._ddl_explorer_syncing: set[str]` marks the roles currently being re-synced *by* the handler, and
+  > the opener returns on seeing its own role there. **The lockstep itself is untouched** — only its echo
+  > into the opener is suppressed. **The invariant is: one open gesture, one fetch, one `[DDL]` row.**
+  >
+  > **Deliberately NOT `QSignalBlocker`.** Blocking the action's signals around `setChecked` would also
+  > suppress `changed()`, and a pinned **toolbar** button mirrors that action — so the menu would come back
+  > in step while the button stayed stale. *A blocker silences every consumer, and only one of them was the
+  > problem; a re-entrancy flag names the one caller that must ignore the echo.*
+  >
+  > **A menu click never took this path**, which is why the defect survived: `QAction::activate` sets
+  > `checked` **before** emitting `toggled`, so the later `setChecked(True)` was already a silent no-op. The
+  > gestures that doubled were the ones opening **from the unchecked state** — `Database ▸ Reload DDL` with
+  > the Explorer closed, and a close during an in-flight fetch. *A test written against the menu toggle
+  > proves nothing here, and the code says so at the site.*
+- **A CLOSE DURING LOAD WINS, and the `[DDL]` mode row is therefore reported on every open THAT REVEALS**
+  (`BUG-260812110307` — **the rule is settled and folded; the mechanism is WRITTEN IN THE WORKING TREE AND
+  UNMERGED**, in a `ui/main_window.py` held by concurrent agents. Read that as *written, unmerged* — not as
+  *specified, unwritten*).
+  - `self._run_async` has **no cancellation**: a dispatched fetch sits in flight until it delivers. So a
+    user who closes the Explorer while it loads gets the result back anyway, and the pre-fix behaviour was
+    that the result **re-opened the panel they had just closed**.
+  - The rule: **the later gesture wins.** A per-role fetch **epoch** is bumped on the GUI thread by every
+    open *and* every close, captured by the dispatching open, and compared when the result lands; a
+    superseded result **performs no visible act**. Two rapid reloads therefore cannot paint out of order
+    either — last requested wins.
+  - **An epoch, deliberately NOT a visibility test.** On a normal open the tab is still hidden at that
+    point (the reveal is what shows it), so a visibility gate would suppress the very reveal it exists to
+    perform — and visibility cannot tell *"the user closed it"* apart from the Maintenance-mode prune or
+    the sandbox-unavailable hide.
+  - **What survives a stale result is as load-bearing as what is suppressed.** The **connection-scoped**
+    facts are kept: the probed capabilities and the DDL-mode verdict (keyed on the connection, which a
+    closed tab cannot falsify — dropping them would re-open a probe connection and re-spawn
+    `pg_dump --version` for an answer already in hand), and **§18.6's completion index**, because §18.5
+    object-editor tabs are **independent surfaces with their own lifetime**: a user who closed the browser
+    may still have editable object tabs open, and their completions must describe the freshest
+    introspection. *A blanket early return would silently break completions in tabs nobody closed.*
+  - **The narrowing this implies is stated rather than left to be discovered: the owner's *"report the
+    `[DDL]` row on every DDL open"* becomes *"every open that REVEALS a panel"*.** That is a **reading** of
+    the ruling, not a reversal — *a discarded fetch was not an open* — so `BUG-260812071208`'s
+    one-open-one-fetch-one-row invariant is preserved exactly, and the next real open still emits the row
+    from the cached verdict with no probe.
+  - It is **deliberately not entangled** with `_ddl_explorer_syncing`: that one marks a re-entrancy echo
+    *within* a single gesture, this one orders *gestures* against results already in flight. Two problems,
+    two mechanisms, and merging them would make each unreadable.
 - **Async fetch:** `_open_ddl_explorer()` runs `_fetch_ddl_schema(params)` (an **injectable seam** —
   a one-line wrapper around `fetch_routines_and_triggers(params)`, mirroring `_fetch_db_schema`; tests
   patch it to return a canned `DatabaseSchema`) through the shared `self._run_async` threadpool seam
@@ -8015,18 +8247,17 @@ depths** — one decides which rows the tree HAS, the other decides which of tho
 hide-predicate written against the narrow node set has to be reopened for every kind the first adds — while
 the third **changes what those rows look like** and therefore has to know the final node set it is painting.
 
-#### DUAL-MODE DDL — full `pg_dump` output when a correctly-versioned `pg_dump` exists, the synthesized restricted DDL otherwise (`FQ-260812022749`, owner ruling 2026-08-12; **PART 1 SHIPPED `a852563`, wired `07b83e9`; the buffer's two renderers ⏳ LANDING**)
+#### DUAL-MODE DDL — full `pg_dump` output when a correctly-versioned `pg_dump` exists, the synthesized restricted DDL otherwise (`FQ-260812022749`, owner ruling 2026-08-12; **COMPLETE — Part 1 `a852563` wired `07b83e9`, the buffer `0025113` wired `e6ab9e1`**)
 
-> **Read the status literally.** The **verdict**, the **rule**, the **words** and the **`[DDL]` notice** are
-> built and reachable. The **buffer's two renderers** are landing in a concurrent tree as this is written, so
-> nothing below pins a line in `db/ddl_buffer.py`, `db/pg_dump_ddl.py` or `ui/main_window.py` — the shape is
-> specified, the state is *landing*, and it is neither *built* nor *not built*.
->
-> *Re-verified at the close of this pass rather than at its start, per §31: `build_ddl_buffer`,
-> `build_full_ddl_text`, `parse_pg_dump` and `fetch_schema_dump` all **exist in the working tree**, and
-> `main_window.py` already calls them and reports `degrade_reason` as a second `[DDL]` row — but that file is
-> **mid-merge and conflicted** and the queue entry is still `QUEUED`, which is precisely the state "landing"
-> names. **Do not read the ⏳ as "not written".** The next pass records it as shipped and cites the commit.*
+> **Status: SHIPPED IN FULL — read every remaining marker in this block as *"built"*.** *(This block carried
+> a **⏳ LANDING** banner over `db/ddl_buffer.py`, `db/pg_dump_ddl.py` and `ui/main_window.py` until
+> 2026-08-13. The banner was correct when written — it said "written, unmerged", not "not written" — and the
+> merge landed. **This is the fourteenth consecutive pass to retire a status claim**, and the first where the
+> distinction the previous pass insisted on actually paid: nobody re-wrote the renderers.)* Verified by name
+> 2026-08-13: `db/pg_dump_ddl.py` (`fetch_schema_dump`, `SchemaDumpError`, `split_statements`,
+> `parse_pg_dump`, `ParsedDump`, `DumpStatement`); `db/ddl_buffer.py::build_ddl_buffer` / `DdlBuffer` /
+> `build_full_ddl_text` / `_full_mode_refusal`; and `MainWindow._open_ddl_explorer`'s worker taking the dump
+> and `_report_ddl_degrade` emitting the second `[DDL]` row.
 
 **Why EXTEND §18.1 rather than create anything.** This does not add a buffer, a fetch, a tree or a viewer.
 It answers **one question** — *which renderer fills the one buffer §18.1 already owns?* — and reports the
@@ -8117,7 +8348,7 @@ places.
      session controller's cached capabilities first, the §18 tier probe's second — because
      `_report_ddl_mode` runs on the GUI thread, and *a version notice may not open a connection.*
 
-##### The buffer's two renderers — ⏳ LANDING, and the refusal shape is the specified part
+##### The buffer's two renderers — SHIPPED (`0025113`), and the refusal shape is the load-bearing part
 
 `build_ddl_buffer(schema, *, mode, dump_text) -> DdlBuffer{text, spans, mode, degrade_reason}`:
 
@@ -8141,6 +8372,133 @@ places.
 - The dump is **parsed once** and handed to both the attribution check and the build: a whole-database dump
   is megabytes, and *a second parse for the same answer is the kind of duplicated work that later gets
   "optimized" by skipping the check.*
+
+##### ⚠ SPAN RECOVERY — the finding that made this feature possible, and it was RETRACTED before it was right
+
+**The first triage called `pg_dump`'s output non-contiguity FATAL to click-to-navigate, and then withdrew
+it.** A whole-database `pg_dump --schema-only` is dependency-ordered **globally** rather than grouped per
+object, so *a table's DDL is not contiguous* — which reads, at first, as incompatible with a span index
+whose whole contract is `(start_line, end_line)` per object.
+
+**But each individual STATEMENT is contiguous.** `CREATE TABLE … );`, `ALTER TABLE ONLY … ADD CONSTRAINT …;`
+and `CREATE INDEX …;` are each one unbroken run of lines. So parsing **statement boundaries** yields
+contiguous regions that fit the **existing** `DdlObjectSpan` with at most a new `kind` value — and §18.1's
+**trap 1** (one dataclass, one `kind` field; a sibling span type forks both span walks and the second one
+written misses a case) is respected rather than excepted. *The unit of contiguity was never the object; it
+was the statement, and the feature is what you get when you index the unit that actually exists.*
+
+> **⚠ THE `-t` ROUTE IS A TRAP AND IS RECORDED AS ONE, NOT AS AN OPTION.** Per-table
+> `pg_dump -t schema.table` would make each table's dump contiguous by construction and is the obvious
+> alternative. It is forbidden for two independent reasons: **(1)** it costs one subprocess *and* one server
+> connection **per table**, against a buffer §18.1 settled as having **NO CACHE** — 300 tables is 300 spawns
+> per refresh; **(2)** `-t` does **not** dump the objects the table depends on, so a `SERIAL` column's owned
+> sequence goes missing — *the very case the feature's request opened with.* Nobody may reach for `-t`
+> without re-reading this paragraph; the module docstring carries the same warning at the code.
+
+##### ⚠ TWO FACTS ABOUT `pg_dump` NO QUEUE ENTRY ANTICIPATED, and each is a requirement rather than a note
+
+1. **`pg_dump` splits a table's constraints across TWO SHAPES, and only handling one leaves half the tree
+   dead.** `CHECK` (and `NOT NULL`) stay **inline in the `CREATE TABLE` body**; `PRIMARY KEY` / `UNIQUE` /
+   `FOREIGN KEY` come out later as standalone `ALTER TABLE ONLY … ADD CONSTRAINT`. A parser that handled
+   only the `ALTER` shape would leave **every CHECK constraint's tree row with no span and no navigation** —
+   *the shape of half-working that nobody notices until a user clicks one.* So `DumpStatement` carries
+   **`constraint_offsets`** beside `column_offsets` (both read off the depth-1 entries of the parenthesised
+   body by the same lexer), and `build_full_ddl_text` emits a span for **both** shapes.
+   - **A duplicate SPAN is suppressed; the TEXT never is.** One constraint cannot legally appear in both
+     shapes, so an `ADD CONSTRAINT` naming a constraint already found inline is emitted verbatim but gets
+     no second span — *two spans for one identity would make the tree's span map last-wins, which is
+     BUG-018's shape.*
+   - **Nothing is guessed.** An entry that does not begin with an identifier, or that starts mid-line after
+     another entry, is simply **not recorded**, and the caller **intersects** what was recorded with the
+     catalog's own column/constraint names. The only reachable failure is a *missing* span, never a span on
+     the wrong line. A **quoted** first token is always a name and never a keyword — a column really can be
+     called `"CONSTRAINT"`, and the quotes are the only thing that distinguishes it.
+2. **ROUTINES AND TRIGGERS STILL COME FROM THE CATALOG IN FULL MODE, and the dump's own `CREATE FUNCTION` /
+   `CREATE TRIGGER` are left OUT rather than shown twice. This is a requirement, not a shortcut.** A
+   routine's identity is `RoutineInfo.signature` — `schema.name(` + `format_type(proargtypes)` — and
+   recovering it from a `CREATE FUNCTION` header would mean **RE-RENDERING** that string out of argument
+   names, `OUT`/`VARIADIC` modes and `DEFAULT` expressions, with typmods spelled differently on the two
+   sides (`character varying(20)` vs `character varying`). **BUG-018's rule is that this string has exactly
+   one source and is never re-rendered**; a near-miss would silently unnavigate a routine and break its
+   `Edit DDL`. *And nothing is lost by it: a routine's catalog text is `pg_get_functiondef`, which is
+   already complete — the incompleteness full mode exists to fix is a **table** problem.*
+
+##### What the FULL buffer looks like, and the three decisions a later reader would otherwise re-derive
+
+1. **A table's object span covers its `CREATE TABLE` statement only** (owner-settled: *"click should bring
+   to create table"*). **Containment is therefore LOST in full mode**: folding a table hides less than it
+   does in restricted mode, and `_span_at_line` on a constraint line resolves to the **constraint**, not to
+   the enclosing table. Both are recorded design, not costs to re-raise, and a test pins the
+   click-lands-on-`CREATE TABLE` behaviour. The span still **starts at the banner**, exactly as in restricted
+   mode, so a tree click lands in the same place in both modes and the clone hazard sits *inside* the region
+   a whole-object copy takes with it.
+2. **Relations are ordered by NAME and their attached statements by `(kind, name)`** — constraints, then
+   indexes, then everything else — **not** in `pg_dump`'s global dependency order. Dependency order matters
+   when a file is *executed*; this file is **read and partially copied**, and the tree it is navigated from
+   is alphabetical. *This is also the only determinism this layer can actually own* — see below.
+3. **Statements naming no relation are EMITTED, never dropped**, under their own preamble banner: the `SET`
+   preamble, `CREATE SCHEMA`, `CREATE EXTENSION`, `CREATE TYPE`, `CREATE DOMAIN`, `CREATE SEQUENCE`,
+   `ALTER SEQUENCE … OWNED BY`, and any statement a future PostgreSQL emits that this parser has never
+   seen. *They are exactly what a clone of a table would otherwise silently need.* By the same reasoning
+   **`--no-comments` is deliberately NOT passed**: it would drop the `COMMENT ON` statements the *restricted*
+   renderer already emits, making full mode less complete than restricted mode in one respect — the one
+   regression this feature must not ship. `--no-owner` / `--no-privileges` **are** passed: `OWNER TO` and
+   `GRANT` are deployment scaffolding that says nothing about an object's shape.
+
+`pg_dump`'s own `-- Name: orders; Type: TABLE; …` headers and its `-- Dumped by pg_dump version …` banner
+are **dropped**, deliberately twice over: `db/ddl_buffer.py` writes its own banner per object (the buffer's
+established convention, which the tree navigates by), and the *"Dumped by"* line is the single most
+version-volatile text in the file — keeping it would make the buffer differ across a client upgrade for no
+reader's benefit. **A comment *inside* a statement stays where it is.**
+
+##### DETERMINISM, stated honestly — and the residual risk stated rather than hidden
+
+**End-to-end byte-identity in full mode CANNOT be promised, and is written down as an environmental
+assumption rather than a proven property.** `pg_dump`'s output depends on the **client's** version (a
+version-dependent `SET` preamble, and whatever a newer major spells differently), and no test of ours can
+make that untrue. What *is* pinned, directly, by tests:
+
+- **The parser is pure** — the same dump text in always gives the same statements, in the same order, with
+  the same offsets.
+- **The composition removes `pg_dump`'s walk order from the buffer's identity**, by ordering relations by
+  name and attachments by `(kind, name)`. So nothing but the dump text itself can move a line.
+- **RESTRICTED keeps BUG-018's *proven* end-to-end determinism**, unweakened, because `build_ddl_text` was
+  not touched — the permute-the-dict-order test covers exactly the code it always covered.
+
+> **The residual risk, stated rather than hidden: this parser depends on `pg_dump`'s TEXT LAYOUT, which is
+> not a documented contract** (`pg_catalog` is). *That inverts the "`pg_dump` is correct so we needn't be"
+> argument for exactly the code that parses it.* The mitigation is **structural, not careful**: the parse
+> either attributes **every** relation the introspection found, or the caller degrades with a named `[DDL]`
+> row. Refusing is the caller's single visible decision, and half-parsing is not reachable.
+
+##### The degrade is a SECOND `[DDL]` row beside the mode row — never a replacement
+
+`MainWindow._report_ddl_degrade` adds a row; it does not rewrite the mode row. **Deliberately additive**:
+the mode row is an owner ruling on *every* open, and *"full mode was chosen but you are looking at
+reconstructed DDL"* is **extra information, not a correction of it**. Both appear, in that order.
+
+Two shapes reach it, and the second one earns the design:
+
+| Shape | Where it is detected | What the row says |
+|---|---|---|
+| `pg_dump --schema-only` refused, timed out, or failed to spawn | `fetch_schema_dump` raises `SchemaDumpError`; the worker returns it as `dump_error` | the named failure, verbatim |
+| the dump could not be attributed to every relation the introspection found | `_full_mode_refusal`, before any text is built | how many of how many relations, naming the first three, **plus `RESTRICTED_CLONE_WARNING`** |
+
+- **The attribution check also catches INTROSPECTION-VS-DUMP SKEW for free, and that is not a side effect
+  worth losing.** The dump is a **second connection at a different instant** than the psycopg
+  introspection, so a table created between the two shows up as an unattributed relation and degrades the
+  buffer instead of producing a tree row whose click goes nowhere.
+- **A refusal degrades the WHOLE buffer, with the reason, and never half.** *Spans pointing at the wrong
+  lines are worse than restricted DDL* — the same ranking §18.1's reconstruction notice already applies to
+  text. `_degraded` rebuilds the complete restricted buffer; there is no partially-built full one.
+- **A degrade never fails the open.** The Explorer opens either way; both `SchemaDumpError` and an
+  unexpected exception are caught on the worker, because a version-or-completeness notice must not be able
+  to fail a DDL open.
+- **RESTRICTED never spawns.** No verdict, or a restricted one, means **no `pg_dump` invocation at all** —
+  a test pins that a RESTRICTED verdict *carrying a located `pg_dump_path`* still spawns nothing.
+- **The verdict is the QUALITY server's even for the sandbox role** (the owner's one-version-rule), **but
+  the DUMP is taken from that role's own connection** — so the sandbox buffer is never the quality
+  database's text. A genuine major divergence is reported separately by `server_major_divergence`.
 
 #### VIEWS are editable through the existing §18.5 lane — matviews are REFUSED WITH A REASON (`FQ-260812025836`, **SHIPPED** `c7c45b3`, gated `07b83e9`)
 
@@ -9657,6 +10015,21 @@ projects generally, not only the `ddl/` folder — see also the callout at the t
 >
 > - **Warn, never block.** A folder that is set but does not contain the tool **falls back to `PATH`** rather
 >   than failing: the field is optional, the user may be mid-typing, and `PATH` is still a legitimate answer.
+> - **⚠ A RESOLUTION ORDER STATED IN PROSE HAS TO BE STATED EVERYWHERE IT IS STATED AT ALL.** Changing the
+>   order changed **three user-visible sentences at once**, and only one of them travelled with the code:
+>   `MissingCloneToolError` (correct from the start), `determine_project_tier`'s `degraded_reason`, and the
+>   **sandbox `Test` button's status line** in `Project Settings ▸ Connections`. All three now read
+>   *"in the configured PostgreSQL binaries folder (`<dir>`) or on PATH"* when a folder is set and
+>   *"on PATH"* when none is, and each derives that clause from `bin_dir` rather than spelling a fixed
+>   sentence. **The rule is folded here because NOTHING ENFORCES IT** — three independently-worded sentences
+>   about one precedence order have no test that can hold them together, so the requirement lives beside the
+>   order itself. *"Not found on PATH" is not merely incomplete when a folder was configured: it sends the
+>   user to fix their PATH, which is the wrong thing, so the incompleteness is a wrong instruction.*
+>   - **The `New Project` dialog's probe is the deliberate exception, and it is not a survivor.** That
+>     dialog has **no** binaries-folder field — the project does not exist yet, and the setting is
+>     per-project — so its `"… on PATH (not found)"` status is literally true there. *An exception that is
+>     true is not the same shape as a sentence that was left behind, which is why it is named here rather
+>     than "fixed".* Verified 2026-08-13.
 > - **`bin_dir=""`/`None` is bit-for-bit today's behaviour**, which is what makes the setting safe to add to
 >   every existing project file at once.
 > - **Both `Test` buttons now report the PostgreSQL server version**, which is what made
@@ -14871,8 +15244,13 @@ owns File Save / Save As.
   (else Save As). Save As → `getSaveFileName` (`PGTP files (*.pgtp)`).
 - **Generate PHP flow:** guard no-project / no-exe; prompt Save vs Save As (so disk matches editor);
   output folder prefilled from `Project@outputPath` else project dir; run with streaming `[PHP]` audit
-  lines; finish → summary + success/critical dialog. **Locate PHP Generator Executable…**
-  (`getOpenFileName`). **Open Output Folder** via `QDesktopServices.openUrl` (enabled after a run).
+  lines; finish → summary + success/critical dialog. **Open Output Folder** via
+  `QDesktopServices.openUrl` (enabled after a run).
+  > **`Generation ▸ Locate PHP Generator Executable…` NO LONGER EXISTS** (`FQ-260812025705`, `179d5e0`): it
+  > moved into **`Settings ▸ Software settings… ▸ External tools`** (§7), which is its sole home.
+  > `GenerationController.locate_generator` survives as this lane's write path — the pane drives it, nothing
+  > about how it persists changed — and `Generate PHP...` is now **greyed with its reason in the tooltip**
+  > while no executable is set, which is what replaced the menu item as the discoverability cue.
 - **Output folder default when a local project (§18.2) is open — added 2026-08-03.** The output-folder
   prefill above (`Project@outputPath` else project dir — "project dir" there meaning the directory
   containing the open `.pgtp` file, unrelated to §18.2's local project) is **superseded by the local
@@ -14929,28 +15307,35 @@ layout cases.
   POSIX-first so a venv **copied between platforms** is still found instead of silently falling through
   to the editor's own interpreter, which may lack re_phpgen's dependencies and then dies as a bare
   `panGen failed (exit N)` naming nothing. *(Superseded 2026-08-10: the Windows-only
-  `<root>\venv\Scripts\python.exe` if present else `sys.executable` — ledger §28.)* **Locate panGen
-  Runtime…** overrides the root, validated by `validate_re_phpgen_root`, which was already
+  `<root>\venv\Scripts\python.exe` if present else `sys.executable` — ledger §28.)* **The root is
+  overridden from `Settings ▸ Software settings… ▸ External tools`** *(2026-08-13: this read
+  **"Locate panGen Runtime… overrides the root"**; that menu entry is **gone**, `FQ-260812025705`)*,
+  validated by `validate_re_phpgen_root`, which was already
   cross-platform (`Path(root) / "src" / "re_phpgen"` — the `src\re_phpgen` spelling elsewhere in this
   section is prose, not a second Windows assumption). CLI:
   `pangen <project> --out <dir>` and `analyze <project> --vendor <dir> --ours <dir> --json <path>` (writes
   a `schema_version 1` gap JSON with per-page statuses ok/diff/missing/error, cause buckets, capped
   `difflib` hunks). Editor menu actions (Generation menu conventions): **panGen (Generate Own PHP)** →
   `pangen … --out <folder>\_pangen`; **rePHPgen (Analyze Gap)** → require a vendor `.php` present, then
-  pangen + analyze → summary; **Save reJSON…** (enabled after an analysis); **Locate panGen Runtime…**.
+  pangen + analyze → summary; **Save reJSON…** (enabled after an analysis). **All three are greyed with a
+  stated reason** while the runtime is unset or no longer valid (§7's External tools block).
 
 > **Branch-model note:** the re-phpgen work was folded into `main` and the branch deleted 2026-07-20; the
 > project is now single-branch. Some re_phpgen spec headers still say `Branch: re-phpgen` (stale).
 
 > **§20 re-audited against the code 2026-08-10 — the section is accurate; three concrete notes.**
 > (1) The **`Generation` menu is not built by `main_window.py`** — it is owned outright by
-> `ui/generation_controller.py::GenerationController.build_menu`, and ships all four entries this section
+> `ui/generation_controller.py::GenerationController.build_menu`, and ships the entries this section
 > names, verbatim: `panGen (Generate Own PHP)` · `rePHPgen (Analyze Gap)` · `Save reJSON...` (created
-> **disabled**, enabled after an analysis) · `Locate panGen Runtime...`, alongside
-> `Locate PHP Generator Executable...` · `Generate PHP...` · `Open Output Folder`. **Those last four use
-> ASCII `...`, not the ellipsis character `…`** that the Tools-menu lint entries use — an inconsistency in
-> the shipped labels, recorded rather than quietly normalized here, because the label **is** the command
-> id's last segment and "fixing" it is an id change owing a `RENAMED_ID_ALIASES` row.
+> **disabled**, enabled after an analysis), alongside `Generate PHP...` · `Open Output Folder`. **The
+> shipped inventory in menu order is: `Generate PHP...` · ― · `Open Output Folder` · ― ·
+> `panGen (Generate Own PHP)` · `rePHPgen (Analyze Gap)` · `Save reJSON...` — FIVE entries.**
+> *(2026-08-13: this note used to name `Locate panGen Runtime...` and `Locate PHP Generator Executable...`
+> among them. **Both are DELETED** — `FQ-260812025705`, `179d5e0` — and moved into
+> `Settings ▸ Software settings… ▸ External tools`.)* **The surviving entries use ASCII `...`, not the
+> ellipsis character `…`** that other menus use — an inconsistency in the shipped labels, recorded rather
+> than quietly normalized here, because the label **is** the command id's last segment and "fixing" it is an
+> id change owing a `RENAMED_ID_ALIASES` row.
 > (2) `generation/re_runner.py` (`resolve_re_phpgen_python` / `validate_re_phpgen_root`),
 > `generation/gap_summary.py::summarize_gap_json` and `generation/config.py`'s `re_phpgen_root` key all
 > ship as described.
@@ -14961,8 +15346,12 @@ layout cases.
 > failure** — absent, unreadable, malformed, wrong top-level type, key missing, or an empty-string
 > value — and its docstring states the rule the module now follows: *"Ships no default: a guessed path is
 > indistinguishable from a configured one, and callers must be able to say 'not configured' out loud."*
-> The user-facing remedy is unchanged and still reachable: `generation_controller.py`'s
-> *"re_phpgen runtime not found. Set it via Generation > Locate panGen Runtime..."*. **BUG-051 shipped as
+> The user-facing remedy is unchanged and still reachable — and its **wording travelled with the surface**:
+> `generation_controller.py` now says *"re_phpgen runtime not found. Set it in Settings ▸ Software settings…
+> ▸ External tools."*, composed from the one `EXTERNAL_TOOLS_SETTINGS_PATH` constant. *(2026-08-13: this
+> line quoted the pre-`179d5e0` text, *"Set it via Generation > Locate panGen Runtime..."*, which named a
+> menu entry that no longer exists — **a refusal pointing at an unreachable remedy**, which is the exact
+> defect class a removal sweep exists to catch.)* **BUG-051 shipped as
 > ONE fix together with the two-layout venv probe above** (DEC-011's direction), so no window existed in
 > which one Windows assumption was fixed and the other was not. *(This note previously recorded the
 > hardcoded default as deliberately **not** filed; that judgement is superseded.)*
@@ -15068,17 +15457,27 @@ folder is the natural next step. Explicitly deferred; no section number spent on
 >
 > **⚠ The "remaining gap" above is CLOSED — re-audited 2026-08-10** (the TOC had flagged this status text
 > as un-re-audited since 2026-08-07). The MainWindow host side **ships**, in its own collaborator
-> **`ui/lint_controller.py::LintController`** — which owns all three Tools entries (`Lint Current File`,
-> ☐ `Lint on Save` persisted under its own QSettings key, `Locate PHP Linter…`), subscribes each opened
+> **`ui/lint_controller.py::LintController`** — which owns the **two** Tools entries (`Lint Current File`,
+> ☐ `Lint on Save` persisted under its own QSettings key), subscribes each opened
 > PHP tab's `lint_reported`, and appends the already-`[Lint]`-prefixed lines. Its own module docstring
 > records the gap it was built to close. *(The reconciliation note this banner used to carry — *"§7's
 > `[Lint]` prefix row still calls the MainWindow append host the remaining gap"* — is **followed and
 > closed**: §7's prefix table now names only a destination and a lifecycle, 2026-08-10.)*
+>
+> **⚠ `Tools ▸ Locate PHP Linter…` IS GONE** (`FQ-260812025705`, `179d5e0`; this banner said *"all three
+> Tools entries"* until 2026-08-13). It moved into **`Settings ▸ Software settings… ▸ External tools`**,
+> which drives `LintController.locate_linter` from there. **In exchange the two surviving entries are GATED
+> on a configured linter** (`register_dependent_actions` → `refresh_tool_affordances`) instead of being
+> always enabled and reporting `NOT RUN` at trigger time — a greyed entry whose tooltip names the new
+> address. See §7's External tools block for the whole gating table and for why
+> `linter_is_configured` deliberately asks *"is a path stored"* and not *"does the file still exist"*.
 
 - Runs an external linter (`php -l`, optionally full `phpcs`) against the active custom-PHP tab's
   content (§21), either on save (toggleable) or via **Tools ▸ "Lint Current File"**.
 - Executable path configured with the same pattern as `generation/config.py`'s `executable_path`
-  (§19): a new `lint_executable_path` key + a "Locate PHP Linter…" action.
+  (§19): a `lint_executable_path` key in the **same** `generator_config.json`, set from
+  **`Settings ▸ Software settings… ▸ External tools`** *(2026-08-13: this bullet said *"a 'Locate PHP
+  Linter…' action"*, which no longer exists)*.
 - Output is produced with the `[Lint]` prefix and follows the same click-to-navigate convention as
   `[Validate]`/`[Find]`. **Since FQ-028 (2026-08-10) the prefix names a DESTINATION: `[Lint]` rows land
   on the bottom dock's *Messages* tab and ACCUMULATE across runs** (§7's disposition table is
@@ -15421,10 +15820,15 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   execution path.)
 - **Tools — the SHIPPED inventory, in menu order** (pinned by
   `tests/ui/test_menus.py::test_tools_menu_contents`; status-corrected 2026-08-10, ledger §28):
-  `Manage Captions…` · ― · `Lint Current File` · ☐ `Lint on Save` · `Locate PHP Linter…` · ― ·
-  `Reparse Raw XML into Tree` · ― · ☐ `Start MCP Server`. (§22 — the three lint entries **do** exist in
+  `Manage Captions…` · ― · `Lint Current File` · ☐ `Lint on Save` · ― ·
+  `Reparse Raw XML into Tree` · ― · ☐ `Start MCP Server`. (§22 — the lint entries **do** exist in
   `_build_tools_menu` as of 2026-08-07; §22's *"the Tools-menu wiring is the remaining gap"* status note
   is stale. §23 — `Start MCP Server` is checkable, unchecked at startup; unchecking is the stop gesture.)
+  > **`Locate PHP Linter…` HAS LEFT THIS MENU** (`FQ-260812025705`, `179d5e0`; this inventory listed it
+  > until 2026-08-13). It is a row of `Settings ▸ Software settings… ▸ External tools` (§7), and the two
+  > surviving lint entries are now **greyed with their reason in the tooltip** while no linter is
+  > configured — that gating is what replaced it as the pointer. **No alias row**, by the absorbed-is-not-
+  > renamed rule.
   > **ALL FOUR Compare/Merge entries have now left this menu** (superseding 2026-08-09's *"only TWO … have
   > left"*). `Compare / Merge Two Files...` became **`Deployment ▸ Compare/Merge pgtp`** on the Raw XML tab
   > (FQ-020, §12); **`Next Difference` and `Prev Difference` moved onto the Editor bar's `Navigation` menu
@@ -15440,8 +15844,16 @@ under File below is §18.2's later, distinct DDL-project action that merely reus
   **All three lint entries STAYED here** (FQ-016 decision, closing that §29 open item): moving only
   `Lint Current File` would have split lint across two bars, which is the exact complaint the Editor bar
   exists to fix.
-- **Generation:** Locate PHP Generator Executable…, Generate PHP…, Open Output Folder, panGen (Generate
-  Own PHP), rePHPgen (Analyze Gap), Save reJSON…, Locate panGen Runtime….
+- **Generation — the SHIPPED inventory, in menu order** (built by
+  `ui/generation_controller.py::GenerationController.build_menu`, not by `main_window.py`):
+  `Generate PHP...` · ― · `Open Output Folder` · ― · `panGen (Generate Own PHP)` ·
+  `rePHPgen (Analyze Gap)` · `Save reJSON...` — **five entries**, every one of them gated on an external
+  binary and greying with a stated reason (§7, §19, §20).
+  > **BOTH `Locate …` ENTRIES HAVE LEFT THIS MENU** (`FQ-260812025705`, `179d5e0`; this bullet listed them
+  > until 2026-08-13): `Locate PHP Generator Executable…` and `Locate panGen Runtime…` are rows of
+  > `Settings ▸ Software settings… ▸ External tools`. **No alias rows** — same rule as the four ids
+  > `FQ-260812002827` absorbed, and here a single alias target would additionally collapse three distinct
+  > buttons into one.
 - **Settings — MAINTENANCE-MODE ONLY, and since `19c14c5` it holds EXACTLY ONE ENTRY:
   `Software settings…`** (`_build_settings_menu`, built between `Generation` and `Help`; held as
   `self._settings_menu`, the action as `self._software_settings_action`). The label is **imported** from
@@ -15476,7 +15888,7 @@ mode is entered by picking the launcher's Maintenance column, lasts for the **se
 | Window-bar menu | Maintenance mode | Why |
 |---|---|---|
 | **File** | **visible, trimmed to `New Session` (+ the menu's save entries, if any) and `Exit`** | the escape hatch must never be hidden (§7) |
-| **Schema** | **visible, whole** (all five items, §11) | the mode's entire purpose: administrative/setup work on the app's own schema |
+| **Schema** | **visible, whole** (all **six** items, §11) | the mode's entire purpose: administrative/setup work on the app's own schema |
 | **Settings** | **visible — and hidden in EVERY other mode** (`_MAINTENANCE_ONLY_MENU_TITLES`) | the same purpose from the additive side: editing the app's own state. **No shortcut on any entry** (DEC-006) |
 | **Help** | **visible, whole** | `Manual` (F1) may never be filtered out |
 | **View** | **hidden** | — |
@@ -16299,6 +16711,14 @@ is authoritative** (and is what appears in the body above).
 | 2026-08-12 *(feature fold, PARTIAL — and TWO facts the wiring established that are worth more than the feature)* | **§18.1's read-only buffer as having exactly ONE renderer (`build_ddl_text`) with the reconstruction notice as the whole disclosure; §18's silence on whether a `pg_dump` is present or correctly versioned; and the two structural gaps of `DEC-260811022536` recorded as *"pending a consumer"* with no consumer in sight** | **`FQ-260812022749` PART 1 SHIPPED (`a852563`, wired `07b83e9`); the buffer's TWO RENDERERS are ⏳ LANDING and are written as landing — neither built nor unbuilt.** `db/pg_dump_mode.py` owns **the rule and the words and nothing else** (Qt-free, renders no DDL, never raises; the `pg_dump --version` spawn stays in `db/sandbox.py`). **The rule is one-sided on purpose: `pg_dump` major >= server major** — `pg_dump` dumps happily from an older server and **refuses one newer than itself**, so newer-than-server is fine and is **not** a mismatch, and a symmetric "must match" rule would have discarded the common working case. **ONE version rule, not two** (owner): quality and sandbox must be the same major, so the same comparison answers for **both** §18.7 roles. **Four RESTRICTED shapes, each naming which shape it was** (`REASON_ABSENT`/`UNREADABLE`/`UNKNOWN_SERVER`/`OLDER`), machine-readable **beside** the human sentence, and **every message names BOTH version numbers** because *a version message that omits one of the two is the one that generates the support question.* **Degrade, never guess, never fail** — the fallback is what keeps a packaged install (which never bundles the client tools) working at all. **`RESTRICTED_CLONE_WARNING` is appended to every restricted message and is a HAZARD sentence, not a completeness footnote**: Part 5 settles that the complete DDL is a **clone source**, so cloning a partitioned or inherited table from restricted text yields **a plain table that looks right and executes fine** — a silent wrong result reaching a real database, which is why `DEC-260811022536`'s two gaps now have the consumer `DEC-260811094437` was waiting for. **The `[DDL]` notice is computed ONCE per quality connection and reported on EVERY DDL open** (owner: *"this way the choice is clear"*) — the sentence repeats, the subprocess does not; `DDL_PREFIX` has one home in `ui/audit_router.py`. **⚠ TWO FACTS THE WIRING ESTABLISHED: (1) there was no quality capability probe anywhere** — `db/sandbox.py::probe` had only ever been run against the sandbox; **(2) the owner's same-version principle was ASSUMED, NEVER ENFORCED AND NEVER CHECKED** — `server_version` was produced by that one probe and consumed only by `needs_trigger_drop`'s PG14 gate, so **no comparison of the two servers existed**, while §18.5 D2's sandbox is explicitly bring-your-own. **`server_major_divergence()` now performs it**, returns `None` when either version is unknown (*"could not check" must never read like agreement*), and **never opens a connection** — it reads whichever probe already ran, because a version notice may not connect from the GUI thread. |
 | 2026-08-12 *(feature fold — a per-project setting whose PRECEDENCE is the whole feature)* | **§18.2's `settings.json` field list, which had no PostgreSQL-binaries field, and the app's implicit assumption that `shutil.which` is the only way a client tool is found** | **`FQ-260812025353` SHIPPED (`a852563`, wired `07b83e9`): `postgres_bin_dir: str = ""` in the project settings, resolved CONFIGURED FOLDER FIRST, `PATH` SECOND.** `db/sandbox.py::resolve_tool(name, bin_dir, which)` is the one resolver. **The ordering is the feature, not a preference:** the setting exists because `PATH` picks an **arbitrary major** on a multi-installation machine and `pg_dump` refuses a newer server, so **a `PATH`-first order would make the setting a no-op in exactly the situation it was added for** — the tools *are* on `PATH`, they are the wrong ones. **Warn, never block:** a folder set but missing the tool falls back to `PATH` rather than failing (the field is optional and the user may be mid-typing), and `bin_dir=""`/`None` is **bit-for-bit today's behaviour**, which is what makes the field safe to add to every existing project at once. Both `Test` buttons now report the **server version**, which is what made `FQ-260812022749`'s verdict expressible at all. **It must NOT be unified with §7's app-wide `External tools` pane, for the mirror-image reason:** those three binaries are one-per-machine in `generator_config.json`, while the PostgreSQL binaries must differ per project **because the server does** — and `resolve_tool` is not reusable there anyway, being keyed on a **folder** holding a known name where two of those three store a full executable **path**. **`pg_dump_version` never raises** (missing binary, non-zero exit, timeout and unparseable output all return `None`, *because every one means the same thing to the caller: degrade*), and it is **deliberately not called from `probe()`** — `probe`'s detection is `shutil.which` only and **spawns nothing**, so folding a subprocess in would make every existing probe call site, and every test that stubs `which`, start a process. |
 
+| 2026-08-13 *(feature fold — COMPLETION of a part-shipped entry, and the finding was RETRACTED before it was right)* | **§18.1's dual-mode block as **⏳ LANDING** — *"nothing below pins a line in `db/ddl_buffer.py`, `db/pg_dump_ddl.py` or `ui/main_window.py`"*; §5's `ddl_buffer.py` and `pg_dump_ddl.py` entries carrying the same ⏳; and the TOC's *"the buffer's two renderers are LANDING"*** | **`FQ-260812022749` IS COMPLETE (`0025113` buffer, `e6ab9e1` wiring). The span-recovery finding is worth more than the status change: the first triage called `pg_dump`'s non-contiguity FATAL to click-to-navigate and then RETRACTED it.** A whole-database `--schema-only` dump is dependency-ordered **globally**, so a table's DDL is not contiguous — but **each individual STATEMENT is** (`CREATE TABLE … );`, `ALTER TABLE ONLY … ADD CONSTRAINT …;`, `CREATE INDEX …;`), so statement boundaries yield contiguous regions that fit the **EXISTING `DdlObjectSpan`** and §18.1's **trap 1** (one dataclass, one `kind` field) is respected rather than excepted. *The unit of contiguity was never the object; it was the statement.* **The per-table `-t` route is recorded as a TRAP, not an option:** ≈300 subprocesses **and** 300 connections per refresh against a buffer §18.1 settled as having **NO CACHE**, and `-t` does not dump a `SERIAL` column's **owned sequence** — the very case the request opened with. **⚠ TWO FACTS NO ENTRY ANTICIPATED, folded as facts about `pg_dump` rather than as history. (1) `pg_dump` splits a table's constraints across TWO SHAPES** — `CHECK` inline in the `CREATE TABLE`, PK/UNIQUE/FK as standalone `ALTER TABLE ONLY … ADD CONSTRAINT` — so a parser handling only the `ALTER` shape leaves **every CHECK constraint's tree row clicking into nothing**; `DumpStatement.constraint_offsets` exists for that, a duplicate **span** (never the text) is suppressed, and what the parser records is **intersected with the catalog's own names**, so the only reachable failure is a *missing* span and never one on the wrong line. **(2) Routines and triggers keep coming from the CATALOG in full mode**, the dump's `CREATE FUNCTION` left out — a routine's identity is `schema.name(format_type(proargtypes))`, and recovering it from a header means **RE-RENDERING** a signature with typmods spelled differently on the two sides (`character varying(20)` vs `character varying`), which **BUG-018 forbids**; nothing is lost, because `pg_get_functiondef` is already complete and *the incompleteness full mode exists to fix is a **table** problem.* **DETERMINISM IS STATED HONESTLY:** end-to-end byte-identity in FULL mode **cannot be promised** (dump text varies with the **client's** version) and is written down as an **environmental assumption**; what is owned and pinned is a **pure parser** plus a composition ordering relations **by name** and attachments by **`(kind, name)`**, which removes `pg_dump`'s walk order from the buffer's identity — while **RESTRICTED keeps BUG-018's proven determinism unweakened**, because `build_ddl_text` was not touched. **THE DEGRADE CONTRACT: a relation the introspection found with no `CREATE` statement degrades the WHOLE buffer to RESTRICTED with a named reason** — *spans pointing at the wrong lines are worse than restricted DDL* — and that same attribution check catches **introspection-vs-dump skew** for free, the two being separate connections at separate instants. **The degrade is a SECOND `[DDL]` row BESIDE the mode row, never a replacement:** the mode row is an owner ruling on every open, and *"full mode was chosen but you are looking at reconstructed DDL"* is extra information, not a correction of it. **RESTRICTED never spawns** — a restricted verdict *carrying a located `pg_dump_path`* still invokes nothing, pinned by a test. |
+| 2026-08-13 *(feature fold — a pane that BREAKS the pane contract on purpose, and the break is what makes it correct)* | **§7's *"⏳ A SIXTH pane, `External tools`, is IN FLIGHT in a concurrent tree … nothing about it is pinned here"*; the five-row pane table; §19's `Locate PHP Generator Executable…`; §20's `Locate panGen Runtime…` and its quoted refusal text; §22's *"all three Tools entries"*; §26's `Tools` and `Generation` inventories; and §29's launcher-candidate and lint-menu items** | **`FQ-260812025705` SHIPPED (`179d5e0`): the SIXTH pane is `External tools`, and it is the SOLE home of three commands that used to be menu items.** `Generation ▸ Locate PHP Generator Executable…`, `Generation ▸ Locate panGen Runtime…` and `Tools ▸ Locate PHP Linter…` are **gone**; `EXTERNAL_TOOLS` is three `ExternalTool` rows over one `generator_config.json`, so a fourth binary is one row — *three panes would fragment a grouped concept.* **⚠ IT DIVERGES FROM THE PANE CONTRACT DELIBERATELY, AND THE DIVERGENCE IS RECORDED SO IT IS NOT FILED AS A BUG: Browse PERSISTS IMMEDIATELY, so the pane has no OK/Cancel — and therefore no `finished` for the host to rebuild on, which is CORRECT because a pane holding no edit buffer has nothing to rebuild from.** The host's rebuild mechanic exists to stop a pane being a **stale scratch copy**; nothing here is buffered, so nothing can go stale, and each pick refreshes this pane while the lane re-gates its own menus **in the same call**. *A single-value pick through a file dialog is already a confirmed gesture — the picker IS the OK*, exactly as `ThemesPane`'s *Use this theme* established; buffering it would invent a seventh apply semantics and give a non-modal window a body of unsaved state. **NOTHING HERE RE-IMPLEMENTS A STORE** — every Browse calls the owning lane's existing `locate_*` (the deleted menu item's own slot), so the dialog, the validation, the sibling-key-preserving write and the status line are all shipped code, and the pane never learns where `config_dir` points. **`resolve_tool` is deliberately NOT reused**, and §18.2's per-project `postgres_bin_dir` is deliberately not unified with this pane: these three are **one per machine**, the PostgreSQL binaries must differ **per project because the server does**, and `resolve_tool` is keyed on a **folder** where two of these three store a full **path**. **WHAT REPLACED THE DELETED ITEMS AS THE DISCOVERABILITY CUE IS THE OPERATIONS' ENABLED STATE** — FQ-023's *state your reason* applied to a greyed entry, with the address coming from the one `EXTERNAL_TOOLS_SETTINGS_PATH` constant (`lint/findings.py` cannot import a UI module and carries the literal; **a test pins the two together**). `linter_is_configured` deliberately asks *"is a path stored"* and **not** *"does the file still exist"*, because §22's own `EXECUTABLE_MISSING` diagnoses a vanished binary better — *greying on existence would make a lint run's own diagnosis unreachable* — while `pangen_runtime_is_valid` goes the other way, since a moved checkout would otherwise leave three enabled entries that cannot run. **THE THREE ABSORBED IDS GET NO ALIAS ROWS**, third application of *alias when the successor answers the same request, drop when it does not*: nothing means *"locate the PHP linter"*, and one alias target would collapse **three** distinct buttons into one. **⚠ `DEC-260812004358`'s WITHDRAWAL GAINS A FOURTH AND WIDEST MEMBER: setting an external binary is Maintenance-only while the operations that USE it run in Project/Standalone mode** — sharper than the other three, which are configuration whose effect is also configuration; the greyed entry plus its tooltip is the whole mitigation and is recorded as such. |
+| 2026-08-13 *(bugfix fold — an OMISSION rather than a divergence: this document had never said which way the echo travels)* | **§18.1's *"Bidirectional lockstep"* bullet, which described `_on_ddl_explorer_visibility_changed` re-syncing the menu action's checked state and said nothing about what happens when that re-sync emits `toggled` back into the opener** | **`BUG-260812071208` (fixed `179d5e0`): THE LOCKSTEP'S RE-SYNC IS NOT READABLE AS A USER TOGGLE.** From an **unchecked** action the lockstep's `setChecked(True)` emitted `toggled` straight back into `_on_ddl_explorer_toggled`, which re-entered `_open_ddl_explorer` and ran **a second seven-statement introspection round trip per open**. `self._ddl_explorer_syncing: set[str]` marks the roles being re-synced *by* the handler and the opener returns on seeing its own; **the lockstep is untouched — only its echo into the opener is suppressed.** The invariant is now stated: **one open gesture, one fetch, one `[DDL]` row.** **⚠ DELIBERATELY NOT `QSignalBlocker`, and that is the transferable part:** blocking the action's signals around `setChecked` would also suppress **`changed()`**, and a pinned **toolbar** button mirrors that action — so the menu would come back in step while the button stayed stale. *A blocker silences every consumer, and only one of them was the problem; a re-entrancy flag names the one caller that must ignore the echo.* **A menu click never took this path**, which is why it survived: `QAction::activate` sets `checked` **before** emitting `toggled`, so the later `setChecked(True)` was already a silent no-op — the gestures that doubled were the ones opening from the unchecked state (`Reload DDL` with the Explorer closed, and a close during an in-flight fetch). *A test written against the menu toggle proves nothing here.* |
+| 2026-08-13 *(bugfix fold — the RULE only; the mechanism is WRITTEN IN-TREE AND UNMERGED and the entry says which)* | **The owner's `[DDL]` ruling as *"reported on EVERY DDL open"*, unqualified — and §18.1's silence about what a result does when it lands after the surface it was fetched for is gone** | **`BUG-260812110307`: A CLOSE DURING LOAD WINS, WHICH NARROWS THE RULING TO *"every open that REVEALS"*.** `self._run_async` has **no cancellation** — a dispatched fetch sits in flight until it delivers — so closing the Explorer mid-load let the result **re-open the panel the user had just closed**. The rule: a per-role **fetch epoch**, bumped on the GUI thread by every open *and* every close, captured by the dispatching open, compared when the result lands; a superseded result **performs no visible act**, which also makes two rapid reloads last-requested-wins. **An epoch, deliberately NOT a visibility test:** on a normal open the tab is still hidden at that point (the reveal is what shows it), so a visibility gate would suppress the very reveal it exists to perform — and visibility cannot tell *"the user closed it"* apart from the Maintenance prune or the sandbox-unavailable hide. **What SURVIVES a stale result is as load-bearing as what is suppressed:** the **connection-scoped** probe results and DDL-mode verdict are kept (a closed tab cannot falsify them, and dropping them would re-open a connection and re-spawn `pg_dump --version` for an answer already in hand), and so is **§18.6's completion index** — §18.5 object-editor tabs are **independent surfaces with their own lifetime**, so a blanket early return would *silently break completions in tabs nobody closed.* **THE NARROWING IS A READING, NOT A REVERSAL:** *a discarded fetch was not an open*, so `BUG-260812071208`'s one-open-one-fetch-one-row invariant is preserved exactly and the next real open still emits the row from the cache with no probe. **Deliberately not entangled with `_ddl_explorer_syncing`** — that marks a re-entrancy echo *within* one gesture, this orders *gestures* against results in flight. **STATUS, stated per the rule the previous pass sharpened: the mechanism EXISTS in `ui/main_window.py` in the working tree (`_ddl_fetch_epoch`, the `stale` gate) in a file two concurrent agents hold — *written, unmerged*, not *specified, unwritten*.** |
+| 2026-08-13 *(rule fold — a RULE with no enforcement, written where the thing it governs is)* | **§18.2's `postgres_bin_dir` block stated the *configured folder first, `PATH` second* precedence and said nothing about the sentences that describe it — while THREE user-visible strings said *"not found on PATH"* after the order changed** | **A RESOLUTION ORDER STATED IN PROSE HAS TO BE STATED EVERYWHERE IT IS STATED AT ALL.** `FQ-260812025353` changed the order and changed **three sentences at once**, only one of which travelled with it: `MissingCloneToolError` (correct from the start), `determine_project_tier`'s `degraded_reason`, and the sandbox **Test** button's status line in `Project Settings ▸ Connections`. All three now derive their clause from `bin_dir` — *"in the configured PostgreSQL binaries folder (`<dir>`) or on PATH"* when one is set, *"on PATH"* when none is. **The rule is folded because NOTHING ENFORCES IT:** three independently-worded sentences about one precedence order have no test that can hold them together, so the requirement lives beside the order itself. *"Not found on PATH" is not merely incomplete when a folder was configured — it sends the user to fix their PATH, which is the wrong thing, so the incompleteness is a wrong instruction.* **One site is a named EXCEPTION rather than a survivor:** the `New Project` dialog has **no** binaries-folder field (the project does not exist yet, and the setting is per-project), so its `"… on PATH (not found)"` is literally true there — *an exception that is true is not the same shape as a sentence left behind*, which is why it is named rather than "fixed". |
+| 2026-08-13 *(retroactive — a MEASURED property of the suite this document had never recorded)* | **§30 described how to run the tests and said nothing about what the suite does to the outside world; nothing anywhere asserted that no test opens a database connection or spawns a client tool** | **THE SUITE OPENS NO SOCKET AND SPAWNS NOTHING BUT INSPECTED FRESH INTERPRETERS — verified empirically at `e6ab9e1`, not by reading.** The whole suite was re-run under a throwaway plugin arming `subprocess.Popen.__init__`, `socket.socket.connect`/`connect_ex` and `socket.create_connection` to raise: **zero connect attempts**, and **18 spawns**, every one deliberate and individually enumerated (17 `sys.executable` fresh-interpreter purity probes, one `ldd`). **This matters most for exactly the feature this pass folded:** `tests/ui/conftest.py`'s `probe_ddl_mode` stub keeps every Explorer open off a 10 s-timeout connection and its `fetch_schema_dump` stub keeps it out of a shell. **⚠ AND THE AUDIT FOUND A REAL DEFECT IN THAT THIRD SEAM, which is the durable lesson:** the stub constructed `SchemaDumpError(msg)` where the signature is `(step, returncode, stderr)`, so it raised a **`TypeError`**, not the refusal it documents — and `_open_ddl_explorer`'s generic `except Exception` degraded on it anyway, so **the suite stayed green over a stub that had never once exercised the path its own comment describes.** *A stub whose failure mode is swallowed by a broad `except` is not a test of the refusal; it is a test that the broad `except` exists.* Recorded as a property **to re-measure, not to assume**: the first test that opens a socket falsifies it silently. |
+| 2026-08-13 *(removal sweep — THIRTEEN survivors of three deleted menu entries, and one stale count found beside them)* | **Two menu inventories listing `Locate PHP Generator Executable…` / `Locate panGen Runtime…` (§26 Generation, §20's re-audit note) and `Locate PHP Linter…` (§26 Tools, §22 twice, the TOC's §22 line, §29 twice); §19's Generate-PHP flow naming the generator locator; §20's quotation of `generation_controller.py`'s refusal text *"Set it via Generation > Locate panGen Runtime..."*; and §26's Maintenance table saying the `Schema` menu has **five** items** | **ALL CORRECTED. The three `Locate …` entries were deleted by `FQ-260812025705` and this document kept sending readers to them in six sections.** The sharpest is §20's, because it quoted a **refusal naming an unreachable remedy** — the code's message now reads *"re_phpgen runtime not found. Set it in Settings ▸ Software settings… ▸ External tools."*, composed from the one constant, and the spec was quoting the sentence it replaced. **The shipped inventories are now written out:** `Generation` is **five** entries (`Generate PHP...` · ― · `Open Output Folder` · ― · `panGen (Generate Own PHP)` · `rePHPgen (Analyze Gap)` · `Save reJSON...`) and `Tools` is `Manage Captions…` · ― · `Lint Current File` · ☐ `Lint on Save` · ― · `Reparse Raw XML into Tree` · ― · ☐ `Start MCP Server`. **§29's two items are annotated rather than rewritten:** the launcher-candidate question about `Locate PHP Linter…` is now **moot rather than open**, and the *"does lint follow onto `Parsing`"* resolution is **unaffected** — its argument was about splitting lint's **operations** across two bars, and a locator is not one of them. **The stale count found in the same sweep: `Schema` has had SIX items since `483a9ad`** (`Restore Bundled Curated Schema…`), while §26's Maintenance table still said five. *A removal sweep must be run over the SPEC as well as the package: the spec is a user-visible string too, for the only reader who is asked to build from it.* |
+
 ---
 
 ## 29. Open questions
@@ -16317,8 +16737,12 @@ place, which is why the feature shipped rather than waiting:
   > Maintenance-only (`FQ-260812021715`/`-716`, `7caf024`; ledger §28). Unlike the other two, this affects a
   > surface a user may touch daily. **The reversal for this member is NOT a returned `View` toggle** — a
   > checkbox cannot select among N themes — but an always-available **picker**, with the pane keeping the
-  > editing half. A fourth member is landing with `FQ-260812025705` (the `External tools` pane), where the
-  > operations that *use* a binary run in Project/Standalone mode while *setting* it does not.
+  > editing half. **The fourth member HAS LANDED (`FQ-260812025705`, `179d5e0`) and is the widest of the
+  > four: setting an external binary is now Maintenance-only while the operations that *use* it run in
+  > Project/Standalone mode.** Unlike the other three — configuration whose effect is also configuration — a
+  > user in Project mode meets a greyed `Generate PHP` and must leave the session to fix it. **The greyed
+  > entry plus its tooltip naming the pane is the whole mitigation**, and it is recorded as a mitigation
+  > rather than as a feature.
 - **`DEC-260812004359` — is the dialog modal?** Default shipped: **non-modal, single-instance**, because it
   is the only option that changes nothing about a shipped surface — a non-modal shortcut editor lets a user
   try a chord against the live app. Reversal is one `setModal(True)` plus dropping the raise-and-focus logic.
@@ -16448,7 +16872,8 @@ unrecorded — nothing below was invented in the body above:
   `Import XSD`**, and is now those two **plus `Software settings…`** (`19c14c5`, §7). The former group's
   `Edit AutoXSD` / `Verify XSD` / `Export XSD` and the four §20 re_phpgen entries **leave the launcher**
   (they stay on their menus, and the whole `Schema` menu is visible inside the mode). The candidates once
-  raised and never ruled on — `Help ▸ Open Log Folder`, `Tools ▸ Locate PHP Linter…`,
+  raised and never ruled on — `Help ▸ Open Log Folder`, `Tools ▸ Locate PHP Linter…` *(which has since been
+  **deleted** outright, `FQ-260812025705` — the question is now moot rather than open)*,
   `Tools ▸ Start MCP Server` — are **out**: the column names the mode's *entry* gestures, not its
   capabilities, and those sit on menus the mode hides. **The fourth candidate, `View ▸ Customize Toolbar…`,
   is the one that came back — and it came back the RIGHT way rather than as a fourth button.** The stated
@@ -16472,9 +16897,11 @@ unrecorded — nothing below was invented in the body above:
   gating `Parsing` is **accepted as a cost** rather than treated as a blocker (§7/§26, ledger §28).
   *(The related lint sub-question is **RESOLVED** too: all three lint entries stayed on Tools — see below.)*
 - **~~Does lint follow `Lint Current File` onto `Parsing`?~~ — RESOLVED 2026-08-07 (`c327c9d`):** **no.**
-  All three entries (`Lint Current File`, ☐ `Lint on Save`, `Locate PHP Linter…`) stay on **Tools**, because
-  moving only the first would split lint across two bars — the exact complaint the Editor bar exists to fix
-  (§26).
+  The entries stay on **Tools**, because moving only the first would split lint across two bars — the exact
+  complaint the Editor bar exists to fix (§26). *(2026-08-13: this read *"all three entries (…, `Locate PHP
+  Linter…`)"*. There are **two**: the Locate item left for `Settings ▸ Software settings… ▸ External
+  tools`, `FQ-260812025705`. **The resolution is unaffected** — the argument was about splitting lint's
+  operations across two bars, and a locator is not one of them.)*
 - **~~What does the Editor menu bar show on the Caption Management tab and on the Manual tab?~~ —
   RESOLVED 2026-08-07 (`c327c9d`):** nothing; `_refresh_editor_menu_affordances` hides **the whole bar
   widget** on both (never its actions, which a pinned toolbar button shares). Still open in the same area:
@@ -16949,6 +17376,34 @@ launcher pick (q8), and one `FindingsPanel` class serves both tabs. What genuine
 - Real-sample tests skip gracefully when the git-ignored sample files are absent.
 - The self-diff regression guard (`diff_project(m, m) == []`) and byte-for-byte round-trip
   (load→save→diff) must stay green — they protect the master serialization invariant.
+
+#### ⚠ A MEASURED PROPERTY OF THE WHOLE SUITE: it opens NO socket and spawns nothing but inspected fresh interpreters
+
+**Recorded here because it is a property this document had never stated, and because it is the thing that
+makes every `db/` and every DDL-Explorer test trustworthy.** Verified **empirically, not by reading**, at
+`e6ab9e1` (`docs/TEST_LOG.md`'s newest row): the whole suite was re-run under a throwaway plugin arming
+`subprocess.Popen.__init__`, `socket.socket.connect` / `connect_ex` and `socket.create_connection` to raise
+for the duration of each test.
+
+- **Zero connect attempts.** No `psycopg`, no `pg_dump`, no `psql`, no DNS.
+- **18 spawn attempts, every one deliberate and individually inspected:** 17 are `sys.executable -c …` /
+  `-m …` **fresh-interpreter purity probes** (`tests/{sql,vim,xmlfmt}/test_package_purity.py`, `tests/mcp/*`,
+  `tests/db/test_deployment_engine.py`, `tests/test_version.py`, `tests/test_curated_xsd_packaging.py`, and
+  one nested `-m pytest` that **is** the leak-guard's own subject), plus one `ldd` in
+  `tests/test_build_excludes.py`.
+- **The two seams `FQ-260812022749` nearly leaked through are genuinely closed:** `tests/ui/conftest.py`'s
+  `probe_ddl_mode` stub keeps every Explorer open off a 10 s-timeout connection, and its
+  `fetch_schema_dump` stub keeps it out of a shell.
+- **One real defect was found in that third seam by the audit itself, and it is the durable lesson:** the
+  stub constructed `SchemaDumpError(msg)` where the signature is `(step, returncode, stderr)`, so it raised
+  a **`TypeError`**, not the refusal it documents — and `_open_ddl_explorer`'s generic `except Exception`
+  degraded on it anyway, so **the suite stayed green over a stub that had never once exercised the path its
+  own comment describes.** *A stub whose failure mode is swallowed by a broad `except` is not a test of the
+  refusal; it is a test that the broad `except` exists.*
+
+**This is a property to re-measure, not to assume.** It is a fact about the suite at one commit, and the
+first test that opens a socket or spawns a real client tool falsifies it silently — which is exactly the
+shape of claim §31 requires re-verifying rather than inheriting.
 
 ---
 

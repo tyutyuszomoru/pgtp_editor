@@ -61,8 +61,11 @@ call.
 **Failures are reported, never swallowed,** and in the vocabulary the `db/`
 layer already established rather than a second set of strings:
 `ProjectCapabilityStatus.degraded_reason` ("sandbox unreachable: …", "sandbox
-unavailable: pg_dump not found on PATH", "no local sandbox configured for this
-project"), `SandboxCapabilities.probe_error`, `install_gate`'s four exact reason
+unavailable: pg_dump not found …" -- which names the configured binaries folder
+when there is one and only says "on PATH" when there is not (FQ-260812025353);
+do NOT quote one branch here as though it were the whole sentence, which is how
+this docstring became the FOURTH prose statement of a resolution order nothing
+enforces -- "no local sandbox configured for this project"), `SandboxCapabilities.probe_error`, `install_gate`'s four exact reason
 strings, and `ForeignDatabaseError`'s own message. Every operation ends in one
 `SandboxOperationResult` carrying `ok` plus a human-readable `reason`.
 
