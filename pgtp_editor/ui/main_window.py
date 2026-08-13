@@ -716,6 +716,13 @@ class MainWindow(QMainWindow):
         #: bar is built, because `_refresh_editor_menu_affordances` consults it
         #: during that build.
         self._workflow_mode = None
+        #: BUG-260813025052: the actions `_refresh_workflow_mode_affordances`
+        #: last HID for the mode. Purely a record -- nothing here ever calls
+        #: `setEnabled` -- and it exists because Qt's `setVisible(False)` also
+        #: clears the enabled flag, so `isEnabled()` alone cannot tell
+        #: "genuinely unavailable" from "hidden by the mode I am trying to
+        #: leave". The launcher reads it to keep its mode columns selectable.
+        self._mode_filtered_actions: set = set()
         #: The File menu, filled in by `_build_file_menu`.
         self._file_menu = None
         # Injectable so tests point at a temp QSettings ini instead of the real
@@ -3609,8 +3616,18 @@ class MainWindow(QMainWindow):
         one way modes are ever entered. Re-picking the same column is harmless:
         `set_workflow_mode` re-applies the filter idempotently, and the launcher's
         entries come from `_walk_menu_actions`, which never tests `isVisible()` —
-        so every column is offered even while Maintenance mode has the menu bar
-        trimmed.
+        so every column is **offered** even while Maintenance mode has the menu
+        bar trimmed.
+
+        Offered is not the same as **selectable**, and the difference was a bug
+        (BUG-260813025052): the entries were all present while the Standalone
+        and Project buttons were grey, because Qt's `setVisible(False)` also
+        disables, and the launcher mirrored the action's enabled flag — so
+        Maintenance mode had no exit but a restart. A launcher column is a
+        **destination**, not a command, so the launcher now consults
+        `is_mode_filtered` and every mode column is selectable in every mode.
+        Which is what makes this gesture the escape hatch it is documented to
+        be; the File filter itself is unchanged (FQ-027 / DEC-006).
 
         Each prompt is the one that already exists for that surface (§11's
         `confirm_close_for_exit`, the stage's own tab-close route, the document
@@ -7056,6 +7073,32 @@ class MainWindow(QMainWindow):
 
         return self._workflow_mode == MODE_MAINTENANCE
 
+    def mode_filtered_actions(self) -> frozenset:
+        """The actions the CURRENT mode hides (BUG-260813025052).
+
+        A record written by `_refresh_workflow_mode_affordances` beside its
+        `setVisible` calls — never a second posture, and never a `setEnabled`.
+        It exists because Qt couples the two flags: `setVisible(False)` clears
+        `isEnabled()`, so a reader of the enabled flag cannot distinguish
+        "this command cannot run" from "this command is hidden by the mode".
+        The launcher needs exactly that distinction: its columns ARE the modes,
+        and the mode being left must never be able to grey out the way out of
+        it.
+
+        It records **both directions** of the filter, because both hide: inside
+        Maintenance that is the trimmed menus and File entries; outside it, the
+        `_MAINTENANCE_ONLY_MENU_TITLES` menus (`Settings`). The latter costs the
+        launcher nothing — only the top-level `menuAction()` is hidden there,
+        while `settings.software-settings` itself stays visible — but a record
+        that skipped it would be a record of "some of what is hidden", which is
+        the kind of half-truth this whole bug was made of.
+        """
+        return frozenset(self._mode_filtered_actions)
+
+    def is_mode_filtered(self, action) -> bool:
+        """Whether `action` is hidden by the current workflow mode."""
+        return action in self._mode_filtered_actions
+
     def set_workflow_mode(self, mode) -> None:
         """Enter (or leave, with None) a workflow mode and re-apply the filter.
 
@@ -7161,12 +7204,38 @@ class MainWindow(QMainWindow):
           it — the intent behind FQ-027's non-existent `Save`/`Save All` File
           entries, satisfied by scope rather than by re-opening FQ-020's
           deliberate deletion of `File ▸ Save`.
-        * The **toolbar** (FQ-027 Q2). A pinned button whose menu action is
-          hidden keeps working; that is the accepted trade for keeping the
-          filter's blast radius small, and it falls straight out of the
-          enumeration fact above.
+        * The **toolbar** (FQ-027 Q2). Out of scope means this code never walks
+          it — **not** that a pinned button survives the mode. Measured
+          (BUG-260813025052): with `file.open` pinned, entering Maintenance
+          leaves its toolbar action `visible=False enabled=False`, because the
+          toolbar hosts the menus' OWN `QAction`s (§7), so hiding the menu item
+          hides the button with it. The button goes **absent and inert** — which
+          is what FQ-027's queue text predicted, and the opposite of what this
+          docstring used to claim. The accepted trade is the small blast radius,
+          not a working back door: the toolbar is NOT a way out of the mode.
+
+        **It also RECORDS what it hid** (`_mode_filtered_actions`, read by
+        `mode_filtered_actions` / `is_mode_filtered`). Recording only: Qt's
+        `setVisible(False)` clears the enabled flag, so the pre-hide value is
+        gone the instant it is written and any later reader of `isEnabled()`
+        would confuse "unavailable" with "hidden by this mode". The launcher is
+        that reader (BUG-260813025052: it greyed out the very columns that leave
+        Maintenance, making the mode a one-way door). Adding a record rather
+        than an enabled-state write is what keeps the two-posture rule above
+        intact -- and a test greps this method's source to hold that line.
         """
         maintenance = self.in_maintenance_mode()
+        # BUG-260813025052: rebuilt from scratch on every refresh, so the record
+        # describes the mode that is in force right now and nothing else. It is
+        # a RECORD, not a posture -- no branch below reads it, and nothing here
+        # writes an enabled flag.
+        filtered: set = set()
+
+        def apply(action, visible: bool) -> None:
+            action.setVisible(visible)
+            if not visible:
+                filtered.add(action)
+
         # Top-level menus are hidden through their `menuAction()` -- the QMenu
         # itself is not a child widget of the bar's layout.
         for action in self.menuBar().actions():
@@ -7175,19 +7244,19 @@ class MainWindow(QMainWindow):
                 # The INVERSE rule: present only inside the mode. Handled here,
                 # in the one method that decides menu-bar visibility per mode,
                 # rather than by a second mechanism somewhere else.
-                action.setVisible(maintenance)
+                apply(action, maintenance)
             else:
-                action.setVisible(
-                    not maintenance or title in _MAINTENANCE_MENU_TITLES
-                )
+                apply(action, not maintenance or title in _MAINTENANCE_MENU_TITLES)
         # File survives partially -- the only menu that does.
         for action in self._file_menu.actions():
             # A separator normalizes to "", so it is never in the set: the
             # trimmed menu is its members with no stray dividing lines.
-            action.setVisible(
+            apply(
+                action,
                 not maintenance
-                or normalize_label(action.text()) in _MAINTENANCE_FILE_ITEMS
+                or normalize_label(action.text()) in _MAINTENANCE_FILE_ITEMS,
             )
+        self._mode_filtered_actions = filtered
 
     # --- §18.5 D2/D3a: the SandboxController's session and its gestures ------
     def _refresh_sandbox_affordances(self) -> None:

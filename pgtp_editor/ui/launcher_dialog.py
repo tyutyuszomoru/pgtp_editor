@@ -59,6 +59,12 @@ QActions"). So an entry shares its menu item's slot, enabled state and shortcut
 for free and can never drift from it, and the button labels are the walk's own
 ``File › Open``-style paths rather than new vocabulary.
 
+The one thing a button does NOT simply inherit is *enabledness*, and that took a
+bug to learn (BUG-260813025052): a column is a **destination**, not a command,
+and Qt's ``setVisible(False)`` disables the action it hides — so borrowing the
+flag let Maintenance mode grey out the two columns that leave it. See
+``_build_group``.
+
 Behaviour
 ---------
 * **Picking a mode is OBLIGATORY when there is no mode yet (BUG-059).** Owner
@@ -228,6 +234,7 @@ class LauncherDialog(QDialog):
         *,
         groups: Sequence[tuple[str, Sequence[str]]] = LAUNCHER_GROUPS,
         dismissable: bool = False,
+        mode_filtered=(),
         parent=None,
     ):
         super().__init__(parent)
@@ -248,6 +255,11 @@ class LauncherDialog(QDialog):
                 & ~Qt.WindowType.WindowContextHelpButtonHint
             )
         self._entries = entries
+        #: BUG-260813025052: the QActions the window's workflow mode is
+        #: currently HIDING, straight off `MainWindow.mode_filtered_actions()`.
+        #: Empty by default, so every construction that does not pass it (every
+        #: test double, every ad-hoc `groups=`) behaves exactly as before.
+        self._mode_filtered = frozenset(mode_filtered)
         self._chosen_command_id: str | None = None
         #: command_id -> the QPushButton standing for it (test seam).
         self._buttons: dict[str, QPushButton] = {}
@@ -307,12 +319,27 @@ class LauncherDialog(QDialog):
             label, action = entry
             button = QPushButton(label, box)
             button.setToolTip(f"Runs {label}")
-            # Mirror the menu item's enabled state: `Generation ▸ Save reJSON…`
-            # starts disabled (there is no gap JSON yet), and a button that looks
-            # clickable but silently does nothing is worse than a greyed one.
-            # Read once — the launcher is short-lived and modal, so nothing can
-            # change the answer while it is up.
-            button.setEnabled(action.isEnabled())
+            # A launcher button is one of TWO things, and they do not share a
+            # rule (BUG-260813025052):
+            #
+            # * a COMMAND, which is grey when it cannot run -- `Generation ▸
+            #   Save reJSON…` starts disabled because there is no gap JSON yet,
+            #   and a button that looks clickable but silently does nothing is
+            #   worse than a greyed one. That is what `isEnabled()` is for here.
+            # * a DESTINATION: a column IS a workflow mode (`GROUP_MODES`), and
+            #   its button is how the session ENTERS that mode. The mode being
+            #   LEFT must never be able to grey out the way out of itself -- a
+            #   circular gate, and the reason Maintenance mode was a one-way
+            #   door whose only exit was restarting the app.
+            #
+            # `isEnabled()` alone cannot tell the two apart, because Qt's
+            # `QAction.setVisible(False)` ALSO clears the enabled flag: every
+            # `File` action Maintenance mode hides reads as disabled, which is
+            # exactly the Standalone and Project columns. So the window's record
+            # of what the mode hid is consulted alongside it. Both are read once
+            # -- the launcher is short-lived and modal, and the mode deliberately
+            # STANDS while it is up (BUG-059) -- so nothing changes the answer.
+            button.setEnabled(action.isEnabled() or action in self._mode_filtered)
             # Default-argument binding, not a closure over the loop variable.
             button.clicked.connect(
                 lambda _checked=False, cid=command_id: self.choose(cid)
@@ -452,8 +479,18 @@ def show_launcher(
     entries = resolve(window)
     if dismissable is None:
         dismissable = getattr(window, "workflow_mode", None) is not None
+    # BUG-260813025052: what the current mode is HIDING, so a mode column stays
+    # selectable even when the mode being left has disabled its action as a
+    # side effect of hiding it. `getattr`-guarded because the window is a test
+    # double at most call sites.
+    filtered_getter = getattr(window, "mode_filtered_actions", None)
+    mode_filtered = filtered_getter() if callable(filtered_getter) else ()
     dialog = LauncherDialog(
-        entries, groups=groups, dismissable=dismissable, parent=window
+        entries,
+        groups=groups,
+        dismissable=dismissable,
+        mode_filtered=mode_filtered,
+        parent=window,
     )
     runner = exec_dialog if exec_dialog is not None else (lambda dlg: dlg.exec())
     runner(dialog)

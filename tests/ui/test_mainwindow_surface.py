@@ -487,6 +487,12 @@ EXPECTED_HOST_SURFACE = {
     "_wire_php_tab_activity",
     "_wire_ddl_object_panel_reporting",
     "_workflow_mode",
+    # BUG-260813025052: the record of what the mode currently HIDES, and its two
+    # readers. It sits beside `_workflow_mode` for the same reason -- the mode
+    # and its consequences are one host concern -- and exists because Qt's
+    # `setVisible(False)` also clears the enabled flag, so the launcher cannot
+    # tell "unavailable" from "hidden by the mode" without being told.
+    "_mode_filtered_actions",
     "_xsd_ui",
     "active_target_params",
     "_active_minor_mode",
@@ -553,6 +559,8 @@ EXPECTED_HOST_SURFACE = {
     "left_tabs",
     "manual_contents",
     "in_maintenance_mode",
+    "is_mode_filtered",
+    "mode_filtered_actions",
     "new_session",
     "open_project_file",
     "project_tab_index",

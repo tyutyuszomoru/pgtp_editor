@@ -753,6 +753,183 @@ def test_the_mode_never_touches_enabled_state(qtbot, tmp_path):
     assert {id(a): a.isEnabled() for a in everything} == before
 
 
+# -- BUG-260813025052: the mode may never grey out the way out of itself -----
+#
+# Qt couples the two flags: `QAction.setVisible(False)` ALSO clears the enabled
+# flag. The mode hides every File entry but `New Session`/`Exit`, which is
+# exactly `file.open`, `file.open-php-file`, `file.new-project` and
+# `file.open-project` -- i.e. the launcher's whole Standalone and Project
+# columns. The launcher mirrored `action.isEnabled()`, so both escape columns
+# came up grey and Maintenance mode had no exit short of restarting the app.
+#
+# Every case here reads the BUTTON, through `show_launcher`'s `exec_dialog=`
+# seam. A test that read `QAction.isEnabled()` would have passed throughout --
+# that is precisely how this shipped.
+
+
+def _filtered_launcher_ids(window):
+    """Which launcher command ids the current mode is hiding."""
+    return [
+        command_id
+        for command_id in _all_group_ids()
+        if window.is_mode_filtered(window._toolbar_ui.menu_commands[command_id])
+    ]
+
+
+def _launcher_button_states(window, **kwargs):
+    """`command_id -> button.isEnabled()` for a real `show_launcher` run."""
+    seen = {}
+
+    def _run(dialog):
+        for command_id in dialog.entry_ids():
+            seen[command_id] = dialog.button_for(command_id).isEnabled()
+
+    show_launcher(window, window._settings, exec_dialog=_run, **kwargs)
+    return seen
+
+
+def test_maintenance_mode_leaves_every_launcher_column_selectable(qtbot, tmp_path):
+    """The regression guard: in Maintenance mode all seven buttons are live.
+
+    A launcher column is a **destination**, not a command — the mode being left
+    must never gate the button that leaves it, which is a circular gate as well
+    as a trap.
+    """
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    # The underlying actions really ARE disabled -- this is the Qt coupling the
+    # fix has to see through, not a hypothetical.
+    escapes = ["file.open", "file.open-php-file", "file.new-project", "file.open-project"]
+    for command_id in escapes:
+        action = window._toolbar_ui.menu_commands[command_id]
+        assert action.isVisible() is False
+        assert action.isEnabled() is False
+
+    states = _launcher_button_states(window)
+    assert set(states) == set(_all_group_ids())
+    assert [command_id for command_id, live in states.items() if not live] == []
+
+
+@pytest.mark.parametrize("mode", [None, MODE_STANDALONE, MODE_PROJECT])
+def test_the_unfiltered_modes_keep_every_button_live_too(qtbot, tmp_path, mode):
+    """The baseline, so the fix cannot be a blanket "always enable" masking a
+    real regression: nothing is filtered outside Maintenance, so nothing needs
+    the new predicate to be live."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(mode)
+    assert _filtered_launcher_ids(window) == []
+
+    states = _launcher_button_states(window)
+    assert [command_id for command_id, live in states.items() if not live] == []
+
+
+def test_a_capability_disabled_button_stays_grey_inside_maintenance(qtbot, tmp_path):
+    """The two kinds are told apart, not merged. `Generation ▸ Save reJSON…` is
+    unavailable because there is no gap JSON — a COMMAND that cannot run, grey
+    in every mode, including the one that un-greys the mode columns."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    entries = _fake_entries(["file.open", "generation.save-rejson"])
+    entries["generation.save-rejson"][1].setEnabled(False)
+
+    states = _launcher_button_states(
+        window,
+        resolve_entries=lambda _w: entries,
+        groups=(("Standalone", ("file.open", "generation.save-rejson")),),
+    )
+    assert states == {"file.open": True, "generation.save-rejson": False}
+
+
+def test_picking_standalone_from_maintenance_actually_opens_the_door(qtbot, tmp_path):
+    """End-to-end escape, against the real menu actions: the mode changes, the
+    File menu comes back, and the triggered action is ENABLED when it fires.
+
+    That last part is why `show_launcher` sets the mode BEFORE triggering — do
+    not reorder those two statements; leaving Maintenance re-shows and therefore
+    re-enables the four File actions first.
+    """
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    open_action = window._toolbar_ui.menu_commands["file.open"]
+    fired_enabled = []
+    # `File ▸ Open...`'s own slot, replaced so no QFileDialog is ever reached.
+    window._doc_ui.open_dialog = lambda: fired_enabled.append(open_action.isEnabled())
+
+    chosen = show_launcher(
+        window,
+        window._settings,
+        exec_dialog=lambda dialog: dialog.choose("file.open"),
+    )
+
+    assert chosen == "file.open"
+    assert fired_enabled == [True]
+    assert window.workflow_mode == MODE_STANDALONE
+    assert open_action.isVisible() is True
+    assert open_action.isEnabled() is True
+    assert _filtered_launcher_ids(window) == []
+
+
+def test_the_record_tracks_exactly_what_the_current_mode_hides(qtbot, tmp_path):
+    """`_mode_filtered_actions` is rebuilt per refresh, so it always describes
+    the mode in force — and it is a RECORD: the filter still contains no
+    `setEnabled` (pinned separately by
+    `test_the_mode_never_touches_enabled_state`)."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    # A fresh window has never run the filter, so the record is genuinely empty.
+    assert window.mode_filtered_actions() == frozenset()
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    filtered = window.mode_filtered_actions()
+    for command_id in ("file.open", "file.new-project"):
+        action = window._toolbar_ui.menu_commands[command_id]
+        assert action in filtered
+        assert window.is_mode_filtered(action) is True
+    # `New Session` survives the trim, so it is not in the record.
+    new_session = find_action(find_top_menu(window, "File"), "New Session")
+    assert window.is_mode_filtered(new_session) is False
+
+    window.set_workflow_mode(MODE_STANDALONE)
+    # Not empty, and deliberately so: outside the mode the record holds the
+    # INVERSE rule's hidden menus (`Settings`) and nothing else — never a
+    # launcher command, which is all the launcher cares about.
+    assert _filtered_launcher_ids(window) == []
+    assert {a.text() for a in window.mode_filtered_actions()} == set(
+        _MAINTENANCE_ONLY_MENU_TITLES
+    )
+
+
+def test_a_pinned_toolbar_button_is_NOT_a_back_door_out_of_maintenance(
+    qtbot, tmp_path
+):
+    """The measured truth, replacing a docstring that claimed the opposite.
+
+    §7's "the toolbar hosts the menus' OWN QActions" cuts both ways: hiding the
+    menu item hides the pinned button with it, and Qt disables it into the
+    bargain. The accepted FQ-027 trade is that this code does not WALK the
+    toolbar — not that a pinned command keeps working. So the launcher was, and
+    remains, the only exit; it just works now.
+    """
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue("toolbarIds", ["file.open"])
+    seed.sync()
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+    assert window._toolbar_ui.command_ids == ["file.open"]
+    pinned = window._toolbar_ui.menu_commands["file.open"]
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert pinned.isVisible() is False
+    assert pinned.isEnabled() is False
+
+
 def test_menu_actions_are_the_same_objects_across_a_mode_toggle(qtbot, tmp_path):
     """Build once, `setVisible`-toggle. An action rebuilt per mode would drop out
     of `collect_menu_commands()` while hidden and take saved `toolbarIds` with
