@@ -8430,3 +8430,51 @@ So the split is: **window-level, connection-scoped facts are kept; every user-vi
 2. **Already owed, left over by BUG-260812071208 and not yet written:** the bidirectional lockstep's `setChecked` re-sync is **not readable as a user toggle** (`_ddl_explorer_syncing`) — an omission, not a divergence. Mentioned here so the two get reconciled in one pass.
 
 ---
+
+## BUG-260813023714: a Sandbox DDL open can emit a degrade row with no mode row before it
+**Status:** OPEN
+**Reported:** 2026-08-13
+**Report (verbatim):** "The `[DDL]` mode row is role-gated; the `[DDL]` degrade row is not. In `MainWindow._open_ddl_explorer.on_result` the mode row is emitted only `if role == DDL_EXPLORER_TARGET`, while `_report_ddl_degrade` is called for either role. So opening the Sandbox Explorer can emit *'full mode was chosen and could not be delivered'* with no preceding mode row saying full mode was chosen at all — a message with no context, in a tab the user may not have been watching. Introduced in e6ab9e1."
+
+**Root cause:** `pgtp_editor/ui/main_window.py`, `_open_ddl_explorer.on_result`, lines ~4934–4944 (post-BUG-260812110307 tree; the file is mid-merge, so treat the line numbers as approximate and locate by the `if role == DDL_EXPLORER_TARGET: self._report_ddl_mode(...)` guard):
+
+```python
+if role == DDL_EXPLORER_TARGET:
+    self._report_ddl_mode(self._ddl_mode_verdict)
+buffer = build_ddl_buffer(schema, mode=..., dump_text=dump_text)
+if dump_error:
+    self._report_ddl_degrade(dump_error)
+elif buffer.degrade_reason:
+    self._report_ddl_degrade(buffer.degrade_reason)
+```
+
+The mode row is guarded by role; the two degrade calls are not. Both `_report_ddl_mode` (`:4624`) and `_report_ddl_degrade` (`:4645`) are unconditional appenders to `audit_panel` — neither knows the role — so the role decision lives entirely at these call sites.
+
+**Three facts established by reading the tree, because the fix hinges on them:**
+
+1. **The sandbox degrade row is REAL information about the sandbox buffer, not a stray quality message — verified, not taken on report.** In `work()` (`:4819`–`:4856`): `probe_mode` is `role == DDL_EXPLORER_TARGET and …`, so a sandbox open never probes and takes `verdict = cached_verdict` — the **quality** server's verdict (deliberate; the docstring at `:4839` cites the owner's same-major principle). But the dump itself is `fetch_schema_dump(params, verdict.pg_dump_path)` where `params = self._ddl_explorer_params(role)` — **this role's own connection**. So on a sandbox open the buffer really is a `pg_dump` of the *sandbox* database, `build_ddl_buffer` really does render it in full or degrade it, and `degrade_reason` really does describe the sandbox buffer the user is about to read. **Silencing the sandbox degrade row therefore makes the sandbox Explorer fall back to reconstructed, not-safe-to-clone-from DDL with no notice at all** — the silent-wrong-result class this project treats as its worst. That rules out "gate the degrade to the quality role too" as the fix.
+2. **The stale-result suppression already covers the degrade rows — no gap, nothing to add.** BUG-260812110307's epoch guard is in the working tree and its `if stale: … return` (`:4910`–`:4933`) sits **above** both the mode row and the `build_ddl_buffer`/degrade block. A superseded sandbox fetch emits neither row. Whatever this fix does, it must stay **below** that early return, i.e. inside the "this open revealed a panel" region; do not hoist reporting above it to "make both roles symmetric".
+3. **A related, order-dependent silence, in the same call sites.** `_ddl_mode_verdict` starts `None` (`:784`) and is only ever written on a **target** open (`:4881`). Open the Sandbox Explorer in a session where the Quality Explorer has never been opened and `verdict is None` → `build_ddl_buffer(mode=RESTRICTED)`, no dump, no degrade, no row of any kind — the sandbox buffer's *mode* silently depends on whether the user happened to open the quality Explorer first. Not the reported defect, but the same absence of role-scoped reporting, and it should be answered by the same fix (a sandbox open with no verdict yet still deserves a row saying which renderer produced the text and why).
+
+**Proposed fix:**
+
+Both rows, for both roles, with the **sandbox** rows naming their surface — the reported defect's second option, chosen for the reason in fact 1: nothing may be silent, and the earlier implementer's real concern (attributing a quality-server fact to the sandbox database) is answered by saying which surface the row is about rather than by suppressing it.
+
+Concretely, in `pgtp_editor/ui/main_window.py`:
+
+1. Give `_report_ddl_mode` and `_report_ddl_degrade` a `role` parameter (default `DDL_EXPLORER_TARGET`) and drop the `if role == DDL_EXPLORER_TARGET:` guard at the mode-row call site, so `on_result` reads: mode row, then degrade row, unconditionally, for both roles, still below the `if stale:` return.
+2. **Keep the quality rows byte-identical.** The manual quotes them verbatim (`pgtp_editor/resources/manual.md`, *Full DDL and restricted DDL*: `[DDL] Full DDL via pg_dump 17.2 (server 16.4).`, all four restricted sentences, and the `RESTRICTED_CLONE_WARNING` tail). For `DDL_EXPLORER_TARGET` the emitted string must not change at all — only the sandbox role gains a role qualifier. That keeps the manual's quotes true and confines the manual delta to one new paragraph.
+3. **Do not repeat the version-bearing sentence on a sandbox open.** `verdict.message` names the **quality** server's version (`db/pg_dump_mode.py:222`), so replaying it under a *Sandbox* heading would assert the sandbox server's version and be wrong — the very attribution problem the original role gate was avoiding. Emit instead a short role-scoped context row that names the renderer and where the decision came from, e.g. `[DDL] Sandbox Explorer — full DDL (mode decided on the quality connection).` / `… — restricted DDL (mode decided on the quality connection).`, and for fact 3's case `… — restricted DDL (the quality connection's mode has not been decided yet).` The degrade row then follows it unchanged, prefixed the same way: `[DDL] Sandbox Explorer — <degrade_reason>`. The quality-vs-sandbox major divergence sentence (`_server_version_divergence`) must stay on the **quality** row only; do not duplicate it per role.
+4. The sentences belong with the others in `pgtp_editor/db/pg_dump_mode.py` (Qt-free, owns *the rule and the words*), not inline in `main_window.py`. `DDL_PREFIX` stays the single one in `ui/audit_router.py`.
+5. **Gotchas.** (a) Stay below the `if stale:` return — the reveal-only narrowing is already spec'd (§18.1) and applies to both roles. (b) Do not move reporting into `_report_ddl_mode`/`_report_ddl_degrade` as a role lookup on the window — pass the role, the reporters hold no state. (c) The owner's *"the mode is reported on every DDL open"* ruling is **widened**, not narrowed, by this fix (it now also covers the sandbox open); say so in the comment beside the call sites, in the same voice the existing reveal-only narrowing comment uses.
+6. **If the implementer disagrees with the exact sandbox wording, that is the only part worth an owner ruling** — file it via `owner-decision` and ship the rest. The non-negotiable invariant, which needs no ruling: *a degrade row is never emitted without a preceding context row for the same role.*
+
+**Test impact:**
+
+- `tests/ui/test_ddl_mode_wiring.py` is the home lane — it already owns `_ddl_rows(window)` (filters `results_panel.row_texts()` by `DDL_PREFIX`), the `_open(window)` gesture helper, and the degrade cases `test_a_REFUSED_dump_degrades_with_a_NAMED_row_and_still_opens` / `test_the_degrade_row_sits_BESIDE_the_mode_row_not_instead_of_it`. Extend it; its `window` fixture is quality-only, so the sandbox cases need the sandbox-open plumbing from `tests/ui/test_ddl_explorer_sandbox.py` (which drives `window._open_ddl_explorer(DDL_EXPLORER_SANDBOX)` and already has the params/settings setup).
+- New cases, all asserting **the actual rows on the Messages tab** via `_ddl_rows`, never that a method was called: (1) a sandbox open whose dump is refused emits **two** rows in order — a sandbox context row then the sandbox degrade row — and never a degrade row alone; (2) a quality open's rows are **unchanged, string-for-string**, including the divergence row (this is the regression guard for the manual's verbatim quotes); (3) a sandbox open with `_ddl_mode_verdict is None` (quality never opened) still emits exactly one context row and no degrade; (4) the existing stale/epoch case extended to the sandbox role — a superseded sandbox fetch emits **no** rows at all.
+- `tests/ui/conftest.py::_offline_ddl_mode_probe` is autouse; a FULL-mode sandbox test must monkeypatch `pgtp_editor.ui.main_window.fetch_schema_dump` rather than let anything spawn.
+
+**Spec impact:** diverges from `docs/superpowers/CONSOLIDATED_SPEC.md` §18.1 — *"The `[DDL]` notice — probed ONCE per quality connection, reported on EVERY DDL open"* (~§ line 8215) and *"The degrade is a SECOND `[DDL]` row beside the mode row — never a replacement"* (~line 8367). Neither states that the mode row is role-gated while the degrade row is not, so the shipped asymmetry is an **unrecorded** behaviour rather than a decision; §18.7 (role-parameterized Explorers) says nothing about reporting either. After the fix lands, `spec-maintainer` owes those two subsections one statement: **both rows are emitted for both roles, on every open that reveals; the sandbox rows name their surface and do not repeat the quality server's version numbers, because the verdict is the quality connection's while the dump is the role's own.** **Manual impact, flag for `manual-maintainer` in the same pass:** `pgtp_editor/resources/manual.md`, *Full DDL and restricted DDL*, currently says the app tells you the mode *"every time you open the Quality explorer"* and quotes the rows verbatim — it needs the sandbox paragraph and the corrected scope sentence.
+
+---
