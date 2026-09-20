@@ -124,6 +124,7 @@ class Layer:
         self.caps = caps if caps is not None else _caps()
         self.session = session if session is not None else RecordingSession()
         self.probe_calls: list[ConnectionParams] = []
+        self.probe_kwargs: list[dict] = []
         self.open_calls: list[dict] = []
         self.provision_calls: list[tuple] = []
         self.create_db_calls: list[tuple] = []
@@ -140,8 +141,9 @@ class Layer:
         self.install_error: BaseException | None = None
         self.check_error: BaseException | None = None
 
-    def prober(self, params):
+    def prober(self, params, **kwargs):
         self.probe_calls.append(params)
+        self.probe_kwargs.append(kwargs)
         return self.caps
 
     def opener(self, params, **kwargs):
@@ -199,7 +201,14 @@ class SyncRunner:
         return None
 
 
-def _controller(layer: Layer, *, confirm=True, mode=SandboxMode.SCHEMA_ONLY, **kwargs):
+def _controller(
+    layer: Layer,
+    *,
+    confirm=True,
+    mode=SandboxMode.SCHEMA_ONLY,
+    postgres_bin_dir="",
+    **kwargs,
+):
     """A controller wired to `layer`, bound to a project, with a synchronous
     executor seam. Returns `(controller, runner, results)`."""
     if callable(confirm):  # a spy, for tests that assert it is NOT consulted
@@ -222,7 +231,12 @@ def _controller(layer: Layer, *, confirm=True, mode=SandboxMode.SCHEMA_ONLY, **k
     controller._run_async = runner
     results = []
     controller.operation_finished.connect(results.append)
-    controller.set_project(sandbox_params=SANDBOX, target_params=TARGET, mode=mode)
+    controller.set_project(
+        sandbox_params=SANDBOX,
+        target_params=TARGET,
+        mode=mode,
+        postgres_bin_dir=postgres_bin_dir,
+    )
     return controller, runner, results
 
 
@@ -1433,7 +1447,7 @@ def test_capabilities_are_reprobed_after_the_extension_install():
     after = _caps(installed_extensions=frozenset({"plpgsql_check"}))
     probed: list[ConnectionParams] = []
 
-    def prober(params):
+    def prober(params, **kwargs):
         probed.append(params)
         return before if len(probed) == 1 else after
 
@@ -1681,3 +1695,90 @@ def test_the_leak_guard_fails_the_test_that_leaked(tmp_path):
     assert "still in flight" in out
     assert "BUG-043" in out
     assert "sync_run" in out
+
+
+# ---------------------------------------------------------------------------
+# FQ-260812025353: the project's PostgreSQL binaries folder reaches db/sandbox.py
+# ---------------------------------------------------------------------------
+#
+# `ProjectSettings.postgres_bin_dir` and the whole `db/sandbox.py` chain landed
+# together, but only the settings dialog's own Test buttons passed the folder:
+# this controller resolved `pg_dump`/`pg_restore` from PATH alone, so the
+# setting was inert exactly where it decides whether a sandbox can be cloned.
+
+
+def test_no_binaries_folder_is_path_only_and_says_so_as_none():
+    """`""` must reach `db/sandbox.py` as `None`, never as an empty string --
+    `resolve_tool("")` would be a folder search of the current directory."""
+    layer = Layer()
+    controller, _runner, _results = _controller(layer)
+    assert controller.postgres_bin_dir == ""
+
+    controller.refresh_capabilities()
+
+    assert layer.probe_kwargs == [{"bin_dir": None}]
+
+
+def test_the_recorded_folder_reaches_every_probe():
+    layer = Layer()
+    controller, _runner, _results = _controller(layer, postgres_bin_dir="/opt/pg17/bin")
+
+    controller.refresh_capabilities()
+    controller.open_session()
+
+    assert controller.postgres_bin_dir == "/opt/pg17/bin"
+    assert layer.probe_kwargs == [{"bin_dir": "/opt/pg17/bin"}] * 2
+
+
+def test_the_recorded_folder_reaches_the_ownership_gate():
+    layer = Layer()
+    controller, _runner, _results = _controller(layer, postgres_bin_dir="/opt/pg17/bin")
+
+    controller.open_session()
+
+    assert layer.open_calls[-1]["postgres_bin_dir"] == "/opt/pg17/bin"
+
+
+def test_the_recorded_folder_reaches_the_data_clone():
+    """The clone is the operation the folder exists for: `clone_data` is the one
+    place in `db/` that shells out, and a missing binary there is a named
+    failure rather than a silent schema-only fallback."""
+    layer = Layer()
+    controller, _runner, _results = _controller(
+        layer, mode=SandboxMode.WITH_DATA, postgres_bin_dir="/opt/pg17/bin"
+    )
+    controller.open_session()
+    layer.clone_kwargs = []
+    original = layer.cloner
+
+    def cloner(target_params, sandbox_params, **kwargs):
+        layer.clone_kwargs.append(kwargs)
+        return original(target_params, sandbox_params)
+
+    controller._cloner = cloner
+
+    controller.run_data_clone()
+
+    assert layer.clone_kwargs == [{"bin_dir": "/opt/pg17/bin"}]
+
+
+def test_the_recorded_folder_reaches_provisioning():
+    layer = Layer()
+    controller, _runner, _results = _controller(layer, postgres_bin_dir="/opt/pg17/bin")
+    seen = []
+    controller._provisioner = lambda *args, **kwargs: (
+        seen.append(kwargs.get("postgres_bin_dir")) or layer.session
+    )
+
+    controller.provision()
+
+    assert seen == ["/opt/pg17/bin"]
+
+
+def test_clearing_the_project_forgets_the_folder():
+    layer = Layer()
+    controller, _runner, _results = _controller(layer, postgres_bin_dir="/opt/pg17/bin")
+
+    controller.clear_project()
+
+    assert controller.postgres_bin_dir == ""

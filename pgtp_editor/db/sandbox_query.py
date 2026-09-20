@@ -39,6 +39,15 @@ by fetching one row *past* it, so `QueryResult.truncated` is a fact rather than
 a guess, and the panel says so out loud -- this project treats a silently
 short result set as the worst failure class.
 
+**And an unbounded run is a hung app.** The row cap bounds what comes *back*;
+it does nothing about a statement that takes an hour to produce it. So every
+run also carries a **mandatory** `statement_timeout_ms` (§18.5 D4's *primary*
+control -- `DEFAULT_STATEMENT_TIMEOUT_MS`, floor `MIN_STATEMENT_TIMEOUT_MS`),
+applied transaction-locally by the executor. There is no "unlimited" value; that
+absence is the design rather than an omission. A statement the server cancels
+comes back as an ordinary error result worded by `timeout_error`, never as a
+hang and never as a bare driver string.
+
 **Three outcomes, never conflated** (`QueryOutcome`): a statement that returned
 rows, a statement that returned none (DML/DDL, carrying the driver's own
 `statusmessage` and affected-row count), and an error carrying **the database's
@@ -65,13 +74,26 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Protocol
 
 from .apply import diagnose
 from .config import ConnectionParams
-from .sandbox import FetchedRows, SandboxSession
+from .sandbox import (
+    DEFAULT_STATEMENT_TIMEOUT_MS,
+    MIN_STATEMENT_TIMEOUT_MS,
+    FetchedRows,
+    SandboxSession,
+)
+
+# `DEFAULT_STATEMENT_TIMEOUT_MS` / `MIN_STATEMENT_TIMEOUT_MS` are **re-exported
+# here, not re-declared** (§18.5 D4). They live in `db/sandbox.py` beside the
+# seam they parameterise -- this module imports `sandbox` and never the reverse,
+# so declaring them here and importing them back into the executor would be an
+# import cycle -- but the UI and D4b's quality lane read *policy* from this
+# module, exactly as they do `DEFAULT_MAX_ROWS` and `RawResult`. One number, one
+# place, reachable from both.
 
 #: How many rows one ad-hoc run may bring back before it is cut off. Chosen to
 #: be comfortably renderable in a `QTableWidget` (a grid this size builds in
@@ -79,6 +101,11 @@ from .sandbox import FetchedRows, SandboxSession
 #: anyone who needs more should add their own `LIMIT`/`WHERE`, which is also
 #: the only honest way to say *which* rows they want.
 DEFAULT_MAX_ROWS = 1000
+
+#: PostgreSQL's `query_canceled` sqlstate -- what a statement killed by
+#: `statement_timeout` reports. Named once, here, so that recognising a timeout
+#: never means regexing English prose out of a driver message.
+TIMEOUT_SQLSTATE = "57014"
 
 
 class QueryOutcome(str, Enum):
@@ -112,6 +139,14 @@ class QueryRunner(Protocol):
     than applied afterwards so a real implementation can `fetchmany` instead of
     dragging a million rows across the wire first and discarding them.
 
+    **This is the third declaration of the same signature, and the one that is
+    easy to forget** (the others are `SandboxExecutor.fetch`'s protocol and
+    `_RealSandboxExecutor.fetch`). It is separate because it names the `runner=`
+    injection point; leaving it narrower than the real executor breaks every
+    injected path **at call time, not at import** -- the worst shape for a seam
+    whose whole purpose is that tests never reach a server. When one of the
+    three changes, all three change.
+
     There is deliberately **no module-level default implementation** any more:
     the default is the *session's* executor, read off the session inside
     `run_sandbox_query`. That is not a style change -- a module-level default
@@ -120,7 +155,12 @@ class QueryRunner(Protocol):
     """
 
     def __call__(
-        self, params: ConnectionParams, sql: str, *, max_rows: int
+        self,
+        params: ConnectionParams,
+        sql: str,
+        *,
+        max_rows: int,
+        statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
     ) -> RawResult:
         ...
 
@@ -274,11 +314,41 @@ class QueryResult:
         return self.outcome is QueryOutcome.ROWS
 
 
+def timeout_error(error: QueryError, statement_timeout_ms: int) -> QueryError:
+    """`error` with §18.5 D4's timeout sentence in place of the driver's own
+    words -- **`message` and nothing else**.
+
+    `sqlstate`, `detail`, `hint`, `position` and `line` are preserved, because
+    `error_text` already prefixes the sqlstate and a surface that lost
+    `position` would lose the clickable line: a cancelled statement must stay as
+    navigable as any other failure.
+
+    **One named helper, at module level, deliberately** -- not inlined at the
+    call site -- so §18.5 D4b's `run_quality_query` produces the identical
+    sentence by calling this rather than by copying the wording.
+
+    Honest caveat, worth knowing before trusting the sentence: `57014` is
+    `query_canceled` generally, so a user-issued `pg_cancel_backend()` reports it
+    too. This wording is therefore the app's best interpretation rather than a
+    certainty. D4 asks for exactly this mapping, and a timeout is overwhelmingly
+    the likelier cause in a console that sets one on every statement.
+    """
+    seconds = statement_timeout_ms / 1000
+    return replace(
+        error,
+        message=(
+            f"statement cancelled: exceeded the console's statement timeout of "
+            f"{seconds:g} s — raise the timeout or narrow the query"
+        ),
+    )
+
+
 def run_sandbox_query(
     session: SandboxSession,
     sql: str,
     *,
     max_rows: int = DEFAULT_MAX_ROWS,
+    statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS,
     runner: QueryRunner | None = None,
     clock: Callable[[], float] = time.perf_counter,
 ) -> QueryResult:
@@ -294,6 +364,15 @@ def run_sandbox_query(
     function, deliberately (§18.3's never-execute-silently non-goal is untouched
     for every database that is not the disposable sandbox).
 
+    **Every run is time-bounded, and there is no way to ask for one that is
+    not.** `statement_timeout_ms` (§18.5 D4's *primary* control) is applied in
+    the statement's own transaction by the executor; below
+    `MIN_STATEMENT_TIMEOUT_MS` it raises `ValueError`, and no value means
+    "unlimited". A statement the server cancels comes back as an ordinary
+    `QueryOutcome.ERROR` result whose message is `timeout_error`'s sentence,
+    with `sqlstate`/`position`/`line` intact -- never a hang, never a bare
+    driver string.
+
     **The run goes through `session.executor.fetch`** -- the sandbox lane's
     seam -- unless a `runner` is injected. This module opens no connection
     itself: the executor is reached only through the ownership-gated session, so
@@ -305,6 +384,17 @@ def run_sandbox_query(
     """
     if max_rows < 0:
         raise ValueError(f"max_rows must not be negative, got {max_rows!r}")
+    if statement_timeout_ms < MIN_STATEMENT_TIMEOUT_MS:
+        # A caller bug, and therefore loud -- exactly like `max_rows` above and
+        # the `_sandbox_params` TypeError below. The never-raises contract
+        # covers *the database*, not the caller. There is deliberately no value
+        # (0, -1, None) that means "unlimited": the absence of that option is
+        # the half of D4's design that carries the safety.
+        raise ValueError(
+            f"statement_timeout_ms must be at least {MIN_STATEMENT_TIMEOUT_MS} "
+            f"(§18.5 D4: the timeout is mandatory and there is deliberately no "
+            f"unlimited setting), got {statement_timeout_ms!r}"
+        )
     # Read *outside* the never-raises block on purpose: the never-raises
     # contract covers the database, not the caller. Handing this function
     # something that is not a `SandboxSession` (a bare `ConnectionParams`, say)
@@ -315,11 +405,20 @@ def run_sandbox_query(
 
     started = clock()
     try:
-        raw = fetch(params, sql, max_rows=max_rows)
+        raw = fetch(
+            params, sql, max_rows=max_rows, statement_timeout_ms=statement_timeout_ms
+        )
     except Exception as exc:  # noqa: BLE001 -- the DB's message IS the result
+        error = QueryError.from_exception(exc, sql)
+        if error.sqlstate == TIMEOUT_SQLSTATE:
+            # Reworded HERE, above the seam, because this is where the timeout
+            # that was actually in force is known -- not in the executor (which
+            # would put UI wording in the driver layer) and not in the panel
+            # (which D4b would then have to copy).
+            error = timeout_error(error, statement_timeout_ms)
         return QueryResult.failed(
             sql,
-            QueryError.from_exception(exc, sql),
+            error,
             elapsed_ms=(clock() - started) * 1000.0,
             max_rows=max_rows,
         )

@@ -15,8 +15,25 @@
 
 from PySide6.QtWidgets import QMessageBox
 
+from pgtp_editor.version import __version__ as APP_VERSION
+
+# **Every version number in this box is LABELLED, and that is a requirement, not
+# a style choice** (`FQ-260810164455`). Two unrelated versions render here — the
+# app's own release and the *vendor's* `.pgtp` project-format version — and they
+# were conflated once already, because an app release number two lines above
+# `22.8` with neither one saying what it versions invites exactly that. (This
+# comment deliberately does not quote the app's current version either — a test
+# asserts that no release-shaped literal appears anywhere in this file, and a
+# comment is exactly where a stale one would hide.) So the app line says
+# "PGTP Editor version", the format line says "`.pgtp` project format version",
+# and neither number appears bare.
+#
+# The app version comes from `pgtp_editor.version`, which reads the single
+# literal in `pyproject.toml` — there is no version string spelled out in this
+# file, and adding one would defeat the feature.
 ABOUT_TEXT = (
     "<h3>PGTP Editor</h3>"
+    f"<p><b>PGTP Editor version {APP_VERSION}</b></p>"
     "<p>A companion editor for SQL Maestro PostgreSQL PHP Generator "
     "<code>.pgtp</code> project files.</p>"
     "<p>Copyright &copy; 2026 Botond Zalai-Ruzsics. Licensed under the "
@@ -34,7 +51,8 @@ ABOUT_TEXT = (
     "backups of your projects.</p>"
     "<p>PGTP Editor targets the PHP Generator "
     "<a href=\"https://www.sqlmaestro.com\">PHP Generator for PostgreSQL</a> "
-    "<code>.pgtp</code> project format, version 22.8. PHP Generator for "
+    "<code>.pgtp</code> <b>project format version 22.8</b> &mdash; SQL Maestro's "
+    "format version, not this application's. PHP Generator for "
     "PostgreSQL is a product of SQL Maestro Group.</p>"
     "<p><b>Credits:</b></p>"
     "<ul>"

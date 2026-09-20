@@ -1,4 +1,4 @@
-from pgtp_editor.db.ddl_buffer import build_ddl_text
+from pgtp_editor.db.ddl_buffer import DdlObjectSpan, build_ddl_text
 from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, RoutineInfo, TableInfo, TriggerInfo
 from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_ACTIONS,
@@ -10,11 +10,17 @@ from pgtp_editor.ui.ddl_buffer_panel import (
     ALTER_TABLE_MENU_TITLE,
     ALTER_TABLE_TABLE_COMMENT_ACTIONS,
     CREATE_TABLE_LABEL,
+    DISCARD_LOCAL_LABEL,
+    RELOAD_LABEL,
     BrowserPanel,
     alter_table_action_groups,
+    edit_refusal_for_span,
     resolve_edit_target,
 )
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+# Imported from the dialog, not re-typed: the panel shows the dialog's own
+# sentence, and a second spelling here would let the two drift (DEC-260811025733).
+from pgtp_editor.ui.new_trigger_dialog import NO_TRIGGERS_MESSAGE
 
 # DatabaseSchema is used directly (not just via _schema()) in several tests
 # below to exercise empty/dangling-reference/cross-schema edge cases.
@@ -722,28 +728,33 @@ def test_edit_target_for_a_trigger(qtbot):
     assert source == "def1"
 
 
-def test_context_menu_on_an_argument_leaf_offers_no_edit(qtbot, monkeypatch):
-    """Argument-name child leaves carry no span -- no Edit… entry (§18.5)."""
+def test_context_menu_on_an_argument_leaf_offers_no_edit(qtbot):
+    """Argument-name child leaves carry no span -- no Edit… entry (§18.5).
+
+    Since BUG-062 such a leaf DOES get a menu: `Reload DDL` is offered wherever
+    the click lands, because it is a property of the connection and not of the
+    clicked row. What must stay true is that no editing entry appears -- asserted
+    through `context_menu_for_item` rather than `_on_context_menu`, which would
+    reach a real `QMenu.exec`."""
     schema = _schema()
     text, spans = build_ddl_text(schema)
     panel = BrowserPanel()
     qtbot.addWidget(panel)
     panel.set_schema(schema, spans)
-    from PySide6.QtCore import QPoint, Qt
-    from PySide6.QtWidgets import QTreeWidget
+    from PySide6.QtCore import Qt
 
     arg_leaf = _routine_item(panel).child(0)  # "item_id (integer)"
     assert arg_leaf.data(0, Qt.ItemDataRole.UserRole) is None
-    monkeypatch.setattr(QTreeWidget, "itemAt", lambda self, pos: arg_leaf)
-    got = []
-    panel.edit_requested.connect(lambda *a: got.append(a))
 
-    panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
-
-    assert got == []
+    assert panel._menu_for_item(arg_leaf) is None  # nothing this ITEM offers
+    labels = [a.text() for a in panel.context_menu_for_item(arg_leaf).actions()]
+    assert labels == [RELOAD_LABEL]
 
 
-def test_context_menu_at_empty_position_does_nothing(qtbot):
+def test_context_menu_at_empty_position_offers_only_reload(qtbot):
+    """A right-click below the last row used to offer nothing at all. BUG-062
+    requires `Reload DDL` "wherever in DDL Objects", which includes the blank
+    area -- and still nothing else, since there is no item to act on."""
     schema = _schema()
     text, spans = build_ddl_text(schema)
     panel = BrowserPanel()
@@ -752,10 +763,9 @@ def test_context_menu_at_empty_position_does_nothing(qtbot):
     got = []
     panel.edit_requested.connect(lambda *a: got.append(a))
 
-    from PySide6.QtCore import QPoint
+    labels = [a.text() for a in panel.context_menu_for_item(None).actions()]
 
-    panel._on_context_menu(QPoint(-1, -1))  # below the last row: no item there
-
+    assert labels == [RELOAD_LABEL]
     assert got == []
 
 
@@ -783,6 +793,11 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
         def addAction(self, label, cb=None):
             captured["actions"].append((label, cb))
 
+        def addSeparator(self):
+            # BUG-062 puts `Reload DDL` below a separator on every menu of this
+            # tree, so the fake has to accept one.
+            captured["actions"].append(("--", None))
+
         def exec(self, *a, **k):
             # The real menu only ever triggers the ONE action the user
             # clicked; simulate clicking "Edit DDL" specifically.
@@ -798,13 +813,69 @@ def test_edit_menu_action_triggers_edit_requested(qtbot, monkeypatch):
     panel._on_context_menu(QPoint(0, 0))  # position is irrelevant, itemAt is patched
 
     # ONE editing entry since FQ-024: `Check Out for Versioning` is withdrawn,
-    # and the row already names the object so the entry does not repeat it.
+    # and the row already names the object so the entry does not repeat it. The
+    # separator + `Reload DDL` below it are BUG-062's connection-level gesture,
+    # offered on every menu of this tree.
     labels = [label for label, _cb in captured["actions"]]
-    assert labels == ["Edit DDL"]
+    assert labels == ["Edit DDL", "--", RELOAD_LABEL]
     assert len(got) == 1
     ref, source = got[0]
     assert ref.name == "calc_total"
     assert source == "body1"
+
+
+# --- BUG-062: Reload DDL, wherever in the tree -------------------------------
+
+
+def test_reload_is_offered_on_an_object_row_and_emits_the_signal(qtbot):
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    menu = panel.context_menu_for_item(_routine_item(panel))
+    reload_action = [a for a in menu.actions() if a.text() == RELOAD_LABEL][0]
+    reload_action.trigger()
+
+    assert got == [True]
+
+
+def test_reload_is_the_only_entry_a_browse_only_tree_offers(qtbot):
+    """§18.7's sandbox tree suppresses every edit/create gesture, which left it
+    with no menu at all. Reload is neither an edit nor a creation, and it is the
+    gesture a sandbox browse needs most (BUG-062)."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    menu = panel.context_menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == [RELOAD_LABEL]
+    menu.actions()[0].trigger()
+    assert got == [True]
+
+
+def test_the_reload_entry_carries_no_shortcut(qtbot):
+    """DEC-012: Reload DDL has exactly ONE keyboard host, the `Ctrl+Shift+R`
+    QShortcut on the Explorer's viewing pane. Every menu form is click-only, and
+    this is the invariant a future edit would break silently."""
+    schema = _schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    menu = panel.context_menu_for_item(_routine_item(panel))
+
+    reload_action = [a for a in menu.actions() if a.text() == RELOAD_LABEL][0]
+    assert reload_action.shortcut().isEmpty()
 
 
 def test_the_object_row_menu_has_no_checkout_entry_or_signal(qtbot):
@@ -820,6 +891,95 @@ def test_the_object_row_menu_has_no_checkout_entry_or_signal(qtbot):
 
     assert [a.text() for a in menu.actions()] == ["Edit DDL"]
     assert not hasattr(panel, "checkout_requested")
+
+
+# --- BUG-260810193333: Discard local change ----------------------------------
+
+
+def _panel_with_schema(qtbot, **kwargs):
+    schema = _schema()
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(**kwargs)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    return panel
+
+
+def test_discard_local_is_absent_when_nothing_is_checked_out(qtbot):
+    """No predicate injected (projectless) means no local working copy exists,
+    so the entry is ABSENT rather than selectable-and-explaining."""
+    panel = _panel_with_schema(qtbot)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == ["Edit DDL"]
+
+
+def test_discard_local_is_offered_beside_edit_ddl_for_a_checked_out_object(qtbot):
+    panel = _panel_with_schema(qtbot)
+    panel.set_checked_out_predicate(lambda ref: True)
+    got = []
+    panel.discard_local_requested.connect(got.append)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == ["Edit DDL", DISCARD_LOCAL_LABEL]
+    menu.actions()[1].trigger()
+    assert len(got) == 1
+    assert got[0].name == "calc_total"
+
+
+def test_discard_local_is_offered_per_object_not_per_tree(qtbot):
+    """The predicate is asked with the row's own ref, so a checked-out routine
+    offers it and its neighbour does not."""
+    panel = _panel_with_schema(qtbot)
+    panel.set_checked_out_predicate(lambda ref: ref.name == "calc_total")
+
+    routines_root = panel.tree.topLevelItem(1)
+    offered = panel._menu_for_item(routines_root.child(1))
+    other = panel._menu_for_item(routines_root.child(0))
+
+    assert DISCARD_LOCAL_LABEL in [a.text() for a in offered.actions()]
+    assert DISCARD_LOCAL_LABEL not in [a.text() for a in other.actions()]
+
+
+def test_discard_local_is_never_offered_on_the_browse_only_tree(qtbot):
+    """§18.7's sandbox Explorer: discard is an edit gesture, and the sandbox
+    tree offers none -- even with a predicate wired that says yes."""
+    panel = _panel_with_schema(qtbot, browse_only=True)
+    panel.set_checked_out_predicate(lambda ref: True)
+
+    assert panel._menu_for_item(_routine_item(panel)) is None
+    labels = [a.text() for a in panel.context_menu_for_item(_routine_item(panel)).actions()]
+    assert labels == [RELOAD_LABEL]
+
+
+def test_discard_local_carries_no_shortcut(qtbot):
+    """DEC-012 / KEYBINDINGS.md: this is a context-menu-only command; no chord
+    is reserved for it, so the action must not claim one."""
+    panel = _panel_with_schema(qtbot)
+    panel.set_checked_out_predicate(lambda ref: True)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    action = [a for a in menu.actions() if a.text() == DISCARD_LOCAL_LABEL][0]
+    assert action.shortcut().isEmpty()
+
+
+def test_a_raising_checked_out_predicate_hides_the_entry_instead_of_the_menu(qtbot):
+    """The predicate reads the filesystem while a context menu is being built:
+    an unreadable project must cost one entry, never an exception out of a
+    right-click -- and hiding a destructive gesture is the safe direction."""
+    panel = _panel_with_schema(qtbot)
+
+    def boom(ref):
+        raise OSError("project folder went away")
+
+    panel.set_checked_out_predicate(boom)
+
+    menu = panel._menu_for_item(_routine_item(panel))
+
+    assert [a.text() for a in menu.actions()] == ["Edit DDL"]
 
 
 # --- */! drift markers (spec §18.2) -----------------------------------------
@@ -1108,9 +1268,14 @@ def test_click_on_table_node_emits_table_selected_with_table_info(qtbot):
     assert got == [table_info]
 
 
-def test_click_on_table_node_does_not_emit_navigate_requested(qtbot):
-    """A table node has no DdlObjectSpan -- clicking it must go through the
-    table_selected path, never navigate_requested."""
+def test_click_on_table_node_navigates_to_its_synthesized_ddl(qtbot):
+    """A table node now DOES carry a span (`FQ-260810183812`): the buffer holds
+    its synthesized `CREATE TABLE`, and clicking the node jumps to its banner.
+
+    This supersedes the pre-feature assertion that a table click never emitted
+    `navigate_requested` -- which held only because tables had no DDL anywhere
+    in the app.
+    """
     schema = DatabaseSchema(tables={"pr.widget": _table_info("pr.widget")})
     _, spans = build_ddl_text(schema)
     panel = BrowserPanel()
@@ -1122,13 +1287,18 @@ def test_click_on_table_node_does_not_emit_navigate_requested(qtbot):
     table_item = panel.tree.topLevelItem(0).child(0)
     panel._on_item_clicked(table_item, 0)
 
-    assert got == []
+    table_span = next(span for span in spans if span.kind == "table")
+    assert got == [table_span.start_line]
 
 
 def test_click_on_trigger_owning_table_node_still_emits_table_selected(qtbot):
     """A table WITH triggers is still a table node in its own right -- its
-    top-level row click emits table_selected, distinct from clicking one of
-    its nested trigger leaves (which emits navigate_requested instead)."""
+    top-level row click emits table_selected.
+
+    Since `FQ-260810183812` the click is ADDITIVE (open question 2, settled
+    both-not-either): it ALSO navigates to the table's synthesized DDL. The
+    Properties population is the working behaviour that must not be withdrawn
+    to buy the jump, so this pins that it survives."""
     table_info = _table_info("pr.equipment")
     schema = DatabaseSchema(
         tables={"pr.equipment": table_info},
@@ -1152,7 +1322,8 @@ def test_click_on_trigger_owning_table_node_still_emits_table_selected(qtbot):
     panel._on_item_clicked(table_item, 0)
 
     assert got_table == [table_info]
-    assert got_navigate == []
+    table_span = next(span for span in spans if span.kind == "table")
+    assert got_navigate == [table_span.start_line]
 
 
 def test_table_with_no_tableinfo_and_no_triggers_never_happens_but_empty_schema_is_safe(qtbot):
@@ -1174,20 +1345,23 @@ def _table_panel(qtbot):
 
 
 def test_context_menu_on_a_table_node_offers_no_edit(qtbot):
-    """A table node still offers NO Edit…/Check Out (§18.1) -- a whole table
-    has no single DdlObjectSpan/source text for either to act on, and table
-    nodes carry only _TABLE_ROLE data, never _SPAN_ROLE.
+    """A table node still offers NO Edit…/Check Out (§18.1) -- a table is not
+    part of §18.2's checkout model, and its shape changes through
+    `Alter Table ▸` alone.
 
-    FQ-002 carved out a *creation* entry on this node (covered below), which
-    is why this asserts the absence of the two edit gestures rather than the
-    absence of a menu: the reason the edit entries stay away is unchanged, and
-    that is the guarantee worth pinning.
+    Since `FQ-260810183812` the node DOES carry a `_SPAN_ROLE` (it navigates to
+    its synthesized DDL), so the reason the edit entries stay away is no longer
+    "there is no span" but "this span's kind is not editable" -- which is what
+    `edit_refusal_for_span` answers and what this pins. The table menu must
+    still be the `Alter Table ▸`/creation one, not the span menu.
     """
     from PySide6.QtCore import Qt
 
     panel = _table_panel(qtbot)
     table_item = panel.tree.topLevelItem(0).child(0)
-    assert table_item.data(0, Qt.ItemDataRole.UserRole) is None  # no _SPAN_ROLE
+    span = table_item.data(0, Qt.ItemDataRole.UserRole)
+    assert span is not None and span.kind == "table"
+    assert edit_refusal_for_span(span) is not None
 
     menu = panel._menu_for_item(table_item)
 
@@ -1218,6 +1392,51 @@ def test_context_menu_on_a_table_node_offers_add_trigger(qtbot):
     menu.actions()[0].trigger()
     assert len(requested) == 1
     assert requested[0].name == "pr.widget"
+
+
+def test_add_trigger_is_offered_on_a_view_node(qtbot):
+    """DEC-260811025733: a view keeps the gesture -- `INSTEAD OF` on a view is
+    the standard way to make one updatable, so this is a real command there. It
+    emits the view's own `TableInfo`, kind included, which is how the dialog
+    learns to offer `INSTEAD OF` only."""
+    panel = _alter_panel(qtbot, kind="view")
+    view_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.add_trigger_requested.connect(requested.append)
+
+    menu = panel._menu_for_item(view_item)
+
+    labels = [action.text() for action in menu.actions()]
+    assert labels == ["Add Trigger…", CREATE_TABLE_LABEL]  # no Alter Table ▸
+    menu.actions()[0].trigger()
+    assert [(info.name, info.kind) for info in requested] == [("pr.widget", "view")]
+
+
+def test_add_trigger_on_a_matview_node_is_a_stated_refusal(qtbot):
+    """DEC-260811025733: PostgreSQL supports no trigger on a materialized view,
+    so the command is not offered -- but per FQ-023 it says why rather than
+    vanishing, as a DISABLED entry carrying the reason (the shape
+    `DdlEditorPanel` uses for `edit_refusal_for_span`). Nothing can be emitted
+    from it: a disabled action does not fire, and there is no enabled entry
+    whose text mentions triggers."""
+    panel = _alter_panel(qtbot, kind="matview")
+    matview_item = panel.tree.topLevelItem(0).child(0)
+    requested = []
+    panel.add_trigger_requested.connect(requested.append)
+
+    menu = panel._menu_for_item(matview_item)
+
+    refusals = [a for a in menu.actions() if a.text() == NO_TRIGGERS_MESSAGE]
+    assert len(refusals) == 1
+    assert not refusals[0].isEnabled()
+    assert not any(a.text() == "Add Trigger…" for a in menu.actions())
+    # The reason is stated exactly once, and the sibling creation entry survives.
+    assert [a.text() for a in menu.actions()] == [
+        NO_TRIGGERS_MESSAGE,
+        CREATE_TABLE_LABEL,
+    ]
+    refusals[0].trigger()
+    assert requested == []
 
 
 def test_context_menu_on_the_routines_branch_offers_new_routine(qtbot):
@@ -1758,3 +1977,1099 @@ def test_a_view_offers_no_constraint_operations_either(qtbot):
     table_item = panel.tree.topLevelItem(0).child(0)
 
     assert _submenu(panel._menu_for_item(table_item)) is None
+
+
+# ---------------------------------------------------------------------------
+# Every tree item that has DDL navigates to it (`FQ-260810183812`).
+# ---------------------------------------------------------------------------
+
+from pgtp_editor.db.introspect import ConstraintInfo, IndexInfo  # noqa: E402
+from pgtp_editor.ui.ddl_buffer_panel import (  # noqa: E402
+    NOT_EDITABLE_REFUSALS,
+)
+
+
+def _rich_table_schema():
+    table = TableInfo(
+        name="pr.orders",
+        kind="table",
+        columns=[
+            ColumnInfo("id", "integer", True, False, False, None),
+            ColumnInfo("tag", "text", False, False, True, None),
+        ],
+    )
+    view = TableInfo(name="pr.v_orders", kind="view", view_definition="SELECT 1")
+    constraints = {
+        "pr.orders.orders_pkey": ConstraintInfo(
+            schema="pr", table="orders", name="orders_pkey", kind="primary key",
+            columns=["id"], definition="PRIMARY KEY (id)",
+        )
+    }
+    indexes = {
+        "pr.ix_tag": IndexInfo(
+            schema="pr", table="orders", name="ix_tag", columns=["tag"],
+            method="btree", definition="CREATE INDEX ix_tag ON pr.orders (tag)",
+        ),
+        "pr.orders_pkey": IndexInfo(
+            schema="pr", table="orders", name="orders_pkey", columns=["id"],
+            is_unique=True, is_primary=True, method="btree",
+            definition="CREATE UNIQUE INDEX orders_pkey ON pr.orders (id)",
+            constraint_name="orders_pkey",
+        ),
+    }
+    return DatabaseSchema(
+        tables={"pr.orders": table, "pr.v_orders": view},
+        constraints=constraints,
+        indexes=indexes,
+    )
+
+
+def _rich_panel(qtbot):
+    schema = _rich_table_schema()
+    text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    return panel, text.splitlines()
+
+
+def _group_named(table_item, prefix):
+    for index in range(table_item.childCount()):
+        child = table_item.child(index)
+        if child.text(0).startswith(prefix):
+            return child
+    return None
+
+
+def _orders_item(panel):
+    root = panel.tree.topLevelItem(0)
+    for index in range(root.childCount()):
+        if root.child(index).text(0).startswith("pr.orders"):
+            return root.child(index)
+    raise AssertionError("no pr.orders node")
+
+
+def _clicked_line(panel, item):
+    got = []
+    panel.navigate_requested.connect(got.append)
+    panel._on_item_clicked(item, 0)
+    return got
+
+
+def test_a_view_node_navigates_to_its_create_view(qtbot):
+    panel, lines = _rich_panel(qtbot)
+    root = panel.tree.topLevelItem(0)
+    view_item = next(
+        root.child(i) for i in range(root.childCount())
+        if root.child(i).text(0).startswith("pr.v_orders")
+    )
+    got = _clicked_line(panel, view_item)
+    assert got and lines[got[0] - 1] == "-- VIEW pr.v_orders --"
+
+
+def test_a_column_node_jumps_to_its_own_line_not_the_banner(qtbot):
+    """Open question 3, settled: the column's line. Landing on the banner
+    would make the user find the row they just clicked by eye."""
+    panel, lines = _rich_panel(qtbot)
+    columns = _group_named(_orders_item(panel), "Columns")
+    tag_leaf = next(
+        columns.child(i) for i in range(columns.childCount())
+        if columns.child(i).text(0).startswith("tag")
+    )
+    got = _clicked_line(panel, tag_leaf)
+    assert got and lines[got[0] - 1].strip().startswith("tag text")
+
+
+def test_the_tree_gains_a_constraints_group_whose_nodes_navigate(qtbot):
+    """Open question 1, settled: a constraint jumps to its INLINE line inside
+    the `CREATE TABLE`, which is the only place it exists in a buffer that
+    emits no ALTERs."""
+    panel, lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Constraints")
+    assert group is not None and group.childCount() == 1
+    got = _clicked_line(panel, group.child(0))
+    assert got and "CONSTRAINT orders_pkey" in lines[got[0] - 1]
+
+
+def test_the_tree_gains_an_indexes_group_whose_nodes_navigate(qtbot):
+    panel, lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Indexes")
+    assert group is not None and group.childCount() == 2
+    ix_tag = next(
+        group.child(i) for i in range(group.childCount())
+        if group.child(i).text(0).startswith("ix_tag")
+    )
+    got = _clicked_line(panel, ix_tag)
+    assert got and lines[got[0] - 1].startswith("CREATE INDEX ix_tag")
+
+
+def test_a_constraint_backed_index_navigates_to_its_constraints_line(qtbot):
+    """The buffer never emits a `CREATE INDEX` for one (PostgreSQL rejects it
+    and the constraint already prints it), so the constraint's line is where
+    that index genuinely is."""
+    panel, lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Indexes")
+    backed = next(
+        group.child(i) for i in range(group.childCount())
+        if group.child(i).text(0).startswith("orders_pkey")
+    )
+    got = _clicked_line(panel, backed)
+    assert got and "CONSTRAINT orders_pkey" in lines[got[0] - 1]
+
+
+def test_a_table_click_is_additive_navigate_and_properties(qtbot):
+    """Open question 2, settled both-not-either."""
+    panel, lines = _rich_panel(qtbot)
+    got_table = []
+    panel.table_selected.connect(got_table.append)
+    got_line = _clicked_line(panel, _orders_item(panel))
+    assert got_table and got_table[0].name == "pr.orders"
+    assert got_line and lines[got_line[0] - 1] == "-- TABLE pr.orders --"
+
+
+def test_a_column_click_still_populates_properties_too(qtbot):
+    panel, _lines = _rich_panel(qtbot)
+    columns = _group_named(_orders_item(panel), "Columns")
+    got_table = []
+    panel.table_selected.connect(got_table.append)
+    got_line = _clicked_line(panel, columns.child(0))
+    assert got_table and got_table[0].name == "pr.orders"
+    assert got_line
+
+
+def test_the_columns_group_node_itself_still_navigates_nowhere(qtbot):
+    """The shipped rule "an item with no span navigates nowhere" is unchanged
+    -- which is what keeps this widening additive rather than a rewrite."""
+    panel, _lines = _rich_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Columns")
+    assert _clicked_line(panel, group) == []
+
+
+def test_a_table_node_keeps_its_alter_table_menu_not_the_span_menu(qtbot):
+    """A table node carries a span AND a `_TABLE_ROLE`; the span must not
+    shadow the menu that matters."""
+    panel, _lines = _rich_panel(qtbot)
+    menu = panel._menu_for_item(_orders_item(panel))
+    labels = [action.text() for action in menu.actions()]
+    assert any("Add Trigger" in label for label in labels)
+    assert not any("Edit DDL" == label for label in labels)
+
+
+def test_every_non_editable_kind_has_a_stated_reason():
+    """A refusal with a reason, not a silently disabled menu (FQ-023)."""
+    for kind in ("table", "matview", "column", "constraint", "index"):
+        assert NOT_EDITABLE_REFUSALS[kind]
+        assert edit_refusal_for_span(DdlObjectSpan(kind, "pr", "x", None, 1, 1))
+
+
+def test_a_matview_span_is_still_refused_and_says_why():
+    """`FQ-260812025836`'s carve-out, asserted as a REFUSAL rather than as an
+    absence: views became editable, matviews must not have followed by analogy
+    (the BUG-052 / BUG-063 failure mode). The reason travels with the rule --
+    there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so a replace would be a
+    `DROP` + `CREATE` discarding the stored data."""
+    refusal = edit_refusal_for_span(DdlObjectSpan("matview", "pr", "x", None, 1, 1))
+    assert refusal is not None
+    assert "CREATE OR REPLACE MATERIALIZED VIEW" in refusal
+    assert "data" in refusal
+
+
+def test_a_table_span_is_still_refused():
+    refusal = edit_refusal_for_span(DdlObjectSpan("table", "pr", "x", None, 1, 1))
+    assert refusal is not None
+    assert "Alter Table" in refusal
+
+
+def test_routines_triggers_and_views_are_editable():
+    for kind in ("function", "procedure", "trigger", "view"):
+        assert edit_refusal_for_span(DdlObjectSpan(kind, "pr", "x", None, 1, 1)) is None
+    assert "view" not in NOT_EDITABLE_REFUSALS
+
+
+# ---------------------------------------------------------------------------
+# Views are editable (`FQ-260812025836`).
+# ---------------------------------------------------------------------------
+def _relation_item(panel, prefix):
+    root = panel.tree.topLevelItem(0)
+    for index in range(root.childCount()):
+        if root.child(index).text(0).startswith(prefix):
+            return root.child(index)
+    raise AssertionError(f"no {prefix} node")
+
+
+def _matview_panel(qtbot):
+    """The same fixture with the view's kind flipped to `matview` -- the ONE
+    difference, so anything that passes for the view and fails here is the
+    carve-out doing its job."""
+    schema = _rich_table_schema()
+    schema.tables["pr.v_orders"] = TableInfo(
+        name="pr.v_orders", kind="matview", view_definition="SELECT 1"
+    )
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+    return panel
+
+
+def _span_of(item):
+    from PySide6.QtCore import Qt
+
+    return item.data(0, Qt.ItemDataRole.UserRole)
+
+
+def test_a_view_span_resolves_to_a_create_or_replace_view_edit_target(qtbot):
+    """The editable text is `pg_get_viewdef` wrapped in `CREATE OR REPLACE
+    VIEW` -- the shape that alters a view in place, and the same text the
+    read-only buffer already shows."""
+    panel, _lines = _rich_panel(qtbot)
+    span = _span_of(_relation_item(panel, "pr.v_orders"))
+
+    ref, source = resolve_edit_target(panel._schema, span)
+
+    assert (ref.kind, ref.schema, ref.name) == ("view", "pr", "v_orders")
+    assert ref.arg_types == ()
+    assert ref.table is None
+    assert source == "CREATE OR REPLACE VIEW pr.v_orders AS\nSELECT 1;"
+
+
+def test_the_editable_view_text_carries_no_create_trigger(qtbot):
+    """LOAD-BEARING (`FQ-260812025836`, open question 1). A view can carry
+    `INSTEAD OF` triggers, and each of those already owns its own `ddl/*.sql`
+    checkout identity. The double-identity collision dissolves only because the
+    editable text comes from `pg_get_viewdef` -- the `SELECT` body alone.
+    Sourcing it from `pg_dump` output instead brings the collision straight
+    back, which is what this assertion is here to catch."""
+    panel, _lines = _rich_panel(qtbot)
+    _ref, source = resolve_edit_target(
+        panel._schema, _span_of(_relation_item(panel, "pr.v_orders"))
+    )
+    assert "CREATE TRIGGER" not in source.upper()
+
+
+def test_a_view_node_offers_edit_ddl_beside_its_relation_gestures(qtbot):
+    """A view row carries BOTH an editable span and a `_TABLE_ROLE`, so its
+    menu is the union: `Edit DDL` must not have displaced `Add Trigger…`, which
+    is how a view is made updatable."""
+    panel, _lines = _rich_panel(qtbot)
+    view_item = _relation_item(panel, "pr.v_orders")
+
+    labels = [a.text() for a in panel._menu_for_item(view_item).actions() if a.text()]
+
+    assert labels[0] == "Edit DDL"
+    assert "Add Trigger…" in labels
+    assert CREATE_TABLE_LABEL in labels
+    # No `Discard local change`: a view is not part of the checkout model.
+    assert DISCARD_LOCAL_LABEL not in labels
+
+
+def test_edit_ddl_on_a_view_node_emits_the_ref_and_the_source(qtbot):
+    panel, _lines = _rich_panel(qtbot)
+    requested = []
+    panel.edit_requested.connect(lambda ref, src: requested.append((ref, src)))
+
+    menu = panel._menu_for_item(_relation_item(panel, "pr.v_orders"))
+    next(a for a in menu.actions() if a.text() == "Edit DDL").trigger()
+
+    assert len(requested) == 1
+    ref, source = requested[0]
+    assert ref.kind == "view"
+    assert ref.qualified == "pr.v_orders"
+    assert source.startswith("CREATE OR REPLACE VIEW")
+
+
+def test_a_matview_node_offers_no_edit_ddl(qtbot):
+    """The carve-out, driven through the real menu path rather than asserted
+    off a constant: there is no `CREATE OR REPLACE MATERIALIZED VIEW`, so a
+    matview keeps exactly the menu it had."""
+    panel = _matview_panel(qtbot)
+    labels = [
+        a.text() for a in panel._menu_for_item(_relation_item(panel, "pr.v_orders")).actions()
+    ]
+    assert "Edit DDL" not in labels
+
+
+def test_a_matview_span_resolves_no_edit_target(qtbot):
+    """The last line of defence, below the menu: even handed the span
+    directly, the resolver refuses to produce an editable matview."""
+    panel = _matview_panel(qtbot)
+    span = _span_of(_relation_item(panel, "pr.v_orders"))
+    assert span.kind == "matview"
+    assert resolve_edit_target(panel._schema, span) is None
+    # And a span that merely CLAIMS to be a view over a matview relation is
+    # refused too -- the resolver re-checks `TableInfo.kind`.
+    assert (
+        resolve_edit_target(
+            panel._schema,
+            DdlObjectSpan("view", "pr", "v_orders", None, span.start_line, span.end_line),
+        )
+        is None
+    )
+
+
+def test_a_table_node_still_offers_no_edit_ddl(qtbot):
+    panel, _lines = _rich_panel(qtbot)
+    labels = [a.text() for a in panel._menu_for_item(_orders_item(panel)).actions()]
+    assert "Edit DDL" not in labels
+    assert any("Add Trigger" in label for label in labels)
+
+
+def test_a_view_with_no_available_definition_falls_back_to_its_table_menu(qtbot):
+    """A connection that could not supply `pg_get_viewdef` leaves nothing to
+    edit -- and inventing a body is the one thing this app does not do. The row
+    must keep its relation gestures rather than losing its whole menu."""
+    schema = _rich_table_schema()
+    schema.tables["pr.v_orders"] = TableInfo(
+        name="pr.v_orders", kind="view", view_definition=None
+    )
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    labels = [a.text() for a in panel._menu_for_item(_relation_item(panel, "pr.v_orders")).actions()]
+
+    assert "Edit DDL" not in labels
+    assert "Add Trigger…" in labels
+
+
+def test_a_browse_only_tree_still_offers_nothing_on_a_view(qtbot):
+    """§18.7's sandbox Explorer is browse-only, and widening what is editable
+    must not have given it an editing gesture."""
+    schema = _rich_table_schema()
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    assert panel._menu_for_item(_relation_item(panel, "pr.v_orders")) is None
+
+
+def test_a_browse_only_tree_gains_the_navigation_but_no_creation_entries(qtbot):
+    """§18.7: both Explorers get this for free, because the change lands in
+    the panels the two roles construct from one path. The sandbox instance is
+    `browse_only=True`, so its widened tree must NAVIGATE without gaining any
+    of the creation / `Alter Table ▸` entries browse-only suppresses at
+    menu-BUILD time."""
+    schema = _rich_table_schema()
+    _text, spans = build_ddl_text(schema)
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, spans)
+
+    table_item = _orders_item(panel)
+    got = _clicked_line(panel, table_item)
+    assert got  # navigation works on the sandbox tree
+
+    labels = [a.text() for a in panel.context_menu_for_item(table_item).actions()]
+    assert labels == [RELOAD_LABEL]
+
+    constraints = _group_named(table_item, "Constraints")
+    assert _clicked_line(panel, constraints.child(0))
+
+
+# ---------------------------------------------------------------------------
+# The tree NAME FILTER (`FQ-260810180336`, §18.1) and the QUALITY tree's DANGER
+# selection colour (`FQ-260810165518`, §18.7).
+#
+# Everything colour-related below asserts RENDERED PIXELS, never a palette or a
+# stylesheet string. `BUG-260811021804` is the standing proof that a read-back
+# assertion here is a false green: `sql_results_panel.py`'s palette faithfully
+# reports a red that is painted zero times.
+# ---------------------------------------------------------------------------
+from collections import Counter  # noqa: E402
+
+import pytest  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
+
+from pgtp_editor.ui.ddl_buffer_panel import (  # noqa: E402
+    CLEAR_FILTER_BUTTON_LABEL,
+    FILTER_BUTTON_LABEL,
+    FILTER_MODE_CONTAINS,
+    FILTER_MODE_DEFAULT,
+    FILTER_MODE_ENDS_WITH,
+    FILTER_MODE_LABELS,
+    FILTER_MODE_NOT_CONTAINS,
+    FILTER_MODE_NOT_STARTS_WITH,
+    FILTER_MODE_STARTS_WITH,
+    FILTER_PLACEHOLDER,
+    NO_FILTER_MATCHES_TEXT,
+    danger_selection_colors,
+    danger_selection_stylesheet,
+    filter_matches,
+    filter_mode_label,
+)
+from pgtp_editor.ui.mode_indicator import MODE_MAINTENANCE, mode_colors  # noqa: E402
+from pgtp_editor.ui.theme import apply_theme  # noqa: E402
+
+
+def _filtered_panel(schema=None):
+    panel = BrowserPanel()
+    schema = schema if schema is not None else _schema()
+    _, spans = build_ddl_text(schema)
+    panel.set_schema(schema, spans)
+    return panel, schema, spans
+
+
+def _visible_labels(panel):
+    """Every row the user can actually see, in tree order -- a row whose parent
+    is hidden is not visible however its own flag reads."""
+    seen: list[str] = []
+
+    def walk(item, parent_visible):
+        visible = parent_visible and not item.isHidden()
+        if visible:
+            seen.append(item.text(0))
+        for index in range(item.childCount()):
+            walk(item.child(index), visible)
+
+    for index in range(panel.tree.topLevelItemCount()):
+        walk(panel.tree.topLevelItem(index), True)
+    return seen
+
+
+def _filter_for(panel, term, mode=FILTER_MODE_CONTAINS):
+    panel.filter_input.setText(term)
+    panel.filter_mode_combo.setCurrentIndex(
+        [value for _, value in FILTER_MODE_LABELS].index(mode)
+    )
+    panel.apply_filter()
+
+
+# -- the five predicates, pure ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name,term,mode,expected",
+    [
+        ("pr.calc_total", "calc", FILTER_MODE_CONTAINS, True),
+        ("pr.calc_total", "zzz", FILTER_MODE_CONTAINS, False),
+        ("pr.calc_total", "pr.", FILTER_MODE_STARTS_WITH, True),
+        ("pr.calc_total", "calc", FILTER_MODE_STARTS_WITH, False),
+        ("pr.calc_total", "total", FILTER_MODE_ENDS_WITH, True),
+        ("pr.calc_total", "calc", FILTER_MODE_ENDS_WITH, False),
+        ("pr.calc_total", "calc", FILTER_MODE_NOT_CONTAINS, False),
+        ("pr.calc_total", "zzz", FILTER_MODE_NOT_CONTAINS, True),
+        ("pr.calc_total", "pr.", FILTER_MODE_NOT_STARTS_WITH, False),
+        ("pr.calc_total", "calc", FILTER_MODE_NOT_STARTS_WITH, True),
+    ],
+)
+def test_each_filter_mode_answers_its_own_question(name, term, mode, expected):
+    assert filter_matches(name, term, mode) is expected
+
+
+def test_matching_is_case_insensitive():
+    """Open question 1, settled: insensitive, with no `Match case` toggle."""
+    assert filter_matches("pr.Calc_Total", "CALC", FILTER_MODE_CONTAINS)
+    assert filter_matches("pr.Calc_Total", "PR.", FILTER_MODE_STARTS_WITH)
+
+
+def test_an_empty_term_matches_everything_even_in_a_negative_mode():
+    """Otherwise `Filter` on an empty box would empty the tree under
+    "Doesn't contain", which is nobody's idea of clearing a filter."""
+    for _, mode in FILTER_MODE_LABELS:
+        assert filter_matches("anything", "", mode)
+
+
+# -- the bar -----------------------------------------------------------------
+
+
+def test_the_filter_bar_offers_the_owners_four_controls(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert panel.filter_input.placeholderText() == FILTER_PLACEHOLDER
+    assert panel.filter_button.text() == FILTER_BUTTON_LABEL
+    assert panel.clear_filter_button.text() == CLEAR_FILTER_BUTTON_LABEL
+    assert [
+        panel.filter_mode_combo.itemText(i)
+        for i in range(panel.filter_mode_combo.count())
+    ] == [label for label, _ in FILTER_MODE_LABELS]
+
+
+def test_the_default_mode_is_contains(qtbot):
+    """Open question 3, settled."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert FILTER_MODE_DEFAULT == FILTER_MODE_CONTAINS
+    assert panel.filter_mode_combo.currentData() == FILTER_MODE_CONTAINS
+
+
+def test_return_in_the_input_filters_but_typing_does_not(qtbot):
+    """A text input beside a button that ignores Return is its own small
+    defect -- but nothing filters on a keystroke."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    panel.filter_input.setText("calc")
+    assert panel.active_filter() is None
+    panel.filter_input.returnPressed.emit()
+    assert panel.active_filter() == (FILTER_MODE_CONTAINS, "calc")
+
+
+def test_the_name_filter_is_not_the_find_replace_bar(qtbot):
+    """The DDL Explorer tab now carries two search inputs, and the panel-side
+    one must be distinguishable at a glance: different verbs, a mode dropdown
+    Find has no equivalent of, and a placeholder that names its subject."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert not hasattr(panel, "find_replace_bar")
+    assert "Find" not in panel.filter_button.text()
+    assert "object names" in panel.filter_input.placeholderText()
+
+
+# -- what it hides and what it keeps -----------------------------------------
+
+
+def test_filtering_hides_non_matching_routines_and_keeps_the_match(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+    visible = _visible_labels(panel)
+    assert "pr.calc_total [F]" in visible
+    assert "pr.audit_log() [T]" not in visible
+    # The branch root survives so the hit is shown in context.
+    assert "Functions & Procedures" in visible
+
+
+def test_a_group_with_a_matching_child_stays_visible(qtbot):
+    """The "function 1" case: an ancestor is visible iff it matches itself or
+    has a visible descendant."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "trg_other")
+    visible = _visible_labels(panel)
+    assert "Tables" in visible
+    assert "pr.equipment  (2)" in visible  # ancestor of the hit
+    assert "pr.equipment.trg_other [B][D]" in visible
+    assert "pr.equipment.trg_audit [A][I][U]" not in visible
+
+
+def test_a_matched_object_still_shows_its_own_children(qtbot):
+    """A matched routine keeps its argument leaves -- hiding them would answer
+    a different question than the one asked."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc_total")
+    visible = _visible_labels(panel)
+    assert "item_id (integer)" in visible
+    assert "rate (numeric)" in visible
+
+
+def test_argument_leaves_are_not_match_targets(qtbot):
+    """§18.1: column leaves and routine-argument leaves are not object rows."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "item_id")
+    assert panel.filter_banner_label.text() == NO_FILTER_MATCHES_TEXT
+    assert _visible_labels(panel) == []
+
+
+def test_column_leaves_are_not_match_targets(qtbot):
+    schema = DatabaseSchema(
+        tables={
+            "pr.equipment": TableInfo(
+                name="pr.equipment",
+                kind="table",
+                columns=[
+                    ColumnInfo(
+                        name="serial_no", data_type="text", is_pk=False,
+                        is_fk=False, is_nullable=True, default=None,
+                    ),
+                ],
+            )
+        }
+    )
+    panel, _, _ = _filtered_panel(schema)
+    qtbot.addWidget(panel)
+    _filter_for(panel, "serial_no")
+    assert _visible_labels(panel) == []
+    _filter_for(panel, "equipment")
+    assert "serial_no (text)" in _visible_labels(panel)  # rides along
+
+
+def test_the_marker_letters_are_never_matched(qtbot):
+    """The spec's own worked example, and the reason the filter reads a stored
+    NAME rather than the base label: `d` must not match every DELETE trigger,
+    and `f` must not match every function."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "[D]")
+    assert _visible_labels(panel) == []
+    _filter_for(panel, "[F]")
+    assert _visible_labels(panel) == []
+
+
+def test_the_drift_and_dirty_markers_are_never_matched_either(qtbot):
+    """The label carries more decoration than `[F]`/`[D]`: §18.2's `*`/`!` drift
+    markers and BUG-033's unsaved-edit star are appended to the same text. A
+    filter that read the label would make `*` select "everything the user has
+    touched", which is a different feature nobody asked for."""
+    from pgtp_editor.db.ddl_project import DriftMarkers
+
+    schema = _schema()
+    _, spans = build_ddl_text(schema)
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(
+        schema, spans,
+        drift_markers={"ddl/pr.calc_total.sql": DriftMarkers(locally_edited=True)},
+    )
+    assert "pr.calc_total [F] *" in _visible_labels(panel)
+
+    _filter_for(panel, "*")
+    assert _visible_labels(panel) == []
+    _filter_for(panel, "!")
+    assert _visible_labels(panel) == []
+
+
+def test_a_row_marked_dirty_UNDER_a_live_filter_keeps_matching_its_bare_name(qtbot):
+    """The two label rewriters meet here: `set_object_dirty` re-renders the row
+    text while a filter is applied. The stored name is what the filter reads, so
+    a starred row must neither vanish nor start matching its star."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+    panel.set_object_dirty(_calc_total_ref(), True)
+
+    assert "pr.calc_total [F] *" in _visible_labels(panel)
+    _filter_for(panel, "*")
+    assert _visible_labels(panel) == []
+
+
+def test_the_trigger_count_suffix_on_a_table_is_not_matched(qtbot):
+    """A table row reads `pr.equipment  (2)` -- the count is presentation, so
+    filtering for it must not select "tables with two triggers"."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert "pr.equipment  (2)" in _visible_labels(panel)
+
+    _filter_for(panel, "(2)")
+    assert _visible_labels(panel) == []
+
+
+def test_a_trigger_is_hidden_in_BOTH_of_its_occurrences(qtbot):
+    """One object is never half-hidden (§18.1's dual-grouped tree)."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc_total")
+    assert not any("trg_audit" in label for label in _visible_labels(panel))
+
+
+def test_clear_filter_restores_every_row_and_empties_the_input(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    everything = _visible_labels(panel)
+    _filter_for(panel, "calc")
+    assert _visible_labels(panel) != everything
+    panel.clear_filter()
+    assert panel.active_filter() is None
+    assert panel.filter_input.text() == ""
+    assert _visible_labels(panel) == everything
+
+
+def test_pressing_filter_on_an_empty_box_clears_rather_than_hiding(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    everything = _visible_labels(panel)
+    _filter_for(panel, "calc")
+    _filter_for(panel, "   ")
+    assert panel.active_filter() is None
+    assert _visible_labels(panel) == everything
+
+
+def test_hiding_a_row_changes_nothing_about_a_visible_rows_behaviour(qtbot):
+    """A visibility operation and nothing else: same span, same signal, same
+    context menu."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc_total")
+    routines_root = panel.tree.topLevelItem(1)
+    routine_item = next(
+        routines_root.child(i)
+        for i in range(routines_root.childCount())
+        if not routines_root.child(i).isHidden()
+    )
+    with qtbot.waitSignal(panel.navigate_requested):
+        panel._on_item_clicked(routine_item, 0)
+    labels = [a.text() for a in panel.context_menu_for_item(routine_item).actions()]
+    assert "Edit DDL" in labels
+
+
+def test_the_sandbox_tree_gets_the_filter_too(qtbot):
+    """`browse_only` withholds edits, creations and mutations -- a search aid
+    is none of those."""
+    panel = BrowserPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    schema = _schema()
+    _, spans = build_ddl_text(schema)
+    panel.set_schema(schema, spans)
+    _filter_for(panel, "calc")
+    assert "pr.calc_total [F]" in _visible_labels(panel)
+    assert "pr.audit_log() [T]" not in _visible_labels(panel)
+
+
+# -- the banner --------------------------------------------------------------
+
+
+def test_an_active_filter_announces_itself(qtbot):
+    """Open question 2, settled: yes. A tree silently missing objects is the
+    shape of a silent wrong result."""
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    assert not panel.filter_banner_label.isVisibleTo(panel)
+    _filter_for(panel, "calc")
+    assert panel.filter_banner_label.isVisibleTo(panel)
+    text = panel.filter_banner_label.text()
+    assert filter_mode_label(FILTER_MODE_CONTAINS).lower() in text
+    assert "calc" in text
+    panel.clear_filter()
+    assert not panel.filter_banner_label.isVisibleTo(panel)
+
+
+def test_an_all_hidden_tree_says_why(qtbot):
+    panel, _, _ = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "no_such_object")
+    assert panel.filter_banner_label.text() == NO_FILTER_MATCHES_TEXT
+    assert panel.filter_banner_label.isVisibleTo(panel)
+
+
+# -- the rebuild-under-a-live-filter case, which is the real correctness risk -
+
+
+def test_a_rebuild_under_a_live_filter_re_applies_it(qtbot):
+    """Open question 4, settled: RE-APPLY, the `_dirty_keys` shape. A
+    `set_schema` that came back unfiltered would leave the user reading a tree
+    they believe is narrowed."""
+    panel, schema, spans = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+
+    panel.set_schema(schema, spans)  # a Reload DDL / re-fetch
+
+    assert panel.active_filter() == (FILTER_MODE_CONTAINS, "calc")
+    visible = _visible_labels(panel)
+    assert "pr.calc_total [F]" in visible
+    assert "pr.audit_log() [T]" not in visible
+    assert panel.filter_banner_label.isVisibleTo(panel)
+
+
+def test_a_rebuild_re_filters_the_NEW_rows_not_the_old_ones(qtbot):
+    """The filter must act on whatever the rebuild produced -- an object that
+    appears in the refresh and does not match must come back hidden."""
+    panel, schema, spans = _filtered_panel()
+    qtbot.addWidget(panel)
+    _filter_for(panel, "calc")
+
+    widened = DatabaseSchema(
+        routines={
+            **schema.routines,
+            "pr.new_helper()": RoutineInfo(
+                schema="pr", name="new_helper", arg_types=[], return_type="void",
+                language="plpgsql", source="body3", kind="function",
+            ),
+        },
+        triggers=schema.triggers,
+    )
+    _, new_spans = build_ddl_text(widened)
+    panel.set_schema(widened, new_spans)
+
+    visible = _visible_labels(panel)
+    assert "pr.new_helper() [F]" not in visible
+    assert "pr.calc_total [F]" in visible
+
+
+def test_a_rebuild_with_no_filter_hides_nothing(qtbot):
+    panel, schema, spans = _filtered_panel()
+    qtbot.addWidget(panel)
+    everything = _visible_labels(panel)
+    panel.set_schema(schema, spans)
+    assert _visible_labels(panel) == everything
+
+
+# -- the danger selection colour, asserted in PIXELS -------------------------
+
+#: The live qdarkstyle chrome the tree's rows are drawn on, per theme -- the
+#: contrast target §7 requires ("against the live QDarkStyle chrome, not the
+#: bare palette"), not `theme.py`'s `Highlight`, which a tree row never paints.
+TREE_CHROME = {True: "#fafafa", False: "#19232d"}
+
+
+def _rendered(name: str) -> str:
+    """A colour spelled the way `QImage.pixelColor().name()` spells it.
+    `mode_colors` stores upper-case literals, so a raw comparison against a
+    pixel name silently never matches."""
+    return QColor(name).name()
+
+
+def _pixel_counts(widget) -> Counter:
+    image = widget.grab().toImage()
+    counts: Counter = Counter()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            counts[image.pixelColor(x, y).name()] += 1
+    return counts
+
+
+def _relative_luminance(name: str) -> float:
+    color = QColor(name)
+    channels = [
+        raw / 12.92 if raw <= 0.03928 else ((raw + 0.055) / 1.055) ** 2.4
+        for raw in (color.redF(), color.greenF(), color.blueF())
+    ]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(one: str, other: str) -> float:
+    first, second = _relative_luminance(one), _relative_luminance(other)
+    return (max(first, second) + 0.05) / (min(first, second) + 0.05)
+
+
+@pytest.fixture
+def themed_browser(qtbot, qapp):
+    """A *shown* panel with a selected row, under a real theme. Showing is not
+    optional: an unshown widget's grab is not evidence of what the user sees,
+    and the app-wide QSS is only resolved once the widget is polished."""
+
+    def build(light: bool, browse_only: bool = False) -> BrowserPanel:
+        apply_theme(qapp, light)
+        panel = BrowserPanel(browse_only=browse_only)
+        qtbot.addWidget(panel)
+        schema = _schema()
+        _, spans = build_ddl_text(schema)
+        panel.resize(420, 320)
+        panel.show()
+        panel.set_schema(schema, spans)
+        panel.tree.expandAll()
+        routines_root = panel.tree.topLevelItem(1)
+        panel.tree.setCurrentItem(routines_root.child(0))
+        qapp.processEvents()
+        return panel
+
+    return build
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_quality_tree_actually_paints_its_selection_in_the_danger_red(
+    themed_browser, light
+):
+    """Rendered pixels, not a palette read-back: `BUG-260811021804` is the
+    standing proof that a palette can report a red nothing paints."""
+    panel = themed_browser(light)
+    background, _ = danger_selection_colors(light)
+    assert _pixel_counts(panel.tree)[_rendered(background)] > 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_sandbox_tree_keeps_the_ordinary_selection(themed_browser, light):
+    """The DIFFERENCE is the feature -- colouring both would say nothing."""
+    panel = themed_browser(light, browse_only=True)
+    background, _ = danger_selection_colors(light)
+    assert _pixel_counts(panel.tree)[_rendered(background)] == 0
+    assert panel.has_danger_highlight() is False
+
+
+#: The app-wide qdarkstyle selection blue, per theme -- the colour the indent
+#: strip was still painting when only the two `::item` selectors were overridden.
+ORDINARY_SELECTION = {True: "#9FCBFF", False: "#346792"}
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_no_ordinary_blue_survives_inside_the_danger_band(themed_browser, light):
+    """Found by looking at pixels: overriding only the two `::item` selectors
+    left the selected row's indent strip painting the app-wide selection blue,
+    so the band was red with a blue notch in it."""
+    panel = themed_browser(light)
+    ordinary = _rendered(ORDINARY_SELECTION[light])
+    assert _pixel_counts(panel.tree)[ordinary] == 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_ordinary_selection_colour_this_file_watches_for_is_REALLY_painted(
+    themed_browser, light
+):
+    """The anchor for the test above, and the reason it is not a false green of
+    its own shape: an "assert this colour is absent" test passes forever if the
+    colour was never the app's selection blue in the first place (a theme tweak,
+    a typo, a case difference). The sandbox tree is selected identically and
+    NOT reddened, so it must paint exactly that value.
+    """
+    panel = themed_browser(light, browse_only=True)
+    assert _pixel_counts(panel.tree)[_rendered(ORDINARY_SELECTION[light])] > 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_danger_band_reaches_the_rows_INDENT_STRIP_not_just_its_text(
+    themed_browser, light
+):
+    """The regression stated positionally rather than by a global count: the
+    strip left of the label is drawn from the universal `QWidget` rule's
+    `selection-background-color`, so the band must be red at x=1 of the selected
+    row, not merely red somewhere."""
+    panel = themed_browser(light)
+    red = _rendered(danger_selection_colors(light)[0])
+    rect = panel.tree.visualItemRect(panel.tree.currentItem())
+    assert rect.width() > 0 and rect.height() > 0
+    image = panel.tree.viewport().grab().toImage()
+    middle = rect.top() + rect.height() // 2
+    assert image.pixelColor(1, middle).name() == red
+    assert image.pixelColor(rect.left() + 1, middle).name() == red
+
+
+def test_the_danger_red_survives_a_light_dark_round_trip(themed_browser, qapp):
+    """The value is a per-theme pair, so it must be re-applied on every flip.
+
+    Settled with `processEvents` on purpose: `PaletteChange` fires four times
+    per flip and the first two still report the OLD lightness, so the handler
+    is idempotent and last-write-wins rather than right on the first event.
+    """
+    panel = themed_browser(False)
+    dark_red = _rendered(danger_selection_colors(False)[0])
+    light_red = _rendered(danger_selection_colors(True)[0])
+    assert dark_red != light_red
+    assert _pixel_counts(panel.tree)[dark_red] > 0
+
+    apply_theme(qapp, True)
+    qapp.processEvents()
+    counts = _pixel_counts(panel.tree)
+    assert counts[light_red] > 0
+    assert counts[dark_red] == 0
+
+    apply_theme(qapp, False)
+    qapp.processEvents()
+    counts = _pixel_counts(panel.tree)
+    assert counts[dark_red] > 0
+    assert counts[light_red] == 0
+
+
+def test_turning_the_danger_highlight_off_restores_the_ordinary_selection(
+    themed_browser, qapp
+):
+    panel = themed_browser(True)
+    red = _rendered(danger_selection_colors(True)[0])
+    assert _pixel_counts(panel.tree)[red] > 0
+    panel.set_danger_highlight(False)
+    qapp.processEvents()
+    assert _pixel_counts(panel.tree)[red] == 0
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_danger_red_is_the_maintenance_pair_and_never_a_second_red(light):
+    """Trap 1: no colour literal enters this module. The pair is used swapped
+    -- the chip's strong colour becomes the band, the pale one the text on it --
+    because the chip background is useless as a selection band (see below)."""
+    chip_background, chip_foreground = mode_colors(light)[MODE_MAINTENANCE]
+    assert danger_selection_colors(light) == (chip_foreground, chip_background)
+    sheet = danger_selection_stylesheet(light)
+    assert chip_foreground in sheet and chip_background in sheet
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_selected_rows_text_is_legible_on_the_danger_band(light):
+    """The pair was already tuned to be legible against itself, which is what
+    reusing it buys: 7.98:1 light, 8.50:1 dark, against qdarkstyle's own
+    9.44:1 / 4.57:1 for the blue it replaces."""
+    background, text = danger_selection_colors(light)
+    assert _contrast_ratio(background, text) >= 4.5
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_the_danger_band_is_visible_AS_a_band_against_the_tree_chrome(light):
+    """Why the pair is swapped rather than used as-is: the chip's light
+    background `#FDECEA` measures 1.10:1 against the tree's chrome, so a
+    selection painted in it would be invisible as a selection. The swapped
+    band measures 8.74:1 / 9.28:1."""
+    background, _ = danger_selection_colors(light)
+    chrome = TREE_CHROME[light]
+    assert _contrast_ratio(background, chrome) >= 3.0
+    chip_background, _ = mode_colors(light)[MODE_MAINTENANCE]
+    if light:
+        assert _contrast_ratio(chip_background, chrome) < 3.0
+
+
+# ---------------------------------------------------------------------------
+# FULL mode (`FQ-260812022749`): the tree and the edit seams are unchanged
+# ---------------------------------------------------------------------------
+
+from pgtp_editor.db.ddl_buffer import build_ddl_buffer  # noqa: E402
+from pgtp_editor.db.pg_dump_mode import DdlMode  # noqa: E402
+
+#: A `pg_dump --schema-only` covering exactly `_rich_table_schema()`'s
+#: relations, with the primary key as a standalone `ALTER TABLE` and the index
+#: as its own statement -- i.e. the non-contiguous shape the spans are recovered
+#: from.
+_FULL_DUMP = """SET statement_timeout = 0;
+
+CREATE TABLE pr.orders (
+    id integer NOT NULL,
+    tag text
+);
+
+ALTER TABLE ONLY pr.orders
+    ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+
+CREATE INDEX ix_tag ON pr.orders USING btree (tag);
+
+CREATE VIEW pr.v_orders AS
+ SELECT orders.id
+   FROM pr.orders;
+"""
+
+
+def _full_panel(qtbot):
+    schema = _rich_table_schema()
+    buffer = build_ddl_buffer(schema, mode=DdlMode.FULL, dump_text=_FULL_DUMP)
+    assert buffer.mode is DdlMode.FULL, buffer.degrade_reason
+    panel = BrowserPanel()
+    qtbot.addWidget(panel)
+    panel.set_schema(schema, buffer.spans)
+    return panel, buffer.text.splitlines()
+
+
+def test_the_tree_needs_no_knowledge_of_the_mode(qtbot):
+    """The tree is built from `DatabaseSchema` and finds each row's span by
+    identity, so a full-mode span list drops straight in -- no second walk, no
+    mode flag reaching the panel."""
+    panel, lines = _full_panel(qtbot)
+    orders = _orders_item(panel)
+    assert orders is not None
+    assert _clicked_line(panel, orders)
+
+
+def test_a_table_click_in_full_mode_lands_on_its_create_table(qtbot):
+    """Owner-settled: *"click should bring to create table."* Pinned here so a
+    later refactor cannot drift it."""
+    panel, lines = _full_panel(qtbot)
+    [line] = _clicked_line(panel, _orders_item(panel))
+    region = "\n".join(lines[line - 1: line + 6])
+    assert "CREATE TABLE pr.orders (" in region
+    assert "ADD CONSTRAINT orders_pkey" not in region
+
+
+def test_a_constraint_click_in_full_mode_lands_on_its_own_statement(qtbot):
+    """Containment is LOST in full mode and that is design: the constraint has
+    a statement of its own, further down the file, and the click resolves to
+    it."""
+    panel, lines = _full_panel(qtbot)
+    group = _group_named(_orders_item(panel), "Constraints")
+    [line] = _clicked_line(panel, group.child(0))
+    assert lines[line - 1] == "ALTER TABLE ONLY pr.orders"
+    assert "ADD CONSTRAINT orders_pkey" in lines[line]
+
+
+def test_full_mode_does_NOT_change_what_the_editable_text_for_a_view_is(qtbot):
+    """LOAD-BEARING (`FQ-260812025836`). A `pg_dump`-sourced editable text would
+    arrive bundled with the view's `CREATE TRIGGER`s, so a user's own
+    `DROP VIEW` would silently take the triggers too. The edit target resolves
+    against `DatabaseSchema` (`pg_get_viewdef`), never against the buffer text
+    -- verified here rather than assumed."""
+    panel, _lines = _full_panel(qtbot)
+    span = _span_of(_relation_item(panel, "pr.v_orders"))
+
+    ref, source = resolve_edit_target(panel._schema, span)
+
+    assert (ref.kind, ref.name) == ("view", "v_orders")
+    assert source == "CREATE OR REPLACE VIEW pr.v_orders AS\nSELECT 1;"
+    assert "CREATE TRIGGER" not in source
+    # ...and that is NOT what the full-mode buffer shows for the same object,
+    # which is exactly why the seam had to be checked.
+    assert "SELECT orders.id" in "\n".join(_lines)

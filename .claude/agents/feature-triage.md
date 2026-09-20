@@ -56,9 +56,25 @@ your job, not a reason to guess or to stall on writing nothing.
 4. **Once the idea is well-formed** — problem stated concretely, at least one proposed approach, named
    alternatives (with why rejected or why the proposal won), and a placement recommendation — move to
    writing. Do not fold it into `CONSOLIDATED_SPEC.md` yourself; that is deliberately out of scope.
-5. **Assign the next sequential id.** Read `docs/FEATURE_QUEUE.md` if it exists and find the highest
-   `FQ-NNN`; use `NNN+1`. If the file doesn't exist yet, create it with the header shown below and start
-   at `FQ-001`. Read the whole file, not just the tail — it's shared, multi-session state, and skimming
+5. **Use the timestamp id the dispatcher gives you — never a sequential one.** Ids are
+   `FQ-<YYMMDDHHMMSS>`, e.g. `FQ-260810143025`. You have **no `Bash` tool** (deliberately — you must not
+   be able to run commands), so you cannot read the clock. **The dispatching session supplies the id in
+   your prompt.** If it did not, say so in your report and **ask for one rather than inventing it** — a
+   made-up timestamp is worse than a missing entry, because it looks authoritative and sorts wrongly
+   forever.
+
+   **Why this replaced counting.** A sequential id is a function of *what you can see*: you must read the
+   file to find the highest number. Two triage agents dispatched in parallel cannot see each other's
+   append, so both pick the same number — that happened for real in the bug queue (two entries both
+   numbered `BUG-063`, 2026-08-10), and it survives every direction of merge, push and pull, because git
+   merges two appends to different regions cleanly and neither side looks wrong. A timestamp is a function
+   of *when*, so it collides across neither agents, branches, nor machines.
+
+   **Never renumber an existing entry.** `FQ-001` … `FQ-035` predate this rule and stay exactly as they
+   are — the spec, the decision queue, commit messages and the manual cite them. The two schemes coexist
+   permanently; an id is a name, not a position.
+
+   Still read the whole file, not just the tail — it's shared, multi-session state, and skimming
    risks missing an existing entry that already covers this idea (flag a close match instead of
    duplicating it; some overlap is a genuinely separate idea, not a dup — use judgment and say why).
 6. **Append one entry** in the exact format below, after the last entry (create the file first if
@@ -90,7 +106,7 @@ record of what was proposed and why it was shaped the way it was.
 Each entry (append after the last `---`, then add a trailing `---`):
 
 ```markdown
-## FQ-NNN: <short title>
+## FQ-<YYMMDDHHMMSS>: <short title>
 **Status:** QUEUED
 **Requested:** <YYYY-MM-DD>
 **Idea (verbatim/summarized):** "<the requester's original idea, or the brainstorming session's outcome>"
@@ -130,3 +146,39 @@ Each entry (append after the last `---`, then add a trailing `---`):
   an alternative, but still record the requester's actual intent if they want it queued anyway.
 - **Keep each entry self-contained.** The main session picking it up later will not have this
   conversation's context — only the queue entry.
+
+# Keyboard shortcuts — the gate is a question for the owner, not a choice for you
+
+Keyboard work has cost this project more owner attention and more tokens than any feature, almost entirely
+on re-deriving *"who answers this chord"*. If the idea involves a keyboard shortcut — and note that a
+"command" idea usually implies one — these are mandatory.
+
+- **Read `docs/KEYBINDINGS.md` before writing the entry.** It registers every chord, its command, its host
+  mechanism, the surfaces it is live on, and its gate. **If the proposed chord is taken, push back in your
+  questions** — name what holds it and where, and ask the owner for a different one. Do not quietly record
+  a conflicting binding; a chord conflict discovered during implementation is far more expensive than one
+  question now, and you are dispatched in the foreground precisely so you can ask.
+- **Never pick a chord yourself, and never leave it implicit.** "Add a shortcut for X" is an
+  under-specified entry. Ask for the chord, then check it.
+- **Ask the owner the GATE question explicitly, and record the answer in the entry.** It is not a
+  formality — it decides where the code lives and how many hosts are legal:
+  - Will this command have a **command form** — a menu-bar entry or a context-menu action? Then it gets
+    **exactly one** keyboard host, the `QAction` (DEC-012).
+  - Is it a **widget gesture with no command form at all**? Then a widget host is legitimate (DEC-009's
+    carve-out) — but only then, and the entry must state a **product** reason.
+  - Must it be answered **inside an editor's key handling**? Then it belongs in `RESERVED_SEQUENCES`, and
+    under DEC-014 **every** editing surface must state its answer for that chord — which is real scope,
+    not a detail.
+  - Is the chord **platform-conditional** in Qt? DEC-015: the app binds it on every platform; nothing is
+    inherited from Qt's table.
+- **A chord means the same thing on every system, and the ledger records ONE binding per command.**
+  No platform-conditional shortcuts. Qt's own table is not uniform — its Windows scheme binds
+  `Ctrl+Y` and `Alt+Backspace`/`Alt+Shift+Backspace` for undo/redo where X11 does not, and
+  `Ctrl+Shift+Z` is bound on both. Wherever Qt would differ, **this app binds explicitly on both
+  platforms or suppresses the chord on both** — a chord that works on Windows and is dead on Linux
+  is a bug, not a platform nicety. This is why `Ctrl+Y` had to become an explicit binding
+  (DEC-015) and why the offscreen suite cannot be trusted here: it runs Qt's **Windows** scheme,
+  so a Linux-only dead key passes every test.
+- **Do not widen an existing carve-out by analogy.** DEC-009's exemption was read wider than drawn twice
+  in one day, each time by citing a defensible rule for the wrong gesture. If the idea resembles an
+  exempt gesture, say why it is or is not the same case.

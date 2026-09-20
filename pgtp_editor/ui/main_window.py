@@ -76,7 +76,8 @@ from pgtp_editor.db.bookmark_store import (
     load_editor_bookmarks,
     store_editor_bookmarks,
 )
-from pgtp_editor.db.ddl_buffer import build_ddl_text
+from pgtp_editor.db.ddl_buffer import build_ddl_buffer, build_ddl_text
+from pgtp_editor.db.pg_dump_ddl import SchemaDumpError, fetch_schema_dump
 from pgtp_editor.db.migration_gen import connection_summary
 from pgtp_editor.db.ddl_project import (
     DeployedObject,
@@ -86,10 +87,22 @@ from pgtp_editor.db.ddl_project import (
     save_settings,
     trigger_ddl_path,
 )
+from pgtp_editor.db.quality_query import (
+    DISCARD_TARGET_GONE,
+    DISCARD_WINDOW_CLOSED,
+    QualitySession,
+    run_quality_query,
+    transaction_message,
+)
 from pgtp_editor.db.introspect import RoutineInfo, fetch_routines_and_triggers
 from pgtp_editor.db.introspect import test_connection as db_test_connection
 from pgtp_editor.db.schema_index import SchemaIndex
-from pgtp_editor.db.sandbox import SandboxMode
+from pgtp_editor.db.sandbox import SandboxMode, probe as sandbox_probe
+from pgtp_editor.db.pg_dump_mode import (
+    DdlMode,
+    probe_ddl_mode,
+    server_major_divergence,
+)
 from pgtp_editor.ui.async_task import run_async
 from pgtp_editor.ui.connection_setup_dialog import ConnectionSetupDialog
 from pgtp_editor.ui.new_project_dialog import NewProjectDialog
@@ -146,8 +159,13 @@ from pgtp_editor.ui.coherence_controller import CoherenceController
 from pgtp_editor.ui.coherence_panel import CoherencePanel
 from pgtp_editor.ui.ddl_project_controller import DdlProjectController
 from pgtp_editor.ui.diff_merge_controller import DiffMergeController
-from pgtp_editor.ui.find_controller import FindValidateController
+from pgtp_editor.ui.find_controller import (
+    DDL_EXPLORER_AUDIT_TARGET,
+    FindValidateController,
+)
 from pgtp_editor.ui.ddl_buffer_panel import (
+    RELOAD_LABEL as RELOAD_DDL_LABEL,
+    DISCARD_LOCAL_LABEL,
     OP_ADD_COLUMN,
     OP_ADD_CONSTRAINT,
     OP_ADD_FOREIGN_KEY,
@@ -213,8 +231,13 @@ from pgtp_editor.model.event_handlers import language_for_side
 from pgtp_editor.ui import caption_scan
 from pgtp_editor.ui.project_tree import ProjectTreePanel
 from pgtp_editor.ui.properties_panel import PropertiesPanel
+from pgtp_editor.ui import theme_model
 from pgtp_editor.ui.theme import apply_theme
-from pgtp_editor.ui.audit_router import AuditRouter
+from pgtp_editor.ui.audit_router import DDL_PREFIX, AuditRouter
+from pgtp_editor.ui.software_settings_dialog import (
+    MENU_LABEL as SOFTWARE_SETTINGS_MENU_LABEL,
+    SoftwareSettingsDialog,
+)
 from pgtp_editor.ui.connectivity import (
     QUALITY_LABEL,
     SANDBOX_LABEL,
@@ -235,12 +258,22 @@ from pgtp_editor.ui.mode_indicator import (
 )
 from pgtp_editor.ui.project_status_model import quality_state
 from pgtp_editor.ui.status_bar import StaticStatusBar
+from pgtp_editor.ui.vim_mode import (
+    STICKY_CHARACTER,
+    STICKY_LINE,
+    add_editing_mode_observer,
+)
 
 _log = logging.getLogger(__name__)
 
 #: Format Selection refusals (§18.4/§18.5). Not clickable, no line role
 #: (carve-out 6) -- the offending span is already underlined in the tab.
 _SQL_REFUSAL_PREFIX = "[SQL] "
+#: FQ-033's XML formatter refusals. A separate prefix from `[SQL]` because the
+#: two engines are separate and a reader filtering the journal wants to know
+#: which one refused -- but the same destination, for the reason recorded on
+#: `audit_router.XML_PREFIX`.
+_XML_REFUSAL_PREFIX = "[XML] "
 
 #: How long a bookmark change waits before it is written to
 #: `<project>/.ddlproject/bookmarks.json` (FQ-013). Deliberately coarse: a
@@ -597,6 +630,43 @@ class AlterDdlRef:
         return f"{stem}.sql"
 
 
+def _supports_structural_expansion(editor) -> bool:
+    """Whether `editor` offers §8's structural expand ladder (FQ-034).
+
+    **A question put to the editor, not a `hasattr`.** The gate this replaces
+    asked `hasattr(editor, "select_parent_block")`, which is a *class* fact;
+    grow's real gate is a **per-instance** one — a `CodeEditor` has the ladder
+    only where its language is plpgsql — and `hasattr` cannot express that. So
+    both editor families answer one predicate,
+    `supports_structural_expansion()`, and this wrapper is only the "an editor
+    that never heard of the question says no" adapter (a future non-gutter editor
+    tab, or a `None`-ish stand-in in a test).
+    """
+    predicate = getattr(editor, "supports_structural_expansion", None)
+    return bool(predicate()) if callable(predicate) else False
+
+
+def _supports_sticky_selection(editor) -> bool:
+    """Whether `editor` can answer `Select ▸ Sticky Selection` (FQ-260812000331).
+
+    Two conditions, and the second is the interesting one:
+
+    1. the editor carries `VimModeMixin` at all (the Manual and Caption panes,
+       and any future non-vim editor tab, do not), and
+    2. it is **not read-only** — §8's ruling is that on a read-only editor the
+       whole editing-mode layer is *inactive entirely*, and `VimModeMixin`'s
+       sticky key handling honours that by asking `isReadOnly()` at the
+       keystroke. Toggling the state there would set a flag nothing reads.
+
+    Asked at trigger/refresh time rather than cached, because Caption Mode and
+    Compare/Merge flip `setReadOnly` at runtime under a live tab.
+    """
+    if not callable(getattr(editor, "toggle_sticky_selection", None)):
+        return False
+    is_read_only = getattr(editor, "isReadOnly", None)
+    return not (callable(is_read_only) and is_read_only())
+
+
 class MainWindow(QMainWindow):
     #: The ONE sanctioned bridge while a lane is mid-extraction: legacy host
     #: attribute name -> dotted path to resolve on the host instead
@@ -646,6 +716,13 @@ class MainWindow(QMainWindow):
         #: bar is built, because `_refresh_editor_menu_affordances` consults it
         #: during that build.
         self._workflow_mode = None
+        #: BUG-260813025052: the actions `_refresh_workflow_mode_affordances`
+        #: last HID for the mode. Purely a record -- nothing here ever calls
+        #: `setEnabled` -- and it exists because Qt's `setVisible(False)` also
+        #: clears the enabled flag, so `isEnabled()` alone cannot tell
+        #: "genuinely unavailable" from "hidden by the mode I am trying to
+        #: leave". The launcher reads it to keep its mode columns selectable.
+        self._mode_filtered_actions: set = set()
         #: The File menu, filled in by `_build_file_menu`.
         self._file_menu = None
         # Injectable so tests point at a temp QSettings ini instead of the real
@@ -686,8 +763,14 @@ class MainWindow(QMainWindow):
         #: command_id -> the user's chosen sequence (`""` == deliberately
         #: cleared). Absent means "use the captured default".
         self._shortcut_overrides: dict[str, str] = {}
-        # Held so the non-modal Customize Shortcuts dialog is not GC'd while shown.
+        # The last-built Customize Shortcuts surface. Since FQ-260812002827 the
+        # Software settings dialog owns it as a pane, so this is a handle for the
+        # host and the tests rather than a GC pin.
         self._customize_shortcuts_dialog = None
+        #: The ONE live `Settings ▸ Software settings…` window, or None. Non-modal,
+        #: so `open_software_settings_dialog` uses this to raise rather than to
+        #: build a second one.
+        self._software_settings_dialog = None
         # Schema-aware Ctrl+Space completion (§18.6): the Qt-free lookup index
         # built once per DDL Explorer connect/refresh from the (now widened,
         # §18.6) fetch's `DatabaseSchema`, and handed to every open/newly
@@ -697,6 +780,33 @@ class MainWindow(QMainWindow):
         self._ddl_schema_index: SchemaIndex | None = None
         #: The raw `DatabaseSchema` behind `_ddl_schema_index` (FQ-002).
         self._ddl_schema = None
+        #: FQ-260812022749 part 1 -- the dual-mode DDL verdict
+        #: (`db/pg_dump_mode.py`). Probed ONCE per quality connection (the
+        #: `pg_dump --version` spawn is expensive and its answer cannot change
+        #: mid-connection) and cached here with the connection it was probed
+        #: for; every DDL open then REPORTS it from this cache. The repetition
+        #: is the owner's ruling -- *"this way the choice is clear"* -- so the
+        #: notice is not collapsed to once per session and not withheld when the
+        #: verdict is good.
+        self._ddl_mode_verdict = None
+        #: What `_ddl_mode_verdict` was probed for: the quality connection's
+        #: identity plus the project's binaries folder. Anything else is a
+        #: DIFFERENT connection and re-probes, which is also how closing a
+        #: project (or pointing it at another binaries folder) invalidates the
+        #: cache without a single explicit clear.
+        self._ddl_mode_verdict_key = None
+        #: The quality server's `SandboxCapabilities` from that same probe --
+        #: kept because it carries `server_version`, which is one half of
+        #: `server_major_divergence`'s quality-vs-sandbox comparison.
+        self._quality_capabilities = None
+        #: The two `db/pg_dump_mode.py` seams, as plain attributes so a test can
+        #: replace them (the same convention as
+        #: `DdlProjectController.probe_sandbox_capabilities`). Both are I/O:
+        #: `probe_quality_capabilities` opens a connection and
+        #: `ddl_mode_prober` spawns `pg_dump --version`, so neither may ever
+        #: run on the GUI thread or inside a test that has not replaced it.
+        self.probe_quality_capabilities = sandbox_probe
+        self.ddl_mode_prober = probe_ddl_mode
         #: The §18.8 Project Status window, kept so re-invoking the menu entry
         #: raises the existing one instead of stacking duplicates.
         self._project_status_window = None
@@ -784,6 +894,16 @@ class MainWindow(QMainWindow):
         # (spec §18.5, D1 entry point 1) -- ONE gesture whose behaviour the
         # handler picks from project state (FQ-024), not a pair of entries.
         self.ddl_browser_panel.edit_requested.connect(self._on_ddl_edit_requested)
+        # Right-click ▸ Discard local change: the checkout-drop that undoes
+        # `Edit DDL`'s project-open branch (BUG-260810193333). The predicate is
+        # what keeps the entry from appearing on an object that was never
+        # checked out -- the panel cannot know, so the host answers.
+        self.ddl_browser_panel.set_checked_out_predicate(
+            self._ddl_object_is_checked_out
+        )
+        self.ddl_browser_panel.discard_local_requested.connect(
+            self._on_ddl_discard_local_requested
+        )
         # Click on a Tables-branch table node populates the shared Properties
         # panel (spec §18.1, 2026-08-05) -- the same panel instance the
         # XML/XSD tree's own node-click already drives (_on_tree_selection_changed).
@@ -841,6 +961,15 @@ class MainWindow(QMainWindow):
             DDL_EXPLORER_TARGET: self.ddl_browser_tab_index,
             DDL_EXPLORER_SANDBOX: self.sandbox_ddl_browser_tab_index,
         }
+        # BUG-062: the ONLY consumer of `reload_requested`. Bound per role --
+        # each panel reloads its own connection, never the other's, which is
+        # also why the chord is hosted on the panel rather than the window
+        # (§18.7 gives each role its own Explorer, so a window-level chord would
+        # have two candidate actions and no way to choose).
+        for _role, _browser in self._ddl_browser_panels.items():
+            _browser.reload_requested.connect(
+                lambda role=_role: self.reload_ddl_explorer(role)
+            )
         # FQ-028 Part 1: the navigable findings tab, in the LEFT dock beside
         # the project tree -- NOT the centre pane, which would hide the very
         # editor each hit jumps into. Hidden until a navigable op runs, exactly
@@ -973,6 +1102,13 @@ class MainWindow(QMainWindow):
         # DDL Explorer's read-only buffer's own right-click ▸ Edit DDL (spec
         # §18.5, D1 entry point 2) -- same target handler as BrowserPanel's
         # tree entry point.
+        # BUG-062's other half. HERE and not with the browser-panel connects
+        # above, because `center_stage` does not exist yet at that point -- the
+        # first attempt wired it there and broke construction for every test.
+        for _role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+            self.center_stage.ddl_explorer_panel(_role).reload_requested.connect(
+                lambda role=_role: self.reload_ddl_explorer(role)
+            )
         self.center_stage.ddl_editor_panel.edit_requested.connect(
             self._on_ddl_edit_requested
         )
@@ -1046,14 +1182,9 @@ class MainWindow(QMainWindow):
 
         if self._debug_log_path is not None:
             self._debug_label = QLabel("DEBUG")
-            self._debug_label.setStyleSheet(
-                "QLabel { color: white; background: #b33; padding: 1px 6px;"
-                " border-radius: 3px; font-weight: bold; }"
-            )
+            self._apply_debug_chip_colours()
             self.statusBar().addPermanentWidget(self._debug_label)
-            self.statusBar().showMessage(
-                f"Debug logging: {self._debug_log_path}", 10000
-            )
+            self.statusBar().showMessage(f"Debug logging: {self._debug_log_path}")
 
         self.properties_panel = PropertiesPanel(xml_editor=self.center_stage.xml_editor)
         self.properties_dock = QDockWidget("Properties", self)
@@ -1077,8 +1208,11 @@ class MainWindow(QMainWindow):
         self.sandbox_controller = SandboxController(
             self,
             confirm_destructive=self._confirm_destructive_sandbox_operation,
-            prober=lambda params: self._ddl_project_ui.probe_sandbox_capabilities(
-                params
+            # `**kwargs` so the controller's `bin_dir=` (FQ-260812025353)
+            # reaches the real `probe` through this one seam rather than
+            # needing a second probing path of its own.
+            prober=lambda params, **kwargs: (
+                self._ddl_project_ui.probe_sandbox_capabilities(params, **kwargs)
             ),
         )
         # BUG-043: route the sandbox lane's off-thread runner through the SAME
@@ -1105,6 +1239,17 @@ class MainWindow(QMainWindow):
         #: `_build_database_menu` (called from `_build_menu_bar` below) assigns
         #: it, and the refresh may run before that on an early call path.
         self._sandbox_console_action = None
+        #: Database ▸ Quality SQL Console… (§18.5 D4b) -- same hidden-until-
+        #: reachable treatment and the same pre-initialisation reason.
+        self._quality_console_action = None
+        #: The ONE `db/quality_query.py::QualitySession` this window holds, or
+        #: None. It owns the held-open transaction the Commit gesture commits, so
+        #: it must be a single instance per window: a second session would be a
+        #: second transaction nobody can see (§18.5 D4b).
+        self._quality_session = None
+        #: The SQL of the last quality Run, kept only so a later Commit can
+        #: journal what became durable (see `_record_quality_transaction`).
+        self._quality_run_sql = ""
         #: The §18.5 D3a Check gesture and the two session gestures, all
         #: VISIBILITY-managed (carve-out 2: absent, never disabled). Same
         #: before-`_build_menu_bar` initialisation reason as above.
@@ -1124,6 +1269,20 @@ class MainWindow(QMainWindow):
         #: reason as the three above, and the same reason for the pair map below.
         self._sandbox_ddl_explorer_action = None
         self._ddl_explorer_actions = {}
+        #: Roles whose menu action is currently being re-synced *by* the lockstep
+        #: handler (`_on_ddl_explorer_visibility_changed`), so
+        #: `_on_ddl_explorer_toggled` can tell that `toggled` apart from a user
+        #: gesture (BUG-260812071208). The lockstep itself is BUG-007's fix and
+        #: stays; only its echo back into the opener is suppressed.
+        self._ddl_explorer_syncing: set[str] = set()
+        #: BUG-260812110307: how many times `role`'s Explorer has been asked to
+        #: load OR to close. `_open_ddl_explorer` captures the value it bumped
+        #: to; a result whose captured epoch no longer matches was superseded by
+        #: a close (or by a later open) and paints nothing visible. Deliberately
+        #: NOT entangled with `_ddl_explorer_syncing` above: that one marks a
+        #: re-entrancy echo within a single gesture, this one orders gestures
+        #: against results that are already in flight.
+        self._ddl_fetch_epoch: dict[str, int] = {}
         # `Database ▸ Sandbox Setup…` used to live here. It is DELETED (owner
         # ruling, 2026-08-09): Provision / Reset / "create a sandbox database
         # for me" now live in Project Settings' sandbox group, which is what
@@ -1176,17 +1335,45 @@ class MainWindow(QMainWindow):
         # project buffer, a document the user was not even looking at. The
         # shortcut is deliberately NOT disabled (§18.5's ledger row forbids that
         # shape); it is routed through a scope check instead.
+        #
+        # `Ctrl+Y` is bound HERE, explicitly, on every platform (DEC-015: *"Redo
+        # is always, on all systems Ctrl+Y"*). It is a Qt `StandardKey.Redo`
+        # binding under the **Windows** keyboard scheme only, so a redo that
+        # leaned on Qt answering it natively would be a dead key on Linux --
+        # measured, in the Sandbox SQL Console (BUG-056).
         self._undo_shortcut = QShortcut(QKeySequence("Ctrl+Z"), self)
-        self._undo_shortcut.activated.connect(self._undo_from_shortcut)
+        self._undo_shortcut.activated.connect(self._undo_raw_xml_history)
         self._redo_shortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
-        self._redo_shortcut.activated.connect(self._redo_from_shortcut)
+        self._redo_shortcut.activated.connect(self._redo_raw_xml_history)
         # When the Raw XML editor has focus its native undo would shadow the
         # window shortcuts; the editor consumes Ctrl+Z/Ctrl+Y in keyPressEvent
-        # and routes them here instead. Both paths call the same _undo/_redo,
-        # and the focused editor consumes the key so the window shortcut does
-        # not also fire (no double-undo). (Sub-project C, C1.)
-        self.center_stage.xml_editor.undo_requested.connect(self._undo)
-        self.center_stage.xml_editor.redo_requested.connect(self._redo)
+        # and routes them here instead. The focused editor consumes the key so
+        # the window shortcut does not also fire (no double-undo). (Sub-project
+        # C, C1.)
+        #
+        # BOTH KEYSTROKE PATHS LAND ON THE SCOPED SLOT (BUG-064). They used to
+        # differ: the `QShortcut` reached the tab-scoped
+        # `_undo_from_shortcut` while this re-emission reached the UNSCOPED
+        # `_undo`. That was equivalent only by an invariant nothing stated —
+        # `QStackedWidget` hides the departed page and Qt clears focus from a
+        # hidden widget, so focus in `xml_editor` implied the Raw XML tab was
+        # current. Host an `XmlEditor` in a dock or beside another tab and the
+        # keystroke silently loses its tab scope, re-opening BUG-048. Every
+        # *keystroke* is scoped; only the History menu's *click* is not, which is
+        # the whole distinction between the two commands.
+        self.center_stage.xml_editor.undo_requested.connect(self._undo_raw_xml_history)
+        self.center_stage.xml_editor.redo_requested.connect(self._redo_raw_xml_history)
+        # FQ-033 part C: the two SINGLETON XmlEditor hosts. The draft fragment
+        # tab's editor connects itself in `DraftFragmentTab.__init__` -- drafts
+        # multiply, so wiring it here would miss every one opened later.
+        self.center_stage.xml_editor.format_refused.connect(
+            self._report_xml_format_refusal
+        )
+        self.center_stage.xsd_editor.format_refused.connect(
+            self._report_xml_format_refusal
+        )
+        # ...and the draft fragment tabs, through CenterStage's aggregator.
+        self.center_stage.format_refused.connect(self._report_xml_format_refusal)
 
         # Edit XSD tab (spec §11): its own undo/redo routing. The XSD tab has
         # no snapshot history -- it relies solely on the editor's native undo,
@@ -1210,8 +1397,8 @@ class MainWindow(QMainWindow):
         #: they are bound methods that resolve host state at CALL time, which
         #: is what keeps post-construction seam injection
         #: (`window._run_async = ...`) working for collaborators too -- and is
-        #: why `is_light_theme` may be handed over before `_light_theme_action`
-        #: exists.
+        #: why `is_light_theme` may be handed over before the theme has been
+        #: applied.
         self._shell = UiShell(
             window=self,
             stage=self.center_stage,
@@ -1410,7 +1597,6 @@ class MainWindow(QMainWindow):
             # this lane must not pick its own, or the app connects with one set
             # of credentials while Project Settings shows another.
             target_params=self._target_params_for_fetch,
-            show_left_dock=self._show_left_dock,
             show_audit_dock=self._show_audit_dock,
             panel_visible=self._coherence_tab_visible,
         )
@@ -1458,6 +1644,13 @@ class MainWindow(QMainWindow):
         )
         # Reflect the persisted §22 toggle on the menu item built above.
         self._lint_on_save_action.setChecked(self._lint_ui.lint_on_save)
+        # FQ-260812025705: both Tools lint entries are gated on a configured
+        # linter. The lane owns the RULE (it reads the store); the menu items are
+        # the host's, so the host hands them over -- the same split as
+        # `tab_lint_settings`, and it keeps the settings pane out of both.
+        self._lint_ui.register_dependent_actions(
+            self._lint_action, self._lint_on_save_action
+        )
         # §21: files can be dropped onto the window (handled by dragEnterEvent /
         # dropEvent below, which delegate the classification to `_php_tabs`).
         self.setAcceptDrops(True)
@@ -1513,6 +1706,18 @@ class MainWindow(QMainWindow):
         self._bookmark_write_timer.setInterval(_BOOKMARK_WRITE_DEBOUNCE_MS)
         self._bookmark_write_timer.timeout.connect(self._flush_bookmark_writes)
         add_bookmark_observer(self._on_editor_bookmarks_changed)
+        # FQ-032: the mode indicator's editing-mode segment follows the FOCUSED
+        # editor, and the state is per-editor. Two more triggers for the one
+        # refresh, subscribed ONCE here rather than wired per creation site --
+        # tabs are built at runtime in three different files and the next tab type
+        # would have to remember:
+        #   * an editing-mode transition on any editor (the publish registry, the
+        #     `add_bookmark_observer` idiom above);
+        #   * a focus change (which also covers a tab switch).
+        add_editing_mode_observer(self._on_editing_mode_changed)
+        application = QApplication.instance()
+        if application is not None:
+            application.focusChanged.connect(self._on_focus_changed_refresh_mode)
         # A project transition is a quiet moment: flush anything still pending
         # (each pending entry carries its OWN folder, so a close cannot misroute
         # it), then restore for documents that were already open when the project
@@ -1831,14 +2036,69 @@ class MainWindow(QMainWindow):
             self.restoreState(window_state)
 
     def _restore_theme(self):
-        light = self._settings.value("lightTheme", False, type=bool)
-        self._light_theme_action.setChecked(light)
-        apply_theme(QApplication.instance(), light)
-        # Toolbar was built under the native/default palette; re-tint its
-        # icons to whichever theme was just applied (BUG-004: the "off"
-        # state is now a real, explicit dark palette, not a native/OS
-        # passthrough) so they stay legible.
+        """Apply the persisted theme, migrating the legacy boolean on the way.
+
+        **The migration, stated plainly** (FQ-260812021715): the theme used to be
+        a `lightTheme=true/false` boolean written by `View ▸ Light Theme`. It is
+        now a NAME. On the first start after the upgrade there is no name, so one
+        is derived from the boolean — `true` lands the user on the bundled
+        `light` theme, anything else on `dark` — written under the new key, and
+        the old key is REMOVED. Removing it is the point: two stored answers to
+        "which theme" is exactly the drift the consolidation exists to kill, and
+        leaving a stale `lightTheme=true` behind would make the next reader's
+        guess as good as this one's.
+        """
+        stored = self._settings.value(theme_model.SETTINGS_KEY, "", type=str)
+        if not stored:
+            stored = theme_model.migrated_theme_name(
+                None, self._settings.value(theme_model.LEGACY_LIGHT_KEY, False, type=bool)
+            )
+            self._settings.remove(theme_model.LEGACY_LIGHT_KEY)
+            self._settings.setValue(theme_model.SETTINGS_KEY, stored)
+        applied = self.apply_theme_named(stored, persist=False)
+        if applied != stored:
+            # The stored name no longer loads (deleted or broken theme file) and
+            # `resolve_theme` fell back. Write the fallback down: leaving the
+            # ghost name stored would make `theme_name()` disagree with what is
+            # actually painted, which is the Themes pane's "in use" marker
+            # pointing at a row that does not exist.
+            self._settings.setValue(theme_model.SETTINGS_KEY, applied)
+
+    def apply_theme_named(self, name: str, *, persist: bool = True) -> str:
+        """Apply the theme called `name` app-wide, and persist the choice.
+
+        **The one entry point for theme selection**, used by `_restore_theme` at
+        startup and by the Themes pane (FQ-260812021716) when a theme is marked
+        selected. There is no `View` toggle any more: theme selection is a
+        Maintenance-mode setting, and settings changed in Maintenance mode are
+        app-wide and durable by owner ruling — so the choice is saved the moment
+        it is made and survives both restart and a new session.
+
+        Returns the name actually applied, which differs from `name` only when
+        the named theme no longer loads (`theme_model.resolve_theme` falls back
+        to `dark` rather than crashing the app someone edited a theme file for).
+        """
+        applied, theme = theme_model.resolve_theme(name)
+        self._theme = theme
+        apply_theme(QApplication.instance(), theme)
+        if persist:
+            self._settings.setValue(theme_model.SETTINGS_KEY, applied)
+        # The toolbar's icons were tinted for the PREVIOUS palette (at startup,
+        # for the native/default one) -- re-tint them so they stay legible.
         self._toolbar_ui.refresh_icons()
+        # ...and re-consult the theme's mode chips, so the indicator is never
+        # painted in the other theme's colours.
+        self._refresh_mode_indicator()
+        # ...and the DEBUG chip, which is a theme colour now too.
+        self._apply_debug_chip_colours()
+        return applied
+
+    def theme_name(self) -> str:
+        """The selected theme's name, as persisted. The Themes pane reads this to
+        mark which row is active."""
+        return self._settings.value(
+            theme_model.SETTINGS_KEY, theme_model.DARK_THEME, type=str
+        ) or theme_model.DARK_THEME
 
     # -- §21 drag-and-drop ---------------------------------------------------
     # `QMainWindow` gestures, so they stay on the host; every decision about
@@ -1876,6 +2136,15 @@ class MainWindow(QMainWindow):
         if not self._xsd_ui.confirm_close_for_exit():
             event.ignore()
             return
+        # §18.5 D4b's WINDOW-CLOSE edge (`DEC-260811023646`). An uncommitted
+        # transaction on the production database is the one thing that must not
+        # be thrown away silently, so the console asks -- and a declined answer
+        # aborts the close, exactly like the XSD lane above. Whatever the answer,
+        # `_close_quality_session` below runs on the way out, so the held
+        # connection can never outlive the window.
+        if not self._confirm_close_quality_console():
+            event.ignore()
+            return
         # Persist window geometry/dock state on close (Sub-project D). No modal
         # prompt here -- File > Close handles the unsaved-changes prompt.
         self._settings.setValue("geometry", self.saveGeometry())
@@ -1895,19 +2164,38 @@ class MainWindow(QMainWindow):
         # deserves a clean EOF rather than a half-dead peer.
         if self._mcp_session is not None and self._mcp_action is not None:
             self._mcp_action.setChecked(False)
+        # §18.5 D4b: release the held quality connection LAST and
+        # unconditionally. `_confirm_close_quality_console` above has already
+        # rolled back anything outstanding and told the user; this is the
+        # belt-and-braces close for the paths that never ran a statement (a
+        # console opened and abandoned still holds no transaction, but may hold a
+        # connection), so no psycopg session survives the window.
+        self._close_quality_session(DISCARD_WINDOW_CLOSED)
         super().closeEvent(event)
 
-    def _on_light_theme_toggled(self, checked):
-        apply_theme(QApplication.instance(), checked)
-        self._settings.setValue("lightTheme", checked)
-        # The palette flipped -- re-tint the toolbar icons so they stay legible.
-        self._toolbar_ui.refresh_icons()
-        # ...and re-consult `mode_colors(light)`, so the mode chip is never the
-        # DEBUG chip's hardcoded red that reads wrong in one of the two themes.
-        self._refresh_mode_indicator()
+    def _confirm_close_quality_console(self) -> bool:
+        """Ask about an uncommitted quality run before the window closes;
+        False aborts the close (§18.5 D4b's window-close edge).
+
+        Delegates the question to the panel, so the tab-close and window-close
+        edges ask the same sentence through the same confirmation seam and cannot
+        drift apart. With no quality console open, or nothing uncommitted, it is
+        a no-op that returns True.
+        """
+        panel = self.center_stage.quality_sql_tab()
+        if panel is None:
+            return True
+        return bool(panel.request_close(what="the window"))
+
+    # `_on_light_theme_toggled` USED TO BE HERE, and FQ-260812021715 removed it
+    # with the `View ▸ Light Theme` action it served. A theme is no longer a
+    # boolean: it is a named file, chosen in the Themes pane of
+    # `Settings ▸ Software settings…`. `apply_theme_named` is what replaced this
+    # slot, and it does the same three things (apply, persist, re-tint) for any
+    # number of themes rather than two.
 
     def _not_implemented(self, label):
-        self.statusBar().showMessage(f"Not yet implemented: {label}", 5000)
+        self.statusBar().showMessage(f"Not yet implemented: {label}")
 
     # -- Document state: dirty tracking + window title -----------------------
 
@@ -1959,24 +2247,36 @@ class MainWindow(QMainWindow):
         if reason is None:
             return False
         _log.info("history: refused — %s", reason)
-        self.statusBar().showMessage(reason, 4000)
+        self.statusBar().showMessage(reason)
         return True
 
-    def _undo_from_shortcut(self) -> None:
-        """The window `Ctrl+Z` shortcut's slot — scoped, unlike `_undo`.
+    def _undo_raw_xml_history(self) -> None:
+        """Every KEYSTROKE path into the project history — scoped, unlike `_undo`.
 
         Fires only when the Raw XML tab is current and writable. Anywhere else
         the key belongs to whatever has focus, and the tabs that hold a
         read-only editor state that themselves (`EditorPanel.eventFilter`,
-        `DdlObjectEditorPanel.eventFilter`) rather than leaving a dead key."""
+        `DdlObjectEditorPanel.eventFilter`) rather than leaving a dead key.
+
+        Named for **what it is** rather than for which host fired it (BUG-064:
+        it was `_undo_from_shortcut`), because it now has two callers — the
+        window `Ctrl+Z` `QShortcut` and the Raw XML editor's re-emission — and
+        the thing they share is the scope, not the host.
+
+        **This is one command, one function, one surface — not an app-level undo
+        router.** Do not grow it into a "one undo every surface calls" dispatcher:
+        that is §7's `_save_active_tab` failure with a different noun (a four-way
+        dispatch with an `else` fall-through made `Ctrl+S` on the SQL console
+        write the `.pgtp`). Every other surface answers its own chord locally.
+        """
         if self.center_stage.currentIndex() != self.center_stage.raw_xml_tab_index:
             return
         if self._history_write_refused():
             return
         self._undo()
 
-    def _redo_from_shortcut(self) -> None:
-        """The window `Ctrl+Y` shortcut's slot — see `_undo_from_shortcut`."""
+    def _redo_raw_xml_history(self) -> None:
+        """The redo twin — see `_undo_raw_xml_history`."""
         if self.center_stage.currentIndex() != self.center_stage.raw_xml_tab_index:
             return
         if self._history_write_refused():
@@ -2001,10 +2301,14 @@ class MainWindow(QMainWindow):
             self._restoring = False
 
     def _undo(self) -> None:
-        """Snapshot undo. Deliberately NOT tab-scoped: the History menu's
-        `Undo` is an explicit, deliberate click that means "undo the project",
+        """Snapshot undo. Deliberately NOT tab-scoped: `History ▸ Undo Project
+        Edit` is an explicit, deliberate click that means "undo the project",
         wherever the user is. It IS lock-scoped (see `_history_write_refused`)
-        — the read-only modes are data-loss guards, not view states."""
+        — the read-only modes are data-loss guards, not view states.
+
+        That scope is why this is a **different command** from the one `Ctrl+Z`
+        drives (`_undo_raw_xml_history`), and since BUG-064 the menu label says
+        so. Keystrokes go through the scoped slot; only a click reaches here."""
         if self._history_write_refused():
             return
         _log.info("history: undo")
@@ -2087,7 +2391,11 @@ class MainWindow(QMainWindow):
 
     def _shell_status(self, *args, **kwargs) -> None:
         """`UiShell.status` -- forwards to the status bar, resolved at call
-        time rather than captured, matching `showMessage(text[, timeout])`."""
+        time rather than captured. The signature stays `showMessage`'s
+        (`text[, timeout]`) because collaborators pass a status-bar-shaped
+        callable around; a `timeout` that arrives is accepted and **ignored**
+        (`StaticStatusBar.showMessage` journals, it never paints), which is why
+        this window's own call sites no longer pass one (BUG-055)."""
         self.statusBar().showMessage(*args, **kwargs)
 
     def _shell_run_async(self, *args, **kwargs):
@@ -2099,27 +2407,48 @@ class MainWindow(QMainWindow):
         return self._run_async(*args, **kwargs)
 
     def _reveal_left_panel(self, panel) -> None:
-        """`UiShell.reveal_left_panel` -- show a left-dock tab and focus it."""
+        """`UiShell.reveal_left_panel` -- the ONE "open the browser pane and
+        show this child in it" primitive (BUG-260812023420).
+
+        It owns the WHOLE gesture: the dock is un-hidden, the tab is made
+        visible, and the tab becomes current. That un-hide step used to be
+        copy-pasted at every reveal site (DDL Explorer, Findings, Contents,
+        Coherence) while this seam did only the tab half -- so any reveal that
+        forgot it landed a visible tab inside a hidden dock, i.e. the reveal
+        "silently did nothing". A caller cannot get it half-right any more.
+
+        `_show_left_dock()` runs AFTER the `index < 0` guard on purpose: a
+        widget that is not a left-dock tab has nothing to reveal, and popping an
+        empty dock for it would be worse than the no-op.
+
+        The counterpart for "make available without stealing the user's layout"
+        is `_set_left_panel_visible`, which deliberately touches neither the
+        dock nor the current tab.
+        """
         index = self.left_tabs.indexOf(panel)
         if index < 0:
             return
+        self._show_left_dock()
         self.left_tabs.setTabVisible(index, True)
         self.left_tabs.setCurrentWidget(panel)
 
     def _set_left_panel_visible(self, panel, visible: bool) -> None:
-        """`UiShell.set_left_panel_visible` -- visibility only, no focus."""
+        """`UiShell.set_left_panel_visible` -- visibility only, no focus, and
+        deliberately no dock un-hide (contrast `_reveal_left_panel`)."""
         index = self.left_tabs.indexOf(panel)
         if index < 0:
             return
         self.left_tabs.setTabVisible(index, visible)
 
-    # Three dock/tab gestures `UiShell` has no field for, injected into
-    # `CoherenceController` instead: the docks themselves are host furniture,
-    # and exactly one lane needs each of these.
+    # Dock/tab gestures `UiShell` has no field for: the docks themselves are
+    # host furniture. `_show_audit_dock` is injected into the lanes that need
+    # it; `_show_left_dock` is no longer injected anywhere, because
+    # `_reveal_left_panel` now calls it (BUG-260812023420).
 
     def _show_left_dock(self) -> None:
         """Un-hide the left dock. Revealing a left-dock TAB is not enough if a
-        prior action hid the dock that carries it."""
+        prior action hid the dock that carries it -- which is exactly why
+        `_reveal_left_panel` calls this and no reveal site does it by hand."""
         self.tree_dock.setVisible(True)
 
     def _show_audit_dock(self) -> None:
@@ -2135,10 +2464,11 @@ class MainWindow(QMainWindow):
     def _reveal_findings_tab(self) -> None:
         """Auto-open and focus the left-dock Findings tab. Called by the router
         the moment a navigable row lands: a result the user asked for should
-        not need a second gesture to be seen."""
-        self._show_left_dock()
-        self.left_tabs.setTabVisible(self.findings_tab_index, True)
-        self.left_tabs.setCurrentWidget(self.findings_panel)
+        not need a second gesture to be seen.
+
+        Routed through `_reveal_left_panel`, which owns the un-hide-the-dock
+        step (BUG-260812023420) -- this site no longer repeats it."""
+        self._reveal_left_panel(self.findings_panel)
 
     def _reveal_activity_tab(self) -> None:
         """View ▸ Activity Log: un-hide the bottom dock and focus its journal
@@ -2205,8 +2535,15 @@ class MainWindow(QMainWindow):
         return self.left_tabs.isTabVisible(self.coherence_tab_index)
 
     def _is_light_theme(self) -> bool:
-        """`UiShell.is_light_theme` -- the View ▸ Light Theme toggle's state."""
-        return self._light_theme_action.isChecked()
+        """`UiShell.is_light_theme` -- whether the SELECTED theme reads as light.
+
+        Reads the theme object rather than a menu toggle (which no longer
+        exists): with named themes there can be any number of light ones, and
+        `Theme.light` is each file's own declaration of which side of the app's
+        `light: bool` seam it sits on.
+        """
+        theme = getattr(self, "_theme", None)
+        return bool(theme.light) if theme is not None else False
 
     def _on_tree_selection_changed(self, node, kind):
         self.properties_panel.show_node(node, kind)
@@ -2359,6 +2696,19 @@ class MainWindow(QMainWindow):
             # nothing if that tab is gone" rule as `[Check]` below.
             self._php_tabs.navigate_to(item.data(Qt.ItemDataRole.UserRole + 2), line)
             return
+        if target == DDL_EXPLORER_AUDIT_TARGET:
+            # BUG-260811232724: a `[Find]`/`[Bookmark]` row from a read-only DDL
+            # Explorer buffer carries its Explorer ROLE on UserRole+2 (the slot
+            # the "xsd" and PHP branches use for their own extra, each read only
+            # inside its own branch). The role must come FROM the row: the two
+            # Explorer buffers are different documents with independent line
+            # numbering (§18.7), so resolving "which Explorer" from the active
+            # tab would jump the wrong buffer. `_on_ddl_navigate_requested` is
+            # the same focus+caret+scroll route a DDL tree leaf click uses.
+            self._on_ddl_navigate_requested(
+                line, item.data(Qt.ItemDataRole.UserRole + 2)
+            )
+            return
         if isinstance(target, tuple):
             # §18.5 D3a: a `[Check]` finding carries the object's
             # `DdlObjectRef.key` (a tuple) -- focus that tab and place the
@@ -2483,32 +2833,48 @@ class MainWindow(QMainWindow):
         self._refresh_editor_menu_affordances()
 
     def _build_history_menu(self):
-        """History ▸ History… · Undo · Redo — in that order (FQ-016).
+        """History ▸ History… · Undo Project Edit · Redo Project Edit — in that
+        order (FQ-016).
 
         The owner's ordering, verbatim reasoning: *"everyone uses
         Ctrl+Z/Ctrl+Y anyway"*, so the navigator that has no shortcut leads.
-        Undo/Redo are the same single-step actions the Ctrl+Z/Ctrl+Y shortcuts
-        drive (wired in `__init__`); `History…` opens the non-modal navigator
-        where moving back = undo and forward = redo.
+        `History…` opens the non-modal navigator where moving back = undo and
+        forward = redo.
 
-        Their command ids become `history.undo` / `history.redo`, both pinned in
-        `LEGACY_ID_ALIASES` — updated in the same commit, or two DEFAULT toolbar
-        buttons ship empty and iconless (`toolbar_registry`).
+        **These two are NOT the actions `Ctrl+Z`/`Ctrl+Y` drive, and the labels
+        say so (BUG-064).** They were called plain `Undo`/`Redo`, which made them
+        look like the chord's menu twin; they are a different command with a
+        different scope. A keystroke means *"undo here"* — it is answered by
+        whatever surface has focus, and at the window it is tab-scoped to Raw XML
+        (`_undo_raw_xml_history`). A click here means *"undo the project"*,
+        wherever the user is (`_undo`, deliberately unscoped by tab; see its
+        docstring). One `QAction` cannot tell how it was triggered, so the two
+        meanings cannot share a host — the fix is to name them apart, not to
+        merge them. They deliberately carry **no shortcut**, and the manual no
+        longer has to spend a paragraph undoing the old label.
+
+        **The label IS the command id** (`toolbar_registry.command_id_for`
+        slugifies the whole menu path), so renaming these entries renames the
+        commands: `history.undo` → `history.undo-project-edit`. Three tables move
+        with them in the same commit — `LEGACY_ID_ALIASES` (which
+        `DEFAULT_TOOLBAR_IDS` derives from and `ICON_ID_BY_COMMAND` inverts) and
+        `RENAMED_ID_ALIASES` — or two DEFAULT toolbar buttons ship empty and
+        iconless. FQ-022's precedent, same reasoning.
         """
         menu = self.editor_menu_bar.addMenu("History")
         history_action = menu.addAction("History…")
         history_action.triggered.connect(self._open_history_jump_list)
         self._history_action = history_action
-        undo_action = menu.addAction("Undo")
+        undo_action = menu.addAction("Undo Project Edit")
         undo_action.triggered.connect(self._undo)
         self._undo_action = undo_action
-        redo_action = menu.addAction("Redo")
+        redo_action = menu.addAction("Redo Project Edit")
         redo_action.triggered.connect(self._redo)
         self._redo_action = redo_action
 
     def _build_select_menu(self):
-        """Select ▸ Select All · Select Enclosing Block · Select Parent Block
-        (FQ-015, §8/§26).
+        """Select ▸ Select All · Select Enclosing Block · Expand Selection ·
+        Shrink Selection (FQ-015, then FQ-034; §8/§26).
 
         `Select All` is a NEW entry for behaviour that already worked: nothing in
         the app binds Ctrl+A, so every editor's built-in select-all has always
@@ -2519,7 +2885,13 @@ class MainWindow(QMainWindow):
         Mode (unlike Find/Replace, which that mode owns): selecting text mutates
         nothing.
 
-        The other two MOVED here off the dissolved Edit menu — and are rebuilt,
+        **FQ-034 grew the menu to four.** `Select Parent Block` became the
+        repeatable `Expand Selection` (extended to the SQL editors) and gained
+        `Shrink Selection` beside it; see `_expand_structural_selection` and
+        `_shrink_structural_selection`.
+
+        The two block-selection entries MOVED here off the dissolved Edit menu —
+        and are rebuilt,
         not relocated: FQ-016 removed them with the menu, so between it and this
         change Ctrl+Shift+A had no host at all and Ctrl+Shift+B survived only
         through `CodeEditor.keyPressEvent`.
@@ -2552,10 +2924,62 @@ class MainWindow(QMainWindow):
         select_enclosing_action.setShortcut("Ctrl+Shift+B")
         select_enclosing_action.triggered.connect(self._select_enclosing_block)
         self._select_enclosing_action = select_enclosing_action
-        select_parent_action = menu.addAction("Select Parent Block")
-        select_parent_action.setShortcut("Ctrl+Shift+A")
-        select_parent_action.triggered.connect(self._select_parent_block)
-        self._select_parent_action = select_parent_action
+        # FQ-034's renamed grow entry plus its new inward twin. Order matters:
+        # `Expand Selection` keeps `Select Parent Block`'s place and
+        # `Shrink Selection` follows it immediately, so the pair reads as a pair.
+        expand_action = menu.addAction("Expand Selection")
+        expand_action.setShortcut("Ctrl+Shift+A")
+        expand_action.triggered.connect(self._expand_structural_selection)
+        self._expand_selection_action = expand_action
+        # **NO `setShortcut` HERE, and that is the feature's subtlest point.**
+        # `Ctrl+Shift+Z` is already claimed by all six editing surfaces
+        # (`CLAIMED_NOT_UNDO_REDO`), which accept its `ShortcutOverride` so Qt's
+        # native redo cannot fire -- a suppression DEC-014 *mandates* and DEC-015
+        # depends on. A window action bound to the same chord would be starved by
+        # exactly that override. So shrink's keyboard host is the existing
+        # per-surface claim, which now delegates to one
+        # `apply_shrink_structural_selection`; this action is the *command* form
+        # only. The stated price (§8): the pair is not symmetrically rebindable --
+        # grow can be moved through the Software settings keyboard-shortcuts
+        # pane, shrink cannot,
+        # and `Ctrl+Shift+Z` cannot be handed to anything else either because it
+        # stays in `RESERVED_SEQUENCES`.
+        shrink_action = menu.addAction("Shrink Selection")
+        shrink_action.triggered.connect(self._shrink_structural_selection)
+        self._shrink_selection_action = shrink_action
+
+        # FQ-260812000331's two command forms. The editor behaviour shipped in
+        # `e60e0d0`; these entries are the menu half, held back only because
+        # this file was owned elsewhere at the time.
+        #
+        # **NEITHER carries a `setShortcut`, and that is a rule rather than an
+        # omission.** Both gestures are already answered as the bare `v` / `V`
+        # keys inside the Command-mode grammar, and under DEC-012 a command with
+        # a command form has EXACTLY ONE keyboard host. The `v` / `V` answer is
+        # that host, so a chord here would be a second one — with the usual
+        # consequence that the two could then disagree about which is "the"
+        # binding. Nothing is added to `RESERVED_SEQUENCES` or the ledger for the
+        # same reason: no new chord exists.
+        #
+        # Checkable, because they are toggles over ONE piece of per-editor state
+        # (`VimModeMixin.sticky_selection_mode`) that `v` / `V` also write. The
+        # check marks are therefore never authoritative — they are re-derived
+        # from the active editor by `_refresh_sticky_selection_actions`, and
+        # `triggered` (not `toggled`) is connected so that re-deriving cannot
+        # itself fire the command.
+        menu.addSeparator()
+        sticky_action = menu.addAction("Sticky Selection")
+        sticky_action.setCheckable(True)
+        sticky_action.triggered.connect(self._toggle_sticky_selection)
+        self._sticky_selection_action = sticky_action
+        line_action = menu.addAction("Line Selection")
+        line_action.setCheckable(True)
+        line_action.triggered.connect(self._toggle_line_selection)
+        self._line_selection_action = line_action
+        # Read-only-ness flips at runtime (Caption Mode, Compare/Merge) without a
+        # tab change, so the tab-driven `_refresh_editor_menu_affordances` is not
+        # enough on its own: the menu re-derives both entries as it opens.
+        menu.aboutToShow.connect(self._refresh_sticky_selection_actions)
 
     def _select_all_in_active_editor(self) -> None:
         """`Select All` — the one member every editor family supports, since
@@ -2581,7 +3005,8 @@ class MainWindow(QMainWindow):
         (owner ruling, 2026-08-10 — BUG-046, superseding FQ-015's "duplicate
         handler, measured then KEPT"). `CodeEditor.keyPressEvent` no longer
         handles the chord, so it is hosted the same way every other shortcut is
-        and it is genuinely rebindable through `Customize Shortcuts…`. The one
+        and it is genuinely rebindable through the Software settings
+        keyboard-shortcuts pane. The one
         other host is `CodeEditorDialog`'s own `QShortcut`, because that dialog
         has no menu bar for this action to live in.
 
@@ -2601,23 +3026,114 @@ class MainWindow(QMainWindow):
         if select is not None:
             select()
 
-    def _select_parent_block(self) -> None:
-        """`Select Parent Block` — XML-only, and ABSENT rather than silently
-        wrong where there is no parent element (FQ-015).
+    def _expand_structural_selection(self) -> None:
+        """`Expand Selection` — one structural level outward per press (FQ-034).
 
-        Only `XmlEditor` has `select_parent_block` ("one nesting level up"): a
-        bracket pair has no analogous parent walk that means anything to a
-        reader of SQL or PHP. So on a `CodeEditor` tab the entry is HIDDEN by
-        `_refresh_editor_menu_affordances` — visibility, matching the app's
-        two-posture rule (present / absent, never greyed) — which also drops
-        Ctrl+Shift+A there, since Qt keeps a shortcut live only while its action
-        is both enabled and visible. The capability guard below is the second
-        belt: the action can be triggered programmatically.
+        **Renamed from `Select Parent Block`, which described only the XML walk.**
+        The command now means the same thing on both editor families, so the label
+        — and therefore the command id, since the label IS the id's last segment
+        (§7) — moves `select.select-parent-block` → `select.expand-selection`,
+        with a `toolbar_registry.RENAMED_ID_ALIASES` row so a pinned toolbar
+        button and a stored shortcut override survive.
+
+        Dispatched BY CAPABILITY, never by assuming one method name, exactly like
+        `_select_enclosing_block`:
+
+        * `CodeEditor` with `language == "sql"` (DDL object tabs, the read-only
+          DDL Explorer buffer, the Sandbox SQL Console):
+          `expand_structural_selection` — the repeatable plpgsql ladder, word →
+          bracket group → clause → statement → each enclosing block →
+          `BEGIN…END`, with an expansion stack so `Shrink Selection` can invert it.
+        * `XmlEditor`: `select_parent_block` — the existing stateless parent walk,
+          unchanged, because it is *already* one structural level per press.
+
+        The entry is HIDDEN where neither applies (PHP/JS tabs), which also drops
+        `Ctrl+Shift+A` there since Qt keeps a shortcut live only while its action
+        is visible. The predicate below is the second belt, for the programmatic
+        and toolbar triggers that bypass visibility.
         """
         editor = self._find_ui.active_selection_editor()
-        select = getattr(editor, "select_parent_block", None)
+        if not _supports_structural_expansion(editor):
+            return
+        select = getattr(editor, "expand_structural_selection", None) or getattr(
+            editor, "select_parent_block", None
+        )
         if select is not None:
             select()
+
+    def _shrink_structural_selection(self) -> None:
+        """`Shrink Selection` — one structural level back inward (FQ-034).
+
+        SQL editors only. `XmlEditor` has no `shrink_structural_selection` at
+        all: its grow is stateless, so shrink would mean giving that family the
+        expansion stack too, for users who did not ask for it (§8). The entry is
+        hidden there by the same capability gate that hides grow on PHP tabs.
+
+        **This slot is the command form, not the keyboard host.** The chord
+        `Ctrl+Shift+Z` is answered inside each surface's own key handling — see
+        `_build_select_menu` for why it cannot be a `setShortcut` here — and both
+        paths run the same `CodeEditor.shrink_structural_selection`.
+        """
+        editor = self._find_ui.active_selection_editor()
+        if not _supports_structural_expansion(editor):
+            return
+        shrink = getattr(editor, "shrink_structural_selection", None)
+        if shrink is not None:
+            shrink()
+
+    # -- FQ-260812000331: the two sticky-selection command forms --------------
+
+    def _toggle_sticky_selection(self) -> None:
+        """`Sticky Selection` — character-wise sticky selection on/off.
+
+        Resolved at TRIGGER time through `active_selection_editor`, like every
+        other entry on this menu: connecting to a bound method of one editor at
+        build time is the exact bug FQ-015 fixed here, and re-introducing it
+        would toggle sticky selection on the Raw XML buffer no matter which tab
+        is in front.
+
+        The slot re-checks the gate itself rather than trusting the entry to be
+        hidden — the second belt for a toolbar button or a programmatic trigger,
+        the same shape `_expand_structural_selection` uses.
+        """
+        editor = self._find_ui.active_selection_editor()
+        if not _supports_sticky_selection(editor):
+            return
+        editor.toggle_sticky_selection()
+        self._refresh_sticky_selection_actions()
+
+    def _toggle_line_selection(self) -> None:
+        """`Line Selection` — line-wise sticky selection on/off. See
+        `_toggle_sticky_selection`; the two are one state at two
+        granularities, so turning either on turns the other off."""
+        editor = self._find_ui.active_selection_editor()
+        if not _supports_sticky_selection(editor):
+            return
+        editor.toggle_line_selection()
+        self._refresh_sticky_selection_actions()
+
+    def _refresh_sticky_selection_actions(self) -> None:
+        """Re-derive both entries from the active editor: present only where the
+        feature can do anything, checked exactly when it is on.
+
+        **Hidden, never greyed** (the app's two-posture rule), and the predicate
+        is a real one: on a **read-only** editor the whole vim layer is inactive
+        — `VimModeMixin.keyPressEvent` refuses to answer a sticky key when
+        `isReadOnly()` — so the command would toggle a state that changes
+        nothing. An entry that no-ops is worse than an absent one.
+
+        The check state is re-derived rather than remembered because `v` / `V`
+        write the same state without going through these actions, and because it
+        is PER EDITOR: the same action stands for a different editor on every
+        tab.
+        """
+        editor = self._find_ui.active_selection_editor()
+        supported = _supports_sticky_selection(editor)
+        kind = getattr(editor, "sticky_selection_mode", None) if supported else None
+        self._sticky_selection_action.setVisible(supported)
+        self._sticky_selection_action.setChecked(kind == STICKY_CHARACTER)
+        self._line_selection_action.setVisible(supported)
+        self._line_selection_action.setChecked(kind == STICKY_LINE)
 
     def _build_parsing_menu(self):
         """Parsing ▸ Auto Parse XML · Validate Project (FQ-016).
@@ -2878,14 +3394,14 @@ class MainWindow(QMainWindow):
            the recommendation and it is what the visibility refresh gives for
            free. Note it hides the *bar widget*, not the actions, so a pinned
            toolbar button never blinks out with it.
-        2. Hide `Select ▸ Select Parent Block` on tabs whose editor has no
-           parent-block concept (FQ-015). This is the seam's first real
-           **capability** gate — the kind `_build_parsing_menu`'s docstring says
-           it exists for — rather than a taste-based per-tab hide: a `CodeEditor`
-           (DDL Explorer, DDL object tab, PHP tab) genuinely has no "one nesting
-           level up", so the honest posture is absent, not a menu entry that
-           no-ops. Asking the editor itself (`hasattr`) keeps this correct for
-           free when a new editor tab kind appears. Unlike case 1 this hides an
+        2. Hide `Select ▸ Expand Selection` / `Shrink Selection` on tabs whose
+           editor has no structural ladder (FQ-015, rescoped by FQ-034). This is
+           the seam's first real **capability** gate — the kind
+           `_build_parsing_menu`'s docstring says it exists for — rather than a
+           taste-based per-tab hide: a PHP or JS `CodeEditor` genuinely has no
+           plpgsql structure to climb, so the honest posture is absent, not a menu
+           entry that no-ops. Asking the editor itself keeps this correct for free
+           when a new editor tab kind appears. Unlike case 1 this hides an
            *action*, so a user who pinned this command to the toolbar sees that
            button come and go with the tab — accepted, because the alternative is
            a toolbar button that does nothing.
@@ -2909,9 +3425,24 @@ class MainWindow(QMainWindow):
         # Save XSD` reachable inside the mode.
         self.editor_menu_bar.setVisible(index not in hidden_on)
         editor = self._find_ui.active_selection_editor()
-        self._select_parent_action.setVisible(
-            hasattr(editor, "select_parent_block")
+        # FQ-034: grow's gate is now a QUESTION on the editor rather than a
+        # `hasattr`, because a `CodeEditor` supports the ladder only in
+        # `language == "sql"` — a per-instance fact no class-level check can
+        # express. Shrink keeps the `hasattr` form, where it really IS a class
+        # fact (`XmlEditor` does not have the method), AND asks the predicate too,
+        # so a PHP tab — whose `CodeEditor` has the method but not the language —
+        # hides both entries rather than one. Hidden, never greyed, per the app's
+        # two-posture rule; both slots re-check inside themselves as the second
+        # belt for programmatic and toolbar triggers.
+        supports_expansion = _supports_structural_expansion(editor)
+        self._expand_selection_action.setVisible(supports_expansion)
+        self._shrink_selection_action.setVisible(
+            supports_expansion and hasattr(editor, "shrink_structural_selection")
         )
+        # Case 2 again, on a different capability (FQ-260812000331). Also driven
+        # by the menu's own `aboutToShow`, because read-only-ness — half of that
+        # capability — moves without a tab change.
+        self._refresh_sticky_selection_actions()
         group = self._active_deployment_group()
         for name, actions in self._deployment_actions.items():
             for action in actions:
@@ -2965,10 +3496,30 @@ class MainWindow(QMainWindow):
         project_settings_action.triggered.connect(
             lambda: self._ddl_project_ui.open_settings()
         )
-        # §18.2's project group is FOUR entries, not five: `Deploy .pgtp` MOVED to
+        # BUG-058: `Project Status…` MOVED here from the Database menu, directly
+        # under `Project Settings…` (owner ruling, verbatim: "Project status
+        # should be in File, just below Project settings"). Same lambda-wrapped
+        # connect as its neighbours, for the BUG-021 reason stated above.
+        #
+        # Two things came with it and neither is incidental:
+        # * The move changes the command's menu-path id
+        #   (`database.project-status` -> `file.project-status`), so
+        #   `toolbar_registry.RENAMED_ID_ALIASES` carries a row -- a user who
+        #   pinned the Database-menu button keeps it.
+        # * It was an always-visible, ungated action in the Database menu and
+        #   stays one here: `_open_project_status` handles the projectless case
+        #   itself, and it is deliberately NOT in `_MAINTENANCE_FILE_ITEMS`, so
+        #   Maintenance mode trims it exactly as it trims `Project Settings…`,
+        #   its new neighbour. (In its old home the whole Database menu was
+        #   hidden in that mode, so the availability answer is unchanged.)
+        project_status_action = menu.addAction("Project Status…")
+        project_status_action.triggered.connect(lambda: self._open_project_status())
+        # §18.2's own project actions are FOUR, not five: `Deploy .pgtp` MOVED to
         # the Editor bar's `Deployment` menu (FQ-020), where it is meaningful only
         # while Raw XML is active. Its pinnable id changed with it, so
-        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row.
+        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row. The group above
+        # therefore reads FIVE entries: those four plus §18.8's `Project
+        # Status…`, which joined them from the Database menu (BUG-058).
         menu.addSeparator()
         # There is deliberately NO `Save` and NO `Save As…` here, and no `Ctrl+S`
         # or `Ctrl+Shift+S` anywhere in the app (§7/§27, FQ-020). Saving is four
@@ -2996,18 +3547,24 @@ class MainWindow(QMainWindow):
         # has to pick which "close" it means -- and the one it meant was the
         # rarest, closing the whole project.
         #
-        # This does NOT touch `CodeEditorDialog`'s own `Ctrl+W`, which is a
-        # dialog-local Cancel bound as a `QShortcut` beside that dialog's
-        # `Ctrl+S`; it is not a menu command, it never competed with this one,
-        # and §27 documents it separately.
+        # There is no `Ctrl+W` left anywhere else either: `CodeEditorDialog`
+        # used to own a dialog-local `Ctrl+W` Cancel, and `code_editor.py`
+        # (see the "NO `Ctrl+S` / `Ctrl+W`" comment where its button box is
+        # built) removed it by the same 2026-08-09 decision -- that dialog was
+        # the last carve-out for either chord. So the chord answers nothing in
+        # the app; it is deliberately left FREE to assign in Customize
+        # Shortcuts, paired with `Ctrl+O` (see `docs/KEYBINDINGS.md`), rather
+        # than reserved the way `Ctrl+S` is.
         close_action.triggered.connect(lambda: self._doc_ui.close())
         self._close_action = close_action
         menu.addSeparator()
         # FQ-027: this WAS FQ-010's `Show Launcher…`, which only re-opened the
         # modal over the live session. It is RENAMED (one action, not two) and
         # given the full re-initiation the owner asked for: resolve unsaved
-        # work, close everything, clear the session workflow mode, re-enter the
-        # launcher. The rename changes its command id, so
+        # work, close everything, re-enter the launcher. (It used to clear the
+        # session workflow mode as its last step; BUG-059 removed that -- the
+        # mode stands until a new column is picked, so a dismissed launcher can
+        # never land in "No Mode".) The rename changes its command id, so
         # `toolbar_registry.RENAMED_ID_ALIASES` carries a row.
         #
         # It is ALSO the escape hatch from Maintenance mode's menu filter, which
@@ -3029,6 +3586,12 @@ class MainWindow(QMainWindow):
 
         No `force=` any more: FQ-027 deleted the suppression flag, so there is
         nothing left to bypass — the launcher always shows.
+
+        No `dismissable=` either, and that omission is the point (BUG-059):
+        `launcher_dialog.show_launcher` derives the regime from this window's
+        `workflow_mode`, so there is exactly one rule — obligatory choice while
+        the session has no mode, dismissable once it has one — and no caller can
+        open a dismissable launcher over a mode-less window.
         """
         from pgtp_editor.ui import launcher_dialog
 
@@ -3038,12 +3601,33 @@ class MainWindow(QMainWindow):
         """`File ▸ New Session` — re-initiate the app into its starting state
         (FQ-027). Returns True when the session was actually restarted.
 
-        Four steps, in the order that makes a cancel cheap: resolve unsaved
+        Three steps, in the order that makes a cancel cheap: resolve unsaved
         work (**every** cancel aborts the whole gesture and leaves the session
         exactly as it was), close every dynamic tab, close the document and the
-        §18.2 project, then clear the workflow mode — which restores the full
-        menu bar BEFORE the launcher goes up, so Maintenance mode can never be
-        re-entered on top of itself — and show the launcher.
+        §18.2 project, then show the launcher.
+
+        **The workflow mode is deliberately NOT cleared here (BUG-059).** It used
+        to be set to None just before the launcher went up; that was the only
+        production path (besides a freshly constructed window) into the invalid
+        "No Mode" state the owner ruled out — dismissing the re-opened launcher
+        landed in it. The mode now STANDS while the launcher is up, which is what
+        makes this launcher dismissable at all: closing it leaves the session in
+        the mode it was already in, and picking a column replaces that mode the
+        one way modes are ever entered. Re-picking the same column is harmless:
+        `set_workflow_mode` re-applies the filter idempotently, and the launcher's
+        entries come from `_walk_menu_actions`, which never tests `isVisible()` —
+        so every column is **offered** even while Maintenance mode has the menu
+        bar trimmed.
+
+        Offered is not the same as **selectable**, and the difference was a bug
+        (BUG-260813025052): the entries were all present while the Standalone
+        and Project buttons were grey, because Qt's `setVisible(False)` also
+        disables, and the launcher mirrored the action's enabled flag — so
+        Maintenance mode had no exit but a restart. A launcher column is a
+        **destination**, not a command, so the launcher now consults
+        `is_mode_filtered` and every mode column is selectable in every mode.
+        Which is what makes this gesture the escape hatch it is documented to
+        be; the File filter itself is unchanged (FQ-027 / DEC-006).
 
         Each prompt is the one that already exists for that surface (§11's
         `confirm_close_for_exit`, the stage's own tab-close route, the document
@@ -3056,14 +3640,8 @@ class MainWindow(QMainWindow):
         # -> `_on_tab_close_requested` -> the per-kind prompt), so the DDL-object
         # and PHP unsaved-changes flows are reused rather than re-derived. A tab
         # still present afterwards means the user cancelled.
-        stage = self.center_stage
-        for widget in [*stage.ddl_object_panels(), *stage.php_file_tabs().values()]:
-            index = stage.indexOf(widget)
-            if index == -1:
-                continue
-            stage.tabCloseRequested.emit(index)
-            if stage.indexOf(widget) != -1:
-                return False
+        if not self._close_dynamic_editor_tabs():
+            return False
         # The `.pgtp`: `close()` runs the save/discard/cancel prompt itself, and
         # a still-dirty buffer afterwards is how a cancel reports back.
         self._doc_ui.close()
@@ -3072,8 +3650,34 @@ class MainWindow(QMainWindow):
         # The §18.2 project. Never a forcing point (`close_project` only
         # *offers* a pending deploy), so it cannot abort the gesture.
         self._ddl_project_ui.close_project()
-        self.set_workflow_mode(None)
         self.show_launcher()
+        return True
+
+    def _close_dynamic_editor_tabs(self) -> bool:
+        """Close every dynamic editor tab (DDL-object panels, §21 PHP tabs)
+        through the stage's OWN close route, returning False as soon as one
+        survives — which is how a user cancel reports back.
+
+        The one implementation, shared by `new_session` and the Maintenance-mode
+        prune (BUG-260812001640), rather than two loops that could drift about
+        which kinds count as dynamic or how a cancel is detected. `emit` lands in
+        `CenterStage._on_tab_close_requested`, i.e. the per-kind unsaved-changes
+        prompt — this adds no second dialog. A tab may also VETO its own close
+        (the Quality SQL Console's uncommitted-transaction guard,
+        DEC-260811023646); that is indistinguishable from a cancel here, and
+        treated the same, deliberately: either way the tab is still open.
+
+        The two structural tabs (Raw XML, Diff/Merge, Caption), Edit XSD, the
+        Manual and the DDL Explorers are NOT dynamic and are never touched here.
+        """
+        stage = self.center_stage
+        for widget in [*stage.ddl_object_panels(), *stage.php_file_tabs().values()]:
+            index = stage.indexOf(widget)
+            if index == -1:
+                continue
+            stage.tabCloseRequested.emit(index)
+            if stage.indexOf(widget) != -1:
+                return False
         return True
 
     def _install_find_next_action(self):
@@ -3158,6 +3762,25 @@ class MainWindow(QMainWindow):
         results_action.triggered.connect(self._reveal_results_dock_tab)
         self._results_action = results_action
 
+        # BUG-061: the LEFT dock's Findings tab (FQ-028 Part 1) had no user
+        # gesture at all -- its only reveal path was the router callback, so a
+        # session with no navigable op behind it looked like a tab that does not
+        # exist. Same shape as the two tab entries above: NOT checkable (a tab is
+        # in view or it is not), and it reuses `_reveal_findings_tab` rather than
+        # re-deriving the un-hide/focus sequence, so the menu and the router can
+        # never disagree about what "show the findings" means.
+        #
+        # A brand-new command, so NO `RENAMED_ID_ALIASES` row -- that table is
+        # for moves and renames. Being a menu action it enumerates into
+        # `ToolbarController._walk_menu_actions` as `view.findings`, which is
+        # what makes it pinnable and rebindable like its siblings. And, like
+        # them, it carries NO built-in shortcut: none of `Activity Log`,
+        # `Messages` or the three dock toggles has one, and FQ-012 lets a user
+        # bind one if they want it.
+        findings_action = menu.addAction("Findings")
+        findings_action.triggered.connect(self._reveal_findings_tab)
+        self._findings_action = findings_action
+
         self._raw_xml_panel_action = menu.addAction("Raw XML Panel")
         self._raw_xml_panel_action.setCheckable(True)
         # The Raw XML tab is visible by default (see center_stage), so the
@@ -3171,25 +3794,37 @@ class MainWindow(QMainWindow):
         collapse_all_action = menu.addAction("Collapse All")
         collapse_all_action.triggered.connect(self.project_tree.collapseAll)
 
-        menu.addSeparator()
-        self._light_theme_action = menu.addAction("Light Theme")
-        self._light_theme_action.setCheckable(True)
-        self._light_theme_action.setChecked(False)
-        self._light_theme_action.toggled.connect(self._on_light_theme_toggled)
-
-        menu.addSeparator()
-        customize_toolbar_action = menu.addAction("Customize Toolbar…")
-        customize_toolbar_action.triggered.connect(
-            lambda: self._toolbar_ui.open_customize_dialog()
-        )
-        # FQ-012, beside its sibling: the same command universe, customized on
-        # its other axis. Being a menu action it enumerates into the walk and is
-        # itself pinnable and rebindable, which is intended -- a brand-new
-        # command needs no `RENAMED_ID_ALIASES` row, that table is for moves.
-        customize_shortcuts_action = menu.addAction("Customize Shortcuts…")
-        customize_shortcuts_action.triggered.connect(
-            lambda: self.open_customize_shortcuts_dialog()
-        )
+        # `Light Theme` USED TO BE HERE, and FQ-260812021715 REMOVED it — not
+        # relocated as a checkbox, replaced. A theme is a named file now, and
+        # selecting one lives in the Themes pane of `Settings ▸ Software
+        # settings…` beside the other app-wide settings. The owner's ruling:
+        # settings changed in Maintenance mode are app-wide and durable, so a
+        # theme is set ONCE as a preference rather than flipped per session,
+        # which is what makes an always-available `View` switcher unnecessary
+        # and the Maintenance round-trip an acceptable cost (the same trade
+        # already accepted for Customize Shortcuts/Toolbar).
+        #
+        # `Customize Toolbar…` and `Customize Shortcuts…` USED TO BE HERE, and
+        # FQ-260812002827 MOVED them — they are not duplicated into the settings
+        # dialog, they are gone from this menu. Both are now panes of
+        # `Settings ▸ Software settings…`, which is the app's one settings home
+        # and the third Maintenance launcher button.
+        #
+        # The price, named because it is a real one: `Settings` is
+        # Maintenance-only, so the toolbar and the key bindings can no longer be
+        # customized from an ordinary session. That follows FQ-027's design that
+        # the app is *configured* in Maintenance mode — the reason `Settings` was
+        # Maintenance-only to begin with — and it is what lets one launcher
+        # button stand for the whole of "settings". DEC-260812004358 is the
+        # owner's confirmation of the trade; this ships until answered otherwise.
+        #
+        # No `RENAMED_ID_ALIASES` rows for `view.customize-toolbar` /
+        # `view.customize-shortcuts`: the commands were not renamed, they were
+        # ABSORBED, and there is no successor id that means "customize the
+        # toolbar" for a stored `toolbarIds` entry or a stored override to map
+        # onto. `resolve_ids` drops them, which is the correct outcome — a
+        # pinned button for a command that no longer exists must not resolve to
+        # a dialog that does five other things as well.
 
     # -- FQ-012: user-rebindable keyboard shortcuts --------------------------
     #
@@ -3297,13 +3932,27 @@ class MainWindow(QMainWindow):
         )
         self._apply_shortcut_bindings()
 
-    def open_customize_shortcuts_dialog(self) -> None:
-        """Open the (non-modal) Customize Shortcuts dialog; on OK, apply and
-        persist the chosen overrides. Cancel writes nothing -- the dialog copies
-        the map it is handed, so a rejected dialog leaves the window's bindings
-        and the settings file untouched."""
+    def build_customize_shortcuts_pane(self, parent=None) -> CustomizeShortcutsDialog:
+        """Build and wire the Customize Shortcuts dialog. **The one place it is
+        constructed.**
+
+        Since FQ-260812002827 it is not a window of its own: it is the
+        **Keyboard shortcuts** pane of `Settings ▸ Software settings…`, which
+        embeds the returned dialog as a plain widget (`View ▸ Customize
+        Shortcuts…` is gone, not duplicated). So this RETURNS rather than shows,
+        and `parent` is the pane's container.
+
+        On OK it applies and persists the chosen overrides. Cancel writes
+        nothing -- the dialog copies the map it is handed, so a rejected dialog
+        leaves the window's bindings and the settings file untouched. That is
+        why the settings host adds no OK of its own, and why it can rebuild this
+        pane after either outcome: the command list and the override map are
+        re-read here on every call.
+        """
         dialog = CustomizeShortcutsDialog(
-            self._shortcut_commands(), self._shortcut_overrides, self
+            self._shortcut_commands(),
+            self._shortcut_overrides,
+            parent if parent is not None else self,
         )
         dialog.accepted.connect(
             lambda: self.apply_and_save_shortcut_overrides(
@@ -3311,7 +3960,39 @@ class MainWindow(QMainWindow):
             )
         )
         self._customize_shortcuts_dialog = dialog
+        return dialog
+
+    # -- FQ-260812002827: the one settings home -------------------------------
+
+    def open_software_settings_dialog(self) -> SoftwareSettingsDialog:
+        """`Settings ▸ Software settings…` — the two-pane settings host.
+
+        **Single-instance and non-modal**, and the two are one decision. It is
+        non-modal (DEC-260812004359's shipped default) because the surfaces it
+        absorbed were non-modal, and because the keyboard-shortcuts pane wants to
+        stay up while the user tries a key. A non-modal window that can be opened
+        twice is two windows editing the same stores, so a second request raises
+        the first instead of building a rival — the same rule
+        `SnippetController` already applied to the dialog that is now its pane.
+
+        The handle is dropped when the dialog finishes, so the next call builds a
+        fresh one: every pane re-reads its store at construction, and a settings
+        window kept alive across a whole session would otherwise be the one place
+        showing yesterday's values.
+        """
+        dialog = self._software_settings_dialog
+        if dialog is not None:
+            dialog.raise_()
+            dialog.activateWindow()
+            return dialog
+        dialog = SoftwareSettingsDialog(self, self)
+        dialog.finished.connect(lambda _result: self._forget_software_settings())
+        self._software_settings_dialog = dialog
         dialog.show()
+        return dialog
+
+    def _forget_software_settings(self) -> None:
+        self._software_settings_dialog = None
 
     def _add_stub_action(self, menu, label):
         return add_stub_action(menu, label, self._not_implemented)
@@ -3367,7 +4048,7 @@ class MainWindow(QMainWindow):
         start_line = getattr(node, "sourceline", None)
         if start_line is None:
             self.statusBar().showMessage(
-                "This event handler has no source line to edit.", 5000
+                "This event handler has no source line to edit."
             )
             return
         dialog = CodeEditorDialog(
@@ -3400,9 +4081,7 @@ class MainWindow(QMainWindow):
             return
         page_start_line = getattr(node, "sourceline", None)
         if page_start_line is None:
-            self.statusBar().showMessage(
-                "This page has no source line to insert into.", 5000
-            )
+            self.statusBar().showMessage("This page has no source line to insert into.")
             return
         side = classify_event_side(tag)
         dialog = CodeEditorDialog(
@@ -3418,13 +4097,12 @@ class MainWindow(QMainWindow):
                 updated = insert_event_handler(current, page_start_line, tag, new_code)
             except ValueError:
                 self.statusBar().showMessage(
-                    f"Could not insert {tag}: page not found in the buffer.", 5000
+                    f"Could not insert {tag}: page not found in the buffer."
                 )
                 return
             self.center_stage.xml_editor.setPlainText(updated)
             self.statusBar().showMessage(
-                f"Added event handler {tag}. Reparse Raw XML to see it in the tree.",
-                5000,
+                f"Added event handler {tag}. Reparse Raw XML to see it in the tree."
             )
 
         dialog.saved.connect(_write_back)
@@ -3439,7 +4117,7 @@ class MainWindow(QMainWindow):
         snapshot = self.center_stage.xml_editor.toPlainText()
         if not snapshot.strip():
             self.statusBar().showMessage(
-                "Manage Captions: open a project (Raw XML is empty) first.", 5000
+                "Manage Captions: open a project (Raw XML is empty) first."
             )
             return False
         entries = caption_scan.scan_captions(snapshot)
@@ -3494,7 +4172,7 @@ class MainWindow(QMainWindow):
         changed_count = len(panel.changed_edits())
         self.center_stage.xml_editor.setPlainText(edited_text)
         panel.load_entries(caption_scan.scan_captions(edited_text), snapshot_text=edited_text)
-        self.statusBar().showMessage(f"Updated {changed_count} caption(s).", 5000)
+        self.statusBar().showMessage(f"Updated {changed_count} caption(s).")
 
     def _close_caption_mode(self):
         """Panel Close callback: leave caption mode and restore Raw XML.
@@ -3513,10 +4191,16 @@ class MainWindow(QMainWindow):
         self.center_stage.xml_editor.navigate_to_line(line)
 
     def _on_read_only_edit_attempted(self) -> None:
-        """Flash a non-modal hint when the user tries to edit the read-only
-        Raw XML editor while in Caption Mode."""
+        """Journal the reason the keystroke did nothing, when the user tries to
+        edit the read-only Raw XML editor while in Caption Mode.
+
+        Nothing flashes and nothing is transient: `showMessage` is the journal
+        write (FQ-028's sink — the bar paints nothing), so the reason lands as an
+        Activity Log row. Whether a keystroke-answering refusal like this one
+        ALSO deserves something at the caret is an open owner question, not a
+        gap to be filled here (BUG-055 / DEC-013)."""
         self.statusBar().showMessage(
-            "Raw XML is read-only in Caption Mode — close Caption Mode to edit.", 4000
+            "Raw XML is read-only in Caption Mode — close Caption Mode to edit."
         )
 
     def _build_settings_menu(self):
@@ -3529,36 +4213,55 @@ class MainWindow(QMainWindow):
         `_MAINTENANCE_ONLY_MENU_TITLES` exists beside `_MAINTENANCE_MENU_TITLES`
         instead of the filter growing a special case per entry.
 
-        **This is a HOST for settings commands, not a wrapper around one.** It
-        was built as a menu rather than as an entry appended to `Schema` (where
-        FQ-030's plan put `Edit Snippets…`) precisely because more than one
-        feature wants it: a snippet is a typing shortcut and a formatter
-        ruleset is a formatting preference, and neither is schema work. Adding
-        the next entry is one `addAction` line here — nothing about this method
-        is entangled with the snippet lane.
+        **It holds EXACTLY ONE entry, and that is the point (FQ-260812002827).**
+        It used to hold `Edit Snippets…` and `Autoformatter settings…` as
+        separate commands, and `View` held `Customize Toolbar…` and
+        `Customize Shortcuts…`. All four are **absorbed** into
+        `Software settings…`, a two-pane dialog whose left list names the
+        categories — the four surfaces are re-hosted, not reimplemented, and
+        their old menu entries are removed rather than kept as second doors.
+
+        The forcing constraint was the launcher: a launcher button is ONE menu
+        command (`launcher_dialog.LAUNCHER_GROUPS` is `(title, (command-ids…))`),
+        so "offer settings from the Maintenance column" is only expressible if
+        settings IS one command. Consolidating is what makes the button possible
+        and, incidentally, gives the app a single answer to "where do I configure
+        this?" instead of four scattered ones.
 
         **No shortcuts on anything in here** (DEC-006). Hiding a QMenu does not
         disable its children, so a shortcut on a maintenance-only command would
         still fire outside Maintenance mode and make nonsense of the placement.
         These are rare, deliberate gestures reached through the menu; if one
         ever genuinely needs a key, the enable-vs-hide question goes to the
-        owner rather than being settled here.
+        owner rather than being settled here. **This change adds no chord**: the
+        one command has a command form (this entry and a launcher button), so
+        under DEC-012 it gets exactly one keyboard host, its `QAction` — which
+        carries nothing.
 
-        **KNOWN AND ACCEPTED: these commands are PINNABLE.**
+        **KNOWN AND ACCEPTED: this command is PINNABLE.**
         `ToolbarController._walk_menu_actions` never tests `isVisible()`, so
-        `settings.edit-snippets` appears in Customize Toolbar's Available list
-        and a user who pins it can open the dialog outside Maintenance mode.
+        `settings.software-settings` appears in Customize Toolbar's Available
+        list and a user who pins it can open the dialog outside Maintenance mode.
         That is FQ-027 Q2's recorded trade (the toolbar is deliberately outside
         the mode filter's blast radius) and it is consistent with DEC-006 --
         hiding means "not in your way", never "prevented". It is also the very
-        reason the actions are built once and only toggled: an action that did
+        reason the action is built once and only toggled: an action that did
         not exist while unfiltered would drop out of the enumeration and take
         saved `toolbarIds` with it.
         """
         menu = self.menuBar().addMenu("Settings")
-        edit_snippets = menu.addAction("Edit Snippets…")
-        edit_snippets.triggered.connect(lambda: self._snippet_ui.open_editor())
-        self._edit_snippets_action = edit_snippets
+        #: Held so the mode filter and tests can reach the menu by name rather
+        #: than hunting it out of `menuBar().actions()`, matching `_file_menu`.
+        self._settings_menu = menu
+        # The label is IMPORTED, never re-typed here, so the menu row, the id the
+        # walk derives from it (`settings.software-settings`) and
+        # `launcher_dialog`'s Maintenance tuple cannot drift apart -- the
+        # arrangement `AUTOFORMAT_MENU_LABEL` established.
+        software_settings = menu.addAction(SOFTWARE_SETTINGS_MENU_LABEL)
+        software_settings.triggered.connect(
+            lambda: self.open_software_settings_dialog()
+        )
+        self._software_settings_action = software_settings
         # A window is always constructed unfiltered (`_workflow_mode` is None),
         # so hidden is the correct starting state and matches what a later
         # refresh computes for the same mode.
@@ -3624,6 +4327,17 @@ class MainWindow(QMainWindow):
             DDL_EXPLORER_TARGET: self._ddl_explorer_action,
             DDL_EXPLORER_SANDBOX: self._sandbox_ddl_explorer_action,
         }
+        # BUG-062's third affordance, which two comments already claimed existed
+        # before it did. Quality-scoped: the sandbox Explorer's reload lives on
+        # its own panel, because a menu entry cannot say WHICH role it means and
+        # a second checkable-looking entry beside the two above would read as a
+        # third Explorer. Carries NO shortcut -- `Ctrl+Shift+R` is hosted on the
+        # panel, and DEC-012 allows exactly one host, not two.
+        reload_ddl_action = menu.addAction(RELOAD_DDL_LABEL)
+        reload_ddl_action.triggered.connect(
+            lambda: self.reload_ddl_explorer(DDL_EXPLORER_TARGET)
+        )
+        self._reload_ddl_action = reload_ddl_action
         menu.addSeparator()
         # FQ-002: creating a routine is not scoped to a parent object, so it
         # earns a menu entry as well as the tree's context menu. Its trigger
@@ -3646,6 +4360,23 @@ class MainWindow(QMainWindow):
         self._sandbox_console_action.setVisible(False)
         self._sandbox_console_action.triggered.connect(
             lambda: self._open_sandbox_sql_console()
+        )
+        # §18.5 D4b (`FQ-260811020328`): the SECOND console, and the one the
+        # paragraph above says does not exist. It DOES now, by owner ruling --
+        # full read/write ad-hoc SQL against the quality (production) database,
+        # always available whenever a quality connection with a password exists,
+        # with no Maintenance-mode gate and no per-run confirmation beyond the
+        # object-change dialog. What carries the safety instead is the explicit
+        # **Commit** gesture (`DEC-260811023646`): a Run changes nothing durable.
+        #
+        # Created HIDDEN and shown by `_refresh_quality_console_affordances`,
+        # following §26's absent-not-disabled rule and the SAME predicate the
+        # `Apply to quality` leg uses (`_target_apply_available`). It carries no
+        # shortcut, exactly like the sandbox entry.
+        self._quality_console_action = menu.addAction("Quality SQL Console…")
+        self._quality_console_action.setVisible(False)
+        self._quality_console_action.triggered.connect(
+            lambda: self._open_quality_sql_console()
         )
         # `Open Sandbox Session` / `Close Sandbox Session` are GONE (BUG-040).
         # The session now comes up with the project, so `Open` had no state left
@@ -3683,17 +4414,26 @@ class MainWindow(QMainWindow):
         # `file.save` way -- `resolve_ids` drops what no longer resolves -- and
         # gets NO `RENAMED_ID_ALIASES` row, because this is a deletion, not a
         # move. Nothing became unreachable: the picker only ever delegated.
-        menu.addSeparator()
+        #
+        # NO `addSeparator()` here any more (BUG-058). It used to divide the
+        # sandbox group above from `Sandbox Setup…`/`Project Status…` below;
+        # both of those are gone (deleted 2026-08-09 and moved to File
+        # respectively), so keeping it would end the Database menu on a dangling
+        # rule with nothing under it.
         # `Sandbox Setup…` stood here until 2026-08-09. §18.5 D2/D2a's three
         # provisioning gestures moved into Project Settings' sandbox group
         # (File ▸ Project Settings…), which already owned the sandbox connection
         # and the recorded mode; the entry was deleted rather than hidden so no
         # pinned toolbar button can outlive it.
 
-        # §18.8: opening the window is itself a probe trigger, not a passive
-        # read of a cached result -- see _open_project_status.
-        project_status_action = menu.addAction("Project Status…")
-        project_status_action.triggered.connect(lambda: self._open_project_status())
+        # `Project Status…` stood here until BUG-058 and MOVED to the File menu,
+        # directly under `Project Settings…` (owner ruling: "Project status
+        # should be in File, just below Project settings"). It is a project-wide
+        # health screen, not a per-connection Database gesture, so it now sits
+        # with §18.2's project group. The move changes its menu-path id, so
+        # `toolbar_registry.RENAMED_ID_ALIASES` carries a row and a pinned
+        # button survives it.
+
         # Every sandbox-dependent entry above was created hidden; this is the
         # one place that decides which of them the current state earns.
         self._refresh_sandbox_affordances()
@@ -3708,13 +4448,12 @@ class MainWindow(QMainWindow):
         used to always open Connection Setup on a missing host."""
         if self._ddl_project_folder is not None:
             self.statusBar().showMessage(
-                "No database connection configured — set one up in Project Settings.",
-                5000,
+                "No database connection configured — set one up in Project Settings."
             )
             self._ddl_project_ui.open_settings()
             return
         self.statusBar().showMessage(
-            "No database connection configured — set one up first.", 5000
+            "No database connection configured — set one up first."
         )
         self._open_connection_setup()
 
@@ -3728,8 +4467,7 @@ class MainWindow(QMainWindow):
         # directly on a missing connection, so guard here too.
         if self._ddl_project_folder is not None:
             self.statusBar().showMessage(
-                "Connection is defined in Project Settings while a project is open.",
-                5000,
+                "Connection is defined in Project Settings while a project is open."
             )
             return
         tree = (
@@ -3799,7 +4537,7 @@ class MainWindow(QMainWindow):
             save_settings(folder, updated)
             self._ddl_project_settings = updated
             self.statusBar().showMessage(
-                f"Created and provisioned sandbox database: {database}", 5000
+                f"Created and provisioned sandbox database: {database}"
             )
         # Re-probe either way: the stored tier/capability status must describe the
         # sandbox that now exists (or the one that does not), never the intent.
@@ -3841,8 +4579,7 @@ class MainWindow(QMainWindow):
         self._store_project_target(imported)
         self.statusBar().showMessage(
             f"Imported the .pgtp's connection into the project target: "
-            f"{imported.user}@{imported.host}:{imported.port}/{imported.database}",
-            5000,
+            f"{imported.user}@{imported.host}:{imported.port}/{imported.database}"
         )
 
     # -- DDL Explorer (spec §18.1) --------------------------------------------
@@ -3853,11 +4590,154 @@ class MainWindow(QMainWindow):
         `CoherenceController.fetch_schema`)."""
         return fetch_routines_and_triggers(params)
 
+    # -- the dual-mode DDL verdict (FQ-260812022749 part 1) --------------------
+
+    def postgres_bin_dir(self) -> str:
+        """The open project's *Locate postgres binaries* folder, or `""`
+        meaning **PATH only** -- today's behaviour exactly
+        (FQ-260812025353).
+
+        The ONE reader of `ProjectSettings.postgres_bin_dir` in this window, so
+        every `db/sandbox.py` call site that takes a `bin_dir` gets the same
+        answer and none of them re-derives it. Projectless has no project
+        settings and therefore no folder, which is not a degradation: PATH is
+        what the setting overrides, not what it replaces.
+        """
+        settings = self._ddl_project_settings
+        return (settings.postgres_bin_dir if settings is not None else "") or ""
+
+    def _ddl_mode_cache_key(self, params):
+        """What makes a cached `DdlModeVerdict` still THIS connection's answer.
+
+        The connection's identity plus the binaries folder: pointing the project
+        at a different `pg_dump` changes the verdict without changing the
+        server, and a verdict cached across that swap would name a binary the
+        app no longer uses."""
+        return (
+            params.user,
+            params.host,
+            params.port,
+            params.database,
+            self.postgres_bin_dir(),
+        )
+
+    def _probe_ddl_mode(self, params):
+        """The verdict for `params`, freshly probed -- **worker thread only.**
+
+        Opens a connection (`probe`, for the server version) and spawns
+        `pg_dump --version` (`probe_ddl_mode`), which is exactly why `probe()`
+        deliberately does not spawn and this is the one place that does.
+        Returns `(capabilities, verdict)`; the CALLER caches, on the GUI thread,
+        so this method holds no state and can never race the window.
+
+        Never raises in production -- both seams have never-raises contracts --
+        but the caller still guards, because an injected seam is not bound by
+        them and a version notice must not be able to fail a DDL open.
+        """
+        bin_dir = self.postgres_bin_dir() or None
+        caps = self.probe_quality_capabilities(params, bin_dir=bin_dir)
+        return caps, self.ddl_mode_prober(caps, bin_dir=bin_dir)
+
+    def _report_ddl_mode(self, verdict) -> None:
+        """The `[DDL]` row, on **every** DDL open (owner ruling: *"this way the
+        choice is clear"*).
+
+        Read from the cache, never re-probed: the sentence repeats, the
+        subprocess does not. `[DDL]` is routed to the Messages tab by
+        `ui/audit_router.py`, whose `DDL_PREFIX` is the prefix's one home --
+        `db/pg_dump_mode.py` builds the sentence and stays Qt-free.
+
+        The quality-vs-sandbox major comparison rides with it whenever both
+        probes are in hand: the owner's principle is that the two databases MUST
+        be the same version, and until `server_major_divergence` existed nothing
+        in the app checked it.
+        """
+        if verdict is None:
+            return
+        self.audit_panel.addItem(QListWidgetItem(f"{DDL_PREFIX} {verdict.message}"))
+        divergence = self._server_version_divergence(verdict)
+        if divergence:
+            self.audit_panel.addItem(QListWidgetItem(f"{DDL_PREFIX} {divergence}"))
+
+    def _report_ddl_degrade(self, reason: str) -> None:
+        """A SECOND `[DDL]` row, beside the mode row, when full mode was chosen
+        and could not be delivered.
+
+        Deliberately additive rather than a replacement: the mode row is an
+        owner ruling on every open, and *"full mode was chosen but you are
+        looking at reconstructed DDL"* is extra information, not a correction of
+        it. Both appear, in that order.
+
+        The two shapes that reach here are a refused/timed-out `pg_dump` and a
+        dump the parser could not attribute to every relation the introspection
+        found -- the latter also catching introspection-vs-dump skew, since the
+        two are separate connections at separate instants.
+        """
+        self.audit_panel.addItem(QListWidgetItem(f"{DDL_PREFIX} {reason}"))
+
+    def _server_version_divergence(self, verdict):
+        """`server_major_divergence`'s sentence, or None when it cannot be
+        asked (no sandbox probe yet) or the two majors agree.
+
+        The sandbox half comes from whichever probe has already run -- the
+        session controller's cached capabilities first, the §18 tier probe's
+        second -- and never from a probe started here: this runs on the GUI
+        thread, and a version notice may not open a connection.
+        """
+        caps = self.sandbox_controller.capabilities
+        if caps is None:
+            status = self._ddl_project_ui.capability_status
+            caps = getattr(status, "capabilities", None)
+        if caps is None:
+            return None
+        return server_major_divergence(
+            verdict.server_version, getattr(caps, "server_version", ())
+        )
+
     def _on_ddl_explorer_toggled(self, checked, role=DDL_EXPLORER_TARGET):
+        """The Database-menu toggle for `role`, and ONLY when a user moved it.
+
+        BUG-260812071208: `_on_ddl_explorer_visibility_changed` keeps the menu
+        entry in lockstep with the tab (BUG-007, §18.1 "Bidirectional
+        lockstep"), and from an UNCHECKED action its `setChecked(True)` emits
+        `toggled` right back here -- which re-entered `_open_ddl_explorer` and
+        ran a second seven-statement introspection round trip per open. That
+        echo is what `_ddl_explorer_syncing` marks; the lockstep stays.
+
+        A menu click never took this path: `QAction::activate` sets `checked`
+        BEFORE emitting `toggled`, so the later `setChecked(True)` was already a
+        silent no-op. The gestures that doubled were the ones that opened from
+        the unchecked state -- `Database ▸ Reload DDL` with the Explorer closed,
+        and a close during an in-flight fetch.
+        """
+        if role in self._ddl_explorer_syncing:
+            return
         if checked:
             self._open_ddl_explorer(role)
         else:
             self.center_stage.hide_ddl_explorer(role)
+
+    def reload_ddl_explorer(self, role=DDL_EXPLORER_TARGET) -> None:
+        """BUG-062: re-introspect `role`'s DDL Explorer.
+
+        Deliberately the same full fetch `_open_ddl_explorer` runs for the
+        Database-menu toggle, NOT a redraw from the cached `_ddl_schema_index`:
+        serving it from the cache would answer the gesture with exactly the data
+        the gesture exists to replace.
+
+        Nothing of the user's is at risk, which is why there is no dirty prompt.
+        Reload replaces the read-only synthesized buffer, the tree, the drift
+        markers and the completion index; editable DDL object tabs keep their
+        documents and their modified flags, since only `set_schema_index` is
+        re-pushed. A completion popup is a transient child of the editor and is
+        not reopened by an index swap -- the next `Ctrl+Space` simply queries the
+        new index.
+
+        Reached three ways per role, all landing here: the panel's
+        `Ctrl+Shift+R`, its context item, and `Database ▸ Reload DDL`. The
+        panels never touch a database themselves (§18.5 D1, the BUG-045
+        lesson) -- they emit, and this is the only consumer."""
+        self._open_ddl_explorer(role)
 
     def _ddl_explorer_label(self, role) -> str:
         """What the user-facing messages call `role`'s Explorer -- the same words
@@ -3922,8 +4802,7 @@ class MainWindow(QMainWindow):
                 # modal, which configures the TARGET and would be the wrong door.
                 self.statusBar().showMessage(
                     "No sandbox configured for this project — set one up in "
-                    "Project Settings.",
-                    5000,
+                    "Project Settings."
                 )
                 return
             self._prompt_missing_connection()
@@ -3934,11 +4813,154 @@ class MainWindow(QMainWindow):
             role,
             debuglog.redacted(params),
         )
+        # BUG-260812110307: taken on the GUI thread, after the params guard (a
+        # refused open started no fetch, so it must not supersede a live one)
+        # and before the task is handed off. Every open bumps too, so two rapid
+        # reloads can no longer paint out of order -- last requested wins.
+        epoch = self._bump_ddl_fetch_epoch(role)
 
-        def on_result(schema):
-            text, spans = build_ddl_text(schema)
+        # FQ-260812022749: the quality DDL mode is probed at most ONCE per
+        # quality connection, on this worker thread, and REPORTED on every
+        # open. A cache hit does no I/O at all; a miss carries its
+        # `(capabilities, verdict)` back to `on_result`, which is where the
+        # cache is written -- the worker never touches window state.
+        probe_mode = role == DDL_EXPLORER_TARGET and self._ddl_mode_verdict_key != (
+            self._ddl_mode_cache_key(params)
+        )
+        #: Read on the GUI thread and captured, because the worker never touches
+        #: window state (see above). A freshly probed verdict supersedes it
+        #: inside `work`, so the dump decision and the dump itself are taken
+        #: together against ONE verdict rather than two reads that could differ.
+        cached_verdict = self._ddl_mode_verdict
+
+        def work():
+            schema = self._fetch_ddl_schema(params)
+            probed = None
+            if probe_mode:
+                try:
+                    probed = self._probe_ddl_mode(params)
+                except Exception as exc:  # noqa: BLE001 -- a notice never fails an open
+                    _log.info("db: ddl mode probe failed %s", exc)
+            # §18.5/FQ-260812022749: FULL mode's buffer is a `pg_dump
+            # --schema-only`, taken HERE -- on the worker, in the same fetch as
+            # the introspection, exactly ONCE per Explorer build. A refusal or a
+            # timeout must never fail the open, so it degrades to RESTRICTED
+            # with a named row instead (`degrade_reason`, a SECOND `[DDL]` row
+            # beside the mode row -- the mode is reported on every open by owner
+            # ruling, and a degrade is additional information, not a
+            # replacement).
+            #
+            # RESTRICTED never spawns: no verdict, or a restricted one, means no
+            # `pg_dump` invocation at all.
+            #
+            # The verdict is the QUALITY server's even for the sandbox role, by
+            # the owner's ruling that the two databases must be the same version
+            # and the sandbox gets the same treatment. The DUMP, however, is
+            # taken from `params` -- this role's own connection -- so the
+            # sandbox buffer is never the quality database's text. A genuine
+            # major divergence is already reported by `server_major_divergence`.
+            verdict = probed[1] if probed is not None else cached_verdict
+            dump_text = None
+            dump_error = None
+            if verdict is not None and verdict.full and verdict.pg_dump_path:
+                try:
+                    dump_text = fetch_schema_dump(params, verdict.pg_dump_path)
+                except SchemaDumpError as exc:
+                    dump_error = str(exc)
+                except Exception as exc:  # noqa: BLE001 -- never fails an open
+                    _log.info("db: schema dump failed %s", exc)
+                    dump_error = str(exc)
+            return schema, probed, dump_text, dump_error, verdict
+
+        def on_result(outcome):
+            schema, probed, dump_text, dump_error, verdict = outcome
+            # BUG-260812110307: a close that arrived while this fetch was out
+            # WINS. `run_async` has no cancellation -- the task sits in
+            # `_INFLIGHT` until it delivers, the same fact
+            # `tests/ui/test_sandbox_controller.py::test_a_result_landing_after
+            # _the_window_is_gone_is_dropped_not_raised` records for a vanished
+            # window. This is that principle applied to a SURFACE: the result
+            # still lands, it just performs no visible act.
+            #
+            # An epoch, deliberately NOT `center_stage.isTabVisible(...)`: on a
+            # NORMAL open the tab is still hidden right here, because
+            # `show_ddl_explorer` below is what reveals it, so a visibility gate
+            # would suppress the very reveal it exists to perform. Visibility
+            # also cannot tell "the user closed it" apart from the Maintenance
+            # prune or the sandbox-unavailable hide.
+            stale = self._ddl_fetch_epoch.get(role) != epoch
+            if probed is not None:
+                # KEPT even when stale: these are CONNECTION-scoped facts, keyed
+                # on `_ddl_mode_cache_key(params)`, which a closed tab cannot
+                # falsify. Dropping them would re-open a probe connection and
+                # re-spawn `pg_dump --version` on the next open for an answer
+                # already in hand.
+                self._quality_capabilities, self._ddl_mode_verdict = probed
+                self._ddl_mode_verdict_key = self._ddl_mode_cache_key(params)
+            if role == DDL_EXPLORER_TARGET:
+                # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
+                # index from this same fetch (now widened to also carry
+                # `.tables`) and push it into every already-open DDL object tab,
+                # exactly like the tree and the read-only buffer are refreshed
+                # below -- built once per connect/refresh, never per keystroke.
+                #
+                # TARGET ONLY, for the same reason the drift markers are: an
+                # open object tab's completions (and FQ-002's trigger-function
+                # candidate list) describe the lane the edit will be applied to,
+                # and a sandbox browse must not silently repoint them at a
+                # different database's object set.
+                #
+                # KEPT even when stale, and this is the emphatic one: §18.5
+                # object-editor tabs are INDEPENDENT surfaces with their own
+                # lifetime. A user who closed the browser still has editable
+                # object tabs open, and their completions must describe the
+                # freshest introspection. Do not "simplify" the block below into
+                # a blanket early return that skips this -- that silently breaks
+                # §18.6 completions in tabs nobody closed.
+                self._ddl_schema_index = SchemaIndex(schema)
+                # Kept alongside the index because FQ-002's creation dialogs need
+                # the raw schema (the trigger-function candidate list), and the
+                # index exposes only its own query surface.
+                self._ddl_schema = schema
+                for panel in self.center_stage.ddl_object_panels():
+                    panel.set_schema_index(self._ddl_schema_index)
+            if stale:
+                # Everything below here is a VISIBLE act -- the `[DDL]` rows, the
+                # buffer install, the tree population and its drift markers, the
+                # reveal (which drags the left tree tab and the menu checkmark
+                # with it through `_on_ddl_explorer_visibility_changed`) and the
+                # object counts. None of them is performed for a surface the
+                # user closed, and none of them is lost either: reopening runs
+                # this same full fetch, so the round trip costs exactly what it
+                # costs today.
+                #
+                # Suppressing the `[DDL]` mode row NARROWS the owner's "report it
+                # on every DDL open" ruling to "every open that REVEALS a panel".
+                # That is a reading of the ruling, not a reversal: a discarded
+                # fetch was not an open, so BUG-260812071208's invariant (one
+                # open, one fetch, one row) is preserved exactly, and the next
+                # real open still emits it -- from the cache kept above, with no
+                # probe.
+                self.statusBar().showMessage(
+                    f"{label}: closed while loading — the fetch was discarded."
+                )
+                _log.info(
+                    "db: ddl explorer load finished role=%s stale=True", role
+                )
+                return
+            if role == DDL_EXPLORER_TARGET:
+                self._report_ddl_mode(self._ddl_mode_verdict)
+            buffer = build_ddl_buffer(
+                schema,
+                mode=verdict.mode if verdict is not None else DdlMode.RESTRICTED,
+                dump_text=dump_text,
+            )
+            if dump_error:
+                self._report_ddl_degrade(dump_error)
+            elif buffer.degrade_reason:
+                self._report_ddl_degrade(buffer.degrade_reason)
             self.center_stage.ddl_explorer_panel(role).set_ddl_text(
-                text, spans, schema=schema
+                buffer.text, buffer.spans, schema=schema
             )
             # */! drift markers (§18.2): recomputed fresh on every fetch, never
             # cached -- None (no markers) when no project is open, matching the
@@ -3962,33 +4984,20 @@ class MainWindow(QMainWindow):
                 and self._ddl_project_folder is not None
                 else None
             )
+            # The SAME span list the buffer just rendered, deliberately -- the
+            # tree and the buffer must never disagree about where an object is,
+            # and in full mode the spans come from the dump's statement
+            # boundaries rather than from the synthesizer.
             self._ddl_browser_panels[role].set_schema(
-                schema, spans, drift_markers=drift_markers
+                schema, buffer.spans, drift_markers=drift_markers
             )
             self.center_stage.show_ddl_explorer(role)
-            if role == DDL_EXPLORER_TARGET:
-                # Schema-aware Ctrl+Space completion (§18.6): rebuild the lookup
-                # index from this same fetch (now widened to also carry
-                # `.tables`) and push it into every already-open DDL object tab,
-                # exactly like the tree and the read-only buffer are refreshed
-                # above -- built once per connect/refresh, never per keystroke.
-                #
-                # TARGET ONLY, for the same reason the markers are: an open
-                # object tab's completions (and FQ-002's trigger-function
-                # candidate list) describe the lane the edit will be applied to,
-                # and a sandbox browse must not silently repoint them at a
-                # different database's object set.
-                self._ddl_schema_index = SchemaIndex(schema)
-                # Kept alongside the index because FQ-002's creation dialogs need
-                # the raw schema (the trigger-function candidate list), and the
-                # index exposes only its own query surface.
-                self._ddl_schema = schema
-                for panel in self.center_stage.ddl_object_panels():
-                    panel.set_schema_index(self._ddl_schema_index)
+            # The §18.6 completion index was already rebuilt and pushed above,
+            # BEFORE the stale return, because open object tabs are independent
+            # of this surface.
             self.statusBar().showMessage(
                 f"{label}: {len(schema.routines)} routine(s), "
-                f"{len(schema.triggers)} trigger(s).",
-                5000,
+                f"{len(schema.triggers)} trigger(s)."
             )
             _log.info("db: ddl explorer load finished role=%s", role)
 
@@ -3998,16 +5007,29 @@ class MainWindow(QMainWindow):
             # down) is REPORTED and the toggle springs back, so the menu entry
             # never lands the user on an empty tree that looks like an empty
             # database.
+            #
+            # DELIBERATELY UNGUARDED by the epoch (BUG-260812110307): this path
+            # reveals nothing, so it cannot resurrect anything -- it writes a
+            # status line and un-checks an action that is already unchecked. A
+            # failed fetch is worth reporting even for a panel the user closed
+            # meanwhile. Do not "complete" the fix by silencing it.
             _log.info("db: ddl explorer load failed role=%s %s", role, exc)
-            self.statusBar().showMessage(f"{label} failed: {exc}", 8000)
+            self.statusBar().showMessage(f"{label} failed: {exc}")
             if action is not None:
                 action.setChecked(False)
 
-        self._run_async(
-            lambda: self._fetch_ddl_schema(params),
-            on_result=on_result,
-            on_error=on_error,
-        )
+        self._run_async(work, on_result=on_result, on_error=on_error)
+
+    def _bump_ddl_fetch_epoch(self, role) -> int:
+        """Supersede whatever fetch `role` has in flight, and return the new
+        epoch (BUG-260812110307).
+
+        Called from every OPEN (so the last-requested result is the one that
+        paints) and from every CLOSE — a close during a load wins.
+        """
+        epoch = self._ddl_fetch_epoch.get(role, 0) + 1
+        self._ddl_fetch_epoch[role] = epoch
+        return epoch
 
     def _on_ddl_explorer_visibility_changed(self, role, visible):
         """Keep `role`'s left tree tab and its Database-menu toggle in lockstep
@@ -4018,13 +5040,37 @@ class MainWindow(QMainWindow):
         independent, so this runs once per role and never touches the other's
         tab.
         """
-        self.left_tabs.setTabVisible(self._ddl_browser_tab_indexes[role], visible)
         if visible:
-            self.tree_dock.setVisible(True)
-            self.left_tabs.setCurrentWidget(self._ddl_browser_panels[role])
+            # `_reveal_left_panel` is the one primitive that owns
+            # "open the pane, then show this child in it"
+            # (BUG-260812023420) -- including un-hiding `tree_dock`, which this
+            # site used to do for itself.
+            self._reveal_left_panel(self._ddl_browser_panels[role])
+        else:
+            # BUG-260812110307: the funnel EVERY close gesture already goes
+            # through -- the tab's ✕, the menu toggle off, the Maintenance prune
+            # of a visible tab, the sandbox-unavailable hide. Superseding here
+            # is what makes "a close during a load wins" true for all of them at
+            # once. It is not enough on its own: a fetch launched from the
+            # unchecked state never reaches this branch, which is why
+            # `_refresh_ddl_explorer_affordances` and the Maintenance prune bump
+            # unconditionally too.
+            self._bump_ddl_fetch_epoch(role)
+            self.left_tabs.setTabVisible(self._ddl_browser_tab_indexes[role], False)
         action = self._ddl_explorer_actions.get(role)
         if action is not None:
-            action.setChecked(visible)
+            # BUG-260812071208: mark this `setChecked` as the handler's own menu
+            # echo so `_on_ddl_explorer_toggled` does not read it as a user
+            # gesture and open (i.e. re-fetch) again. Deliberately NOT
+            # `QSignalBlocker`/`blockSignals`: those also suppress `changed()`,
+            # and the Main Toolbar pins this very same `QAction`
+            # (`toolbar_controller.py`), so a pinned button would keep a stale
+            # checked look until something else re-emitted it.
+            self._ddl_explorer_syncing.add(role)
+            try:
+                action.setChecked(visible)
+            finally:
+                self._ddl_explorer_syncing.discard(role)
 
     def _refresh_ddl_explorer_affordances(self) -> None:
         """Make the sandbox Explorer's presence follow whether the open project
@@ -4049,6 +5095,15 @@ class MainWindow(QMainWindow):
         action = self._ddl_explorer_actions.get(DDL_EXPLORER_SANDBOX)
         if action is not None:
             action.setVisible(available)
+        if not available:
+            # BUG-260812110307, and UNCONDITIONALLY -- before, and independently
+            # of, the visibility-gated hide below. The hide only fires for a tab
+            # that is already visible, so a sandbox fetch launched from the
+            # unchecked state (`Reload DDL` with the Explorer closed, or a bare
+            # open) never reaches `_on_ddl_explorer_visibility_changed`'s funnel:
+            # without this line the previous project's sandbox schema would
+            # reveal itself after the project switch that took the sandbox away.
+            self._bump_ddl_fetch_epoch(DDL_EXPLORER_SANDBOX)
         if not available and self.center_stage.isTabVisible(
             self.center_stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)
         ):
@@ -4089,8 +5144,23 @@ class MainWindow(QMainWindow):
 
         Creation (FQ-002) does NOT come through here -- it calls
         `_edit_ddl_live` directly, see `_open_created_ddl_object`.
+
+        **A project open is not enough: the KIND must be checkout-eligible**
+        (`DdlObjectRef.is_checkout_eligible` / `ddl_object_editor
+        .CHECKOUT_KINDS`, FQ-260812025836). A view is edit-and-apply only, and
+        routing one into the checkout branch would write
+        `ddl/pr.orders_v.sql` -- the exact path a same-named *function*
+        (`pr.orders_v()`, legal and common) claims -- and register it as
+        deployed. §18.2's identity-recovery header regex matches
+        `FUNCTION|PROCEDURE` only, so that file could never be read back as a
+        view either. The `getattr` default is **True** on purpose: anything
+        that does not carry the property keeps today's behaviour exactly.
         """
-        if self._ddl_project_folder is not None and self._ddl_project_settings is not None:
+        if (
+            self._ddl_project_folder is not None
+            and self._ddl_project_settings is not None
+            and getattr(ref, "is_checkout_eligible", True)
+        ):
             self._edit_ddl_checked_out(ref, source)
             return
         self._edit_ddl_live(ref, source)
@@ -4315,7 +5385,7 @@ class MainWindow(QMainWindow):
             quality=quality,
             sandbox_schema_present=schema_fact,
             sandbox_data_present=data_fact,
-            dark=not self._light_theme_action.isChecked(),
+            dark=not self._is_light_theme(),
         )
 
     def _inspect_sandbox_provisioning(self, params):
@@ -4454,7 +5524,8 @@ class MainWindow(QMainWindow):
         return connection_summary(params)
 
     def _open_project_status(self) -> None:
-        """Database ▸ Project Status… (§18.8).
+        """File ▸ Project Status… (§18.8) -- it sat on the Database menu until
+        BUG-058 moved it under `Project Settings…`.
 
         Opening the window is itself a probe trigger, not a passive read of a
         cached result -- a sandbox that died since the project was opened must
@@ -4533,9 +5604,16 @@ class MainWindow(QMainWindow):
         )
 
     def _on_ddl_add_trigger_requested(self, table_info) -> None:
-        """Right-click ▸ Add Trigger… on a table node (FQ-002)."""
+        """Right-click ▸ Add Trigger… on a table or view node (FQ-002).
+
+        The relation KIND travels with the name (DEC-260811025733): the dialog
+        offers `BEFORE`/`AFTER` for a table and `INSTEAD OF` for a view, and the
+        tree does not emit this at all for a materialized view."""
         dialog = NewTriggerDialog(
-            table_info.name, self._trigger_function_candidates(), parent=self
+            table_info.name,
+            self._trigger_function_candidates(),
+            parent=self,
+            kind=getattr(table_info, "kind", "table"),
         )
         dialog.accepted.connect(lambda: self._open_created_ddl_object(dialog))
         dialog.show()
@@ -4753,8 +5831,11 @@ class MainWindow(QMainWindow):
 
     def _on_ddl_alter_column_requested(self, operation, table_info, column) -> None:
         """Right-click ▸ Alter Table ▸ … on a table node or a column leaf
-        (FQ-025) -- all twelve operations, columns and constraints alike, arrive
-        here on the one signal and differ only in which dialog is built.
+        (FQ-025) -- every operation in `ALTER_TABLE_ALL_ACTIONS`, columns and
+        constraints alike, arrives here on the one signal and differs only in
+        which dialog is built. Deliberately not stated as a count: the set grows
+        per slice, and the three copies of "twelve" that outlived FQ-025 cost a
+        manual pass to find.
 
         Shown NON-MODALLY and read back on `accepted`, exactly as FQ-002's
         creation dialogs are (§30's no-un-patched-modal rule): the window stays
@@ -4983,6 +6064,152 @@ class MainWindow(QMainWindow):
         panel.format_refused.connect(self._report_ddl_format_refusal)
         self._wire_ddl_object_panel_reporting(panel, ref)
 
+    def _ddl_checked_out_paths(self, ref):
+        """`(relpath, ddl_path)` for `ref`, or `(None, None)` when there is no
+        project to hold a working copy.
+
+        The single resolver both `Discard local change` and its visibility
+        predicate go through, so the entry can never be offered for one path and
+        act on another -- `_ddl_checkout_relpath` is the authority on WHICH
+        `ddl/*.sql` an overloaded routine owns, and asking it twice in two
+        places is how a discard would end up deleting a sibling overload's
+        file."""
+        if self._ddl_project_folder is None or self._ddl_project_settings is None:
+            return None, None
+        schema = getattr(self.ddl_browser_panel, "_schema", None)
+        relpath = self._ddl_checkout_relpath(ref, schema)
+        if not relpath:
+            return None, None
+        return relpath, (self._ddl_project_folder / relpath).resolve()
+
+    def _ddl_object_is_checked_out(self, ref) -> bool:
+        """`BrowserPanel`'s checked-out predicate (BUG-260810193333).
+
+        Checked out means the WORKING FILE exists -- that write is what §18.2
+        defines the checkout as (`_edit_ddl_checked_out`), and it is the thing
+        `Discard local change` deletes. Deliberately NOT keyed on the
+        `deployed` manifest entry: `_register_created_object` puts an entry
+        there for a brand-new object too, and a `deployed` row with no file is
+        exactly the half-state that must still be droppable rather than
+        invisible."""
+        _relpath, ddl_path = self._ddl_checked_out_paths(ref)
+        if ddl_path is None:
+            return False
+        try:
+            return ddl_path.is_file()
+        except OSError:
+            return False
+
+    def _on_ddl_discard_local_requested(self, ref) -> None:
+        """Right-click ▸ Discard local change (BUG-260810193333): drop THIS
+        object's checkout and return it to not-checked-out.
+
+        Four things belong to a checkout, and all four go together -- a
+        half-dropped link is worse than none (BUG-260810173246): the open
+        editable tab, the `ddl/<relpath>.sql` working file, the
+        `ProjectSettings.deployed[relpath]` last-deployed reference that drives
+        the `*`/`!` markers, and the tree's unsaved-edit overlay.
+
+        Three things it deliberately does NOT do:
+
+        * **It never touches the database.** Unlike `Apply to quality` this is
+          purely local; the live object is exactly as it was.
+        * **It does not prompt to save.** The tab may well be dirty -- throwing
+          those edits away is the entire gesture, so the confirmation below IS
+          the save/discard prompt, and routing through
+          `_on_ddl_object_close_requested` would offer to Save the very file
+          about to be deleted.
+        * **It touches only this object's `relpath`.** Overloads share a
+          `ddl/*.sql` directory and differ only by disambiguation, so the path
+          comes from the one resolver (`_ddl_checked_out_paths`) and nothing
+          wider is ever globbed.
+        """
+        relpath, ddl_path = self._ddl_checked_out_paths(ref)
+        if relpath is None:
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] {DISCARD_LOCAL_LABEL}: no project is open, so "
+                    f"{ref.qualified} has no local working copy to discard."
+                )
+            )
+            return
+        had_file = ddl_path.is_file()
+        settings = self._ddl_project_settings
+        had_entry = settings is not None and relpath in settings.deployed
+        if not had_file and not had_entry:
+            # Reported, never raised: the entry is predicate-gated, but the file
+            # can vanish between the right-click and the click.
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] {DISCARD_LOCAL_LABEL}: {ref.qualified} is not "
+                    "checked out; nothing was discarded."
+                )
+            )
+            return
+        if not self._confirm_discard_local_change(ref, relpath):
+            self.audit_panel.addItem(
+                QListWidgetItem(
+                    f"[Project] {DISCARD_LOCAL_LABEL} of {ref.qualified} "
+                    "cancelled; the local working copy was kept."
+                )
+            )
+            return
+        # Tab first: it holds the buffer, and closing it after the file is gone
+        # would leave a tab whose save destination does not exist.
+        if self.center_stage.ddl_object_tab(ref.key) is not None:
+            self.center_stage.close_ddl_object_tab(ref.key)
+        if had_file:
+            try:
+                ddl_path.unlink()
+            except OSError as exc:
+                self.audit_panel.addItem(
+                    QListWidgetItem(
+                        f"[Project] {DISCARD_LOCAL_LABEL} of {ref.qualified} "
+                        f"failed: could not delete {ddl_path} ({exc}). The "
+                        "last-deployed reference was left in place."
+                    )
+                )
+                self._refresh_ddl_drift_markers()
+                return
+        if had_entry:
+            settings.deployed.pop(relpath, None)
+            save_settings(self._ddl_project_folder, settings)
+        self.ddl_browser_panel.set_object_dirty(ref, False)
+        self._refresh_ddl_drift_markers()
+        self.audit_panel.addItem(
+            QListWidgetItem(
+                f"[Project] discarded the local change to {ref.qualified}: "
+                f"{relpath} was deleted and the object is no longer checked "
+                "out. The database was not touched."
+            )
+        )
+
+    def _confirm_discard_local_change(self, ref, relpath) -> bool:
+        """The destructive-gesture confirmation for `Discard local change`.
+
+        Reuses the app's one confirmation idiom -- a Yes/No
+        `modals.QMessageBox.question`, the same seam `_confirm_apply` and
+        `_confirm_destructive_sandbox_operation` use, monkeypatchable in tests
+        so no modal is ever reached -- rather than a fourth mechanism. It NAMES
+        the file, because the destroyed thing is that file, and says the
+        database is untouched, because "discard" next to a row of deploy
+        gestures could otherwise read as a revert of the live object."""
+        return (
+            modals.QMessageBox.question(
+                self,
+                DISCARD_LOCAL_LABEL,
+                f"Delete the local working copy of {ref.qualified}?\n\n"
+                f"{relpath} and its last-deployed reference will be removed, "
+                "any unsaved edits in its open tab are thrown away, and the "
+                "object goes back to not-checked-out.\n\n"
+                "The database is NOT touched: the live object stays exactly as "
+                "it is.",
+                modals.QMessageBox.StandardButton.Yes
+                | modals.QMessageBox.StandardButton.No,
+            )
+            == modals.QMessageBox.StandardButton.Yes
+        )
+
     def _register_checked_out_object(self, relpath, live_source) -> None:
         """Give a freshly checked-out object its last-deployed reference
         (BUG-033, the cause behind the inert `*`).
@@ -5062,7 +6289,7 @@ class MainWindow(QMainWindow):
         # already-clean document, so the overlay is dropped explicitly.
         self.ddl_browser_panel.set_object_dirty(panel.ref, False)
         self._refresh_ddl_drift_markers()
-        self.statusBar().showMessage(f"Saved {path}", 5000)
+        self.statusBar().showMessage(f"Saved {path}")
         return True
 
     def _wire_ddl_object_dirty(self, panel, ref) -> None:
@@ -5175,6 +6402,31 @@ class MainWindow(QMainWindow):
         self.audit_panel.addItem(
             QListWidgetItem(f"{_SQL_REFUSAL_PREFIX}{reason}")
         )
+
+    def _report_xml_format_refusal(self, issues) -> None:
+        """`XmlEditor.format_refused` (FQ-033 part C): one `[XML]` line per issue.
+
+        The XML indenter's twin of `_report_editor_gesture_refusal` above, and
+        deliberately the same shape: `[XML]` routes to the Activity Log, the
+        rows are never clickable and carry no line role, and the caret is
+        already at the spot (§18.5 carve-out 6). The editor underlines the
+        offending span itself; this is where the *reason* gets a durable home,
+        because the widget has no Audit panel to reach and the status bar has
+        been static since FQ-028.
+
+        Connected for all THREE `XmlEditor` hosts, and the third one is the
+        trap: Raw XML and Edit XSD are singletons wired here, but a draft
+        fragment tab's editor is created per draft, so its connect lives in
+        `DraftFragmentTab.__init__`. Wiring all three from here would silently
+        miss every draft opened afterwards -- exactly BUG-049, which was the
+        same mistake with `undo_requested`."""
+        for issue in issues:
+            line = getattr(issue, "start_line", None)
+            message = getattr(issue, "message", issue)
+            body = f"line {line}: {message}" if line else str(message)
+            self.audit_panel.addItem(
+                QListWidgetItem(f"{_XML_REFUSAL_PREFIX}{body}")
+            )
 
     # --- §18.5 D3a: the two Audit channels of a Check run -------------------
     def _report_check_lines(self, lines) -> None:
@@ -5354,6 +6606,152 @@ class MainWindow(QMainWindow):
         if not available and self.center_stage.sandbox_sql_tab() is not None:
             self.center_stage.close_sandbox_sql_tab()
 
+    # --- §18.5 D4b: the Quality SQL Console ---------------------------------
+
+    def _quality_console_available(self) -> bool:
+        """Whether `Database ▸ Quality SQL Console…` is offered.
+
+        **The same predicate the `Apply to quality` leg uses**
+        (`_target_apply_available` -> `_target_is_configured` over BUG-034's one
+        selector `active_target_params`), deliberately: two readings of *"is
+        there a quality target?"* is how two surfaces come to disagree about the
+        same database.
+
+        Note what it does NOT do: prompt. The owner's ruling is *"available
+        whenever a quality connection **with a password** exists"*, and the
+        password is answered by `_target_params_for_apply()` at the moment the
+        user opens the console -- exactly as the Apply leg answers it at the
+        moment the user applies. Asking here would raise a modal from a
+        visibility refresh, for a console nobody has asked for yet.
+        """
+        return self._target_apply_available()
+
+    def _quality_session_provider(self):
+        """The console's `session_provider` seam: this window's single
+        `QualitySession`, created on first use.
+
+        Created lazily and kept, because the session **owns the held-open,
+        uncommitted transaction** (§18.5 D4b, `DEC-260811023646`) -- re-creating
+        one per Run would silently abandon whatever the last Run left
+        uncommitted, which is the failure this whole feature exists to prevent.
+        Returns None when no quality target with a password resolves; the panel
+        then refuses the Run with a stated reason.
+        """
+        session = self._quality_session
+        if session is not None and not session.is_lost:
+            return session
+        # A lost session is finished (its handle is already closed): drop it and
+        # make a new one, which is the honest reading of "reconnect".
+        self._quality_session = None
+        params = self._target_params_for_apply()
+        if params is None:
+            return None
+        self._quality_session = QualitySession(params)
+        return self._quality_session
+
+    def _open_quality_sql_console(self):
+        """Database ▸ Quality SQL Console… -- open, or focus, the single quality
+        console tab. Returns the panel, or None (creating NOTHING) when no
+        quality connection with a password can be had: a console that refuses
+        every Run is worse than no console at all, the same rule the sandbox
+        console follows."""
+        if not self._quality_console_available():
+            self.statusBar().showMessage(
+                "Quality SQL Console… needs a quality (target) connection — "
+                "none is configured; set one up in Project Settings."
+            )
+            return None
+        if self._quality_session_provider() is None:
+            # The target exists but the password question was declined. Stated,
+            # not silent, and nothing is created.
+            self.statusBar().showMessage(
+                "Quality SQL Console… needs the quality database's password; "
+                "nothing was opened."
+            )
+            return None
+        panel = self.center_stage.open_quality_sql_tab(
+            session_provider=self._quality_session_provider,
+            run_query=run_quality_query,
+        )
+        panel.set_schema_index(self._ddl_schema_index)
+        # Idempotent, exactly like the sandbox console's wiring: a re-invoke
+        # hands back the SAME panel and must not stack a second subscription.
+        if not getattr(panel, "_pgtp_refusal_wired", False):
+            panel.format_refused.connect(self._report_ddl_format_refusal)
+            panel.editor.expansion_refused.connect(
+                self._report_editor_gesture_refusal
+            )
+            panel.run_finished.connect(self._remember_quality_run)
+            panel.transaction_finished.connect(self._record_quality_transaction)
+            panel._pgtp_refusal_wired = True
+        panel.set_session_available(True)
+        panel.focus_editor()
+        return panel
+
+    def _remember_quality_run(self, report) -> None:
+        """Keep the SQL of the last quality Run, so a later Commit can journal
+        what became durable.
+
+        The Run itself is NOT journalled: under the explicit commit model a Run
+        has changed nothing durable yet, and an activity line saying otherwise
+        would be the journal asserting something untrue (§18.5 D4b)."""
+        runs = tuple(getattr(report, "runs", None) or ())
+        self._quality_run_sql = "\n".join(
+            (getattr(run.result, "sql", "") or "").strip() for run in runs
+        ).strip()
+
+    def _record_quality_transaction(self, outcome) -> None:
+        """Journal a COMMITTED quality transaction (FQ-019's `ran` verb, on the
+        `Quality DB` source), and state every outcome in the status bar.
+
+        A discard is reported but not journalled: nothing reached the database,
+        and an activity entry for it would read as if something had."""
+        self.statusBar().showMessage(transaction_message(outcome))
+        if not getattr(outcome, "committed", False):
+            return
+        sql = getattr(self, "_quality_run_sql", "") or ""
+        if not sql.strip():
+            return
+        self.record_activity(SOURCE_QUALITY_DB, VERB_RAN, ddl=sql)
+
+    def _refresh_quality_console_affordances(self) -> None:
+        """Make the quality console's presence follow the quality target's
+        (§26's absent-not-disabled rule).
+
+        And when the target stops resolving, deal with the console rather than
+        leaving it: any uncommitted transaction is rolled back with a stated
+        reason (`DISCARD_TARGET_GONE`) and the connection is closed before the
+        tab goes -- the third of `DEC-260811023646`'s lifecycle edges. No
+        question is asked here, because the user did not initiate this and there
+        is no longer a database to commit to."""
+        available = self._quality_console_available()
+        if self._quality_console_action is not None:
+            self._quality_console_action.setVisible(available)
+        if available:
+            return
+        panel = self.center_stage.quality_sql_tab()
+        if panel is not None:
+            outcome = panel.discard_pending(DISCARD_TARGET_GONE)
+            if outcome is not None:
+                self.statusBar().showMessage(transaction_message(outcome))
+            self.center_stage.close_quality_sql_tab()
+        self._close_quality_session(DISCARD_TARGET_GONE)
+
+    def _close_quality_session(self, reason: str):
+        """Roll back and close this window's `QualitySession`, if any, and
+        report what was discarded. Returns the `TransactionOutcome` or None.
+
+        The one place the held connection is released, so *"can this leak?"* has
+        a single answer: no path closes the tab or the window without coming
+        through here (or through the panel's `discard_pending`, which closes the
+        very same session object)."""
+        session = self._quality_session
+        self._quality_session = None
+        if session is None:
+            return None
+        outcome = session.close(reason)
+        return outcome
+
     def _wire_ddl_object_panel_reporting(self, panel, ref) -> None:
         """Connect a freshly opened DDL object tab's §18.5 reporting channels,
         its D4 console bridge and its sandbox apply seams. Shared by both
@@ -5466,6 +6864,36 @@ class MainWindow(QMainWindow):
             return MINOR_XSD
         return None
 
+    def _apply_debug_chip_colours(self) -> None:
+        """Paint the status bar's DEBUG chip from the LIVE theme.
+
+        It used to be `color: white; background: #b33`, hardcoded — the last
+        chip in the app that did not re-theme, and one §7 already named as
+        forbidden to copy. BUG-260812063745 folded it into
+        `resources/themes/*.json` as the `debug_chip_*` accent pair rather than
+        exempting `main_window.py` from the colour guard: an exemption on the
+        largest module in the project would be a far bigger hole than the one
+        that bug closed.
+
+        Re-read on every theme flip (`apply_theme_named`), never stored: a
+        remembered colour re-applied after a flip paints the previous theme's
+        value (BUG-260811021804 step 4).
+        """
+        if getattr(self, "_debug_label", None) is None:
+            return
+        # The SELECTED theme when there is one -- a custom theme file may set
+        # its own chip -- and the bundled one for its side of the seam before
+        # `_restore_theme` has run.
+        theme = getattr(self, "_theme", None)
+        if theme is None:
+            theme = theme_model.theme_for(self._is_light_theme())
+        self._debug_label.setStyleSheet(
+            "QLabel { color: %s; background: %s; padding: 1px 6px;"
+            " border-radius: 3px; font-weight: bold; }"
+            % (theme.accent("debug_chip_foreground"),
+               theme.accent("debug_chip_background"))
+        )
+
     def _refresh_mode_indicator(self) -> None:
         """The SINGLE update path: rewrite both surfaces from `current_mode()`.
 
@@ -5475,7 +6903,8 @@ class MainWindow(QMainWindow):
         `setStyleSheet`; that is what keeps the two renderings identical.
         """
         major, minor = self.current_mode()
-        light = self._light_theme_action.isChecked() if self._light_theme_action else False
+        editing = self.focused_editing_mode()
+        light = self._is_light_theme()
         for indicator in (
             getattr(self, "_mode_label", None),
             getattr(self, "toolbar_mode_indicator", None),
@@ -5483,7 +6912,61 @@ class MainWindow(QMainWindow):
             if indicator is None:
                 continue
             indicator.set_light_theme(light)
-            indicator.set_mode(major, minor)
+            indicator.set_mode(major, minor, editing)
+
+    def focused_editing_mode(self) -> str | None:
+        """The FOCUSED editor's editing mode, or None (FQ-032, §8).
+
+        **Not a fourth dispatcher and not a fourth minor mode.** The editing mode
+        is per-editor and orthogonal, so this asks Qt which widget has focus and
+        asks that widget -- there is no `active_*_editor()` branch and no
+        "which tab was in Command mode" map anywhere.
+
+        None -- the segment ABSENT -- is the honest answer for a non-editor tab
+        and for a read-only editor, where FQ-032 makes the layer inactive entirely
+        and the buffer already names itself in its tab title.
+        """
+        focused = QApplication.focusWidget()
+        answer = getattr(focused, "editing_mode_label", None)
+        if not callable(answer):
+            return None
+        return answer()
+
+    def _on_editing_mode_changed(self, _editor) -> None:
+        """Registry callback: any editor's editing mode moved."""
+        self._refresh_mode_indicator()
+
+    def _on_focus_changed_refresh_mode(self, _old, _new) -> None:
+        """`QApplication.focusChanged`: the indicator reports the FOCUSED
+        editor's mode, so a focus change (a tab switch included) changes it."""
+        self._refresh_mode_indicator()
+
+    # --- FQ-032's `:` palette namespace -------------------------------------
+
+    def vim_command_entries(self) -> list[tuple[str, str]]:
+        """The `:` palette's namespace: **the app's own menu tree.**
+
+        **Derive, don't design.** The verbs are the shipped FQ-012 enumeration --
+        `ToolbarController.collect_menu_commands()`, the same one command universe
+        Customize Toolbar and Customize Shortcuts use -- so `:deploy quality`
+        triggers the real `Deployment ▸ Apply to quality` `QAction`, the namespace
+        auto-syncs as the menus change, and there is never a second vocabulary to
+        maintain.
+
+        The editor finds this by asking its top-level window, which is also why
+        `CodeEditorDialog` has no palette: it is its own top level, it is
+        deliberately menu-less, and a palette with no namespace must SAY so rather
+        than open an empty command line.
+        """
+        return list(self._toolbar_ui.collect_menu_commands())
+
+    def vim_command_action(self, command_id: str):
+        """The `QAction` behind a `:` verb, or None.
+
+        `QAction.trigger()` on the real menu action is the EXISTING dispatch;
+        FQ-032 adds no fourth dispatcher.
+        """
+        return self._toolbar_ui.menu_commands.get(command_id)
 
     # --- FQ-018 (refined by FQ-028 Part 2.4): the connectivity dots ---------
 
@@ -5590,13 +7073,51 @@ class MainWindow(QMainWindow):
 
         return self._workflow_mode == MODE_MAINTENANCE
 
+    def mode_filtered_actions(self) -> frozenset:
+        """The actions the CURRENT mode hides (BUG-260813025052).
+
+        A record written by `_refresh_workflow_mode_affordances` beside its
+        `setVisible` calls — never a second posture, and never a `setEnabled`.
+        It exists because Qt couples the two flags: `setVisible(False)` clears
+        `isEnabled()`, so a reader of the enabled flag cannot distinguish
+        "this command cannot run" from "this command is hidden by the mode".
+        The launcher needs exactly that distinction: its columns ARE the modes,
+        and the mode being left must never be able to grey out the way out of
+        it.
+
+        It records **both directions** of the filter, because both hide: inside
+        Maintenance that is the trimmed menus and File entries; outside it, the
+        `_MAINTENANCE_ONLY_MENU_TITLES` menus (`Settings`). The latter costs the
+        launcher nothing — only the top-level `menuAction()` is hidden there,
+        while `settings.software-settings` itself stays visible — but a record
+        that skipped it would be a record of "some of what is hidden", which is
+        the kind of half-truth this whole bug was made of.
+        """
+        return frozenset(self._mode_filtered_actions)
+
+    def is_mode_filtered(self, action) -> bool:
+        """Whether `action` is hidden by the current workflow mode."""
+        return action in self._mode_filtered_actions
+
     def set_workflow_mode(self, mode) -> None:
         """Enter (or leave, with None) a workflow mode and re-apply the filter.
 
-        Called by `launcher_dialog.show_launcher` when a column is picked, and
-        with None by `new_session`. Nothing else sets it — there is no separate
-        in-app mode toggle, by design: picking the Maintenance column IS how the
-        mode is entered, and `File ▸ New Session` is how it is left.
+        Entering **Maintenance** additionally prunes the center stage down to
+        its XSD-only surface (BUG-260812001640) — see
+        `_prune_non_xsd_surfaces_for_maintenance`. Leaving it does NOT restore
+        anything: closed is closed, exactly as if the user had closed the tabs.
+
+        Called by `launcher_dialog.show_launcher` when a column is picked, and by
+        nothing else in production. There is no separate in-app mode toggle, by
+        design: picking the Maintenance column IS how the mode is entered, and
+        `File ▸ New Session` — which re-enters the launcher so another column can
+        be picked — is how it is left.
+
+        **Nothing in production passes None any more (BUG-059).** `new_session`
+        used to, right before re-showing the launcher, and a dismissed launcher
+        then left the app in the invalid "No Mode" state. None is still accepted
+        here (a freshly constructed window holds it, and the tests that check the
+        unfiltered bar set it) but no user gesture can produce it.
         """
         self._workflow_mode = mode
         self._refresh_workflow_mode_affordances()
@@ -5604,6 +7125,52 @@ class MainWindow(QMainWindow):
         # re-derives the mode and never persists it, so a mode change has
         # exactly one write and two renderings.
         self._refresh_mode_indicator()
+        if self.in_maintenance_mode():
+            # BUG-260812001640: entering the mode also reduces the CENTER STAGE
+            # to its XSD-only surface. Hosted here rather than in `new_session`
+            # because picking the Maintenance column IS the definition of
+            # entering the mode, and this is the only place that knows the
+            # target mode; `new_session` runs BEFORE the launcher pick and
+            # prunes the same set whichever column is chosen next.
+            self._prune_non_xsd_surfaces_for_maintenance()
+
+    def _prune_non_xsd_surfaces_for_maintenance(self) -> None:
+        """Reduce the center stage to the surface Maintenance mode exists for
+        (BUG-260812001640): close the "browser" tabs (both DDL Explorers) and
+        every dynamic editor tab, leaving Edit XSD, the Manual, and the
+        structural tabs alone.
+
+        On EVERY entry into Maintenance, not only when coming from Project: from
+        Standalone the set is normally already empty, so a guard on the previous
+        mode would buy a branch and nothing else.
+
+        Both halves reuse an existing close API — no new close mechanism and no
+        new prompt. The Explorer half is prompt-less and always completes; the
+        dynamic half runs the per-kind unsaved-changes route, and a cancel there
+        keeps that tab (and every tab after it) open **while the mode still
+        changes**. That is the deliberate reading: the prompt's Cancel means
+        "keep this document", not "undo the mode I just picked" — and the mode
+        has already been assigned and the menu bar refreshed by the time this
+        runs. In the reported gesture the question barely arises: `new_session`
+        has already closed the dynamic tabs, with its own abort, before the
+        launcher is shown.
+        """
+        stage = self.center_stage
+        for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+            # BUG-260812110307, unconditionally and for the same reason
+            # `_refresh_ddl_explorer_affordances` does it: the hide below is
+            # visibility-gated, so an Explorer that is LOADING while invisible
+            # (`Reload DDL` with it closed) would otherwise never supersede its
+            # fetch — and the stale result would re-open an Explorer inside the
+            # mode whose whole point is the XSD-only surface.
+            self._bump_ddl_fetch_epoch(role)
+            if stage.isTabVisible(stage.ddl_explorer_tab_index(role)):
+                # Only when visible: `hide_ddl_explorer` emits
+                # `ddl_explorer_visibility_changed` unconditionally, and a
+                # spurious hide-of-a-hidden-tab would tell every subscriber the
+                # tree just closed.
+                stage.hide_ddl_explorer(role)
+        self._close_dynamic_editor_tabs()
 
     def _refresh_workflow_mode_affordances(self) -> None:
         """The single "make both menu bars match the workflow mode" entry point
@@ -5637,12 +7204,38 @@ class MainWindow(QMainWindow):
           it — the intent behind FQ-027's non-existent `Save`/`Save All` File
           entries, satisfied by scope rather than by re-opening FQ-020's
           deliberate deletion of `File ▸ Save`.
-        * The **toolbar** (FQ-027 Q2). A pinned button whose menu action is
-          hidden keeps working; that is the accepted trade for keeping the
-          filter's blast radius small, and it falls straight out of the
-          enumeration fact above.
+        * The **toolbar** (FQ-027 Q2). Out of scope means this code never walks
+          it — **not** that a pinned button survives the mode. Measured
+          (BUG-260813025052): with `file.open` pinned, entering Maintenance
+          leaves its toolbar action `visible=False enabled=False`, because the
+          toolbar hosts the menus' OWN `QAction`s (§7), so hiding the menu item
+          hides the button with it. The button goes **absent and inert** — which
+          is what FQ-027's queue text predicted, and the opposite of what this
+          docstring used to claim. The accepted trade is the small blast radius,
+          not a working back door: the toolbar is NOT a way out of the mode.
+
+        **It also RECORDS what it hid** (`_mode_filtered_actions`, read by
+        `mode_filtered_actions` / `is_mode_filtered`). Recording only: Qt's
+        `setVisible(False)` clears the enabled flag, so the pre-hide value is
+        gone the instant it is written and any later reader of `isEnabled()`
+        would confuse "unavailable" with "hidden by this mode". The launcher is
+        that reader (BUG-260813025052: it greyed out the very columns that leave
+        Maintenance, making the mode a one-way door). Adding a record rather
+        than an enabled-state write is what keeps the two-posture rule above
+        intact -- and a test greps this method's source to hold that line.
         """
         maintenance = self.in_maintenance_mode()
+        # BUG-260813025052: rebuilt from scratch on every refresh, so the record
+        # describes the mode that is in force right now and nothing else. It is
+        # a RECORD, not a posture -- no branch below reads it, and nothing here
+        # writes an enabled flag.
+        filtered: set = set()
+
+        def apply(action, visible: bool) -> None:
+            action.setVisible(visible)
+            if not visible:
+                filtered.add(action)
+
         # Top-level menus are hidden through their `menuAction()` -- the QMenu
         # itself is not a child widget of the bar's layout.
         for action in self.menuBar().actions():
@@ -5651,19 +7244,19 @@ class MainWindow(QMainWindow):
                 # The INVERSE rule: present only inside the mode. Handled here,
                 # in the one method that decides menu-bar visibility per mode,
                 # rather than by a second mechanism somewhere else.
-                action.setVisible(maintenance)
+                apply(action, maintenance)
             else:
-                action.setVisible(
-                    not maintenance or title in _MAINTENANCE_MENU_TITLES
-                )
+                apply(action, not maintenance or title in _MAINTENANCE_MENU_TITLES)
         # File survives partially -- the only menu that does.
         for action in self._file_menu.actions():
             # A separator normalizes to "", so it is never in the set: the
             # trimmed menu is its members with no stray dividing lines.
-            action.setVisible(
+            apply(
+                action,
                 not maintenance
-                or normalize_label(action.text()) in _MAINTENANCE_FILE_ITEMS
+                or normalize_label(action.text()) in _MAINTENANCE_FILE_ITEMS,
             )
+        self._mode_filtered_actions = filtered
 
     # --- §18.5 D2/D3a: the SandboxController's session and its gestures ------
     def _refresh_sandbox_affordances(self) -> None:
@@ -5697,6 +7290,12 @@ class MainWindow(QMainWindow):
         for panel in self.center_stage.ddl_object_panels():
             self._wire_ddl_object_apply_seams(panel)
         self._refresh_sandbox_console_affordances()
+        # §18.5 D4b rides the same refresh, even though its predicate is the
+        # QUALITY target's: this method already re-wires the `Apply to quality`
+        # seams off `_target_apply_available()` on every project transition, so
+        # the two quality affordances stay in step with each other by
+        # construction rather than by two schedules.
+        self._refresh_quality_console_affordances()
         self._refresh_project_status_sandbox_actions()
 
     def _refresh_project_status_sandbox_actions(self) -> None:
@@ -5778,8 +7377,7 @@ class MainWindow(QMainWindow):
             # here, and an unexplained no-op is what FQ-023 exists to kill.
             self.statusBar().showMessage(
                 f"{gesture} needs a sandbox — none is configured for this "
-                "project; set one up in Project Settings.",
-                5000,
+                "project; set one up in Project Settings."
             )
             return False
         reason = GESTURE_UNAVAILABLE_REASONS[GESTURE_CHECK_AND_COMMIT]
@@ -5793,16 +7391,17 @@ class MainWindow(QMainWindow):
             | modals.QMessageBox.StandardButton.Cancel,
         )
         if answer != modals.QMessageBox.StandardButton.Open:
-            # Declining still leaves the reason on screen: the user asked a
-            # question ("why can't I check?") and it must stay answered after the
-            # dialog is gone.
-            self.statusBar().showMessage(f"{gesture} — {reason}.", 5000)
+            # Declining still leaves the reason RECORDED: the user asked a
+            # question ("why can't I check?") and it stays answered after the
+            # dialog is gone -- as an Activity Log row, because `showMessage`
+            # journals and the status bar paints nothing (FQ-028). Nothing is
+            # left on screen; the QMessageBox above was the on-screen answer.
+            self.statusBar().showMessage(f"{gesture} — {reason}.")
             return False
         self._open_sandbox_session()
         self.statusBar().showMessage(
             f"Opening a sandbox session — the outcome is reported in the Audit "
-            f"panel; re-run {gesture} once it is open.",
-            5000,
+            f"panel; re-run {gesture} once it is open."
         )
         return True
 
@@ -5854,6 +7453,7 @@ class MainWindow(QMainWindow):
                 target_params=settings.target,
                 mode=settings.sandbox_mode,
                 configured=bool(settings.sandbox.host),
+                postgres_bin_dir=settings.postgres_bin_dir,
             )
         self._refresh_sandbox_affordances()
         params = self._configured_sandbox_params()
@@ -5895,8 +7495,7 @@ class MainWindow(QMainWindow):
         if self._configured_sandbox_params() is None:
             self.statusBar().showMessage(
                 "No sandbox configured for this project — set one up in "
-                "Project Settings.",
-                5000,
+                "Project Settings."
             )
             return
         self.sandbox_controller.open_session()
@@ -6211,7 +7810,27 @@ class MainWindow(QMainWindow):
         side uses, so both sides of the comparison are produced by one function.
         A trigger is identified by `(schema, table, name)`, which the catalog
         carries directly.
+
+        A **view** (FQ-260812025836) is identified by `(schema, name)` alone --
+        it has no signature to compare, so precondition 1 can only ask *does it
+        still exist*. It lives in `schema.tables` (keyed `"schema.name"`,
+        `kind == "view"`), not in `routines`, which is why it needs its own
+        branch: without one, an existing view always read as ABSENT and the
+        confirmation announced *"… does not exist in the target catalog;
+        applying will create it"* over a view that is plainly there. That never
+        wrongly blocked and never wrongly cleared -- it simply said something
+        untrue in the one dialog whose whole job is to be accurate.
         """
+        if ref.kind == "view":
+            for table in (getattr(schema, "tables", None) or {}).values():
+                if getattr(table, "kind", None) != "view":
+                    continue
+                table_schema, _, table_name = (table.name or "").rpartition(".")
+                if table_schema == ref.schema and table_name == ref.name:
+                    return DdlObjectRef(
+                        kind="view", schema=table_schema, name=table_name
+                    )
+            return None
         if ref.kind == "trigger":
             for trigger in (getattr(schema, "triggers", None) or {}).values():
                 if (
@@ -6347,7 +7966,7 @@ class MainWindow(QMainWindow):
         panel = self.center_stage.active_ddl_object_panel()
         if panel is None:
             self.statusBar().showMessage(
-                f"{gesture} runs on an open DDL object tab — open one first.", 5000
+                f"{gesture} runs on an open DDL object tab — open one first."
             )
         return panel
 
@@ -6368,7 +7987,7 @@ class MainWindow(QMainWindow):
         stage = self.center_stage
         if stage.currentIndex() != stage.xsd_tab_index:
             self.statusBar().showMessage(
-                "Save XSD runs on the Edit XSD tab — open one first.", 5000
+                "Save XSD runs on the Edit XSD tab — open one first."
             )
             return False
         self._xsd_ui.save()
@@ -6425,7 +8044,7 @@ class MainWindow(QMainWindow):
         reason = GESTURE_UNAVAILABLE_REASONS[gesture]
         label = GESTURE_LABELS[gesture]
         self._report_check_lines([CHECK_PREFIX + f"{label} is unavailable: {reason}."])
-        self.statusBar().showMessage(f"{label} is unavailable: {reason}.", 8000)
+        self.statusBar().showMessage(f"{label} is unavailable: {reason}.")
         return False
 
     def _sandbox_database_label(self) -> str:
@@ -6622,7 +8241,7 @@ class MainWindow(QMainWindow):
         panel = self.center_stage.active_ddl_object_panel()
         if panel is None:
             self.statusBar().showMessage(
-                "Check runs on an open DDL object tab — open one first.", 5000
+                "Check runs on an open DDL object tab — open one first."
             )
             return
         text = panel.text()
@@ -6783,20 +8402,25 @@ class MainWindow(QMainWindow):
         # `LEGACY_ID_ALIASES` was updated in the same commit (it is one of the
         # default toolbar buttons).
         #
-        # §22 PHP lint stays HERE, with `Lint on Save` and `Locate PHP Linter…`:
-        # whether all three follow Validate onto Parsing is an open item (§29),
-        # and moving only `Lint Current File` would split lint across two bars.
-        # All three feed the one Audit panel -- `[Lint]`, never `[Validate]`'s or
-        # §18.5's `[Check]` prefix. Lambdas: `_lint_ui` is built after the menu.
-        lint_action = menu.addAction("Lint Current File")
-        lint_action.triggered.connect(lambda: self._lint_ui.lint_active_file())
+        # §22 PHP lint stays HERE, with `Lint on Save`: whether both follow
+        # Validate onto Parsing is an open item (§29), and moving only
+        # `Lint Current File` would split lint across two bars. Both feed the one
+        # Audit panel -- `[Lint]`, never `[Validate]`'s or §18.5's `[Check]`
+        # prefix. Lambdas: `_lint_ui` is built after the menu.
+        #
+        # `Locate PHP Linter…` is NOT here any more (FQ-260812025705): it MOVED
+        # into `Settings ▸ Software settings… ▸ External tools`, the app's one
+        # settings home, together with the two `Generation ▸ Locate …` items.
+        # What replaced it as the cue is these two entries' ENABLED STATE --
+        # registered with the lint lane below (`register_dependent_actions`),
+        # which greys them and states the reason while no linter is configured.
+        self._lint_action = menu.addAction("Lint Current File")
+        self._lint_action.triggered.connect(lambda: self._lint_ui.lint_active_file())
         self._lint_on_save_action = menu.addAction("Lint on Save")
         self._lint_on_save_action.setCheckable(True)
         self._lint_on_save_action.toggled.connect(
             lambda checked: self._lint_ui.set_lint_on_save(checked)
         )
-        locate_linter_action = menu.addAction("Locate PHP Linter…")
-        locate_linter_action.triggered.connect(lambda: self._lint_ui.locate_linter())
         menu.addSeparator()
         reparse_action = menu.addAction("Reparse Raw XML into Tree")
         reparse_action.triggered.connect(self._doc_ui.reparse)
@@ -6876,14 +8500,12 @@ class MainWindow(QMainWindow):
                 self._mcp_session = starter(provider)
             except Exception as exc:  # pragma: no cover - defensive
                 _log.warning("mcp: start failed: %s", exc)
-                self.statusBar().showMessage(
-                    f"Could not start the MCP server: {exc}", 5000
-                )
+                self.statusBar().showMessage(f"Could not start the MCP server: {exc}")
                 if self._mcp_action is not None:
                     self._mcp_action.setChecked(False)
                 return
             _log.info("mcp: server started")
-            self.statusBar().showMessage("MCP server running on stdio.", 5000)
+            self.statusBar().showMessage("MCP server running on stdio.")
             return
 
         session = self._mcp_session
@@ -6896,7 +8518,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             _log.warning("mcp: stop failed: %s", exc)
         _log.info("mcp: server stopped")
-        self.statusBar().showMessage("MCP server stopped.", 5000)
+        self.statusBar().showMessage("MCP server stopped.")
 
     def _build_help_menu(self):
         menu = self.menuBar().addMenu("Help")
@@ -6932,16 +8554,21 @@ class MainWindow(QMainWindow):
             cs.hide_manual()
             return
         cs.show_manual()
-        self.tree_dock.setVisible(True)
 
     def _on_manual_visibility_changed(self, visible):
         """Keep the left-dock Contents tab in lockstep with the Manual tab: show
         and focus it when the Manual opens, hide it and fall back to Project when
-        the Manual closes."""
-        self.left_tabs.setTabVisible(self.contents_tab_index, visible)
+        the Manual closes.
+
+        The open branch goes through `_reveal_left_panel`, so the dock un-hides
+        here rather than in `_show_manual` (BUG-260812023420): every path that
+        opens the Manual -- the menu entry, F1, `show_manual` from anywhere --
+        gets a Contents tab the user can actually see, not just the one path
+        that remembered to call `setVisible(True)` itself."""
         if visible:
-            self.left_tabs.setCurrentWidget(self.manual_contents)
+            self._reveal_left_panel(self.manual_contents)
         else:
+            self.left_tabs.setTabVisible(self.contents_tab_index, False)
             self.left_tabs.setCurrentIndex(self.project_tab_index)
 
     def _on_manual_chapter_selected(self, index):

@@ -23,7 +23,12 @@ from pgtp_editor.ui.diff_merge_panel import DiffMergePanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 from pgtp_editor.ui.manual_panel import ManualPanel
 from pgtp_editor.ui.php_file_tab import PhpFileTab, php_tab_key
-from pgtp_editor.ui.sql_console_panel import CONSOLE_TAB_KEY, SqlConsolePanel
+from pgtp_editor.ui.sql_console_panel import (
+    CONSOLE_TAB_KEY,
+    QUALITY_FLAVOUR,
+    QUALITY_TAB_KEY,
+    SqlConsolePanel,
+)
 from pgtp_editor.ui.xml_editor import XmlEditor
 
 #: First element of every generated-fragment draft tab's key (FQ-006). Draft
@@ -192,6 +197,15 @@ class CenterStage(QTabWidget):
     # refresh hung off `currentChanged` alone would leave the three mode-only
     # members on screen after the mode ended.
     diff_merge_mode_changed = Signal(bool)
+    #: FQ-033 part C: an XML format refusal from a DRAFT FRAGMENT tab's editor.
+    #: The two singleton `XmlEditor`s are connected directly by `MainWindow`,
+    #: but drafts are created dynamically and multiply, so their editors cannot
+    #: be wired once from the host. This aggregates them: the connect happens at
+    #: the single creation site below, where it cannot be forgotten, and the host
+    #: subscribes to one stable signal. Same reasoning as BUG-049's per-tab undo
+    #: wiring, one step further because the destination is the Audit panel, which
+    #: a tab must not reach itself.
+    format_refused = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -428,6 +442,17 @@ class CenterStage(QTabWidget):
                 # would land in MainWindow's handler and call `is_dirty()` on
                 # the console -- an AttributeError that crashes the app.
                 self.close_sandbox_sql_tab()
+                return
+            if widget is self._ddl_object_tabs.get(QUALITY_TAB_KEY):
+                # The Quality SQL Console (§18.5 D4b) is the same scratch surface
+                # with ONE extra obligation: it may be holding an uncommitted
+                # transaction on production. `request_close()` asks the user and
+                # returns False to VETO the ✕ -- the only place an uncommitted
+                # run can be protected, since a tab close is otherwise
+                # unconditional (`DEC-260811023646`'s tab-close edge).
+                if not widget.request_close():
+                    return
+                self.close_quality_sql_tab()
                 return
             if isinstance(widget, DraftFragmentTab):
                 # A generated-fragment draft (FQ-006) shares the object-tab map
@@ -745,6 +770,10 @@ class CenterStage(QTabWidget):
         self._draft_counter += 1
         key = (DRAFT_TAB_KEY_KIND, kind, table_name, self._draft_counter)
         tab = DraftFragmentTab(kind, table_name, text)
+        # FQ-033 part C. Here rather than in `DraftFragmentTab.__init__` because
+        # the tab must not know about the Audit panel; this is the one place a
+        # draft is ever created, so no draft can be missed.
+        tab.editor.format_refused.connect(self.format_refused)
         index = self.addTab(tab, tab.tab_title())
         self.setTabToolTip(index, tab.tab_tooltip())
         self._ddl_object_tabs[key] = tab
@@ -819,6 +848,59 @@ class CenterStage(QTabWidget):
         `hide_ddl_explorer`'s direct close, not `close_ddl_object_tab`'s
         prompt-first route)."""
         panel = self._ddl_object_tabs.pop(CONSOLE_TAB_KEY, None)
+        if panel is None:
+            return
+        index = self.indexOf(panel)
+        if index != -1:
+            self.removeTab(index)
+        panel.deleteLater()
+
+    # --- Quality SQL Console tab (spec §18.5 D4b) --------------------------
+    def quality_sql_tab(self):
+        """The open quality `SqlConsolePanel`, or None. Single-instance, and
+        independent of the sandbox one -- **both may be open at once**, which is
+        what the distinct titles and the danger marking are written against."""
+        panel = self._ddl_object_tabs.get(QUALITY_TAB_KEY)
+        return panel if isinstance(panel, SqlConsolePanel) else None
+
+    def open_quality_sql_tab(self, *, session_provider=None, **panel_kwargs):
+        """Focus the Quality SQL Console if it is already open; otherwise create
+        it, append it (always AFTER the fixed set) and focus that.
+
+        Same map, same single-instance rule and the same forwarded seams as
+        `open_sandbox_sql_tab` -- only the key, the title and the injected
+        flavour/executor differ, because there is **one panel class** (§18.5
+        D4b: a second class is the duplication trap). `session_provider` here
+        yields a `db/quality_query.py::QualitySession`, never a
+        `SandboxSession`."""
+        existing = self.quality_sql_tab()
+        if existing is not None:
+            self.setCurrentWidget(existing)
+            return existing
+
+        panel_kwargs.setdefault("flavour", QUALITY_FLAVOUR)
+        panel = SqlConsolePanel(session_provider=session_provider, **panel_kwargs)
+        self._install_snippets(panel)
+        index = self.addTab(panel, panel.tab_title())
+        self.setTabToolTip(
+            index,
+            "Ad-hoc read/write SQL against the QUALITY (production) database. "
+            "Nothing is durable until you press Commit (spec §18.5 D4b)",
+        )
+        self._ddl_object_tabs[QUALITY_TAB_KEY] = panel
+        self.setCurrentWidget(panel)
+        return panel
+
+    def close_quality_sql_tab(self):
+        """Remove the Quality SQL Console tab.
+
+        **Unconditional, by design** -- the uncommitted-run question belongs to
+        `SqlConsolePanel.request_close()` and is asked by whoever initiated the
+        close (the ✕ handler above, `MainWindow.closeEvent`), because only they
+        can honour a veto. Callers that reach here having NOT asked (a target
+        that stopped resolving) must call `discard_pending(reason)` first, so no
+        held connection outlives the tab."""
+        panel = self._ddl_object_tabs.pop(QUALITY_TAB_KEY, None)
         if panel is None:
             return
         index = self.indexOf(panel)

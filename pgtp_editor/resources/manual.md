@@ -27,7 +27,7 @@ row**:
 |---|---|---|
 | **Standalone** | Edit a `.pgtp` with the XML tooling, or a custom PHP file beside it. No project, no sandbox. | **File ▸ Open**, **File ▸ Open PHP File…** |
 | **Project** | Work on the quality database through a local sandbox, or converge a deployable `.pgtp` by diff/merge. | **File ▸ New Project…**, **File ▸ Open Project…** |
-| **Maintenance** | One-off administrative work on the app's own schema and settings. Reshapes the window menu bar for this session — see *Maintenance mode*, below. | **Schema ▸ Edit XSD**, **Schema ▸ Import XSD** |
+| **Maintenance** | One-off administrative work on the app's own schema, and where the app itself is configured. Reshapes the window menu bar for this session — see *Maintenance mode*, below. | **Schema ▸ Edit XSD**, **Schema ▸ Import XSD**, **Settings ▸ Software settings…** |
 
 **Every button on the launcher is the menu command it names**, which is why the
 buttons are labelled with menu paths such as `File › Open...`. Picking one closes
@@ -36,20 +36,32 @@ different version of any gesture hiding in here. A button whose menu item cannot
 run right now is **greyed out** for the same reason, rather than looking
 clickable and doing nothing.
 
-The three columns are deliberately short. **Maintenance is Edit XSD and Import
-XSD only**: the rest of the **Schema** menu (**Edit AutoXSD**, **Verify XSD**,
-**Export XSD** — see *Schema Tools*) and the whole **Generation** menu are
-ordinary work you reach from the menus once you are in the app. Generating your
-application is development, not maintaining the editor, so no generation entry
-is offered here — see *Generating PHP*.
+The three columns are deliberately short. **Maintenance is Edit XSD, Import XSD
+and Software settings…**: the rest of the **Schema** menu (**Edit AutoXSD**,
+**Verify XSD**, **Export XSD** — see *Schema Tools*) and the whole **Generation**
+menu are ordinary work you reach from the menus once you are in the app.
+Generating your application is development, not maintaining the editor, so no
+generation entry is offered here — see *Generating PHP*.
+
+**The third Maintenance button is the whole of the app's configuration**, because
+the four settings surfaces the app used to scatter across two menus are now one
+command — see *Software Settings*.
 
 - **The launcher always appears.** There is no "don't show this again" any more:
   it was removed together with the setting behind it, because the launcher is
   now where you pick the session's mode, and a mode you can silently skip is a
   trap rather than a convenience.
-- **Close, Escape, or the window's close button lands you in the normal, empty
-  app** with the full menu bar and no mode chosen. The launcher is never a gate
-  on running the editor and never quits it.
+- **At startup you have to choose — the launcher cannot be dismissed.** There
+  is no **Close** button, the window has no **✕**, **Escape** does nothing, and
+  **Alt+F4** is ignored. Every way out of it therefore names a mode. That is
+  deliberate: the mode is what shapes the session, it is never read from disk,
+  and a launcher you could wave away left the app in a *No Mode* state that
+  nothing else in the app is designed for.
+- **Re-opened later it *is* dismissable.** When you bring the launcher back with
+  **File ▸ New Session** (below) there is already a mode to fall back into, so it
+  has its **Close** button, its **✕** and its **Escape** again — and closing it
+  **keeps the mode the session is already in** rather than clearing it. Either
+  way the launcher never quits the editor.
 - **File ▸ New Session** brings it back at any time — see *Starting over*, below.
 
 > **The editor does not open a file you pass on the command line, there is no
@@ -70,13 +82,17 @@ than "show that dialog again": in order, it
    one that has unsaved edits,
 3. closes the **document** — prompting to **Save**, **Discard** or **Cancel** if
    the `.pgtp` is dirty — and then the **project**,
-4. clears the session's workflow mode, restoring the full menu bar,
-5. and shows the launcher again.
+4. and shows the launcher again.
+
+**It does not clear the session's mode.** The mode stands until you pick a
+column, which is what makes this launcher dismissable at all: close it and you
+are back in the mode you were already in, with the same menu bar. Picking
+**Standalone** or **Project** is what leaves **Maintenance mode** (see
+*Maintenance mode*, below).
 
 **Any cancel, at any step, abandons the whole gesture** and leaves your session
-exactly as it was — nothing is closed, no mode is cleared and the launcher does
-not appear. So you can always start the gesture to see what it would ask, and
-back out.
+exactly as it was — nothing is closed and the launcher does not appear. So you
+can always start the gesture to see what it would ask, and back out.
 
 The entry sits in the File menu's last group, just above **Exit**, and has no
 keyboard shortcut. (It is the command that used to be called **Show Launcher…**;
@@ -103,8 +119,21 @@ go away, and one — **Settings** — appears.
 does is subtraction; **Settings** is absent in ordinary work and present here,
 because it is where the app is *configured* rather than used — configuring it is
 exactly what you came to Maintenance mode to do, and a distraction the rest of
-the time. It sits between **Generation** and **Help**, and today it holds one
-entry, **Edit Snippets…** (see *Snippets*).
+the time. It sits between **Generation** and **Help**, and it holds **exactly one
+entry**: **Software settings…**, the dialog that now contains everything the app
+lets you configure — snippets, the toolbar, the autoformatter, your keyboard
+shortcuts, the colour themes and the external tool binaries (see *Software
+Settings*).
+
+**Several of those used to live on other menus, so they are Maintenance-mode
+gestures now.** **Customize Toolbar…** and **Customize Shortcuts…** were
+reachable at any time from the **View** menu, **Locate PHP Generator
+Executable…** and **Locate panGen Runtime…** from **Generation**, and **Locate
+PHP Linter…** from **Tools**; all of them are panes of **Software settings…**
+today, which means you enter Maintenance mode to rearrange your toolbar, rebind a
+key, change the theme or point the app at an external program. That is the trade
+taken deliberately: the app is *configured* in this mode, and one launcher button
+can stand for the whole of "settings" only if settings is one command.
 
 **Nothing on the Settings menu carries a keyboard shortcut, and nothing on it
 ever will.** Hiding a menu does not switch off the keys of the entries inside it
@@ -116,21 +145,31 @@ ordinary work. These are rare, deliberate gestures, reached by opening the menu.
   written to disk and never survives a restart — you cannot inherit a trimmed
   menu bar from last week without noticing.
 - **File ▸ New Session is the way out**, which is exactly why the mode keeps it:
-  a mode able to hide its own exit would be a trap. Coming back through the
-  launcher's **Standalone** or **Project** column leaves the menu bar whole
-  again.
+  a mode able to hide its own exit would be a trap. **Picking the launcher's
+  Standalone or Project column** is what actually leaves the mode and gives you
+  the whole menu bar back — closing that launcher instead keeps you in
+  Maintenance mode, because dismissal retains the mode you are in (see *Starting
+  over*).
 - **The Editor menu bar is deliberately untouched.** That is what keeps
   **Deployment ▸ Save XSD** right where it always is, so schema edits are
   saveable without leaving the mode (see *The Deployment Menu*). **Save XSD is
   how you save in Maintenance mode** — there is no File-menu save anywhere in
   the app.
+- **Entering the mode clears the surfaces it is not for.** Picking the
+  **Maintenance** column closes every **DDL object tab** and **PHP file tab**,
+  and hides **both DDL Explorer panels** — the menu bar is not the only thing
+  that gets out of the way. A tab with unsaved edits still asks first, and
+  **cancelling that prompt keeps the tab but does not undo the mode**: the
+  prompt's Cancel means *"keep this document"*, not *"put me back where I was"*.
+  Leaving the mode later does not bring anything back, exactly as if you had
+  closed the tabs yourself.
 - **A toolbar button keeps working**, even when it is pinned to a command this
   mode hides. The filter is the menu bar only, by design; pinning something to
   the toolbar means you wanted it within reach. **This cuts both ways**, and it
-  is worth knowing: **Settings ▸ Edit Snippets…** can be pinned in **View ▸
-  Customize Toolbar…** like any other command, and that button opens the dialog
-  **outside Maintenance mode** as well. Hiding here means *"not in your way"*,
-  never *"prevented"* — so a menu placement is a statement about where a command
+  is worth knowing: **Settings ▸ Software settings…** can be pinned to the
+  toolbar like any other command, and that button opens the dialog **outside
+  Maintenance mode** as well. Hiding here means *"not in your way"*, never
+  *"prevented"* — so a menu placement is a statement about where a command
   belongs, not a lock on it.
 - **A key you assigned yourself keeps working too — except on the File menu.**
   The two halves of the trim are built differently and behave differently, and
@@ -139,8 +178,8 @@ ordinary work. These are rare, deliberate gestures, reached by opening the menu.
   session: it is not on the menu and its key does nothing. **View**,
   **Database**, **Tools** and **Generation** are hidden *as whole menus*, and
   the commands inside them stay live underneath — so a key you bound to, say,
-  **View ▸ Customize Toolbar…** in **View ▸ Customize Shortcuts…** still fires
-  in Maintenance mode. That is deliberate and it stays that way: this mode
+  **View ▸ Collapse All** in the **Keyboard shortcuts** pane still fires in
+  Maintenance mode. That is deliberate and it stays that way: this mode
   exists to tidy the **menu bar**, it leaves the toolbar alone on purpose (see
   *Appearance & Layout ▸ The toolbar*), and a shortcut you deliberately
   assigned is yours to keep. None of the commands ship with a key of their
@@ -266,17 +305,18 @@ answer to a simple question: *what does this command act on?*
   Tools · Generation · Help** — holds the commands that act on **the project or
   the application**: opening files, projects and connections, the schema,
   generation, the panels and the theme. An eighth menu, **Settings**, slots in
-  between **Generation** and **Help** **only in Maintenance mode** — see
-  *Getting Started ▸ Maintenance mode* and *Snippets*.
+  between **Generation** and **Help** **only in Maintenance mode**, and holds a
+  single entry, **Software settings…** — see *Getting Started ▸ Maintenance mode*
+  and *Software Settings*.
 - The **Editor menu bar**, directly above the central working area, holds the
   commands that act on **whichever tab you are looking at**. Its five menus are:
 
 | Menu | Entries |
 |---|---|
-| **History** | **History…**, **Undo**, **Redo** |
-| **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Select Parent Block** (Ctrl+Shift+A) |
+| **History** | **History…**, **Undo Project Edit**, **Redo Project Edit** — none of the three carries a shortcut |
+| **Select** | **Select All** (Ctrl+A), **Select Enclosing Block** (Ctrl+Shift+B), **Expand Selection** (Ctrl+Shift+A), **Shrink Selection** (Ctrl+Shift+Z), and — on an editable editor only — **Sticky Selection** and **Line Selection**, both checkable and neither carrying a key (see *Editing Modes ▸ Sticky selection*) |
 | **Parsing** | two faces, by tab: **Auto Parse XML** and **Validate Project** on an ordinary tab; **Check Object in Sandbox** and **Check and rollback** on a DDL object editor tab |
-| **Navigation** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** |
+| **Navigation** | **Toggle Bookmark**, **Next Bookmark**, **Previous Bookmark**, **Clear All Bookmarks**, **List All Bookmarks** — plus, only while a comparison is loaded, **Next Difference**, **Previous Difference** and **Apply Changes to Target** (see *Diff / Merge*) |
 | **Deployment** | every save and every outward push, **by tab kind** — see *The Deployment Menu* |
 
 Every one of those commands resolves the editor **at the moment you use it**, so
@@ -289,12 +329,15 @@ the Raw XML document behind it.
 > left completely alone, which is what keeps **Deployment ▸ Save XSD** available
 > there. See *Getting Started ▸ Maintenance mode*.
 
-> **The bookmark menu is called Navigation now.** Its five entries kept their own
-> names; the menu was renamed because it is where jumping around a document
-> belongs, not only where bookmarks do.
+> **The bookmark menu is called Navigation now.** Its five bookmark entries kept
+> their own names; the menu was renamed because it is where jumping around a
+> document belongs, not only where bookmarks do — which is also why
+> **Compare/Merge**'s three navigation commands joined it (see *Diff / Merge*).
 
 > **There is no Edit menu any more.** It was dissolved rather than emptied:
-> Undo / Redo / History… moved to **History**, the two block-selection commands
+> Undo / Redo / History… moved to **History** — where the two are now called
+> **Undo Project Edit** and **Redo Project Edit**, because they are the
+> *project's* undo rather than the menu twin of Ctrl+Z — the two block-selection commands
 > to **Select**, **Auto Parse XML** to **Parsing**, and Find and Replace became
 > the permanently visible bar in every editor (see *Find, Replace & Find All*).
 > Cut / Copy / Paste / Delete and **Preferences…** were never implemented and
@@ -320,10 +363,17 @@ work here is absent, not greyed out.**
   the menu is simply empty — see *The Deployment Menu*.
 - **The Parsing menu has two faces and shows exactly one**, chosen by the tab in
   front of you — see *Parsing, on a DDL object tab*, below.
-- **Select ▸ Select Parent Block disappears on PHP tabs, DDL object tabs and the
-  DDL Explorer**, and **Ctrl+Shift+A** goes quiet with it. "One nesting level up"
-  is an XML idea; SQL and PHP have no parent element to walk to, so the entry is
-  not offered rather than offered and inert.
+- **Select ▸ Expand Selection and Shrink Selection disappear on PHP and
+  JavaScript tabs**, and **Ctrl+Shift+A** goes quiet with them. The ladder they
+  climb is XML nesting or plpgsql structure; neither exists in PHP or JS, so the
+  entries are not offered rather than offered and inert. **Shrink Selection is
+  additionally absent in the XML editors** — see *Expanding and shrinking the
+  selection*, below, for what each surface offers and why.
+- **Select ▸ Sticky Selection and Line Selection are hidden on a read-only
+  editor** — either **DDL Explorer** buffer, and the Raw XML editor while
+  **Caption Mode** or **Compare/Merge** holds it. They toggle a selection you
+  build with the keyboard, and that whole layer is inactive where nothing can be
+  typed (see *Editing Modes ▸ Sticky selection*).
 - **Select ▸ Select Enclosing Block means the right thing for the language you
   are in**: in an XML editor (Raw XML, Edit XSD, a generated draft fragment) it
   selects the enclosing XML element; in a code editor (PHP tabs, DDL object tabs,
@@ -379,8 +429,8 @@ go?"* — and its contents follow the tab in front of you.
 **Only one group is ever visible**, so the menu never offers you a save that
 belongs to a different tab. The last row is not an oversight: the **Diff /
 Merge** tab, **Caption Management**, either **DDL Explorer**, the **Manual**, a
-generated **draft fragment** tab and the **Sandbox SQL** console genuinely have
-no save destination and nothing to deploy, so they get no entries at all. (On
+generated **draft fragment** tab and both SQL consoles (**Sandbox SQL** and
+**Quality SQL**) genuinely have no save destination and nothing to deploy, so they get no entries at all. (On
 Caption Management and the Manual the whole Editor menu bar is hidden anyway —
 see *The Two Menu Bars*.)
 
@@ -395,8 +445,8 @@ database-touching entries. Two different reasons meet here:
   on the app's standing rule that *an irreversible outward effect must not be one
   keystroke away*.
 
-If you use one of them constantly, pin it to the toolbar (**View ▸ Customize
-Toolbar…**). Be aware that such a button **comes and goes with the tab**, exactly
+If you use one of them constantly, pin it to the toolbar (**Settings ▸ Software
+settings… ▸ Toolbar**). Be aware that such a button **comes and goes with the tab**, exactly
 as the menu entry does — that is the honest posture, not a bug.
 
 ### What each entry does
@@ -480,13 +530,23 @@ very thing you are navigating.
   **Database/XML Coherence** and **DDL Objects** tabs beside it, and it **opens
   and focuses itself** the moment the first navigable row lands. A result you
   asked for should not need a second gesture to be seen.
+- **View ▸ Findings** shows it on demand, whether or not anything has landed in
+  it yet. It exists so the tab is not reachable *only* as a side effect of
+  running something: a session with no navigable operation behind it used to
+  make the tab look like something that did not exist.
 - **The last operation wins, across kinds.** Run **Find All** and then **List All
   Bookmarks** and the bookmarks replace the finds — both answer *"where do I want
   to go next?"*, and only one such question is live at a time. Re-running the
   same operation likewise replaces its own previous rows.
-- Rows that could not be tied to a line (a read-only DDL Explorer buffer, a draft
-  tab, a finding with no line number) are **listed but inert when clicked**,
-  rather than sending you to a plausible-looking wrong place.
+- **Rows found in a DDL Explorer's read-only buffer navigate like any other.**
+  Clicking a `[Find]` or `[Bookmark]` row from either Explorer focuses that
+  Explorer's own viewing pane and puts the caret on the line — and it is always
+  the *right* one of the two, because the row remembers which Explorer it came
+  from rather than guessing from whichever tab you are on. Read-only never meant
+  "you cannot go there".
+- Rows that genuinely could not be tied to a line (a generated draft tab, a
+  finding with no line number) are **listed but inert when clicked**, rather than
+  sending you to a plausible-looking wrong place.
 
 ### The Messages tab — what the checks found, kept
 
@@ -499,6 +559,10 @@ without having to remember it.
 Its rows are clickable in exactly the same way as the Findings tab's, so a
 `[Validate]`, `[Lint]` or `[Check]` line with a line number still jumps you
 there.
+
+`[DDL]` rows land here too: opening the Quality DDL Explorer always reports
+whether you are reading full or restricted DDL (see *DDL Explorer ▸ Full DDL and
+restricted DDL*). Those rows carry no location, so they are not clickable.
 
 A run that reports into Messages **switches the bottom dock to this tab** so you
 see it — but it will not re-open a dock you closed. **View ▸ Messages** brings it
@@ -547,8 +611,9 @@ buffer*, *DDL Explorer (Sandbox) failed: …*. See *The Status Bar*, below, for 
 - **View ▸ Activity Log** and **View ▸ Messages** each **open the bottom dock if
   it is hidden and focus that tab**. They are not checkboxes: a tab is either the
   one in view or it is not, and there is no third state to check.
-- The **Findings** tab has no View entry of its own. It reveals itself when it
-  has rows, and it lives in the **Project Tree** dock, which does have one.
+- **View ▸ Findings** is the same shape one dock over: it un-hides the **left**
+  dock, reveals the **Findings** tab and focuses it. Not a checkbox either, and
+  like its two siblings it ships with **no keyboard shortcut**.
 
 **A dock layout you saved in an earlier version still applies.** The bottom dock
 kept its own identity through the split, so its remembered size, position and
@@ -581,23 +646,37 @@ Toolbar**, and again in the status bar. Both are written from one answer, so the
 can never disagree.
 
 - **The colour is the major mode** — the one you picked in the launcher:
-  **Standalone**, **Project** or **Maintenance** (see *Getting Started ▸ The
-  startup launcher*). Before you pick one, the chip reads **No Mode** in a
-  neutral colour rather than going blank.
-- **A minor mode is appended as text**, after a middle dot — `Project · Caption`.
-  The minor modes are the editor sub-states: **Caption** (Caption Management),
-  **Compare/Merge**, and **Edit XSD**. Plain editing is the *absence* of a minor
-  mode, not a fourth one, so most of the time the chip shows the major mode
-  alone. Only one minor mode is ever named; Caption wins over Compare/Merge,
-  which wins over Edit XSD.
-- **The major mode owns the colour** and the minor mode never gets one of its
-  own. Three majors times four sub-states would be a twelve-colour vocabulary,
-  which is exactly what a glance-recognizable chip cannot be.
-- **The colours follow the Light/Dark theme** (see *Appearance & Layout*), so the
-  chip stays legible in both.
+  **Standalone mode**, **Project mode** or **Maintenance mode** (see *Getting
+  Started ▸ The startup launcher*). **Every label says the word "mode" out
+  loud**, because a chip reading a bare *Project* reads like the name of a thing
+  rather than a state you are in. The chip has a **No Mode** reading in a neutral
+  colour rather than going blank, for the window behind the launcher before you
+  have picked — in practice you will not see it, because the startup launcher
+  cannot be dismissed without a choice and dismissing a later one keeps the mode
+  you are in.
+- **A minor mode is appended as text**, after a middle dot — `Project mode ·
+  Caption`. The minor modes are the editor sub-states: **Caption** (Caption
+  Management), **Compare/Merge**, and **Edit XSD**. Plain editing is the
+  *absence* of a minor mode, not a fourth one, so most of the time the chip shows
+  the major mode alone. Only one minor mode is ever named; Caption wins over
+  Compare/Merge, which wins over Edit XSD.
+- **The editing mode of the editor you are typing in is appended last**, after
+  another middle dot — `Project mode · Edit mode`, or `Project mode · Command
+  mode — press i to type`. That third segment is the keyboard vocabulary the
+  **focused** editor is listening in (see *Editing Modes: Edit mode and Command
+  mode*), and it is **absent** whenever the focused editor is read-only or is not
+  an editor at all. It is per-editor and independent of the other two — a tab
+  switch can change it without changing anything else on the chip.
+- **The major mode owns the colour** and neither the minor nor the editing mode
+  gets one of its own. Three majors times four sub-states would already be a
+  twelve-colour vocabulary, which is exactly what a glance-recognizable chip
+  cannot be.
+- **The colours come from the theme in use** (see *Appearance & Layout*), so the
+  chip stays legible whichever one you picked.
 - **It is passive.** There is no click, no context menu, and no way to change
-  mode from it. Mode is set by the launcher and by **File ▸ New Session**, and
-  the chip only reports it — which is what its tooltip says too.
+  mode from it. Mode is set by **picking a launcher column** — at startup, or after
+  **File ▸ New Session** brings the launcher back — and the chip only reports it,
+  which is what its tooltip says too.
 
 ### The busy slot
 
@@ -610,33 +689,42 @@ If one long operation starts another, the slot keeps showing the **outer** one
 and only returns to `Idle` when the last of them has finished, so it can never
 claim to be idle while something is still going.
 
-### The two connectivity dots
+### The two connectivity indicators
 
-While a **local DDL-versioning project is open**, two labelled dots report
+While a **local DDL-versioning project is open**, two labelled indicators report
 whether its databases can be reached: **`Quality ●`** and **`Sandbox ●`**.
 
-| Dot | Meaning |
+| Shape | Meaning |
 |---|---|
-| **green ●** | reachable |
-| **red ●** | offline — configured, but it did not answer |
-| **white ●** | no connection configured |
-| **hollow grey ○** | **not checked yet** |
+| **●** filled circle | reachable |
+| **▲** triangle | offline — configured, but it did not answer |
+| **□** hollow square | no connection configured |
+| **○** hollow circle | **not checked yet** |
 
-**The hollow dot is a real state, not a blank.** A project you have just opened,
-or a probe still in flight, has not produced an answer yet — and showing that
-plainly is better than leaving a gap you would read as "fine" or, worse, keeping
-yesterday's green. Each dot's tooltip spells its state out in words.
+**Each state has its own shape, so colour is never the only channel.** The
+colours are still there and still follow the theme in use (see *Appearance &
+Layout*), but you can tell all four states apart with the shape alone — which
+matters most for the pair that carries the most meaning, *reachable* versus
+*offline*, since those two used to be a green dot and a red dot of exactly the
+same shape. Each indicator's tooltip spells its state out in words as well:
+*"Quality: reachable"*, *"Sandbox: no sandbox configured"*.
+
+**The hollow circle is a real state, not a blank.** A project you have just
+opened, or a probe still in flight, has not produced an answer yet — and showing
+that plainly is better than leaving a gap you would read as "fine" or, worse,
+keeping yesterday's green.
 
 - **They are polled every 30 seconds, and only while the editor's window is
   active.** Switch to another application and the polling stops; come back and it
-  polls **immediately**, so you never read a dot that is up to half a minute
-  stale. The check runs off the UI thread, so an unreachable server can't freeze
-  the window twice a minute.
-- **Green means reachable, not fully capable.** The poll is a single lightweight
-  round trip. Whether the sandbox is *usable* — superuser, `pg_dump`/`pg_restore`
-  present, `plpgsql_check` installed — is the **Project Status** window's
-  question, so a dot can be green while that window still reports a degradation.
-- **With no project open there are no dots at all** — absent, not greyed out,
+  polls **immediately**, so you never read an indicator that is up to half a
+  minute stale. The check runs off the UI thread, so an unreachable server can't
+  freeze the window twice a minute.
+- **Reachable is not the same as fully capable.** The poll is a single
+  lightweight round trip. Whether the sandbox is *usable* — superuser,
+  `pg_dump`/`pg_restore` present, `plpgsql_check` installed — is the **Project
+  Status** window's question, so an indicator can read **●** while that window
+  still reports a degradation.
+- **With no project open there are no indicators at all** — absent, not greyed out,
   like every other thing in this app you cannot currently use.
 
 ### The DEBUG chip
@@ -742,19 +830,24 @@ The **Raw XML** tab is a full text editor over the project file.
   inside a body for **Edit code…** (see *The Code Editor*).
 - Right-click a selection for **Find** to search for the selected text.
 - Right-click ▸ **Wrap Lines** toggles soft line-wrapping.
+- Right-click ▸ **Format Selection** — or **Ctrl+Alt+F** — re-indents the selected
+  XML by element nesting depth, and changes nothing else about it. It needs a
+  selection, and it is refused while the buffer is read-only. See *The
+  Autoformatter*.
 
 ### Undo, Redo & History
 
 The editor keeps a rolling history of up to ten XML snapshots.
 
-- **Ctrl+Z** undoes and **Ctrl+Y** — or **Ctrl+Shift+Z** — redoes a step. These
-  keys drive the project's history **only while the Raw XML tab is in front**;
-  every other tab answers them out of its own history (see *Keyboard Shortcuts ▸
-  Undo and Redo depend on which tab you are in*).
-- **History ▸ History…** (on the Editor menu bar, alongside **Undo** and
-  **Redo**) opens a jump list of the recent snapshots so you can jump
-  straight back to an earlier state. (Snapshots taken when a file is opened or
-  reverted are baselines and are not offered as undo targets.)
+- **Ctrl+Z** undoes and **Ctrl+Y** redoes a step. **Redo is Ctrl+Y on every
+  platform, and it is the only redo chord** — see *Keyboard Shortcuts ▸ Undo and
+  Redo depend on which tab you are in*. These keys drive the project's history
+  **only while the Raw XML tab is in front**; every other tab answers them out of
+  its own history.
+- **History ▸ History…** (on the Editor menu bar, alongside **Undo Project
+  Edit** and **Redo Project Edit**) opens a jump list of the recent snapshots so
+  you can jump straight back to an earlier state. (Snapshots taken when a file is
+  opened or reverted are baselines and are not offered as undo targets.)
 - **While the Raw XML buffer is locked read-only** — by **Caption Mode** or by
   **Compare/Merge** — undo, redo and a jump from the list all **refuse and say
   so** in the status bar rather than rewriting the buffer behind the lock.
@@ -815,8 +908,10 @@ the **Sandbox SQL** console (see *The Sandbox*), and the **Edit code…** dialog
 five of them, and with them **Ctrl+F2** / **F2** / **Shift+F2** — because the Raw XML editor
 they would act on is read-only for as long as that mode lasts. (While the Caption
 Management tab itself is in front, the entire Editor menu bar is hidden anyway;
-the menu stays disabled even if you step back to Raw XML without leaving the
-mode.) **The gutter still works**: clicking the bookmark strip or double-clicking
+the five stay disabled even if you step back to Raw XML without leaving the
+mode. It is the **entries** that are switched off, not the menu: its
+Compare/Merge commands are untouched, because a comparison loaded while you edit
+captions is still navigable.) **The gutter still works**: clicking the bookmark strip or double-clicking
 a line number sets and clears bookmarks exactly as usual, since a bookmark is
 only a marker over the text and does not depend on being able to edit it. Leaving
 Caption Mode restores the entries and the shortcuts.
@@ -892,10 +987,12 @@ one *"where do I want to go next?"* question at a time. The bottom dock's
 list does not update the list — ask again. (Loading a new document does clear the
 rows, since the bookmarks they described are gone.)
 
-Rows from a read-only **DDL Explorer** buffer and from **draft tabs** are listed
-but **do nothing when clicked**: those editors have no click-through route, and
-sending you to a plausible-looking line in a different document would be worse
-than not moving. The *no bookmarks in …* line names which explorer it read —
+**Rows from a read-only DDL Explorer buffer jump like any other**, into that
+Explorer's own viewing pane — and into the right one of the two, because each row
+carries the Explorer it was listed from. Only rows from **draft tabs** are listed
+and **do nothing when clicked**: a draft has no click-through route, and sending
+you to a plausible-looking line in a different document would be worse than not
+moving. The *no bookmarks in …* line names which explorer it read —
 **the DDL Explorer (Quality)** or **the DDL Explorer (Sandbox)** — so with both
 open you can tell the two listings apart.
 
@@ -951,9 +1048,18 @@ Management** tab has its own, differently-shaped bar — see *Caption Management
 Because a DDL Explorer buffer is **read-only**, only the searching half applies
 there: Find, Find Next and Find All work as usual, while Replace and Replace All
 have nothing they can change. A DDL object editor tab, a PHP file tab and a draft
-tab are the opposite case: they're fully editable, so **Find, Find Next, Replace,
-and Replace All all work** there — only **Find All** stays inert and returns no
-results, the one gap carried over from the read-only DDL Explorer's search bar.
+tab are fully editable, so every control works there.
+
+**Find All now reports from every tab that has a bar.** It used to be a dead
+button on four of them — either DDL Explorer, a DDL object tab, a PHP file tab
+and a generated draft fragment — where pressing it did nothing at all. Every one
+of those runs now streams its matches into the **Findings** tab like the Raw XML
+and Edit XSD bars always did, **and every one of those rows is clickable** —
+including the ones found in a **read-only DDL Explorer** buffer, which land in
+that Explorer's own viewing pane. The one caveat the Findings tab still states is
+the **draft fragment**: a draft has no click-through route, so its rows are
+listed but inert, because sending you to a plausible-looking line in another
+document would be worse than not moving.
 
 ---
 
@@ -989,15 +1095,21 @@ The Code Editor is a modal window with:
   for the same reason it is the one place the key **cannot** be changed by
   rebinding **Select ▸ Select Enclosing Block** (see *Keyboard Shortcuts ▸
   Changing a shortcut*).
-- Standard **Ctrl+C / Ctrl+V / Ctrl+X**.
-- **OK and Cancel are the buttons, plus Return and Escape.** This dialog used to
-  accept on **Ctrl+S** and cancel on **Ctrl+W** — the last two places either
-  chord meant anything. Both are gone: **Ctrl+S** is unbound app-wide because
-  saving is a named **Deployment** entry (see *Getting Started ▸ Saving,
+- Standard **Ctrl+C / Ctrl+V / Ctrl+X**, and the three line-editing keys
+  **Ctrl+D** / **Ctrl+K** / **Ctrl+U** (see *Keyboard Shortcuts*).
+- **A mode indicator under the editor**, and **Command mode** — this dialog has
+  the same **Escape**-entered command vocabulary every other editable editor has
+  (see *Editing Modes: Edit mode and Command mode*). It is the one surface where
+  **Escape** also leaves that mode, and the chip is how you can tell which mode
+  you are in.
+- **OK and Cancel are the buttons, plus Return and a double Escape.** This dialog
+  used to accept on **Ctrl+S** and cancel on **Ctrl+W** — the last two places
+  either chord meant anything. Both are gone: **Ctrl+S** is unbound app-wide
+  because saving is a named **Deployment** entry (see *Getting Started ▸ Saving,
   closing, discarding*), and **Ctrl+W** went with it on the same day it stopped
   closing files from the File menu. Nothing became unreachable — press **OK**
-  or **Return** to hand the code back, **Cancel**, **Escape** or the window's
-  close button to drop it.
+  or **Return** to hand the code back, and **Cancel**, the window's close button
+  or **Escape twice** (once into Command mode, once to cancel) to drop it.
 
 On save, the code is written back into the handler's XML body (properly escaped),
 preserving the rest of the file byte-for-byte.
@@ -1073,12 +1185,12 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
   bookmark strip (see *Bookmarks*).
 - **Auto-close** for `()`, `[]`, `{}`, `''`, `""`, **selection-wrap**, and
   **Select ▸ Select Enclosing Block** (**Ctrl+Shift+B**) to select the enclosing
-  bracket span. **Select Parent Block** is not offered here — see *The Two Menu
-  Bars*.
+  bracket span. **Expand Selection** and **Shrink Selection** are not offered
+  here — PHP has no plpgsql structure to climb; see *The Two Menu Bars*.
 - Its **own, permanently visible Find/Replace bar** — **Ctrl+F**, **Ctrl+R** and
   **F3** act on *this file*, never on the Raw XML, and Replace All is the bar's
-  own button. (Find All is the one inert control here, as in a DDL object editor
-  tab.)
+  own button. **Find All** works here too, listing this file's matches in the
+  **Findings** tab (see *Find, Replace & Find All*).
 - **Ctrl+Z / Ctrl+Y undo and redo only this tab's own edits.** They never reach
   the project's Raw XML history, exactly as in a DDL object editor tab.
 - **No fold chevrons yet.** The gutter has the folding machinery, but nothing
@@ -1113,22 +1225,27 @@ The tab hosts the same editor the **Edit code…** dialog uses, in PHP mode:
 
 The **Tools** menu can run PHP's own syntax check over the file in front of you —
 the same kind of gesture as **Parsing ▸ Validate Project** one tier down: this
-file rather than the whole project. All three entries — **Lint Current File**,
-**Lint on Save** and **Locate PHP Linter…** — sit together on **Tools**,
-directly under **Manage Captions…**. They deliberately stayed together when
-Validate Project moved to the Editor menu bar: splitting the three across two
-bars would be worse than either home.
+file rather than the whole project. Both entries — **Lint Current File** and
+**Lint on Save** — sit together on **Tools**, directly under **Manage
+Captions…**. They deliberately stayed together when Validate Project moved to the
+Editor menu bar: splitting them across two bars would be worse than either home.
+(**Locate PHP Linter…** used to sit beside them and is **gone from Tools**: the
+linter is set in **Settings ▸ Software settings… ▸ External tools**.)
 
 Everything here is **advisory**. A lint failure never blocks, delays, or undoes a
 save: by the time the check runs, your bytes are already on disk.
 
 ### Pointing the editor at a PHP executable
 
-The check needs a `php` program to run. **Tools ▸ Locate PHP Linter…** opens a
-file picker for it; the path is remembered with your other tool paths, alongside
-the PHP Generator executable (see *Generating PHP*), so everything you had to
-locate lives in one place. Both a full path and a bare `php` found on your `PATH`
-are accepted.
+The check needs a `php` program to run. **Settings ▸ Software settings… ▸
+External tools** is where you point at it: the **PHP linter (`php` executable)**
+group's **Browse…** button opens a file picker, and the path is stored beside the
+other app-wide tool paths (see *Software Settings ▸ The External tools pane*).
+Both a full path and a bare `php` found on your `PATH` are accepted.
+
+Until one is set, **Tools ▸ Lint Current File** is greyed out and its tooltip
+names that pane; a lint that is attempted with a linter that has since gone
+missing reports the fact as a `[Lint] NOT RUN:` row rather than passing silently.
 
 A newly located linter takes effect **immediately, in tabs that are already
 open** — nothing needs reopening.
@@ -1206,10 +1323,16 @@ across the project are highlighted so you can unify them.
 
 ### Navigating and editing
 
-- **Ctrl+G** (Go to line) jumps from the selected row to that line in the Raw XML
-  editor.
+- **Ctrl+G** — or right-click ▸ **Go to line in XML** — jumps from the selected
+  row to that line in the Raw XML editor. The chord works **from anywhere in this
+  panel, including its Find field**, so you can search for a caption and jump
+  straight to its line without leaving the field; it does nothing outside the
+  panel. (The context-menu entry deliberately carries no shortcut of its own — one
+  gesture, one key.)
 - **Copy / Paste** work across rows, including multi-line selections, so you can move
-  values between rows or in and out of a spreadsheet.
+  values between rows or in and out of a spreadsheet. **Ctrl+C** and **Ctrl+V**
+  belong to the **grid**; pressed while the cursor is in the Find or Replace field
+  they copy and paste that field's text, as they would anywhere else.
 
 ### Filtering
 
@@ -1327,8 +1450,9 @@ PGTP Editor's knowledge of the `.pgtp` format lives in one hand-edited file:
 **`curated.xsd`** in the app's data folder. It is the **official schema** and the
 *only* source feeding Ctrl+Space completion, the *Add attribute* menu, hover
 hints, and the value labels in the Properties panel. You maintain it yourself
-through the **Schema** menu, which has exactly five entries: **Edit XSD**,
-**Edit AutoXSD**, **Verify XSD**, **Export XSD**, and **Import XSD**.
+through the **Schema** menu, which has exactly six entries: **Edit XSD**,
+**Edit AutoXSD**, **Verify XSD**, **Export XSD**, **Import XSD**, and
+**Restore Bundled Curated Schema…**.
 
 Alongside it, the editor still **auto-learns** from every project you open:
 **File ▸ Open** scans the file and writes what it finds to a separate reference
@@ -1341,12 +1465,23 @@ appears in completion** — when something new looks worth keeping, open it with
 find it, and add it to `curated.xsd` by hand.
 
 On first run, when you don't yet have a `curated.xsd`, the app **seeds** it by
-copying the curated schema bundled with the editor (**Curated v1.2**, a real
+copying the curated schema bundled with the editor (**Curated v1.3**, a real
 hand-commented starting schema). The seed happens only when the file is absent —
 `curated.xsd` is hand-owned, so the app never overwrites your edits behind your
 back. (If the bundled schema isn't packaged for some reason, the app falls back
 to generating a starter schema from your learned data, preserving any value
 labels.)
+
+> **There are two `curated.xsd` files, and knowing which is which saves a lot of
+> confusion.** One is **bundled inside the application** and never changes; the
+> other is **your copy in the app's data folder**, written once at that first-run
+> seed and hand-owned from then on. **Everything in the app reads your copy** —
+> completion, hover, the *Add attribute* menu, the Properties labels, **Edit
+> XSD** — and the bundled one is never re-read once your copy exists. So if your
+> copy gets emptied, truncated or broken by a hand edit, the schema feed stops
+> even though a pristine schema is sitting inside the app, unused. **Schema ▸
+> Restore Bundled Curated Schema…** (below) is the way to put the bundled one
+> back.
 
 ### The XSD dialect
 
@@ -1451,6 +1586,51 @@ is in **Edit AutoXSD**.
   completion. If the tab had unsaved edits, they are replaced by the imported
   text and the Activity Log says so; the import's own verification findings land
   in the **Messages** tab like any other Verify run.
+
+### When the schema doesn't load
+
+If your `curated.xsd` cannot be read, the app says so instead of quietly running
+without a schema — and it always **names the file it tried**, since that is the
+whole question when two copies exist:
+
+- **The file is missing.** A `[Schema]` line in the **Activity Log** gives the
+  full path and states that completion, hover and the Properties labels have no
+  schema until it is restored, pointing at **Schema ▸ Restore Bundled Curated
+  Schema…**.
+- **The file is broken, but a schema is still loaded.** This is the mild case —
+  you saved half-typed XSD text, and the last good schema stays in effect, so
+  completion keeps working. You get one `[Schema]` **Activity Log** line with the
+  parse error and the path, and nothing interrupts you.
+- **The file is broken and nothing is loaded.** Completion, hover and the
+  Properties labels are running against nothing, so besides the Activity Log line
+  a **Curated Schema Not Loaded** warning box appears, naming the file, quoting
+  the parser's error, and offering both ways back: fix the file in **Schema ▸
+  Edit XSD**, or replace it with **Schema ▸ Restore Bundled Curated Schema…**.
+  You are told **once** — reopening five more projects with the same broken file
+  will not put the box up five more times. The next successful load arms it
+  again.
+
+### Restoring the bundled schema
+
+**Schema ▸ Restore Bundled Curated Schema…** — the last entry on the Schema menu,
+and the only in-app way back from a `curated.xsd` you broke by hand. It has **no
+keyboard shortcut**: it is a deliberate, rare, destructive recovery step.
+
+It asks first, in a **Restore Bundled Curated Schema** box that names the exact
+file it will replace, says which bundled version it will write, and warns that
+*every hand edit in that file will be DESTROYED*. Say **No** and nothing at all
+happens. Say **Yes** and the app copies your current file aside as
+`curated.xsd.bak`, writes the bundled schema over it, and re-parses it right away
+so completion, hover and the Properties labels come back without a restart. If
+the **Edit XSD** tab is open on the curated schema, it is reloaded with the
+restored text and its unsaved marker cleared — any unsaved edits in it are
+replaced, and the **Activity Log** line recording the restore says so.
+
+This is the one sanctioned exception to "the app never overwrites your
+`curated.xsd`": the rule still holds everywhere else, including at startup, and
+is broken here only because you asked for it by name and confirmed a prompt that
+spelled out the cost. If the build you are running carries no bundled schema at
+all, you get a **No Bundled Schema** box instead and your file is left untouched.
 
 ---
 
@@ -1629,11 +1809,12 @@ drafts open at once stay tellable apart, and its tooltip repeats that it is save
 nowhere. **Every invocation opens a new tab**, so you can generate the same table
 twice and compare, rather than having a second attempt overwrite the first. The
 tab is a full XML editor with highlighting **and its own Find/Replace bar**, so
-you can search and rework the fragment before copying it out. (Find All is the one
-inert control there, as in a DDL object editor tab.) **Ctrl+Z**, **Ctrl+Y** and
-**Ctrl+Shift+Z** undo and redo your edits to the draft, keystroke by keystroke,
-and never reach the project's snapshot history. It has **no save path and no
-unsaved-changes concept at all**, which is why
+you can search and rework the fragment before copying it out. **Find All** works
+there and lists its hits in the **Findings** tab, where they are listed but inert
+when clicked — a draft has no click-through route (see *Find, Replace & Find
+All*). **Ctrl+Z** and **Ctrl+Y** undo and redo your edits to the draft, keystroke
+by keystroke, and never reach the project's snapshot history. It has **no save
+path and no unsaved-changes concept at all**, which is why
 its **✕** closes it immediately with no prompt — there was never anywhere for the
 text to be saved to, so a warning would be about nothing.
 
@@ -1651,8 +1832,9 @@ Coherence** first.
 
 ## DDL Explorer
 
-The DDL Explorer shows a database's server-side code — every function,
-procedure, and trigger — inside the editor. There are **two** of them, one per
+The DDL Explorer shows a database's schema and server-side code — every table,
+view and materialized view, and every function, procedure and trigger — inside
+the editor. There are **two** of them, one per
 database you work against, and each is a checkable toggle on the **Database**
 menu:
 
@@ -1671,32 +1853,38 @@ the explorer again; with a local DDL-versioning project open, an **Activity Log*
 note points you at **Project Settings…** instead (see *Database/XML Coherence ▸
 Connecting* and *Local DDL-Versioning Projects*).
 
-Turning either one on fetches all routines and triggers from that database and
-reveals **its own** two tabs at once — both labelled with the database they show,
-so two open explorers are never confusable:
+Turning either one on fetches that database's whole object set — tables, views
+and materialized views as well as every routine and trigger — and reveals **its
+own** two tabs at once, both labelled with the database they show, so two open
+explorers are never confusable:
 
 - **Center — DDL Explorer (Quality)** / **DDL Explorer (Sandbox)**: every
-  definition in a single **read-only**,
+  object's DDL in a single **read-only**,
   SQL-highlighted buffer. Each object is preceded by a banner comment (e.g.
-  `-- FUNCTION public.foo(integer) --`) so you can always tell where you are.
-  The buffer is a live snapshot of the database and cannot be edited.
+  `-- FUNCTION public.foo(integer) --`, `-- TABLE pr.orders --`) so you can
+  always tell where you are.
+  The buffer is a live snapshot of the database and cannot be edited — see
+  *Full DDL and restricted DDL*, below, for which of the two renderers produced
+  the text you are looking at, and *What the read-only buffer holds* for what is
+  in it and which part of it is reconstructed rather than original.
 - **Left dock — DDL Objects (Quality)** / **DDL Objects (Sandbox)**: a tree of
   the same objects, grouped from two
-  angles. Under **Tables**, **every table in the connected schema is listed** —
+  angles, with a **name-filter bar above it** (*Filtering the object tree by
+  name*, below). Under **Tables**, **every table, view and materialized view in
+  the connected schema is listed** —
   tables that own a trigger list those triggers nested underneath them; tables
-  with no triggers appear as plain entries. Every table also carries a
-  **`Columns  (N)`** group listing its own columns. Under **Functions &
-  Procedures**,
+  with no triggers appear as plain entries. Every table also carries
+  **`Columns  (N)`**, **`Constraints  (N)`** and **`Indexes  (N)`** groups.
+  Under **Functions & Procedures**,
   each function or procedure lists the triggers that call it. A trigger
   therefore appears in **both** places — either entry points at the same
-  definition. **Click** a routine or trigger to jump **that explorer's own** DDL
-  buffer straight to it; **click** a table — or one of its columns — to see that
-  table's columns in Properties (see *Clicking a table: column properties*,
-  below).
+  definition. **Click any item that has DDL** — a table, a view, a column, a
+  constraint, an index, a routine, a trigger — to jump **that explorer's own**
+  DDL buffer straight to it.
 
-Everything in the next three sections describes both trees and both buffers.
-The sections after them — editing objects, creating them, and altering a table —
-belong to the Quality explorer alone.
+Everything from here up to *The Sandbox Explorer, and how it differs* describes
+both trees and both buffers. The sections after that one — editing objects,
+creating them, and altering a table — belong to the Quality explorer alone.
 
 ### Reading the DDL Objects tree
 
@@ -1704,17 +1892,37 @@ Under **Tables**, each table is listed as `schema.table`. A table with
 triggers shows a trigger count suffix, e.g. `public.orders  (2)`, with those
 triggers nested underneath it exactly as before; a table with no triggers
 shows the bare `schema.table` label (no count, since it would only ever be
-`0`) and has no children. Widening the branch to every table means it no
+`0`) and has no children. Views and materialized views are listed in the same
+branch and read the same way. Widening the branch to every relation means it no
 longer omits tables that happen to have no trigger of their own.
 
-Under each table, after its triggers, sits a **`Columns  (N)`** group holding one
-row per column, written as `name (type)` — for example `note (text)`. They are
-listed in the table's own declared column order, the same order the Properties
-panel uses, so the two surfaces show one table the same way round. The group node
-itself is only a container: it clicks nowhere and has no right-click menu. The
-column rows exist so that a right-click can carry *which column* into the **Alter
-Table ▸** dialogs (see *Altering a table's columns*, below); a table the explorer
-has no column information for simply gets no group.
+Under each table, after its triggers, sit up to three collapsible groups:
+
+- **`Columns  (N)`** — one row per column, written as `name (type)`, for example
+  `note (text)`. They are listed in the table's own declared column order, the
+  same order the Properties panel uses, so the two surfaces show one table the
+  same way round.
+- **`Constraints  (N)`** — one row per named constraint, `name [kind]`, where the
+  kind marker is **`[PK]`** primary key, **`[FK]`** foreign key, **`[U]`** unique,
+  **`[C]`** check or **`[X]`** exclusion.
+- **`Indexes  (N)`** — one row per index, `name [U|I] (method)` — **`[U]`** for a
+  unique index, **`[I]`** for an ordinary one — for example
+  `idx_orders_code [U] (btree)`.
+
+Each group node is only a container: it clicks nowhere and has no right-click
+menu, and a group with nothing in it is not shown at all rather than appearing as
+an empty `(0)` folder. The column rows also carry *which column* into the **Alter
+Table ▸** dialogs when you right-click one (see *Altering a table's columns*,
+below). Constraint and index rows are navigational only — right-clicking one
+offers nothing but **Reload DDL**.
+
+**In the Quality tree the selected row is highlighted in red** instead of the
+ordinary blue, and it stays red whether or not the tree has focus. That is a
+marking and nothing more — it changes no behaviour — but it is the tree whose
+right-click gestures reach the **real** database, so it is the one that looks
+like it. The **Sandbox** tree keeps the normal selection colour, and the
+difference between the two is the point. The red comes from the theme in use
+like every other colour in the app (see *Appearance & Layout*).
 
 Routines under **Functions & Procedures** are listed by their fully-qualified
 `schema.name`, followed by a marker telling you what kind of routine it is:
@@ -1754,9 +1962,63 @@ Both markers are purely informational: they surface disagreement between the
 local file, the last deploy, and the live database, but never block anything
 by themselves. With no project open, no markers are shown.
 
-### Clicking a table: column properties
+### Filtering the object tree by name
+
+A long database's tree is long. The row of controls **above the tree**, in the
+left dock, narrows it to the objects whose **name** you are after:
+
+- the **input** (placeholder `Filter object names…`),
+- a **match-mode dropdown** — **Contains** (the default), **Starts with**,
+  **Doesn't contain**, **Doesn't start with**, **Ends with**,
+- a **`Filter`** button and a **`Clear Filter`** button.
+
+Nothing filters while you type: the tree changes when you press **`Filter`** — or
+**Return** in the input, which does exactly the same thing. **`Clear Filter`**
+empties the box and brings every row back. Pressing `Filter` on an empty box is
+not a filter either; it clears, which is why the two negative modes cannot hide
+the whole tree by accident.
+
+**Matching is case-insensitive** (there is no Match-case toggle) and it matches
+the **bare object name** — `pr.orders`, `pr.recalc`, `pr.orders.trg_audit` — never
+the decorated label. The `[F]` / `[P]` / `[T]` routine markers, a trigger's
+`[B][D]`, a table's `  (2)` trigger count and the `*` / `!` drift markers are all
+invisible to it, so typing `d` finds names containing a *d* rather than every
+DELETE trigger.
+
+Non-matching objects are **hidden**, not greyed out. The ancestors of a match
+stay visible and expand themselves, so a hit never hides under a collapsed
+branch; a matched object shows its **whole subtree** — its columns, constraints,
+indexes and triggers — because you asked for the object, not for a filtered view
+of its insides.
+
+A filter always announces itself in the banner under the bar:
+
+- `Filtered: name contains “ord” — 7 of 214 objects` while something matches;
+- `No objects match the active filter — use “Clear Filter” to see everything.`
+  when nothing does — an empty tree always says why it is empty.
+
+**The filter survives a reload.** Re-introspecting an explorer (*Reloading an
+explorer*, below) rebuilds the tree and then re-applies the active filter,
+including to rows that have only just arrived — the banner is what keeps that
+from being a surprise.
+
+> **This bar filters the TREE; the Find bar searches the TEXT.** The DDL Explorer
+> has two find-shaped affordances and they answer different questions. This one
+> lives in the **left dock above the DDL Objects tree**, says `Filter` /
+> `Clear Filter`, and hides tree rows. The **Find/Replace bar** lives in the
+> **center tab below the read-only buffer**, says `Find Next` / `Find All`, and
+> moves the caret through the DDL text (see *Working in the DDL tab*). Filtering
+> the tree never touches the buffer, and finding in the buffer never hides a row.
+>
+> **The filter has no keyboard shortcut**, deliberately: **Ctrl+F** in this tab
+> already belongs to the Find bar over the text pane, and one chord cannot mean
+> both. Return in the filter input is as close as it gets.
+
+### Clicking a table: navigation and column properties
 
 Clicking any table node under **Tables** — whether it owns triggers or not —
+does **two** things. It jumps that explorer's DDL buffer to the table's
+`CREATE TABLE` (see *What the read-only buffer holds*, below), **and** it
 populates the **Properties** panel (the same right-hand dock the Project Tree
 and the coherence view use, see *Properties*) with that table's full column
 list. Each column is shown as **two rows**: a compact identity line — the
@@ -1765,20 +2027,230 @@ followed by a detail line with its default value and comment (an unset
 default or comment shows as `—`). Subtle alternating shading pairs each
 column's two rows together so they read as one record.
 
-**Clicking one of the table's own column rows shows the same thing** — the owning
-table's full column list — so you can inspect a column without collapsing the
-group you are working in.
+**Clicking one of the table's own column rows does the same two things**, except
+that the jump lands on **that column's own line** inside the `CREATE TABLE`
+rather than on the table's banner, and Properties shows the owning table's full
+column list — so you can inspect a column without collapsing the group you are
+working in.
 
-This is **display-only**: clicking a table populates Properties but, unlike
-clicking a routine or trigger, does **not** jump or scroll the DDL buffer,
-since a whole table has no single line in that buffer to jump to. In the
-**Quality** tree, right-clicking a table node offers two things: **Add Trigger…**
-(see *Creating a new trigger, function, or procedure*, below) and the
-**Alter Table ▸** submenu (see *Altering a table's columns*, below). A column row
-offers the **Alter Table ▸** submenu alone. **Edit DDL** remains available only on
-routine and trigger rows, because it acts on an object's existing definition. The
-**Sandbox** tree offers no context menu at all (see *The Sandbox Explorer, and how
-it differs*).
+A constraint row jumps to its inline `CONSTRAINT` line, and an index row to its
+`CREATE INDEX` statement; an index that only exists to back a PRIMARY KEY,
+UNIQUE or EXCLUDE constraint jumps to **that constraint's** line, because that is
+the only place it appears in the text (see *What the read-only buffer holds*).
+
+In the **Quality** tree, right-clicking a table node offers **Add Trigger…**
+(see *Creating a new trigger, function, or procedure*, below), **Create Table…**
+and the **Alter Table ▸** submenu (see *Altering a table's columns*, below). A column row
+offers the **Alter Table ▸** submenu alone. **Edit DDL** is available on routine,
+trigger and **view** rows, because it acts on an object's existing definition — a
+view's row offers it **above** its creation entries, so one menu holds both. A
+**materialized view** does not offer it, for the reason given in *What the
+read-only buffer holds*. The
+**Sandbox** tree offers none of these — its right-click menu holds **Reload DDL**
+and nothing else (see *The Sandbox Explorer, and how it differs*).
+
+### Full DDL and restricted DDL
+
+The read-only buffer has **two modes**, and which one you get depends on whether
+this machine has a usable `pg_dump`:
+
+- **Full DDL** — the buffer is `pg_dump`'s own `--schema-only` output, kept
+  verbatim. It is complete in the way only PostgreSQL's own dumper is: table
+  **inheritance** and **partitioning**, identity columns, storage parameters,
+  row-level security, rules — everything the database knows about a relation.
+- **Restricted DDL** — the buffer is the DDL the app reconstructs from
+  `pg_catalog`, which is what the DDL Explorer has always shown. It is honest
+  about what it cannot express: it does **not** cover table inheritance or
+  partitioning, and it says so above every table.
+
+**The app tells you which mode you are in every time you open the Quality
+explorer**, not once per session — as a row on the **Messages** tab prefixed
+**`[DDL]`** (see *Where Output Appears ▸ The Messages tab*). The mode is decided
+once per quality connection and then repeated on every open, so the notice
+costs nothing and is on screen at the moment it matters: when you are about to
+read the text.
+
+**The version rule: `pg_dump` must be at least the server's major version.** A
+`pg_dump` **newer** than the server is perfectly fine and is **not** a mismatch —
+the rule is asymmetric on purpose, because `pg_dump` happily dumps from an older
+server and **refuses** one newer than itself. So `pg_dump 17` against a
+PostgreSQL 16 server gives you full DDL; `pg_dump 15` against that same server
+does not.
+
+In full mode the row reads **`[DDL] Full DDL via pg_dump 17.2 (server 16.4).`**
+Every restricted row names **both** version numbers too, and says which of the
+four shapes it was:
+
+- `pg_dump` was not found — *"Restricted DDL — pg_dump was not found on PATH or
+  in the configured PostgreSQL binaries folder (pg_dump version unknown, server
+  16.4)."*
+- it was found but would not answer — *"Restricted DDL — pg_dump was found at
+  `<path>` but its version could not be read (pg_dump version unknown, server
+  16.4)."*
+- the server's version is unknown, so nothing can be compared — *"Restricted DDL
+  — the server version is unknown, so pg_dump 17.2 cannot be version-checked
+  against it (pg_dump version 17.2, server unknown)."*
+- it is older than the server — *"Restricted DDL — pg_dump 15.6 is older than
+  server 16.4; pg_dump would refuse this server."*
+
+Each of those four sentences ends with the same warning, which is the next
+section's subject: *"Showing DDL reconstructed from pg_catalog — incomplete for
+inheritance and partitioning; do not clone a partitioned or inherited table from
+this text."*
+
+**A second `[DDL]` row appears when full mode was chosen but could not be
+delivered** — `pg_dump` refused or timed out, or its output could not be matched
+to every object the explorer found (which also catches a table created between
+the two reads). It sits **beside** the mode row, not instead of it: the first
+row still says which mode was decided, the second says you are nonetheless
+reading reconstructed DDL and why. Rather than show you a half-built full buffer
+whose navigation would land on the wrong lines, the app falls all the way back to
+restricted DDL and says so.
+
+> **Restricted DDL is not safe to clone from.** The reason a complete
+> `CREATE TABLE` is worth having is that you can copy it, rename it, edit it and
+> run it to make a similar table. Do that with a **partitioned** or **inherited**
+> table out of a restricted-mode buffer and you get a plain table: it looks
+> right, it executes without complaint, and it is wrong — in a real database.
+> Nothing is guessed to paper over this (there is never an invented
+> `PARTITION BY`), which is precisely why the text cannot be trusted as a clone
+> source. If you need to clone such a table, get yourself a correctly-versioned
+> `pg_dump` first and re-open the explorer in full mode.
+
+**Where `pg_dump` is looked for:** in the project's **PostgreSQL binaries**
+folder if one is set (**File ▸ Project Settings… ▸ Connections**), otherwise on
+your `PATH` — the same field, and the same fallback, described in *Local
+DDL-Versioning Projects ▸ Project Settings*. Setting that folder is the fix for
+a restricted verdict on a machine that has several PostgreSQL versions
+installed. Changing it re-decides the mode the next time you open the explorer.
+
+**Routines and triggers are identical in both modes.** Functions, procedures and
+triggers always come from the catalog — PostgreSQL stores their text, so there is
+nothing for `pg_dump` to add — and their **Edit DDL** behaves exactly as
+documented throughout this chapter. Full mode changes **relations**: tables,
+views and materialized views.
+
+### What the read-only buffer holds
+
+The DDL Explorer buffer holds **every object kind**, in the same order the tree
+is grouped: the **relations first** — tables, views and materialized views,
+by schema and name — then the **routines and triggers**. Each object is preceded
+by its banner comment (`-- TABLE pr.orders --`, `-- VIEW pr.v_open --`,
+`-- FUNCTION pr.recalc(integer) --`, `-- TRIGGER pr.trg_audit ON orders --`),
+which is what a tree click jumps to and what folding collapses. The banners, the
+object order and the tree navigation are the same in both modes (*Full DDL and
+restricted DDL*, above); what differs is the text between the banners.
+
+**In restricted mode:**
+
+- A **table** renders as one `CREATE TABLE` with its columns and its constraints
+  **inline**, followed by the standalone `CREATE INDEX` statements and any
+  `COMMENT ON TABLE` / `COMMENT ON COLUMN`.
+- A **view** or **materialized view** renders as `CREATE VIEW` /
+  `CREATE MATERIALIZED VIEW` with the database's own definition of it, exactly as
+  PostgreSQL hands it back.
+- **No `ALTER` statement appears anywhere in the buffer.** A constraint has no
+  statement of its own here; it is a line inside its table's `CREATE TABLE`, and
+  that line is where the tree's constraint rows jump.
+- **An index that exists only to back a PRIMARY KEY, UNIQUE or EXCLUDE constraint
+  gets no `CREATE INDEX`** — PostgreSQL will not let you `DROP INDEX` such an
+  index anyway, and the constraint that owns it is already printed. Its tree row
+  therefore jumps to that constraint's line, which is the only place it exists in
+  this text.
+
+**In full mode** the statements are `pg_dump`'s, so they are laid out the way
+`pg_dump` writes them rather than the way the paragraph above describes:
+
+- A **table**'s banner is followed by its `CREATE TABLE`, and then by the
+  statements `pg_dump` emits separately for it — `ALTER TABLE ONLY … ADD
+  CONSTRAINT` for primary keys, unique and foreign keys, `CREATE INDEX` for the
+  rest, plus `COMMENT ON`, `ATTACH PARTITION` and anything else that names that
+  table. `CHECK` constraints stay inside the `CREATE TABLE`, which is where
+  `pg_dump` puts them. So **`ALTER` statements do appear here**, and a
+  constraint's tree row jumps to whichever of the two shapes holds it.
+- The buffer opens with a **`-- DATABASE-LEVEL STATEMENTS (pg_dump
+  --schema-only) --`** section: the schemas, extensions, types, domains and the
+  sequences owned by `SERIAL` columns. They are kept rather than dropped because
+  they are exactly what a copy of a table would otherwise silently need. Nothing
+  in the tree points at them — scroll to the top of the buffer to read them.
+- **Routines and triggers still come from the catalog**, in their own section
+  after the relations, exactly as in restricted mode; `pg_dump`'s own
+  `CREATE FUNCTION` / `CREATE TRIGGER` statements are left out rather than shown
+  a second time.
+
+> **In restricted mode a `CREATE TABLE` is RECONSTRUCTED, not the original
+> statement.**
+> PostgreSQL keeps no stored text for a table the way it does for a function, so
+> the editor builds the statement from the catalog — columns, constraints,
+> indexes and comments — and says so in two SQL-comment lines above every table.
+> The first reads `NOTE: reconstructed by PGTP Editor from pg_catalog (columns,
+> constraints, indexes, comments)`; the second, `this is NOT the original CREATE
+> statement, and it does not cover table inheritance or partitioning.`
+>
+> Read that as written, and read it as a **drawn boundary rather than a to-do**:
+> **table inheritance and partitioning are not reproduced**, so their absence
+> from the text is not evidence of their absence from the database. Nothing is
+> ever guessed — a partitioned table renders as the columns and constraints that
+> were actually read, never with an invented `PARTITION BY`. The notice sits per
+> table rather than once at the top of the buffer, because a tree click drops you
+> into the middle of the text and a notice you scrolled past is a notice you
+> never saw.
+>
+> **Identity and generated columns are reconstructed**, and the notice no longer
+> lists them: an identity column renders its `GENERATED ALWAYS AS IDENTITY` /
+> `GENERATED BY DEFAULT AS IDENTITY` clause, and a stored generated column its
+> `GENERATED ALWAYS AS (…) STORED`. A **`SERIAL` column renders the way the
+> catalog holds it** — `integer … DEFAULT nextval('…'::regclass)`, never the word
+> `SERIAL`. That is deliberate: `SERIAL` is shorthand for *integer + sequence +
+> ownership*, so writing it back would mean guessing which sequence feeds the
+> column, and the spelling you see names the actual one. What is *not* emitted is
+> that sequence's own `CREATE SEQUENCE`, which is a separate catalog object — see
+> the sequence warning below, which applies in **both** modes.
+>
+> **Views carry no such notice**, and that is deliberate: their body comes back
+> from the database verbatim, so there is nothing incomplete to warn about.
+
+> **The sequence hazard, in BOTH modes.** A `SERIAL` column is *integer +
+> sequence + ownership*, and what you see in the buffer is the integer with a
+> `DEFAULT nextval('…'::regclass)`. **Copy that statement under a new name and
+> the new table draws numbers from the ORIGINAL table's sequence** — the two
+> share one counter, and dropping the original breaks the clone. Every affected
+> table therefore carries two warning lines, directly under its banner and inside
+> the region a whole-object copy takes with it:
+> *"WARNING: a column default calls nextval() — a COPY of this statement under a
+> new name would draw from the ORIGINAL table's sequence. The owned CREATE
+> SEQUENCE is not part of this statement; give a clone its own."*
+>
+> Restricted mode never emits a `CREATE SEQUENCE` at all. Full mode does — in the
+> database-level section at the top of the buffer — so copying just the
+> `CREATE TABLE` still leaves it behind. Neither mode is clone-safe here, which
+> is why both warn.
+>
+> **The app warns and does not fix it.** Whether a clone should share the
+> original's counter or get its own sequence is a judgement about your data, so
+> the buffer states the hazard and leaves the decision to you. An **identity**
+> column (`GENERATED … AS IDENTITY`) is not warned about, because cloning one
+> creates a fresh sequence of its own and the hazard does not arise.
+
+**A view is editable here; a table and a materialized view are not.** Right-click
+inside a **view**'s definition in the **Quality** buffer and you get **Edit DDL**,
+which opens it as a `CREATE OR REPLACE VIEW` you can change and apply — that is
+the whole reason it is allowed: PostgreSQL can replace a view in place. Right-click
+inside anything else that is here to be **read** and there is no Edit DDL;
+instead a greyed-out line says why:
+
+- *"Tables are read-only here — change one with Alter Table ▸"*, and the same
+  sentence for a **column**, a **constraint** and an **index**.
+- *"Materialized views are read-only here — there is no CREATE OR REPLACE
+  MATERIALIZED VIEW, so replacing one would drop its stored data"*. Replacing a
+  matview would mean dropping and recreating it, which throws away the rows it
+  has stored — so the app refuses out loud rather than offering an edit that
+  costs you data.
+
+A refusal you can read beats a menu entry that
+silently isn't there. In the browse-only **Sandbox** buffer neither the entry nor
+the sentence appears, since nothing there is editable in the first place (see
+*The Sandbox Explorer, and how it differs*).
 
 ### Working in the DDL tab
 
@@ -1788,20 +2260,29 @@ navigation comforts as the Raw XML editor:
 - **Line numbers** in the gutter.
 - **Folding per DDL object:** a chevron on each object's banner comment line
   collapses that object's body away, leaving the banner visible — handy for
-  skimming a long database's worth of definitions.
+  skimming a long database's worth of definitions. **In full mode a fold hides
+  less:** a table's fold covers its `CREATE TABLE` alone, because `pg_dump`
+  writes that table's constraints and indexes as separate statements below it.
+  Navigation is unaffected — clicking a table still lands on its `CREATE TABLE`,
+  and clicking a constraint or an index lands on that statement.
 - **Bookmarks:** click the bookmark strip at the left edge of the gutter (or
   double-click the line number) to mark a line, or use **Ctrl+F2** / **F2** /
   **Shift+F2** and the **Navigation** menu —
   while this tab is active they act on its editor (see *Bookmarks*).
-- **Find:** this tab has its own always-visible Find/Replace bar, so **Ctrl+F**,
+- **Find:** this tab has its own always-visible Find/Replace bar **below the
+  buffer**, so **Ctrl+F**,
   **F3** and its **Find All** button search the DDL buffer itself instead of
   bouncing you to Raw XML. The replace half (**Ctrl+R** and the **Replace** /
-  **Replace All** buttons) is inert here, since the buffer is read-only.
-- **Undo says why it cannot run:** **Ctrl+Z**, **Ctrl+Y** and **Ctrl+Shift+Z**
-  answer here with *"this buffer is read only — there is nothing to undo here"*.
+  **Replace All** buttons) is inert here, since the buffer is read-only. This is
+  the bar that searches **text**; the one above the tree in the left dock filters
+  **rows** (see *Filtering the object tree by name*).
+- **Undo says why it cannot run:** **Ctrl+Z** and **Ctrl+Y** answer here with
+  *"this buffer is read only — there is nothing to undo here"*.
   They are deliberately caught by this tab, because a read-only editor that let
   them past would have them fall through to the window and revert the **Raw XML
   project buffer** — a document you are not even looking at.
+- **Ctrl+Shift+R re-introspects this explorer** — see *Reloading an explorer*,
+  below.
 
 Clicking an object in a DDL Objects tree scrolls it to the **top** of that
 tree's own DDL Explorer tab, so the whole definition is visible below its
@@ -1818,6 +2299,44 @@ whether that explorer is currently visible. The **Activity Log**
 records how many routines and triggers were loaded, naming which explorer
 loaded them; if the fetch fails, it records the error and that toggle unchecks
 itself.
+
+### Reloading an explorer
+
+An explorer's buffer and tree are a snapshot taken when it was opened, so after
+you apply something to a database — or somebody else changes it — what you are
+reading is out of date. **Reloading re-introspects the database**; you no longer
+have to close the explorer and open it again.
+
+Three gestures do it, and all three do exactly the same thing:
+
+- **Ctrl+Shift+R**, with the caret in an explorer's read-only viewing pane. The
+  chord is **per explorer**: it reloads the one you are looking at, which is why
+  it lives on the pane rather than on the window — the caret is what says *which*
+  explorer you mean.
+- **Right-click ▸ Reload DDL**, offered **anywhere** in either explorer's viewing
+  pane and **anywhere** in either **DDL Objects** tree — on any row, on a branch
+  root, and on the blank space below the last row. It is a property of the
+  connection the tab was filled from, not of the row you clicked, so it never has
+  a reason to be absent.
+- **Database ▸ Reload DDL**, which reloads the **Quality** explorer. A menu entry
+  cannot say which of the two explorers it means, so this one is quality-scoped
+  by definition; reload the sandbox from its own pane or tree.
+
+**Nothing of yours is lost.** A reload replaces the read-only buffer, the tree,
+its drift markers and the completion catalog. **Open, editable DDL object tabs
+keep their documents** and their unsaved-changes markers — a reload never reloads,
+marks or closes them, exactly as re-running the explorer toggle never did.
+
+**It really re-reads the database**, rather than redrawing what was already
+fetched — serving the gesture from the cache would answer it with the very data
+the gesture exists to replace. So it costs a round trip, and a failure reports
+itself the same way opening the explorer does.
+
+**Reload DDL carries no keyboard shortcut of its own on the menu or in either
+context menu.** `Ctrl+Shift+R` on the viewing pane is the gesture's one keyboard
+host — the app's standing rule that a gesture has exactly one — which is also why
+the chord cannot be reassigned to something else (see *Keyboard Shortcuts ▸ What
+cannot be rebound, and why*).
 
 ### The Sandbox Explorer, and how it differs
 
@@ -1851,11 +2370,14 @@ Connections**. Closing the project takes the entry away again **and hides its tw
 tabs with it** — a tree still showing a closed project's sandbox would be
 describing something you are no longer working on.
 
-**The sandbox tree is browse-only.** It has no **Edit DDL**, neither of the
-creation entries (**Add Trigger…**, **New Function/Procedure…**), and no
-**Alter Table ▸** submenu; right-clicking
-anywhere in it offers nothing, and the sandbox buffer's right-click menu has the
-reading commands but no **Edit DDL** either. The column operations are left out
+**The sandbox tree is browse-only.** It has no **Edit DDL**, none of the
+creation entries (**Add Trigger…**, **Create Table…**, **New
+Function/Procedure…**), and no **Alter Table ▸** submenu; right-clicking anywhere in it offers **Reload DDL**
+alone, and the sandbox buffer's right-click menu has the reading commands plus
+**Reload DDL** but no **Edit DDL** either. Reload is the one exception on purpose:
+it only *re-reads* this database, and this is the explorer whose contents you most
+want to re-read after applying something (see *Reloading an explorer*). The column
+operations are left out
 for the strongest form of that reason: they are schema *mutations*, and this
 explorer exists to look at a sandbox, never to reshape one from the tree. That is the point of the surface
 rather than a gap in it: editing and creating are how you change what will
@@ -1866,10 +2388,24 @@ what the quality database has, and treating it as the thing you are editing
 would quietly re-base your project's idea of what has been deployed. So you
 author in the Quality explorer and read the results here.
 
-Everything that only *reads* still works: clicking a routine or trigger
-navigates the sandbox buffer, clicking a table fills the **Properties** panel
-with its columns, and the buffer's own Find bar, bookmarks, and folding behave
-exactly as in the Quality one.
+Everything that only *reads* still works: clicking any object navigates the
+sandbox buffer, clicking a table also fills the **Properties** panel
+with its columns, the name-filter bar above the tree filters this tree the same
+way, and the buffer's own Find bar, bookmarks, folding and
+**Ctrl+Shift+R** reload behave exactly as in the Quality one. Its buffer holds
+the same object kinds — tables, views, matviews, routines, triggers — under the
+same reconstruction rules (see *What the read-only buffer holds*). It is
+rendered in the **same mode** the quality connection was judged to be in, from
+its **own** database's dump, so a sandbox buffer never shows you the quality
+database's text; the `[DDL]` mode row itself is announced once, for the Quality
+explorer (see *Full DDL and restricted DDL*). Right-clicking
+inside a table's DDL here shows no **Edit DDL** entry **and** no read-only
+explanation: in a browse-only explorer there is no editing gesture to explain
+away.
+
+**The sandbox tree's selection stays the ordinary colour.** Only the Quality
+tree's selection band turns red, precisely because that is the tree whose
+gestures reach the real database (see *Reading the DDL Objects tree*).
 
 **The sandbox tree shows no `*` / `!` drift markers**, and that is deliberate
 too. Those markers mean *"this differs from what was last deployed to
@@ -1884,7 +2420,7 @@ lane owns: the **Ctrl+Space** completion catalog in your open DDL object tabs
 keeps describing the quality database (see *Schema-aware completion in the DDL
 object editor*).
 
-### Editing a single function, procedure, or trigger
+### Editing a single function, procedure, trigger, or view
 
 Both of the **Quality** explorer's browsing surfaces double as an entry point
 into a dedicated, **editable**
@@ -1896,16 +2432,26 @@ reason rather than running when their destination cannot be reached (see *The
 Deployment Menu*). Neither entry point exists in the Sandbox
 explorer (see *The Sandbox Explorer, and how it differs*).
 
-- In the **DDL Objects (Quality)** tree, right-click a routine or trigger row for
-  **Edit DDL**. The row you clicked already names the object, so the entry
+- In the **DDL Objects (Quality)** tree, right-click a routine, trigger or view
+  row for **Edit DDL**. The row you clicked already names the object, so the entry
   doesn't repeat it. Right-clicking an argument-name child row offers no Edit
   action — only object rows open a tab.
-- In the **DDL Explorer (Quality)** tab's read-only buffer, right-click inside an
-  object's body for **Edit DDL: `<schema>.<name>(<argtypes>)`** — or **Edit
-  DDL: `<schema>.<table>.<name>`** for a trigger. There your click landed
+- In the **DDL Explorer (Quality)** tab's read-only buffer, right-click inside a
+  routine's or trigger's body for **Edit DDL: `<schema>.<name>(<argtypes>)`** — or
+  **Edit
+  DDL: `<schema>.<table>.<name>`** for a trigger, **Edit DDL:
+  `<schema>.<name>`** for a view. There your click landed
   somewhere in a wall of definitions, so the entry spells out which object it
   caught, and two overloads of one name read differently, so you can tell them
-  apart before opening either.
+  apart before opening either. A click inside a table's, a materialized view's, a
+  column's, a constraint's or an index's DDL answers with a greyed-out reason
+  instead (see *What the read-only buffer holds*).
+
+**A view opens as a `CREATE OR REPLACE VIEW`**, built from the definition the
+database hands back — the same text the read-only buffer shows you, wrapped in
+the statement that replaces it in place. Its `INSTEAD OF` triggers are **not** in
+that text: each trigger is its own object with its own **Edit DDL**, so editing a
+view never silently rewrites them.
 
 **There is one editing gesture, and what you can do with the tab it opens comes
 from whether a project is open** — never from which words you clicked. (The
@@ -1926,6 +2472,13 @@ project state.)
   missing project: editing one object with just a database connection is a
   supported way to work, so there is no "Project Required" prompt in the way of
   every edit.
+- **A view is edit-and-apply only, even with a project open.** Functions,
+  procedures and triggers are what the checkout model holds; a view's tab always
+  behaves like the projectless case above — the live definition, and **Save As…**
+  on the first save — and a view never shows **Discard local change**, because it
+  never had a checked-out file to discard. Editing and applying a view works
+  exactly as it does for a routine; only the local `ddl/*.sql` bookkeeping is
+  absent.
 
 **Re-invoking Edit DDL on an object that is already open focuses the existing
 tab** rather than opening a second one. There is exactly one tab per object,
@@ -1936,6 +2489,26 @@ ever.
 > its "ask me where to save" behavior, and **Edit DDL** on the same object just
 > focuses it — it is not promoted to a checked-out file. To get that object under
 > versioning, close its tab and open it again.
+
+**Undoing a checkout: right-click ▸ Discard local change.** Beside **Edit DDL**
+in the **DDL Objects (Quality)** tree, an object that is currently checked out
+also offers **Discard local change**. It appears **only** for an object that
+actually has a local working copy — on anything else it is simply not there,
+rather than present and dead.
+
+It throws the checkout away, all of it at once: the object's `ddl/*.sql` file is
+deleted, its last-deployed reference is dropped (so the `*` / `!` drift markers
+stop tracking it), its editable tab is closed, and the object goes back to
+not-checked-out. **Any unsaved edits in that tab are thrown away** — you are not
+offered a Save first, because throwing those edits away is the whole point of the
+gesture. A Yes/No confirmation names the file before anything happens, so nothing
+is destroyed by one click.
+
+**It never touches the database.** Unlike **Apply to quality**, this is purely
+local: the live object stays exactly as it is, and the confirmation says so in as
+many words. It also touches only the object you right-clicked — two overloads of
+one name share a folder, and only the one you picked is discarded. Every outcome,
+including a cancel, is recorded as a `[Project]` line in the **Activity Log**.
 
 The tab that opens is titled with the object's short name — `recalc`, or
 `fmt(integer)` when it's one of several overloads, or `orders.trg_audit` for a
@@ -1948,8 +2521,7 @@ actually works**.
 
 **Ctrl+Z and Ctrl+Y in this tab undo and redo only this tab's own edits** —
 they never touch the project's Raw XML undo history, even though the same
-shortcuts drive the project's snapshot history on the Raw XML tab.
-**Ctrl+Shift+Z** is a second redo here, exactly like Ctrl+Y. Which history
+shortcuts drive the project's snapshot history on the Raw XML tab. Which history
 those keys reach depends on the tab in front of you, and the full routing is in
 *Keyboard Shortcuts ▸ Undo and Redo depend on which tab you are in*.
 
@@ -1983,21 +2555,33 @@ As…; if you cancel that file picker, the tab **stays open** rather than
 closing.
 
 **Format Selection** (**Ctrl+Alt+F**, or right-click ▸ **Format Selection**)
-reindents the current text selection in place — the first real user of the
-app's SQL formatter. Both are enabled only when you have a selection. If the
+reindents the current text selection in place, using the app's SQL formatter.
+Both are enabled only when you have a selection. If the
 selection can't be safely reformatted (for example, an unbalanced
 `BEGIN`/`END` split by the selection boundary), nothing changes: the problem
 is reported as a `[SQL]`-prefixed line in the **Activity Log**, and the exact
 offending text is underlined in red in the editor until your next edit or
 your next format attempt.
 
+> **A `BEGIN TRANSACTION` / `BEGIN WORK` block is not an unbalanced block, and is
+> no longer treated as one.** Those `BEGIN`s are transaction control, not a
+> plpgsql block, so they need no `END` to close them and a selection containing
+> one formats normally — as do `BEGIN ISOLATION LEVEL …`, `BEGIN READ ONLY` and
+> `BEGIN DEFERRABLE`, where PostgreSQL lets the noise word be left out. The
+> formatter used to count them as unclosed blocks and refuse perfectly valid SQL.
+
+**What it does to your SQL — keyword casing, which
+clauses start a new line, the indent unit — is configurable**; see *The
+Autoformatter*.
+
 **This tab also carries the five schema-aware editing gestures** — **Ctrl+Space**
 completion, **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J** and
 **Ctrl+Shift+Space** — see *Schema-aware completion and gestures in the SQL
 editors*, at the end of this chapter.
 
-Re-running **Database ▸ DDL Explorer (Quality)** (a fresh fetch) never touches object
-tabs you already have open — they are not reloaded, marked, or closed, even if
+Re-fetching the explorer — by re-running **Database ▸ DDL Explorer (Quality)** or
+by **Reload DDL** (see *Reloading an explorer*) — never touches object
+tabs you already have open. They are not reloaded, marked, or closed, even if
 the live definition changed underneath them; your in-progress edits are never
 silently discarded to resync with the database.
 
@@ -2021,11 +2605,31 @@ places they are offered. None of the three has a keyboard shortcut.
 **Apply to quality is guarded, in this order, and refuses out loud rather than
 silently:**
 
-1. **A changed signature is refused outright, with no override.** PostgreSQL
+1. **A changed signature warns and asks — it no longer refuses.** PostgreSQL
    identifies a routine by schema, name and argument types, so `CREATE OR
-   REPLACE` with different arguments would create a *second* object and leave the
-   old one live — something no confirmation could catch. The refusal names both
-   signatures and points you at the reviewable deployment-script path.
+   REPLACE` on a buffer you have renamed or whose arguments you have changed does
+   **not** replace the object you checked out: it **creates a second object and
+   leaves the old one live**. The dialog names both identities — *"You checked out
+   `x`, but the buffer creates `y`"* — says that consequence in as many words, and
+   then offers to run your SQL anyway. If you say yes, **both objects exist
+   afterwards, and dropping the old one is your job** — this editor has no gesture
+   that drops an object in the target. So the dialog **hands you the statement to
+   run yourself**, spelled out in full (`DROP FUNCTION pr.recalc(integer);`), and
+   names where to run it: the **Quality SQL Console** (**Database ▸ Quality SQL
+   Console…**), which does reach the target database — see *The Quality SQL
+   Console*. Saying no cancels and applies nothing, naming both signatures in the
+   `[Check]` line.
+
+   This used to be a hard refusal with no way through, which was worse than it
+   sounds: **Check and commit to sandbox** has no such guard and happily ran the
+   renamed buffer, so the same edit worked in the sandbox and looked like it had
+   succeeded against quality while doing nothing but printing one line you had no
+   reason to read. The other branches of the check *are* still hard refusals. A
+   buffer whose signature cannot be parsed at all — an `ALTER`, a bare statement,
+   an incomplete argument list — is refused with what it would have needed and
+   points you at **Deployment ▸ Check and commit to sandbox**, where trying things
+   is free. A live identity that could not be read because the database did not
+   answer is refused too: an unreachable database never counts as a cleared check.
 2. **The buffer must have a green sandbox validation.** Actual findings block.
    What could not be *checked* — no sandbox result for this exact text, a missing
    extension — can be overridden, but only through a dialog that **enumerates
@@ -2064,16 +2668,30 @@ only collect a few fields and open an editor tab on a generated skeleton, which
 you then fill in and save like any other DDL object tab (see *Editing a single
 function, procedure, or trigger*, above).
 
-**Add Trigger…** — right-click a **table** node under **Tables** in the DDL
-Objects tree. (It sits at the top level of that node's menu, above the
-**Alter Table ▸** submenu, because creating a new object is a different act from
-changing this one; **Edit DDL** still belongs to routine and trigger rows only.)
+**Add Trigger…** — right-click a **table** or a **view** node under **Tables** in
+the DDL Objects tree. (It sits at the top of that node's menu, with the other
+creation entry **Create Table…** beside it and the **Alter Table ▸** submenu below
+both, because creating a new object is a different act from changing this one;
+**Edit DDL** still belongs to routine and trigger rows only.)
+
+**What is offered follows the relation kind**, because PostgreSQL's rules do:
+
+- On a **table**, the timings are **BEFORE** and **AFTER**.
+- On a **view**, the only timing is **INSTEAD OF** — which is the standard way to
+  make a view updatable, and squarely what this app is for.
+- On a **materialized view** the entry is present but **disabled, carrying its
+  reason**: *"Materialized views cannot have triggers — PostgreSQL supports none
+  on them."* A stated refusal beats a command that vanishes, especially where the
+  sibling kinds on the very same branch do offer it.
+
 The
-dialog shows the clicked table as a fixed line — you picked it by right-clicking
-it, so it isn't offered again as a field — plus:
+dialog shows the clicked relation as a fixed line — you picked it by right-clicking
+it, so it isn't offered again as a field — labelled for what it is, **Table:**,
+**View:** or **Materialized view:**. Then:
 
 - **Name** — the trigger's name.
-- **Timing** — **BEFORE**, **AFTER**, or **INSTEAD OF**.
+- **Timing** — the timings legal for that relation kind, and no others, so a view
+  can never be handed a `BEFORE INSERT` the server would reject.
 - **Events** — **INSERT**, **UPDATE**, **DELETE** as checkboxes, because
   Postgres combines them with `OR` (`BEFORE INSERT OR UPDATE`). Tick at least
   one; you can tick several.
@@ -2127,13 +2745,41 @@ supported way to work.
 
 The DDL Explorer can also **change an existing table**. In the **DDL Objects
 (Quality)** tree, right-click a table node — or one of its column rows under
-**`Columns  (N)`** — and open the **Alter Table ▸** submenu. It holds twelve
-entries in two groups, separated by a line: **the eight column operations** below,
-then **four constraint operations** — **Add Constraint…**, **Add Foreign Key…**,
-**Drop Constraint…** and **Rename Constraint…** — which have a section of their
-own (*Constraints and foreign keys*, next). The split is there because "what are
-this table's columns?" and "what are this table's constraints?" are two different
-questions, and twelve undifferentiated entries would read as one long list.
+**`Columns  (N)`** — and open the **Alter Table ▸** submenu. It gathers everything
+that is **scoped to the table you clicked**, in five groups separated by a line:
+
+- **eight column operations** — the table below.
+- **four constraint operations** — **Add Constraint…**, **Add Foreign Key…**,
+  **Drop Constraint…**, **Rename Constraint…** — which have a section of their own
+  (*Constraints and foreign keys*, next).
+- **two index operations** — **Create Index…** and **Drop Index…** (*Indexes,
+  comments, and creating or dropping a table*, after that).
+- **one comment entry**, and this is the single place the two entry points differ:
+  a **table node** offers **Set Table Comment…**, a **column row** offers **Set
+  Column Comment…**. The entry always names the thing you actually right-clicked,
+  so it can never quietly retarget your click a level up or down.
+- **Drop Table…**, alone at the bottom — the one entry that removes the object the
+  whole menu is about, kept a separator away from a mis-click on **Drop Index…**.
+
+That is **sixteen entries from either entry point**, differing only in which
+comment entry is offered. The grouping is there because "what are this table's
+columns?", "…its constraints?", "…its indexes?", "what does it say about itself?"
+and "does it exist at all?" are five different questions, and sixteen
+undifferentiated entries would read as one long list.
+
+> **The submenu's title names the commonest case, not the generated verb.** Most
+> of these emit `ALTER TABLE`, but **Create Index…**, **Drop Index…**, the comment
+> entries and **Drop Table…** emit `CREATE INDEX`, `DROP INDEX`, `COMMENT ON …`
+> and `DROP TABLE`. They live here because they are scoped to this table, which is
+> the question you are answering when you right-click one — and the tab each one
+> opens is titled after the statement it actually holds, never after the route you
+> took (see *The tab an Alter Table operation opens*).
+
+**Create Table… is the one operation that is not on the submenu**, because it is
+not scoped to the clicked table: it creates a new one. It sits at the **top level**
+of a table node's menu, beside **Add Trigger…** and above **Alter Table ▸**, and
+also on the **Tables** branch root itself — see *Indexes, comments, and creating or
+dropping a table*.
 
 The eight column operations are:
 
@@ -2149,8 +2795,8 @@ The eight column operations are:
 | **Drop DEFAULT…** | `ALTER TABLE … ALTER COLUMN … DROP DEFAULT` |
 
 > **Generating executes nothing.** Every entry here opens a dialog, and confirming
-> that dialog does exactly one thing: it puts the generated `ALTER TABLE` text into
-> an ordinary, editable tab. No connection is opened, nothing is sent to any
+> that dialog does exactly one thing: it puts the generated statement into an
+> ordinary, editable tab. No connection is opened, nothing is sent to any
 > database, and nothing about your table changes. **Running the statement is a
 > separate, explicit gesture** you make afterwards, from the **Deployment** menu.
 > That separation is the whole safety model: you always read the DDL — and can
@@ -2158,16 +2804,27 @@ The eight column operations are:
 
 **Where the click lands is the dialog's starting point, not a cage.** Right-click
 a **column** row and that column is pre-selected; right-click the **table** node
-and you get the same twelve operations with no column pre-selected (the dropdown
-simply starts at the table's first column). Either way the dialog states where it
+and you get the same operations with no column pre-selected (the dropdown simply
+starts at the table's first column). Either way the dialog states where it
 came from on a read-only **From:** line, and both the **Table:** and **Column:**
 dropdowns stay changeable — so a dialog you opened from the wrong row is a
 correction, not a cancel-and-retry. The dropdowns are filled from the schema the
 explorer already fetched; the dialogs never talk to the database themselves.
 
-**Views and materialized views have no Alter Table ▸ submenu**, on the table node
-or on a column. Every entry emits `ALTER TABLE`, which the server would refuse on a
-view, so the operation is not offered rather than offered and broken. For the same
+**Views and materialized views have no Alter Table ▸ submenu**, on the relation
+node or on a column. Nearly every entry emits `ALTER TABLE` or `DROP TABLE`, which
+the server would refuse on a view, so the submenu is not offered rather than
+offered and broken. A handful of its entries *do* have legal view spellings —
+`COMMENT ON VIEW`, an index on a materialized view — but the generators behind
+them write `TABLE`, so they would still produce the wrong statement; a
+view-shaped action set is a separate feature this one does not claim to be. A
+view's node still offers the two creation entries at its top level — **Add
+Trigger…** (offering **INSTEAD OF** only) and **Create Table…**; on a
+**materialized view**'s node, **Create Table…** is the same, while **Add
+Trigger…** is replaced by the disabled line saying PostgreSQL supports no
+triggers on materialized views (see *Creating a new trigger, function, or
+procedure*). A view's **column** row offers no editing gesture at
+all (just **Reload DDL**, which is offered everywhere). For the same
 kind of reason the whole submenu is **absent in the Sandbox explorer**, which is
 browse-only (see *The Sandbox Explorer, and how it differs*).
 
@@ -2204,7 +2861,7 @@ you really want the cascade, type the word into the tab yourself.
 
 ### Constraints and foreign keys
 
-Below the separator, the **Alter Table ▸** submenu offers four constraint
+The second group of the **Alter Table ▸** submenu holds four constraint
 operations. They open from the same two places as the column entries — a table
 node or one of its column rows — carry the same click context, and generate text
 into the same kind of editable tab: **nothing here runs against a database
@@ -2276,20 +2933,34 @@ you came for. Generating the DDL changes nothing — see the note above.
 
 ### Indexes, comments, and creating or dropping a table
 
-Six further operations exist on top of the twelve: **create index**, **drop
-index**, **set a table comment**, **set a column comment**, **create table** and
-**drop table**. Each has its dialog and its statement generator, and each obeys
-the same rules as everything else in this chapter — the lists are filled from the
-schema the explorer already fetched, the dialogs never open a connection, **OK**
-stays disabled until the statement actually renders, and confirming one only puts
-text into an editable tab.
+Six further operations round out the set: **Create Index…**, **Drop Index…**,
+**Set Table Comment…**, **Set Column Comment…**, **Create Table…** and **Drop
+Table…**. Each obeys the same rules as everything else in this chapter — the lists
+are filled from the schema the explorer already fetched, the dialogs never open a
+connection, **OK** stays disabled until the statement actually renders, and
+confirming one only puts text into an editable tab.
 
-> **Where these sit in the menus is still being wired.** The dialogs and the
-> generated statements are what this section describes; once their entry points
-> land, this section will name them. Until then, do not go hunting for a menu path
-> here that isn't in the manual.
+**Where they are.** In the **DDL Objects (Quality)** tree:
 
-**Create index** asks for an index name, one or more columns (the same "+"
+- **Create Index…**, **Drop Index…** and **Drop Table…** are on the **Alter
+  Table ▸** submenu of a table node or one of its column rows, in the third and
+  fifth groups (see *Altering a table's columns*).
+- The comment entry is on that same submenu, and follows your click: **Set Table
+  Comment…** from a table node, **Set Column Comment…** from a column row.
+- **Create Table…** is *not* on the submenu. It is a top-level entry — beside
+  **Add Trigger…** on a table or view node, and on a matview node too (since what
+  you create is a table regardless of what you clicked, even where **Add
+  Trigger…** itself is refused there), and on the **Tables** branch
+  root itself, which is the "make a new one of the kind this branch lists" gesture
+  the **Functions & Procedures** root already had. Opened from a node, the new
+  table's name is pre-seeded with that node's schema so it lands where you
+  clicked; opened from the branch root, which names no schema, the name field
+  starts empty.
+
+None of these appears in the **Sandbox** explorer, which is browse-only (see *The
+Sandbox Explorer, and how it differs*).
+
+**Create Index…** asks for an index name, one or more columns (the same "+"
 picker, order preserved), a **Unique** toggle and a **Method:** dropdown —
 `btree` (the default and the right answer for almost every index), `hash`,
 `gist`, `spgist`, `gin`, `brin`. The method is always spelled out in the
@@ -2306,7 +2977,7 @@ does not exist; type it into the tab afterwards.
 > checkbox for it would produce text that fails on the way it is meant to be run.
 > If you want it, type the word into the tab and run it yourself.
 
-**Drop index** is the one operation that is not about a table: an index is named
+**Drop Index…** is the one entry here that is not about a table: an index is named
 in its own right, as `schema.index_name`, and there is no `DROP INDEX … ON table`
 in PostgreSQL. So you pick the index itself from a list showing what each one is —
 `idx_orders_code — UNIQUE btree (code)`.
@@ -2320,8 +2991,10 @@ in PostgreSQL. So you pick the index itself from a list showing what each one is
 > each one it left out, with the constraint that owns it, and points you at
 > **Drop Constraint…** — remove the constraint and its index goes with it.
 
-**Comments** are one dialog in two flavours — the table's comment, or one
-column's — chosen by the operation you picked rather than by a field inside it.
+**Set Table Comment… / Set Column Comment…** are one dialog in two flavours — the
+table's comment, or one column's — chosen by which entry the submenu offered you,
+which in turn follows the row you right-clicked rather than a field inside the
+dialog.
 The existing comment is offered for editing, which is the difference between
 changing a description and retyping it from memory. **Leaving the box empty
 removes the comment:** it generates `COMMENT ON … IS NULL`, which is the only
@@ -2329,7 +3002,7 @@ spelling PostgreSQL has for "no comment", and an empty box is the only way you
 can ask for it. The dialog says so under the field, because "take that comment
 off" is a legitimate thing to want rather than an error.
 
-**Create table** is a small column builder: one row per column with a **Name**, a
+**Create Table…** is a small column builder: one row per column with a **Name**, a
 **Type** (the same editable list of common types the column dialogs use — anything
 else can simply be typed), a **Nullable** checkbox, an optional **Default**, and a
 **PK** checkbox marking it as part of the primary key. **"+"** adds a row, **"−"**
@@ -2338,7 +3011,7 @@ column order. The primary key is emitted unnamed (`PRIMARY KEY ("id")`), because
 Postgres's auto-name for it — `orders_pkey` — is the one auto-name that is both
 predictable and what everybody already uses.
 
-> **That is everything Create table expresses, on purpose.** No foreign keys, no
+> **That is everything Create Table… expresses, on purpose.** No foreign keys, no
 > `UNIQUE` or `CHECK` constraints, no indexes, no identity/generated columns, and
 > no partitioning, inheritance or tablespace. There is no hidden checkbox for them
 > — those are exactly what the constraint and index operations above add to the
@@ -2347,7 +3020,7 @@ predictable and what everybody already uses.
 > have to guess at how its own fields interact, which is the one outcome this
 > whole feature exists to avoid.
 
-**Drop table** asks nothing beyond which table, and **there is no "are you
+**Drop Table…** asks nothing beyond which table, and **there is no "are you
 sure?"** — no confirmation dialog, no typing the table's name to unlock the
 button. That is the same safety model as every other operation here, stated where
 you are most likely to expect a scary prompt: **generating `DROP TABLE` executes
@@ -2405,10 +3078,11 @@ mean retyping what it knows. Five keys put that knowledge at the caret:
 | **Ctrl+Alt+J** | Write the `JOIN … ON …` a foreign key already implies |
 | **Ctrl+Shift+Space** | Show the signature of the call the caret is inside |
 
-**They work in exactly two places: an open DDL object editor tab, and the
-Sandbox SQL Console** (see *The Sandbox ▸ The Sandbox SQL Console*). Those are
-the app's two editable SQL surfaces, and both are handed the database catalog
-the **Quality** explorer already fetched when you connected. Everywhere else
+**They work in the app's editable SQL surfaces only: an open DDL object editor
+tab, the Sandbox SQL Console and the Quality SQL Console** (see *The Sandbox ▸
+The Sandbox SQL Console* and *The Quality SQL Console*). Each of them is handed
+the database catalog the **Quality** explorer already fetched when you connected.
+Everywhere else
 these keys are not offered — the Raw XML editor, a PHP tab and the **Edit code…**
 dialog hold no SQL and have no schema to answer with, and either read-only **DDL
 Explorer** buffer cannot be written into (asking anyway there says exactly that:
@@ -2511,6 +3185,126 @@ editor has none"*, *"this buffer is read-only"*), never a generic beep.
 
 ---
 
+## Software Settings
+
+**Settings ▸ Software settings… is the one place the app is configured.** It is a
+single dialog with a category list down the left and the settings for the
+selected category on the right, and it holds **six** panes:
+
+| Pane | What it configures |
+|---|---|
+| **Snippets** | The trigger words **Ctrl+Alt+E** expands in a SQL editor, and their bodies — see *Snippets*. |
+| **Toolbar** | Which commands sit on the Main Toolbar, in which order, with which icons — see *Appearance & Layout ▸ The toolbar*. |
+| **Autoformatter** | How **Format Selection** rewrites SQL/plpgsql and XML — see *The Autoformatter*. |
+| **Keyboard shortcuts** | The key bound to each menu command, and the keys the app pins — see *Keyboard Shortcuts ▸ Changing a shortcut*. |
+| **Themes** | Every colour the app paints, as named theme files — see *The Themes pane*, below. |
+| **External tools** | Where the app-wide external programs live: the vendor PHP Generator, the panGen runtime and the PHP linter — see *The External tools pane*, below. |
+
+**Most of these used to be separate menu entries and no longer are.** **View ▸
+Customize Toolbar…**, **View ▸ Customize Shortcuts…**, **Settings ▸ Edit
+Snippets…**, **Settings ▸ Autoformatter settings…**, **Generation ▸ Locate PHP
+Generator Executable…**, **Generation ▸ Locate panGen Runtime…** and **Tools ▸
+Locate PHP Linter…** are **gone** — not duplicated, not kept as second doors.
+The first four are the same dialogs you already knew, re-hosted as panes, with
+the same controls, the same buttons and the same behaviour; only the way in
+changed.
+
+**There are two ways in, and both are the same command.** **Settings ▸ Software
+settings…** — the **Settings** menu's only entry — and the third button in the
+launcher's **Maintenance** column, which reads `Settings › Software settings`.
+
+**Which makes all of this Maintenance-mode work.** The **Settings** menu exists
+only in Maintenance mode (see *Getting Started ▸ Maintenance mode*), so
+rearranging your toolbar, rebinding a key, changing the theme or pointing the app
+at an external program now means entering that mode first, where before you could
+do the first two at any time from **View**. That is deliberate: this is
+configuring the app rather than using it — and it is why an operation that needs
+a tool you have not located yet is greyed with a tooltip naming this dialog
+rather than offering to locate it on the spot. As with any other command, a
+**toolbar button** you pin to it opens the dialog outside Maintenance mode too.
+
+**The dialog is non-modal and there is only ever one of it.** It stays beside
+your work — which is what lets the **Keyboard shortcuts** pane be open while you
+try a key — and asking for it again brings the existing window to the front
+rather than opening a second one editing the same settings.
+
+**Each pane keeps its own OK and Cancel, and the dialog itself only has Close.**
+That is the one thing worth reading twice:
+
+- A pane's **OK** saves exactly what it always saved, immediately. A pane's
+  **Cancel** discards exactly what it always discarded.
+- After either, that pane **reloads itself from what is now stored**, so you are
+  never looking at a stale scratch copy of something that has moved on.
+- **Two gestures do not wait for an OK at all**, because the picker *is* the
+  confirmation: **Use this theme** in the **Themes** pane, and **Browse…** in the
+  **External tools** pane. Both apply and save the moment you make the choice.
+- **Closing the dialog is never a save.** There is no dialog-level OK, because
+  there is no dialog-level state — the panes disagree about what "apply" means
+  and each one is right about itself. Close the window with edits sitting
+  unapplied in a pane and they are gone, exactly as closing any one of those
+  dialogs always did.
+
+### The Themes pane
+
+**A theme is a named file holding every colour the app paints** — the chrome
+(menus, buttons, tabs, docks, scrollbars), the widget palette, the accent colours,
+the mode-indicator chips, the editor decorations, and the eight syntax-highlight
+roles. Two are shipped, `dark` and `light`, and the pane is where you pick one,
+copy it and edit the copy.
+
+- **The list on the left is every theme found**, with the one in use marked
+  `— in use`. It is a directory scan, so **a theme file dropped into your user
+  themes folder appears without restarting the app**, and a file of yours with
+  the same name as a bundled one **shadows** it — which is how you can end up
+  editing "the theme I am using" without touching the installation.
+- **Use this theme** applies the highlighted theme **and remembers it
+  immediately**. It is app-wide and it survives a restart and a new session;
+  there is no separate confirmation to press afterwards.
+- **Duplicate…** asks for a name and writes a full copy into your user themes
+  folder. That is how a new theme is made: a copy is a complete, valid theme from
+  the first keystroke, so there is never a half-defined one.
+- **The colour editor on the right** shows every colour of the highlighted theme
+  as a labelled swatch button; click one to pick a new colour. The syntax section
+  adds **Bold**, **Italic** and **Underline** checkboxes beside each of the eight
+  roles. **Save** writes the theme back to its file and, if it is the theme in
+  use, repaints the app straight away so you can see the change; **Cancel**
+  throws the edits away.
+- **The two bundled themes are read-only, and say so on screen**: *"Dark is a
+  bundled theme and is read-only — use Duplicate… to make an editable copy."*
+  Save is disabled and the swatches are inert until you duplicate it. An install
+  folder is not reliably writable and an upgrade would overwrite your edit
+  anyway, so duplicate-then-edit is the supported path rather than a workaround.
+
+**One honest note about the shipped pair:** the eight syntax roles are three XML
+ones (tag, attribute name, string) and five code ones (keyword, string, comment,
+number, variable). `dark` and `light` recolour the **XML** three, but their
+**five code colours are currently identical** — so switching theme changes the
+chrome and the Raw XML editor's colours, and leaves SQL/plpgsql looking the same.
+If you want SQL coloured differently, duplicate a theme and set those five
+yourself.
+
+### The External tools pane
+
+The three external programs the app can call are set here, each in its own group
+with a **Browse…** button and a status line:
+
+| Tool | Needed by |
+|---|---|
+| **PHP Generator executable** | **Generation ▸ Generate PHP** |
+| **panGen runtime (re_phpgen repo root)** | **Generation ▸ panGen, rePHPgen and Save reJSON** |
+| **PHP linter (`php` executable)** | **Tools ▸ Lint Current File** and **Lint on Save** |
+
+- **Browse… saves as soon as you pick**, so this pane has no OK or Cancel of its
+  own, and a new choice takes effect immediately in tabs that are already open.
+- **The status line states what is stored**: *"Found."*, *"Not set — …stay
+  unavailable until it is."*, or, for a path that has gone missing, a line saying
+  so rather than silently clearing your setting.
+- **These are app-wide**, shared by every project. The **per-project** PostgreSQL
+  client binaries are a different setting, and they live with the project (see
+  *Local DDL-Versioning Projects ▸ Project Settings*).
+
+---
+
 ## Snippets
 
 A **snippet** is a trigger word you type in a SQL editor and expand with
@@ -2519,8 +3313,8 @@ A **snippet** is a trigger word you type in a SQL editor and expand with
 are shipped with the app, and **the set is yours** — you can edit them, add your
 own, delete ours, and send the lot to a colleague.
 
-Expansion works in the two editable SQL surfaces only — an open **DDL object
-editor tab** and the **Sandbox SQL Console** — for the reasons given in *DDL
+Expansion works in the editable SQL surfaces only — an open **DDL object editor
+tab**, the **Sandbox SQL Console** and the **Quality SQL Console** — for the reasons given in *DDL
 Explorer ▸ Schema-aware completion and gestures in the SQL editors*. The whole
 expansion is **one undo step**: a single **Ctrl+Z** takes it back.
 
@@ -2565,15 +3359,17 @@ trigger-function skeleton. Braces never occur doubled in SQL, so `{{` collides
 with nothing. Anything else between braces is left exactly as you wrote it: a
 malformed body degrades to plain text rather than failing.
 
-### Editing them — Settings ▸ Edit Snippets…
+### Editing them — the Snippets pane
 
-**Settings ▸ Edit Snippets…** opens the editor. The **Settings** menu exists
-**only in Maintenance mode** (see *Getting Started ▸ Maintenance mode*), because
-this is configuring the app rather than using it.
+**Settings ▸ Software settings… ▸ Snippets** is the editor. The **Settings** menu
+exists **only in Maintenance mode** (see *Getting Started ▸ Maintenance mode*),
+because this is configuring the app rather than using it. (There is no
+**Settings ▸ Edit Snippets…** entry any more — the dialog became a pane of
+**Software settings…**; see *Software Settings*.)
 
-The window is **not modal** — it stays beside your work, so you can copy a body
-out of the SQL you are looking at — and there is only ever one of it: asking
-again while it is open just brings it to the front.
+The settings window is **not modal** — it stays beside your work, so you can copy
+a body out of the SQL you are looking at — and there is only ever one of it:
+asking again while it is open just brings it to the front.
 
 It has one table and one body pane:
 
@@ -2602,7 +3398,8 @@ Underneath sit **Add**, **Delete**, **Restore Built-ins**, **Export…** and
   be the silent overwrite this feature exists to avoid. When nothing is missing
   it says so.
 - **OK** saves. **Cancel** changes nothing at all — not on disk and not in your
-  editors.
+  editors. Both are this pane's own buttons; the settings window's **Close** is
+  neither of them and saves nothing (see *Software Settings*).
 
 **A saved set is live immediately**, in every SQL editor that is open and in
 every one you open afterwards. Nothing needs restarting.
@@ -2673,6 +3470,84 @@ application.
 
 ---
 
+## The Autoformatter
+
+**Format Selection** is the app's one formatting gesture — **Ctrl+Alt+F**, or
+**Format Selection** on the editor's right-click menu, always over a selection you
+made. It never runs by itself: there is no format-on-save, no format-as-you-type,
+and no auto-format mode anywhere in the app.
+
+**One gesture, two engines, chosen by the surface you are in** — never by guessing
+at what the selected text looks like:
+
+| Where you press it | What formats the selection |
+|---|---|
+| a **DDL object editor tab**, either **SQL Console** (Sandbox or Quality) | the SQL / plpgsql formatter |
+| the **Raw XML** editor, **Edit XSD** / **Edit AutoXSD**, a generated **draft fragment** tab | the XML indenter |
+
+That split is deliberate. A dispatcher that sniffed the text would eventually
+guess wrong on a selection that is legitimately both — `<x>select 1</x>` — so the
+tab you are in decides, and the answer never surprises you.
+
+The XML side **changes indentation only**: it re-indents by element nesting depth
+and rewrites nothing else. The SQL side re-indents and, if you ask it to, recases
+keywords and breaks lines at clause keywords.
+
+### Configuring it — the Autoformatter pane
+
+**Settings ▸ Software settings… ▸ Autoformatter** holds the controls. The
+**Settings** menu exists **only in Maintenance mode** (see *Getting Started ▸
+Maintenance mode*), because this is configuring the app rather than using it, and
+like everything else on that menu the entry carries **no keyboard shortcut**.
+(There is no **Settings ▸ Autoformatter settings…** entry any more — see
+*Software Settings*.)
+
+> **A saved configuration applies in every mode**, even though the dialog is only
+> reachable from Maintenance mode. The hosts of the gesture re-read your settings
+> each time you press **Ctrl+Alt+F**, so a change is live immediately, in every
+> editor that is already open, with nothing to restart. (And a toolbar button you
+> pin to **Software settings…** opens the dialog outside Maintenance mode too —
+> see *Appearance & Layout ▸ The toolbar*.)
+
+**The defaults are byte-identical to the formatter this app always had.** Nothing
+about your formatting changes until you change something here — the shipped
+keyword-case setting is *Leave as typed*, and every clause rule ships as the
+formatter's existing behavior. **Restore Defaults** puts that starting point back.
+
+The dialog is three groups plus the buttons, and **every control is bounded** — a
+combo, a spin box, a checkbox. There is deliberately no free-text rule box
+anywhere: you cannot express a rule the formatter could not apply repeatably.
+
+- **SQL / plpgsql**
+  - **Keyword case:** — **Leave as typed** (the default), **UPPERCASE** or
+    **lowercase**. It applies to **keywords only**. Identifiers, type names,
+    function names, literals, strings and comments are never recased: the
+    formatter works offline with no knowledge of your schema, and a quoted
+    PostgreSQL identifier is case-sensitive, so recasing one would change what it
+    means.
+  - **One indent level:** — **Spaces** with a width, or **Tab**. Picking Tab
+    greys the width out, because a tab has no width to choose.
+  - **Start a new line at a JOIN phrase** — governs the whole phrase (`left outer
+    join …`), never one prefix word of it. Off keeps it on the `FROM` item's line.
+- **Line breaks per clause keyword** — one row per clause keyword the formatter
+  knows, with a **New line** checkbox and an **Extra indent (levels)** spin box.
+  The list is generated from the formatter itself, so it always matches what the
+  engine can act on. **The breaks the formatter needs to stay correct are not
+  listed** and cannot be switched off: after a `--` comment and after `;`, the
+  `DECLARE` header, and the block keywords.
+- **XML / XSD** — **One indent level (spaces):**, for the XML indenter. Two by
+  default, because two spaces is the `.pgtp` file's own indentation unit.
+
+**OK saves**, and saving *is* applying — there is nothing else to press. **OK**
+and **Cancel** are this pane's own; the settings window's **Close** is neither.
+**Cancel** changes nothing, on disk or in your editors. Your configuration is
+stored with the app's other per-user settings, beside your theme, toolbar
+arrangement and shortcut overrides — it is **not** part of any project, because a
+formatting preference is personal and a `.pgtp` is an artifact you hand to other
+people.
+
+---
+
 ## Local DDL-Versioning Projects
 
 A **local project** is a plain folder on your own machine that gives you a
@@ -2735,6 +3610,63 @@ project active, these dialogs behave as before and default to the operating
 system's own last-used directory. It's only a starting point in every case:
 you can always navigate elsewhere.
 
+### Installing PostgreSQL and plpgsql_check (Windows)
+
+Before a project's sandbox can do anything, your machine needs a local
+**PostgreSQL** server, and the sandbox check ladder's **tier 3 static analysis**
+(see *The Sandbox ▸ The validation ladder*) needs the **`plpgsql_check`**
+extension *available on that server*. The app runs `CREATE EXTENSION IF NOT
+EXISTS plpgsql_check` for you when it provisions a sandbox — but it cannot
+install the server itself or the extension's files, so this is a **one-time
+setup you do up front**, before or while you fill in a project's sandbox
+connection. These steps are for **Windows** and take the simplest route, with no
+compiler.
+
+**1. Install PostgreSQL — use version 16.** Download the official installer from
+[postgresql.org/download/windows](https://www.postgresql.org/download/windows/)
+and run it (it bundles pgAdmin and the command-line tools). **Choose PostgreSQL
+16**, not 17 or 18 — the ready-made `plpgsql_check` file in step 2 is built for
+versions 15 and 16, and matching versions is what keeps this compiler-free.
+During setup, **remember the `postgres` superuser password**: the sandbox
+connection you give the project must be a superuser, because `CREATE EXTENSION`
+requires it.
+
+**2. Add `plpgsql_check` — a drop-in file, nothing to build.** The extension's
+author publishes precompiled Windows files, so you never touch a compiler:
+
+- Download **`plpgsql_check-2.5.4-x64.zip`** from
+  [pgsql.cz/files/plpgsql_check-2.5.4-x64.zip](https://pgsql.cz/files/plpgsql_check-2.5.4-x64.zip)
+  (it covers PostgreSQL 15 and 16) and extract it.
+- Copy three items into your PostgreSQL install (default location
+  `C:\Program Files\PostgreSQL\16\`):
+
+  | From the zip | Copy into | Note |
+  |---|---|---|
+  | `plpgsql_check-16.dll` | `…\PostgreSQL\16\lib\` | **rename it to `plpgsql_check.dll`** — drop the `-16` |
+  | `plpgsql_check.control` | `…\PostgreSQL\16\share\extension\` | |
+  | `plpgsql_check--*.sql` | `…\PostgreSQL\16\share\extension\` | copy all the `.sql` files |
+
+That makes the extension *available* to the server. You do **not** need to edit
+`postgresql.conf` or touch `shared_preload_libraries` — the app uses
+`plpgsql_check` in its function-call mode, which only needs the extension created
+in the database.
+
+**3. Enable it — easiest is to let the app do it.** Once you have a project with
+a sandbox, open **File ▸ Project Status…**, click the **plpgsql_check** node, and
+press **Install the plpgsql_check extension** (see *Project Status ▸ Clicking a
+node*). That runs the `CREATE EXTENSION` for you against the sandbox — and the
+app already does it automatically the first time it provisions a sandbox, so
+often there is nothing left to do. To enable it by hand instead, connect to the
+sandbox database as the superuser and run:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS plpgsql_check;
+```
+
+> **If you install PostgreSQL 17 or 18** there is no ready-made file, and the
+> only way to get `plpgsql_check` is to build it from source. Avoid that — install
+> **PostgreSQL 16** and use the drop-in file above.
+
 ### Creating a project
 
 **New Project…** opens a dialog with:
@@ -2742,6 +3674,22 @@ you can always navigate elsewhere.
 - **Name** and **Description** — optional, free text.
 - **Project folder** — pick a folder with **Browse…**; that folder *is* the
   project. There's no separate bootstrap step.
+- **Project .pgtp (optional)** — pick the `.pgtp` this project is a checkout of,
+  with its own **Browse…**. Attaching one copies it into the project as its
+  working copy and links it, exactly as opening a `.pgtp` while the project is
+  active would; **and the file is opened into the editor as soon as the project
+  is created**, so you land on your project rather than on an empty window.
+  Leave it empty for a project with no `.pgtp` — you can still attach one later
+  by opening it. If the copy fails, the project is still created, with **no**
+  `.pgtp` link at all and a `[Project]` line saying why: a recorded link pointing
+  at nothing is worse than no link.
+- **Quality (target) server** — **hidden until you attach a `.pgtp`**, because
+  with no `.pgtp` there is nothing to fill it from. Attaching one reveals it and
+  fills **Host**, **Port**, **Database** and **User** from the file's own
+  connection settings. **The Password is the one field you supply**: it is never
+  read out of the XML. **Test** checks the connection. This is the quality /
+  staging database the DDL Explorer and the database checks read while the
+  project is open.
 - **Local sandbox (optional)** — the Postgres **server** the sandbox should live
   on: **Host**, **Port**, **User**, and **Password**. **There is deliberately no
   "Database:" field.** You never name the sandbox database, because PGTP Editor
@@ -2807,6 +3755,18 @@ The run does five things:
 
 The **Activity Log** confirms with `Created and provisioned sandbox database:
 <name>`.
+
+**The run narrates itself while it runs.** Provisioning creates a database, takes
+a baseline, installs an extension and probes the server, which against a real
+server is seconds to minutes — so the **Messages** tab says
+`[Sandbox] provision: started` the moment the work is dispatched and then keeps
+one line ticking — `[Sandbox] provision: .`, then `..`, then `...` — once a
+second until the run finishes, restarting the count after ten so a long run does
+not draw a hundred-character line. It is a single line rewritten in place,
+it is not clickable (a heartbeat has nowhere to navigate to), and the final
+`[Sandbox]` outcome line lands under it as usual. A project created with the
+**Local sandbox** group left blank builds no database, so it is not narrated
+either.
 
 **Creating a project never reports a connection error of its own.** The
 automatic session (see *The Sandbox ▸ The sandbox session opens itself*) waits
@@ -2907,10 +3867,40 @@ fields are grouped into four tabs:
   me**. Changing the mode re-clones nothing by itself: it takes effect the next
   time you press **Provision sandbox**. See *The Sandbox ▸ Provisioning,
   resetting and creating a sandbox database* for the whole group.
+  This tab also carries the **PostgreSQL binaries** group — see below.
 - **Git** — the same Server / User / Checkout branch fields as New Project.
 - **Deploy manifest** — a table, one row per DDL object, of its `ddl/` path,
   its last-deployed content hash, and its deployed-commit-id (if any), with
   **Add Row** / **Remove Selected Row** buttons.
+
+**The Connections tab also says where this project's PostgreSQL client binaries
+live.** The **PostgreSQL binaries** group has one field, **Locate postgres
+binaries:**, with a **Browse…** button:
+
+- **Leave it empty and nothing changes**: `pg_dump` and `pg_restore` are taken
+  from your `PATH`, exactly as before. The status line under the field says so.
+- **Set it and that folder is searched first**, with `PATH` still there as a
+  fallback. The status line states what the folder currently gives you — *"Found
+  pg_dump and pg_restore in this folder."*, or a warning naming the one that is
+  missing and will fall back to `PATH`. It **warns, it never blocks**: a folder
+  that is incomplete or half-typed does not stop you pressing OK.
+- **Set it when several PostgreSQL versions are installed**, or when the client
+  tools are not on `PATH` at all. `pg_dump` refuses to dump from a server *newer*
+  than itself, so the binaries' major version must be **at least** this project's
+  server's (a newer `pg_dump` is fine) — which is exactly why this setting sits
+  beside the two connection profiles that determine it, and why the **Test**
+  buttons print the server version they found (`Server: PostgreSQL 16.0.3.`) for
+  you to compare against.
+- **It also decides which DDL you get to read.** The same `pg_dump` is what the
+  DDL Explorer uses for its full-mode buffer; point this field at a
+  correctly-versioned installation and the explorer switches from restricted to
+  full DDL the next time you open it (see *DDL Explorer ▸ Full DDL and restricted
+  DDL*).
+- **It is per project, and it never travels.** It is stored in the project's
+  gitignored settings file, so a machine-specific path is not pushed to anyone
+  else. The app-wide external programs — the PHP Generator, the panGen runtime,
+  the PHP linter — are the opposite case and live in **Settings ▸ Software
+  settings… ▸ External tools** instead.
 
 ### Testing the project's connections
 
@@ -3183,7 +4173,9 @@ own dated header:
   extension is absent, available but not created, or its state could not be
   determined, and those are three different answers. Install it from the
   **plpgsql_check** node in the **Project Status** window — the one place that
-  install button lives.
+  install button lives. On a fresh machine the extension has to be made available
+  to the PostgreSQL server first; see *Local DDL-Versioning Projects ▸ Installing
+  PostgreSQL and plpgsql_check (Windows)*.
 
 **On a tab holding a generated `ALTER TABLE` statement, tier 3 is absent
 altogether** — not unavailable, not failed: an ALTER creates no function for
@@ -3268,7 +4260,7 @@ way (see *The Status Bar*) and the full report lands when it finishes.
 **Deployment ▸ Apply to quality** executes a DDL object tab's buffer against the
 quality database, behind its own hard preconditions — including a green sandbox
 validation for exactly that text. It is described where it belongs, in *DDL
-Explorer ▸ Editing a single function, procedure, or trigger*. Nothing else in
+Explorer ▸ Editing a single function, procedure, trigger, or view*. Nothing else in
 this chapter can reach anything but the sandbox.
 
 ### Checking an object and rolling back
@@ -3383,14 +4375,19 @@ button that retries the connection (see *The sandbox session opens itself*).
 There is only ever **one** console — invoking the command again focuses the tab
 you already have.
 
-**It is sandbox-only by construction.** This console cannot run anything against
-your production or quality database — not behind a confirmation, not behind a
+**This console is sandbox-only by construction.** It cannot be pointed at your
+production or quality database — not behind a confirmation, not behind a
 preference, and there is deliberately no setting that would let it. It only ever
-knows about the sandbox session.
+knows about the sandbox session. Ad-hoc SQL against the quality database has its
+own separate tab with its own rules; see *The Quality SQL Console*.
 
-- **Ctrl+Return runs**, and so does the **Run** button. This is the one execution
-  gesture in the app that carries a shortcut, because the sandbox is disposable
-  and there is no real database within this console's reach.
+- **Ctrl+Return runs**, and so does the **Run** button. It is live on both SQL
+  consoles and nowhere else. Here it is safe because the sandbox is disposable —
+  reset it and anything a statement did is gone.
+- **Each statement of a Run commits as it goes**, on its own. There is no commit
+  gesture and nothing to roll back: that is what a disposable database is for.
+  (The Quality SQL Console does the opposite — nothing there is durable until you
+  press **Commit**.)
 - Run sends **your selection if you have one, otherwise the whole buffer**.
 - **Row limit** — a spin box above the editor, 1000 rows by default. There is no
   "unlimited" setting on purpose. A result cut off at the cap is reported as
@@ -3399,7 +4396,10 @@ knows about the sandbox session.
 - The **status strip** above the grid gives you the row count and the elapsed
   time, or the driver's own status and affected-row count for a statement that
   returns no result set, or the database's error message — an error never shows up
-  as a silently empty grid. `NULL` values in the grid are dimmed and italic, so
+  as a silently empty grid. **The strip is coloured for the two states you must
+  not miss:** a failed statement is red, and a **TRUNCATED** result — or a refusal
+  such as an empty statement — is amber. Both colours come from the theme in use.
+  `NULL` values in the grid are dimmed and italic, so
   they can't be confused with an empty string or the text `NULL`.
 - **Ctrl+Alt+F** reformats the selection, exactly as in a DDL object editor tab.
 - **The console is the second home of the schema-aware editing gestures** —
@@ -3416,15 +4416,105 @@ knows about the sandbox session.
 
 **Run in Sandbox Console** (right-click, in a DDL object editor tab, with text
 selected) sends that selection over to the console and focuses it — and
-**executes nothing**. There is exactly one place SQL runs, and pressing Run there
-is your decision, not a side effect of copying something over. A second push
+**executes nothing**. SQL runs in the console and only there, and pressing Run is
+your decision, not a side effect of copying something over. A second push
 appends below the first rather than overwriting it.
+
+---
+
+## The Quality SQL Console
+
+**Database ▸ Quality SQL Console…** opens the **Quality SQL** tab — the same
+editor-over-results console as the sandbox one, but pointed at the **quality
+(production) database**, with full read/write SQL. Everything the previous
+chapter says about the editor, the **Run** button, the **Row limit** and
+**Statement timeout** spin boxes, the coloured status strip, the results grid and
+the schema-aware gestures is true here too. What follows is what is **different**,
+and the differences are the whole point of the tab.
+
+**The entry is absent until a quality target is configured.** It uses the same
+test as the **Apply to quality** deploy gesture, so the two can never disagree
+about whether there is a target. If a target exists but you decline the password
+question, the command refuses at the gesture — *"Quality SQL Console… needs the
+quality database's password; nothing was opened."* — and creates no tab at all. A
+console that would refuse every Run is worse than no console. As with the sandbox
+console there is only ever **one** quality console: invoking the command again
+focuses the tab you already have. Both consoles can be open at the same time.
+
+**A red banner across the top says what this tab is:** *"QUALITY — every Run here
+targets the production database. Nothing is durable until you press Commit."* It
+is painted in the same red as the **Quality** DDL Explorer's selection band, so
+that colour means one thing everywhere in the app.
+
+### Run, then Commit — where the two consoles part company
+
+| | Sandbox SQL Console | Quality SQL Console |
+|---|---|---|
+| A Run goes to | this project's disposable sandbox | the quality (production) database |
+| When it becomes permanent | **as it goes** — each statement of a Run commits on its own | **only when you press Commit** — the whole Run waits in one open transaction |
+| Taking it back | reset the sandbox | **Roll Back**, any time before you commit |
+
+**Commit** and **Roll Back** sit on the controls row beside the row limit and the
+timeout, and they are enabled only while there is something outstanding. Between
+a Run and your answer, a banner states the position: *"UNCOMMITTED — 3 statements
+ran inside an open transaction. Press Commit to make them durable in the quality
+database, or Roll Back to discard them."* **Commit** answers with what it did —
+*"COMMITTED — 3 statements are now durable in the quality database."* — and
+**Roll Back** with *"Rolled back — 3 statements were discarded (you rolled it
+back)."*
+
+**Ctrl+Return runs; it does not commit.** The chord is live on this console
+exactly as on the sandbox one, and it only ever opens or extends the uncommitted
+transaction. **Commit deliberately has no keyboard shortcut** — no chord, no menu
+entry, no mnemonic, and it is not the button **Return** presses. That is the
+design, not an omission: the reason a Run may be one keystroke away is that the
+*commit* is the point of no return, so the commit is a click you have to mean.
+
+**A failed Run is rolled back at once, and says so.** PostgreSQL aborts the whole
+transaction at the first failing statement, so the console stops there, discards
+the transaction and reports *"The run failed, so the whole transaction was rolled
+back: NOTHING was committed."* **Commit** is not offered on an aborted
+transaction — a button that cannot work would only be a lie — so only **Roll
+Back** stays available.
+
+**Four situations throw an uncommitted Run away, and each one tells you:**
+
+- **Closing the tab** asks first, naming how many statements would be lost and
+  what each answer does. Answering no **keeps the tab open** — this is the only
+  way an uncommitted run can be protected, since a tab's **✕** is otherwise
+  unconditional.
+- **Closing the window** asks the same question, in the same words, and can be
+  cancelled the same way.
+- **Losing the connection** is terminal and cannot be asked about: the server has
+  already rolled everything back. The console states the durability fact first —
+  *"The connection to the quality database was lost, so the server rolled the run
+  back: NOTHING was committed."* — and both buttons go dead, because neither
+  gesture has anything left to act on. Re-open the console to start a new
+  transaction.
+- **The quality target ceasing to resolve** (you removed or changed it in
+  **Project Settings**) rolls the transaction back and closes the tab **without
+  asking**, reporting the reason — you did not initiate this, and there is no
+  longer a database to commit to.
+
+**Only a commit is journalled.** A Run against quality has changed nothing
+durable yet, so it produces no **Activity Log** entry; the commit does, as a
+`ran` line on the **Quality DB** source carrying the SQL. Every outcome —
+committed, rolled back, refused — is also stated in the status bar.
+
+**What it shares with the sandbox console, including the rough edge:** the
+per-statement **Statement timeout** applies here too and is the *only* way a
+long-running statement ends early — **there is still no Cancel button**, and the
+app says so rather than offering one that would not work. Object-changing
+statements are confirmed before they run, with wording that names the quality
+database and reminds you that nothing becomes durable until you commit; the
+*"don't ask again"* checkbox on that dialog is scoped to this quality session
+only, and the tab-close question never offers it.
 
 ---
 
 ## Project Status
 
-**Database ▸ Project Status…** opens a separate **Project Status** window that
+**File ▸ Project Status…** opens a separate **Project Status** window that
 shows, at a glance, how much of the working setup is actually in place. It reads
 left to right as a chain that splits at the end:
 
@@ -3438,9 +4528,9 @@ below it, the reminder **"Click a node for details and actions."** A
 that died since you opened the project shows as unreachable here, and invoking
 the menu entry again probes again rather than just raising the window.
 **Re-check** does the same on demand. Closing the window is never final —
-**Database ▸ Project Status…** brings it back, re-probed, as often as you like.
+**File ▸ Project Status…** brings it back, re-probed, as often as you like.
 
-The diagram follows the app's Light/Dark theme automatically (see *Appearance &
+The diagram follows the app's theme automatically (see *Appearance &
 Layout*) and is drawn as vector artwork, so it stays sharp on a high-resolution
 display and at any interface scale.
 
@@ -3509,7 +4599,10 @@ you work:
 - **plpgsql_check** — explains whether the extension is installed, and when it is
   not, offers **Install the plpgsql_check extension**. Once it *is* installed the
   window is purely informational: re-running the install would do nothing, so no
-  button is shown.
+  button is shown. (The button can only install the extension into the database
+  once the extension's files are present on the PostgreSQL server — on a fresh
+  machine, set that up first: see *Local DDL-Versioning Projects ▸ Installing
+  PostgreSQL and plpgsql_check (Windows)*.)
 
 Both of those two need a **live sandbox session**, because that is what they run
 through. With a sandbox configured the button is there whether or not a session
@@ -3543,8 +4636,8 @@ acted.
 
 **Deployment ▸ Compare/Merge pgtp** — on the Raw XML tab (see *The Deployment
 Menu*) — compares two `.pgtp` files side by side in the **Diff / Merge** tab, so
-you can see what changed between versions and reconcile them. **Tools ▸ Next
-Difference** / **Prev Difference** step through the changes. The **Exit
+you can see what changed between versions and reconcile them. **Navigation ▸ Next
+Difference** / **Previous Difference** step through the changes. The **Exit
 Compare/Merge Mode** button at the bottom of the panel leaves the comparison and
 gives you the Raw XML editor back. While the comparison is on, the mode indicator
 reads **· Compare/Merge** (see *The Status Bar ▸ The mode indicator*), which is
@@ -3553,11 +4646,46 @@ what tells you the mode outlives stepping away to another tab.
 The entry point used to be **Tools ▸ Compare / Merge Two Files…**; comparing is a
 `.pgtp`-level gesture, so it moved to the tab that holds the `.pgtp`.
 
-> **Writing the reconciled result back is not available in this version.**
-> **Apply Changes to Target** lost its old home on the Tools menu and its new one
-> — on the Compare/Merge surface itself — has not landed yet, so Compare/Merge is
-> currently a read-and-navigate view. Nothing is written to either file
-> meanwhile.
+### The three Compare/Merge commands on Navigation
+
+**Navigation ▸ Next Difference**, **Previous Difference** and **Apply Changes to
+Target** are the comparison's own commands, and they sit at the bottom of the
+**Navigation** menu, below its five bookmark entries (see *The Two Menu Bars*).
+None of the three carries a keyboard shortcut. They moved off **Tools**, where
+stepping through a comparison sat oddly among project-wide tools; **Prev
+Difference** was relabelled **Previous Difference** to match **Previous Bookmark**
+two entries above it.
+
+**They are visible only while a comparison is loaded**, and they follow the
+**mode**, not the tab — so they stay on the menu if you step away to read the Raw
+XML mid-comparison, and they go when you leave Compare/Merge. The five bookmark
+entries above them are per-*editor* rather than per-mode and are always there, so
+the menu itself is never hidden. **Caption Mode disables the bookmark five and
+leaves these three alone**: a comparison loaded while you are editing captions is
+still navigable.
+
+### Applying the changes you picked
+
+Every difference in the change list carries a **checkbox**, unticked to begin
+with. **Navigation ▸ Apply Changes to Target** writes **exactly the ones you
+ticked** into the target file — nothing else, and never everything by default.
+
+- **A backup comes first.** The target is copied to `<name>.pgtp.bak` before
+  anything is written.
+- **It is all-or-nothing.** If any ticked difference cannot be applied — usually
+  because the target changed since the comparison was run — **nothing is
+  written**, and the dialog lists which ones failed and why. The comparison stays
+  loaded so you can untick them and try again.
+- **Ambiguous differences are refused, by name.** A difference matched by
+  position among duplicate siblings is marked **⚠** in the list; tick one and
+  Apply stops and names it, rather than guessing which sibling you meant. Untick
+  it, or verify the pairing yourself in the detail view first.
+- **Ticking nothing** is answered with *"No differences are checked to apply."*
+  and changes nothing.
+- **On success the comparison ends**: Compare/Merge mode is left and the
+  just-written target is reloaded into the Raw XML editor, so what you are looking
+  at afterwards is the merged file itself. The **Activity Log** records the merge
+  either way — including the per-difference detail of a failed one, one click away.
 
 ---
 
@@ -3582,7 +4710,12 @@ open in a tab, see *Checking PHP Syntax* — one tier down, on the **Tools** men
 The **Generation** menu drives the PHP Generator command-line to compile your
 `.pgtp` into PHP:
 
-1. **Locate PHP Generator Executable…** once (the path is stored for future use).
+1. **Point the app at the generator once**, in **Settings ▸ Software settings… ▸
+   External tools** — the **PHP Generator executable** group (see *Software
+   Settings ▸ The External tools pane*). The path is stored for future use, and
+   until it is set **Generate PHP** is greyed with a tooltip naming that pane.
+   (**Generation ▸ Locate PHP Generator Executable…** used to do this and is
+   gone from the menu.)
 2. **Generate PHP…** — if the project has unsaved changes, a dialog offers
    **Save**, **Save As** or **Cancel** first, so the generator always runs
    against the file on disk. (Those are buttons in that prompt, not menu
@@ -3621,25 +4754,33 @@ simply reads as busy instead of stalled.
 
 ## Appearance & Layout
 
-- **View ▸ Light Theme** is a checkable toggle between the editor's two themes:
-  checked applies the light theme, unchecked applies the dark theme. Both are the
-  editor's own color schemes and look the same on every platform — the app does
+- **The app's colours are a named theme, picked in Settings ▸ Software settings…
+  ▸ Themes.** Two are shipped, `dark` and `light`, and you can duplicate either
+  and recolour it (see *Software Settings ▸ The Themes pane*). The theme is the
+  editor's own colour scheme and looks the same on every platform — the app does
   not follow your operating system's light/dark setting. Toolbar icons re-tint to
-  stay legible in either theme, and your choice is remembered across restarts.
+  stay legible in whichever theme is on, and your choice is remembered across
+  restarts. **The View menu no longer has a theme toggle**: a theme is a setting
+  you pick once, so it lives with the app's other settings, which means changing
+  it is a Maintenance-mode gesture.
 - The **View** menu toggles each panel: **Project Tree**, **Properties Panel**,
   **Activity Log / Messages Panel** (the bottom dock), and **Raw XML Panel**. Each
   checkbox always reflects whether its panel is currently visible — closing a
   panel with the ✕ on its own title bar unchecks the menu entry too, and
-  re-checking it brings the panel back. Below them, **View ▸ Activity Log** and
-  **View ▸ Messages** are not toggles: each opens the bottom dock if needed and
-  focuses that tab (see *Where Output Appears*).
+  re-checking it brings the panel back. In among them, **View ▸ Activity Log**,
+  **View ▸ Messages** and **View ▸ Findings** are not toggles: each opens the dock
+  its tab lives in if needed and focuses that tab (see *Where Output Appears*).
 - **View ▸ Expand All** / **Collapse All** open or fold the whole Project Tree.
-- **View ▸ Customize Toolbar…** chooses which commands appear on the toolbar and
-  what icon each one carries (see *The toolbar*, below).
-- **View ▸ Customize Shortcuts…**, directly below it, changes the **key** any
-  menu command answers to (see *Keyboard Shortcuts ▸ Changing a shortcut*). The
-  two are siblings over the same set of commands: one picks the button, the other
-  picks the key.
+- **The toolbar and your shortcuts are customized in Settings ▸ Software
+  settings…**, in its **Toolbar** and **Keyboard shortcuts** panes — one picks a
+  command's button and icon, the other picks its key (see *Software Settings*,
+  *The toolbar* below, and *Keyboard Shortcuts ▸ Changing a shortcut*). **The
+  View menu no longer carries either**: `Customize Toolbar…` and `Customize
+  Shortcuts…` moved into that one dialog, which lives on the Maintenance-only
+  **Settings** menu.
+- **Keyboard focus is visible.** Move focus with **Tab** and the button or tab
+  bar that has it is outlined, so you can always tell what **Space** or
+  **Return** would press. It follows whichever theme is in use.
 - Your window size and position, dock layout, theme, toolbar arrangement, and
   keyboard-shortcut changes are remembered between sessions.
 - **Dialogs open at a size that shows their contents.** **Project Settings…**,
@@ -3651,9 +4792,11 @@ simply reads as busy instead of stalled.
 ### The toolbar
 
 The **Main Toolbar** shows each command as an icon with its label beside it. Out of
-the box it carries five commands — **File ▸ Open**, **History ▸ Undo**, **History
-▸ Redo**, **Parsing ▸ Validate Project**, and **Generation ▸ Generate PHP** — but
-it is not limited to them.
+the box it carries five commands — **File ▸ Open**, **History ▸ Undo Project
+Edit**, **History ▸ Redo Project Edit**, **Parsing ▸ Validate Project**, and
+**Generation ▸ Generate PHP** — but it is not limited to them. (The two History
+buttons kept their icons and their command through the rename; a toolbar you
+arranged before it is carried over untouched.)
 
 Two commands that used to ship on it are gone, each for the same reason: there is
 no menu command left to pin. **Find** is now a permanent bar in every editor
@@ -3664,9 +4807,11 @@ any button you like. If you want a save button, pin whichever **Deployment** ent
 you actually use, accepting that it comes and goes with the tab (see *The
 Deployment Menu*).
 
-**View ▸ Customize Toolbar…** opens a two-list dialog: **Available** on the left,
-**On Toolbar** on the right, with **Add →**, **← Remove**, **Up**, **Down**, and
-**Choose Icon…** between them, and **OK** / **Cancel** at the bottom.
+**Settings ▸ Software settings… ▸ Toolbar** is where you arrange it: a two-list
+pane with **Available** on the left, **On Toolbar** on the right, **Add →**,
+**← Remove**, **Up**, **Down** and **Choose Icon…** between them, and **OK** /
+**Cancel** at the bottom. (This is the dialog that used to be **View ▸ Customize
+Toolbar…**; that entry is gone — see *Software Settings*.)
 
 - The Available list offers **every command on either menu bar**, listed by its
   menu path — `Deployment › Save pgtp`, `Schema › Verify XSD`,
@@ -3692,8 +4837,8 @@ A toolbar button *is* the menu item, not a copy of it. It therefore shares that
 menu item's enabled state (a command disabled in the menu is disabled on the
 toolbar), its checked state for toggles such as **Database ▸ DDL Explorer
 (Quality)** or
-**View ▸ Light Theme**, and its keyboard shortcut — including one you assigned
-yourself in **View ▸ Customize Shortcuts…**, since the button and the menu entry
+**View ▸ Raw XML Panel**, and its keyboard shortcut — including one you assigned
+yourself in the **Keyboard shortcuts** pane, since the button and the menu entry
 can never drift apart. Toolbars you arranged in an earlier version of the editor
 are carried over unchanged — including a **DDL Explorer** button you pinned
 before the command was renamed to **DDL Explorer (Quality)**, a **Check Object in
@@ -3718,11 +4863,13 @@ of your way, and something you pinned yourself is something you meant to keep
 within reach.
 
 **The same holds in reverse, and it is the one place a menu location does not
-predict the behaviour.** `Settings › Edit Snippets…` is offered in the Available
-list like any other command even though the **Settings** menu itself exists only
-in Maintenance mode — and a button you pin to it opens the snippet editor
-**outside** that mode too (see *Snippets*). Hiding a menu means *"not in your
-way"*, never *"prevented"*, so pinning is how you say you want it anyway.
+predict the behaviour.** `Settings › Software settings` is offered in the
+Available list like any other command even though the **Settings** menu itself
+exists only in Maintenance mode — and a button you pin to it opens that dialog
+**outside** that mode too (see *Software Settings*). Hiding a menu means *"not in
+your way"*, never *"prevented"*, so pinning is how you say you want it anyway.
+It is also how you keep the toolbar and shortcut panes one click away without
+entering Maintenance mode.
 
 ### Choosing a button's icon
 
@@ -3743,12 +4890,337 @@ a cell to pick it and close the dialog, or select it and press **OK**.
 - The icon is shown **only on the toolbar**. The matching menu entry keeps its plain
   text appearance, so decorating a button never changes how the menus look.
 - The preview in the dialog is tinted the same way the real button is, so what you
-  see is what you get under both the light and the dark theme.
+  see is what you get under whichever theme is in use.
 
 Your icon choices are saved with the toolbar arrangement when you press **OK** and
 survive across restarts. Removing a button from the toolbar drops its icon
 assignment with it, and an assignment naming an icon or a command that no longer
 exists is quietly discarded rather than breaking the toolbar.
+
+---
+
+## Editing Modes: Edit mode and Command mode
+
+Every editable editor in this app listens in one of **two keyboard
+vocabularies**, and the one it is listening in right now is called its **editing
+mode**:
+
+- **Edit mode** — ordinary Windows-style typing. Letters type letters, the mouse
+  selects, **Ctrl+C** / **Ctrl+X** / **Ctrl+V** copy, cut and paste. This is
+  where every editor starts, always.
+- **Command mode** — a vim command vocabulary, entered with **Escape**. Letters
+  are commands rather than text: `w` moves a word, `dd` deletes a line, `42j`
+  goes forty-two lines down.
+
+**This is not a vim fan feature.** The editors need advanced editing *operations*
+whatever they are spelled as — go to an absolute line, move a **relative** number
+of lines, delete or change or yank by word, by line, by motion — and none of them
+exists anywhere else in the app, nor has a menu equivalent. The real choice was
+never *"vim or no vim"*: it was **adopt a vocabulary that already exists, or
+invent a keymap of our own**. Windows editors offer nothing to copy here, so
+there was nothing to be consistent with, and the case that settles it is `42j` —
+**a count applied to a motion is a grammar, not a command**, and no menu entry
+and no invented Ctrl-chord can express it.
+
+**There is no setting, no toggle and nothing stored.** Command mode is always
+available and never turned on; it is a passing runtime state of one editor, so
+there is nothing to configure, nothing in your preferences, and nothing that
+survives a restart or even a tab switch. **The Edit-mode editor gains nothing
+from any of this** — every advanced operation lives in Command mode only, and no
+parallel keymap ever appears in ordinary typing.
+
+### Entering and leaving Command mode
+
+**Escape enters Command mode**, in the editor that has focus and only when that
+editor is editable. Any of the **insert-entry** keys — `i` `a` `I` `A` `o` `O`
+`s` `S` `cc` `C`, and also `v` and `V` — puts you back into Edit mode, as does a
+`c{motion}` change, which by definition lands you typing. (`v` and `V` switch on
+a **sticky selection** on their way out — see *Sticky selection*, below.)
+
+**In Command mode the caret is a coloured block sitting *on* a character**,
+rather than the thin bar between characters you get while typing. That is the
+second thing telling you which vocabulary the editor is listening in, and it is
+right where you are looking. It follows the theme, so it reads in both the light
+and the dark scheme, and it is drawn only while the mode holds. The caret being
+*on* a character is also why `$` and `l` stop on the line's last character
+instead of past it — the one exception is straight after a `c`, which lands you
+in Edit mode with an ordinary bar again.
+
+**It belongs to one editor and it is transient.** Each tab is independent, and
+**losing focus drops that editor straight back to Edit mode** — switching tabs,
+clicking into another widget, opening the completion popup, running a `:`
+command that opens a dialog. Coming back **never resurrects it**: there is no
+memory anywhere of which tab was in Command mode. A half-typed command (`42d`)
+is discarded at the same moment, and so is any command left pending when the
+document is replaced under you.
+
+**On a read-only editor, Escape does nothing and the whole layer is inactive.**
+The read-only **DDL Explorer** buffers, the Raw XML editor while **Caption Mode**
+or **Compare/Merge** holds it, the Activity Log's payload viewer: none of them
+has an editing mode at all, so there is no *"motions work but deletes refuse"*
+half-state to learn. If a mode turns the buffer read-only while you are in
+Command mode, you are dropped back to Edit mode there and then.
+
+**The mouse stays fully live in both modes, and never changes the mode.** Click,
+drag-select, scroll and the context menu all behave identically; a click that
+silently moved you out of a mode would make the indicator lie about a state you
+never asked to leave. The **arrow keys**, **Home**, **End**, **Page Up** and
+**Page Down** likewise move the caret in Command mode exactly as they do in Edit
+mode.
+
+**Escape in Command mode stays in Command mode.** If a count or an operator is
+half-typed it is thrown away and you stay; if nothing is pending, nothing at all
+happens. (The one exception is the **Edit code…** dialog — see the last section
+of this chapter.)
+
+### The mode indicator is your way back
+
+If you press **Escape** by reflex and find that letters have stopped typing, the
+thing that tells you so is the **mode indicator** (see *The Status Bar ▸ The mode
+indicator*). It reads:
+
+> **Command mode — press i to type**
+
+**That indicator and its exit hint are the entire safety net, deliberately.**
+There is no first-time dialog, no timeout, no opt-out and no warning beep —
+just a chip that always says which vocabulary the editor is listening in, and
+which says the way out inside its own label. It is shown twice for a main-window
+editor (the Main Toolbar and the status bar) and once, on its own, inside the
+**Edit code…** dialog.
+
+**A command that cannot run says why, at the caret.** Every refusal below appears
+as a small tooltip beside the caret, and — in the surfaces that report to it — as
+a `[SQL]` line in the **Activity Log**. Nothing in Command mode fails silently
+except **Tab**, and *Counts, and the three refusals that are not bugs* below says
+why that one is the exception.
+
+### The command set
+
+This is the whole v1 vocabulary. Anything not on this list resets whatever was
+half-typed and does nothing.
+
+**Motions** — with an optional count before them (`5w`, `42j`):
+
+| Keys | Move to |
+|---|---|
+| `h` `j` `k` `l` | left, down, up, right |
+| `w` `b` `e` | next word start, previous word start, next word end |
+| `0` `^` `$` | start of line, first non-blank of the line, end of line |
+| `gg` `G` | first line, last line |
+| `42G` | line 42 — an **absolute** line number |
+| `f` `t` `F` `T` + a character | forward to / just before, backward to / just after that character, **on this line only** |
+| `%` | the bracket matching the next one on this line |
+| `{` `}` | the previous / next blank line |
+
+**Operators** — `d` delete, `c` change (delete, then drop into Edit mode), `y`
+yank (copy). Each takes a motion (`dw`, `c$`, `y}`), a **text object** (`daw`,
+`ciw`, `yiw`), or is **doubled** to act on whole lines (`dd`, `cc`, `yy`).
+
+**Text objects** — `aw` and `iw`, the two word objects, usable after any operator:
+
+| Keys | What it takes |
+|---|---|
+| `aw` | the word under the caret **and its trailing whitespace** — *a word*. With nothing trailing (the last word on the line) it takes the **leading** whitespace instead, and from a gap it takes the gap plus the word after it |
+| `iw` | the word under the caret and nothing else — *inner word*. From a gap it takes just the gap |
+
+So `daw` deletes a word and the space after it, `ciw` replaces a word in place,
+and `yiw` copies one. **Counts compose and multiply** exactly as they do with
+motions: `3daw` takes three words with their spacing, and `2d3iw` is six.
+
+**They never cross a line.** A word object is line-local, so a `daw` on the last
+word of a line can never quietly join it to the next one; and a count that asks
+for more than the line holds **refuses** — with a message beside the caret —
+rather than taking what it can, which is the same rule `42j` follows.
+
+**Shorthands**, which are just operator-plus-motion pairs spelled shorter:
+
+| Key | Same as |
+|---|---|
+| `x` / `X` | delete the character after / before the caret |
+| `D` / `C` | delete / change to the end of the line |
+| `Y` | yank the whole line |
+| `s` / `S` | change the character / the whole line |
+
+**Other commands:**
+
+| Key | What it does |
+|---|---|
+| `i` `a` `I` `A` `o` `O` | back to Edit mode — at the caret, after it, at the first non-blank, at the end of the line, on a new line below, on a new line above |
+| `v` `V` | switch **sticky selection** (character-wise / line-wise) on, then back to Edit mode — **there is still no visual mode**, see below |
+| `p` / `P` | paste after / at the caret |
+| `r` + a character | replace the character under the caret with it |
+| `u` | undo — the same undo the tab's own **Ctrl+Z** does |
+| **Ctrl+R** | redo, **in Command mode only** |
+| `/` | open this tab's **Find** field |
+| `n` | find next |
+| `:` | open the command line (see below) |
+
+**Counts multiply, and they may sit on either side of an operator.** `3w` moves
+three words, `2d3w` is the same as `d6w`, and `42G` and `G` are genuinely
+different commands (`G` alone is the last line; `42G` is line 42).
+
+**Three keys that would otherwise edit the buffer are given their vim meanings**
+rather than being swallowed: **Backspace** acts as `h`, **Return** as `j` and
+**Delete** as `x`.
+
+### Counts, and the three refusals that are not bugs
+
+Three deliberate behaviours look wrong the first time and are not:
+
+- **`N` — search backwards — refuses, and says why.** `n` and `/` drive the app's
+  own **Find** bar rather than a second search engine of their own, and that bar
+  searches **forwards only**. Rather than invent a backwards search that exists
+  nowhere else in the app, `N` states *"the Find bar searches forwards only —
+  there is no backwards search to run"*. On a tab with no Find bar at all (the
+  **Sandbox SQL Console**, the **Quality SQL Console**, the **Edit code…**
+  dialog) `/` and `n` say that instead.
+- **A count that overshoots refuses rather than clamping.** `42j` in a ten-line
+  buffer does **not** quietly land you on the last line; it answers *"there are
+  only 9 lines below the caret"* and leaves the caret where it was. Silently
+  doing something near what you asked for is how you stop trusting the count at
+  all. The same holds for `42G` in a shorter document, for `w` at the end of the
+  buffer, for `f` with no such character on the line, and for `%` with no bracket
+  to match — and for a **text object** with too few words left on the line, or
+  none under the caret at all.
+- **Tab is swallowed and answers nothing.** In Command mode, **Tab** and
+  **Shift+Tab** do nothing at all — inserting a tab character would be an edit
+  from a mode whose whole point is that letters are not text, and vim has no Tab
+  command to borrow. This is the one key that is consumed without an explanation;
+  the indicator is what tells you why nothing happened.
+
+### Selecting, deleting and pasting — and what is deliberately absent
+
+**There is still no visual mode**, and that is worth saying to anyone who expects
+one: `v` and `V` do not put the editor into a third mode. They switch on **sticky
+selection** (below) and drop you into **Edit mode**, where you select the Windows
+way — with the mouse, with **Shift** plus a motion key, or with the sticky
+selection they just started.
+
+You have three ways to operate on a range:
+
+1. **In Command mode**, operator plus motion or text object — `d}`, `y2w`, `cc`,
+   `daw`.
+2. **In Edit mode**, select however you like and use **Ctrl+C**, **Ctrl+X** or
+   **Delete**.
+3. **Select first, then use an operator on it.** With something selected, a
+   Command-mode `d`, `c` or `y` acts on **the selection** and runs at once
+   instead of waiting for a motion. That works for any selection — sticky, mouse
+   or **Shift**-arrow — and it is what makes `v`, extend, **Escape**, `d` read
+   the way a vim user expects.
+
+One thing to keep straight: you have to be **in Command mode** for an operator to
+be an operator. A `d` typed straight after a mouse selection while you are still
+in Edit mode is the letter `d`, and it replaces what you selected.
+
+**There is one clipboard — the system one — and no registers.** `y` and `Y` write
+it, and so does **every delete**, which is what makes `dd` then `p` move a line.
+It is the same clipboard **Ctrl+C** uses, so text moves freely between Command
+mode, Edit mode and other applications. Two consequences follow directly and are
+accepted rather than worked around:
+
+- **`dd` clobbers your clipboard.** If you had something on it, it is gone. (What
+  the delete took is recoverable with `u`.)
+- **There is no linewise paste.** `p` and `P` paste **plain text, inline**,
+  exactly as **Ctrl+V** does — so `yy` followed by `p` inserts the line's text at
+  the caret rather than opening a new line for it. The two differ only in where
+  the caret is: `p` pastes after it, `P` at it.
+
+### Sticky selection
+
+**Sticky selection is "keep selecting as I move", without holding Shift.** Turn
+it on and every caret movement extends the selection from where you started,
+until something ends the gesture. It comes in two granularities, and they are one
+state rather than two — turning either on turns the other off:
+
+- **Sticky Selection** — character-wise. `v`, or **Select ▸ Sticky Selection**.
+- **Line Selection** — line-wise: the selection always covers whole lines. `V`,
+  or **Select ▸ Line Selection**.
+
+**Two ways in, one behaviour.** Pressing `v` or `V` in Command mode switches it
+on and returns you to Edit mode; the two **Select** menu entries do exactly the
+same thing and are **checkable**, so the menu always shows whether it is on.
+Neither entry carries a keyboard shortcut — `v` and `V` are already the keys for
+it, and one command gets one key.
+
+**Both entries are hidden on a read-only editor** — either **DDL Explorer**
+buffer, or the Raw XML editor while **Caption Mode** or **Compare/Merge** holds
+it — because the whole Command-mode layer is inactive there and the toggle would
+change nothing. Use **Shift** plus a motion key, or the mouse, to select in those.
+
+**What extends it:** the **arrow keys**, **Home**, **End**, **Page Up** and
+**Page Down** in Edit mode, and any Command-mode motion (`w`, `}`, `42G`) if you
+press **Escape** and keep moving.
+
+**What ends it:**
+
+- an operator consuming it — `d`, `c` or `y` in Command mode, which acts on the
+  selection and runs immediately;
+- **typing a printable character**, which replaces the selection and resumes
+  ordinary typing;
+- a **mouse click**, since you are selecting by hand now;
+- the editor **losing focus**, or its document being replaced.
+
+It is transient editor state, like Command mode itself: nothing is stored,
+nothing survives a tab switch, and there is no setting for it.
+
+### Searching, and the colon command line
+
+`/` focuses this tab's **Find** field and `n` runs its **Find next** — the same
+bar, the same highlighting and the same results you get from **Ctrl+F**. There is
+no second search anywhere in this app.
+
+`:` opens a small command line **over the editor**, and **its vocabulary is the
+app's own menu tree**. Typing matches against the full menu path, so `:deployqual`
+finds **Deployment › Apply to quality** and **Enter** triggers exactly the menu
+entry it names — the same command, with the same confirmations and the same
+refusals. Nothing here is a separate command language, so it stays in step with
+the menus by construction. **Escape** closes the line and returns you to Command
+mode with the buffer untouched.
+
+The one non-menu verb is **`:set`**, and it has exactly two options: **`:set
+wrap`** and **`:set nowrap`**, which are the command form of the editors' own
+*Wrap Lines* toggle. Anything else is refused by name. `:set` may only reach a
+setting the app already has — the command line is not a place to invent one.
+
+### Chords that change meaning in Command mode
+
+Four keys behave differently depending on which mode the focused editor is in.
+Apart from these — and **Escape** and **Tab**, above — everything in *Keyboard
+Shortcuts* means the same thing in both modes.
+
+| Chord | In Edit mode | In Command mode |
+|---|---|---|
+| **Ctrl+R** | focus this tab's **Replace with** field | **redo** |
+| **Ctrl+D** | delete the character after the caret | **nothing** — consumed, reserved for a later scrolling command |
+| **Ctrl+K** | delete from the caret to the end of the line | **nothing**, as above |
+| **Ctrl+U** | delete the whole line | **nothing**, as above |
+
+**Ctrl+Y is redo everywhere, in both modes, on both platforms** — it did not
+move and it is not mode-dependent. `Ctrl+R` is redo *in addition*, and only while
+Command mode holds, which is also why **Replace-focus is unavailable on that
+editor** until you leave Command mode. If **Ctrl+R** ever seems dead, the mode
+indicator is telling you why.
+
+### The Edit code… dialog is the one surface that differs
+
+The **Edit code…** dialog (see *The Code Editor*) has Command mode too, and
+carries **its own mode indicator** under the editor — the same chip, showing the
+editing mode and nothing else, because a dialog has no workflow mode to report.
+
+Two things are different there, both on purpose:
+
+- **Escape is a two-press cancel.** The first **Escape** enters Command mode; a
+  second **Escape**, with nothing half-typed, **cancels the dialog**. That is how
+  you close it from the keyboard: Command mode had taken away this dialog's only
+  keyboard cancel, since **Ctrl+S** and **Ctrl+W** do nothing anywhere in the
+  app. **Return** still accepts, and **Cancel** is still one click away. At the
+  other five editing surfaces **Escape** in Command mode simply stays put; this
+  dialog is the single exception, and it is a modal, which is why.
+- **`:` is unavailable, and says so.** The command line's vocabulary *is* the
+  menu tree, and this dialog is deliberately menu-less — so pressing `:` answers
+  *"the ':' command line lists this window's menu commands, and this dialog has
+  no menus"* rather than opening an empty command line you could type nothing
+  useful into.
 
 ---
 
@@ -3776,16 +5248,26 @@ follow from which one you are in:
 - **XML editors** — **Raw XML**, **Edit XSD** / **Edit AutoXSD**, and a generated
   **draft fragment** tab.
 - **Code editors** — a **DDL object** tab, either **DDL Explorer**, a **PHP file**
-  tab, the **Sandbox SQL Console**, and the **Edit code…** dialog.
+  tab, either **SQL Console** (Sandbox or Quality), and the **Edit code…** dialog.
+
+**Everything in this chapter describes an editor in Edit mode** — ordinary typing,
+which is where every editor starts. Press **Escape** in an editable editor and it
+switches to **Command mode**, where letters are commands and three of the chords
+below change meaning; that vocabulary has its own chapter, *Editing Modes: Edit
+mode and Command mode*.
 
 **Everywhere in the app**
 
 | Shortcut | Action |
 |---|---|
 | **F1** | Open the Manual (**Help ▸ Manual**). Reachable in every mode, including Maintenance mode |
-| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy / cut / paste. The editors' own built-ins; no menu command claims them |
+| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy / cut / paste. The editors' own built-ins; no menu command claims them. **Ctrl+Insert**, **Shift+Insert** and **Shift+Delete** are the older spelling of the same three and work everywhere too, and **Ctrl+Shift+Insert** is a second paste the app binds itself in every editor |
+| **Ctrl+D** / **Ctrl+K** / **Ctrl+U** | Delete the character after the caret / to the end of the line / the whole line. See *Three line-editing keys*, below |
+| **Escape** | Enter **Command mode** in the editor you are typing in — after three narrower meanings have had their turn. See *Editing Modes* and *What Escape means where*, below |
 | **Ctrl+S** / **Ctrl+Shift+S** | **Nothing — deliberately unbound.** Every save is a named entry on **Deployment** (see below) |
 | **Ctrl+O** / **Ctrl+W** | **Nothing.** Both were unbound rather than moved, and both are free for you to assign (see below) |
+| **Ctrl+Shift+Z** | **Select ▸ Shrink Selection.** It is **not** a redo chord — every editing surface catches it, and in the SQL editors it steps the selection inward (see *Expanding and shrinking the selection*, below) |
+| **Alt+Backspace** / **Alt+Shift+Backspace** | **Nothing.** Suppressed in every editor, on both platforms (see *Undo and Redo*, below) |
 
 **On any editor tab**
 
@@ -3796,21 +5278,38 @@ and act on it — never on the Raw XML document behind it.
 |---|---|---|
 | **Ctrl+A** | **Select ▸ Select All** | Select the whole document. See *Ctrl+A is a special case*, below |
 | **Ctrl+Shift+B** | **Select ▸ Select Enclosing Block** | One command, two structural meanings — see *One chord, two meanings*, below |
-| **Ctrl+Shift+A** | **Select ▸ Select Parent Block** | One nesting level up. **XML editors only** — the entry is hidden on code-editor tabs and the chord goes quiet with it |
+| **Ctrl+Shift+A** | **Select ▸ Expand Selection** | One structural unit outward per press, repeatable. Everywhere except PHP / JS tabs, where the entry is hidden and the chord goes quiet with it |
+| **Ctrl+Shift+Z** | **Select ▸ Shrink Selection** | Back inward, one step per press. **SQL editors only**; not rebindable — see *Expanding and shrinking the selection*, below |
 | **Ctrl+F2** | **Navigation ▸ Toggle Bookmark** | Disabled for as long as **Caption Mode** lasts |
 | **F2** / **Shift+F2** | **Navigation ▸ Next / Previous Bookmark** | Disabled for as long as **Caption Mode** lasts |
 | **Ctrl+F** | *(no menu entry)* | Focus this tab's **Find** field |
-| **Ctrl+R** | *(no menu entry)* | Focus this tab's **Replace with** field |
+| **Ctrl+R** | *(no menu entry)* | Focus this tab's **Replace with** field — **in Edit mode**. In Command mode this chord is redo instead (see *Editing Modes*) |
 | **F3** | *(no menu entry)* | Find next in this tab's bar — and it works with the caret still in the **editor**, which is the whole point of it |
-| **Escape** | *(no menu entry)* | In a Find/Replace bar: return focus to the document. The bar is never hidden |
+| **Escape** | *(no menu entry)* | In a Find/Replace bar: return focus to the document. The bar is never hidden. With the caret in the editor: enter **Command mode** |
 
 **Ctrl+F / Ctrl+R belong to the tab, not to the window.** Six surfaces own their
 own pair — Raw XML, Edit XSD, a draft fragment tab, a PHP tab, a DDL object tab
 and either DDL Explorer — plus **Caption Management**, which has a seventh. Each
 pair is live only while its own surface has focus, which is why Find in the
-caption grid can never search the Raw XML by accident. **Three surfaces have no
-Find/Replace bar at all** — the **Manual** tab, the **Diff / Merge** tab and the
-**Sandbox SQL Console** — so **Ctrl+F**, **Ctrl+R** and **F3** do nothing there.
+caption grid can never search the Raw XML by accident. **Four surfaces have no
+Find/Replace bar at all** — the **Manual** tab, the **Diff / Merge** tab and both
+**SQL Consoles** — so **Ctrl+F**, **Ctrl+R** and **F3** do nothing there.
+
+**Three line-editing keys, in every editor**
+
+| Shortcut | Action |
+|---|---|
+| **Ctrl+D** | Delete the character **after** the caret — or the selection, when there is one |
+| **Ctrl+K** | Delete from the caret to the end of the line. Pressed with the caret already at the end of a line it takes the newline instead, joining the next line up, which is what makes repeated presses useful. At the very end of the document it does nothing |
+| **Ctrl+U** | Delete the whole line, as **one** undo step — one **Ctrl+Z** brings it back. With a selection it deletes exactly the selection |
+
+**The app implements these three itself, identically on Windows and on Linux.**
+They are not the system's: the KDE desktop binds them inside every text box and
+Windows binds nothing at all, which would have made the same key do two different
+things on two machines. All three are live in every editing surface — the XML
+editors and the code editors alike — and on the read-only **DDL Explorer** they
+state *"this buffer is read-only"* rather than doing nothing. In **Command mode**
+all three are inert (see *Editing Modes ▸ Chords that change meaning*).
 
 **In an XML editor** (Raw XML, Edit XSD / Edit AutoXSD, a draft fragment tab)
 
@@ -3818,9 +5317,10 @@ Find/Replace bar at all** — the **Manual** tab, the **Diff / Merge** tab and t
 |---|---|
 | **Ctrl+Space** | Attribute / value completion, from the schema |
 | **Ctrl+Shift+B** | Select the innermost enclosing **XML element**, `<` through `>` |
-| **Ctrl+Shift+A** | Select one nesting level up |
+| **Ctrl+Shift+A** | **Expand Selection** — one nesting level up, repeatable |
 | **Ctrl+L** | **Go To XSD** — jump to the definition of the attribute at the caret, in the Edit XSD tab |
-| **Ctrl+Z** / **Ctrl+Y** / **Ctrl+Shift+Z** | Undo / redo, routed by tab — see the undo table below |
+| **Ctrl+Alt+F** | **Format Selection** — re-indent the selected XML by element depth. Needs a selection (see *The Autoformatter*) |
+| **Ctrl+Z** / **Ctrl+Y** | Undo / redo, routed by tab — see the undo table below |
 | **Return** | Newline, indented to match the line you left |
 | **<** | Auto-closes: types `<>` and leaves the caret between them |
 | **>** | Closes the tag you just opened, when there is one to close |
@@ -3838,10 +5338,12 @@ Console, **Edit code…** dialog)
 | **Tab** | Insert a tab character — **except** during a template walk, below |
 | **Ctrl+Alt+E** | Expand the word before the caret into its plpgsql snippet. **SQL buffers only** |
 | **Ctrl+Alt+C** | Expand a bare `SELECT` into the column list its `FROM` implies. **SQL buffers only** |
+| **Ctrl+Shift+R** | **Reload DDL** — re-introspect this explorer. **Either DDL Explorer's viewing pane only**, and it reloads the one the caret is in (see *DDL Explorer ▸ Reloading an explorer*) |
 
 **The set Ctrl+Alt+E expands is editable** — eight snippets ship with the app and
-you can change, add to or replace them in **Settings ▸ Edit Snippets…** (see
-*Snippets*). The chord itself stays what it is; only what it inserts changes.
+you can change, add to or replace them in **Settings ▸ Software settings… ▸
+Snippets** (see *Snippets*). The chord itself stays what it is; only what it
+inserts changes.
 
 **Ctrl+Alt+E and Ctrl+Alt+C are SQL-only by design.** The snippet set is plpgsql,
 so in a **PHP** tab or a `js` **Edit code…** dialog these keys are untouched — an
@@ -3863,13 +5365,27 @@ placeholders)
 
 Nothing else changes while the walk is on, and the walk also ends when you click
 anywhere or the editor loses focus. Outside a walk these three keys are exactly
-what they always were — in particular **Escape** keeps its ordinary meaning of
-*return focus to the document* everywhere else in the app.
+what they always were.
 
-**In a DDL object tab or the Sandbox SQL Console — and only there**
+**What Escape means where.** One key, several answers, and the first one that
+applies wins:
+
+1. the **completion popup** is open → close it, inserting nothing;
+2. the caret is in a **Find/Replace bar** field, or the caption bar → return
+   focus to the document (or to the caption grid). The bar is never hidden;
+3. a **template walk** is in progress → leave the walk;
+4. the caret is in an **editable editor** → enter **Command mode**; or, already
+   in Command mode, discard a half-typed command and stay there (see *Editing
+   Modes*);
+5. the caret is in a **read-only** editor → nothing at all;
+6. the **Edit code… dialog** with nothing pending → cancel the dialog. That is
+   the second of its two Escape presses, and the only surface where Escape leaves
+   Command mode.
+
+**In a DDL object tab or either SQL Console — and only there**
 
 These five need to know your database's schema, so they are live in exactly the
-two surfaces that have one wired and **inert in the other three code editors**
+surfaces that have one wired and **inert in the other three code editors**
 (the DDL Explorer, a PHP tab, the **Edit code…** dialog).
 
 | Shortcut | Action |
@@ -3877,8 +5393,8 @@ two surfaces that have one wired and **inert in the other three code editors**
 | **Ctrl+Space** | Schema-aware name completion — the `schema.table.column` cascade, a `FROM`-clause alias, a `%ROWTYPE` local, or `NEW.`/`OLD.` columns |
 | **Ctrl+Alt+J** | Write the `JOIN … ON …` a foreign key implies (one candidate is applied, several are offered) |
 | **Ctrl+Shift+Space** | Signature help for the call at the caret — a tooltip, inserting nothing |
-| **Ctrl+Alt+F** | **Format Selection** — reindent the current selection. Needs a selection |
-| **Ctrl+Return** | *(Sandbox SQL Console only)* Run the selection, or the whole buffer, against the sandbox |
+| **Ctrl+Alt+F** | **Format Selection** — reindent the current selection with the SQL formatter. Needs a selection. (Not one of the five: the same chord formats **XML** in the XML editors — see *The Autoformatter*) |
+| **Ctrl+Return** | *(SQL Consoles only)* Run the selection, or the whole buffer — against the sandbox in the Sandbox console, and into an **uncommitted** transaction in the Quality console, where it never commits (see *The Quality SQL Console*) |
 
 **While the completion popup is open**
 
@@ -3899,8 +5415,8 @@ the editor underneath would have done:
 |---|---|
 | **Ctrl+F** / **Ctrl+R** | Focus the caption bar's **Find** / **Replace with** field |
 | **Escape** | Return focus from the bar to the **grid** |
-| **Ctrl+G** | Go to the current row's line in the Raw XML |
-| **Ctrl+C** / **Ctrl+V** | Copy the selection out of the grid / paste into the New value column |
+| **Ctrl+G** | Go to the current row's line in the Raw XML — and it works from inside the **Find** field too, so you can search for a caption and jump straight to its line without leaving the field |
+| **Ctrl+C** / **Ctrl+V** | Copy the selection out of the grid / paste into the New value column. Both belong to the **grid**: pressed while the cursor is in the Find or Replace field they copy and paste that field's text, as they would anywhere else |
 
 **In the Edit code… dialog** (and the Activity Log's read-only payload viewer)
 
@@ -3912,15 +5428,32 @@ own dialog defaults:
 |---|---|
 | **Ctrl+Shift+B** | Bracket-select. The dialog carries this one chord itself, which is the only reason it works here — and the only reason it does not follow a rebinding (see *The Code Editor ▸ Editing*) |
 | **Return** | OK (Qt's default for the dialog's button box) |
-| **Escape** | Cancel |
+| **Escape** | **Press once** to enter **Command mode**; **press again**, with nothing half-typed, to **Cancel**. See *Editing Modes ▸ The Edit code… dialog is the one surface that differs* |
 | **Ctrl+S** / **Ctrl+W** | **Nothing.** This dialog was the last carve-out for either chord and no longer answers them |
+
+The dialog also carries **its own mode indicator**, under the editor, showing
+which editing mode that editor is in and nothing else. **The `:` command line
+does not work here** — its vocabulary is the menu tree and this dialog has none,
+so it says so.
+
+**The Activity Log's payload viewer is the read-only twin of this dialog**, so
+the editing-mode layer is inactive in it and **one Escape closes it**, as it
+always did.
 
 **Undo and Redo depend on which tab you are in**
 
 **Ctrl+Z** and **Ctrl+Y** are one pair of keys over several different histories,
-and the tab decides which one. **History ▸ Undo** and **History ▸ Redo** on the
-Editor menu bar are a different thing again: they always drive the **project's**
-snapshot history, whatever tab is in front, and they carry no shortcut.
+and the tab decides which one. **Redo is Ctrl+Y on every platform and there is no
+second redo chord** — see *Ctrl+Shift+Z is not redo*, below.
+
+**History ▸ Undo Project Edit** and **History ▸ Redo Project Edit** on the Editor
+menu bar are a different command, which is why they are named apart from the keys.
+They always drive the **project's** snapshot history, whatever tab is in front: a
+chord means *"undo here"* and is answered by the surface you are in, while clicking
+one of these means *"undo the project, wherever I am"*. **Neither carries a
+keyboard shortcut at all** — the pair could not share a key with Ctrl+Z without
+losing that distinction. (You may still assign them one yourself in the
+**Keyboard shortcuts** pane, where they are ordinary rebindable menu commands.)
 
 | Where | **Ctrl+Z** / **Ctrl+Y** undoes |
 |---|---|
@@ -3928,7 +5461,7 @@ snapshot history, whatever tab is in front, and they carry no shortcut.
 | **Edit XSD / Edit AutoXSD** | that tab's own editing history — never the project's |
 | **DDL object tab** | that tab's own editing history. One **Ctrl+Z** takes back a whole template expansion, however many pieces it was built from |
 | **PHP file tab** | that tab's own editing history |
-| **Sandbox SQL Console** | that editor's own editing history |
+| **Sandbox SQL Console**, **Quality SQL Console** | that editor's own editing history |
 | **a draft fragment tab** | that tab's own editing history, keystroke by keystroke. A draft has no snapshot history and no save path, so there is nothing else for the keys to mean |
 | **DDL Explorer** (either) | nothing — the buffer is read-only, and the key says so: *"this buffer is read only — there is nothing to undo here"* |
 
@@ -3938,19 +5471,45 @@ for itself, **Ctrl+Z** used to fall through to the window and quietly revert the
 **Raw XML project buffer** — a different document than the one on screen. The
 Explorer now claims the chord and states the reason above instead.
 
-**History ▸ Undo and History ▸ Redo refuse out loud, too.** While the Raw XML
-buffer is held read-only — by **Caption Mode**, or by **Compare/Merge**'s
+**Undo Project Edit and Redo Project Edit refuse out loud, too.** While the Raw
+XML buffer is held read-only — by **Caption Mode**, or by **Compare/Merge**'s
 data-loss lock — the two entries stay clickable rather than greyed, and clicking
 one puts its reason in the status bar: *"Raw XML is read only in … — project
 history cannot change it."* Jumping to a snapshot from **History…** is held by
 the same lock. An entry that states why it will not run beats one that has
 silently vanished (see *Compare / Merge* and *Caption Management*).
 
-**Ctrl+Shift+Z is a second redo key.** It redoes in the **XML** editors (Raw
-XML, Edit XSD / Edit AutoXSD, a draft fragment tab) and in a **DDL object tab**,
-each into that surface's own history — exactly where **Ctrl+Y** would have gone.
-In the read-only **DDL Explorer** it is refused with the same sentence as
-**Ctrl+Z**.
+**Ctrl+Shift+Z is not redo, anywhere in this app.** It used to be a second redo
+chord and is not one any more: **redo is Ctrl+Y, on every platform, and nothing
+else**. One operation with two spellings meant one of them was always the one a
+given surface had forgotten to wire, and on one platform the "second" redo was a
+dead key.
+
+The chord now belongs to **Select ▸ Shrink Selection** (see *Expanding and
+shrinking the selection*, below) — but the reason it can only ever be that, and
+never a rebindable command of your choosing, is the same reason it stopped being
+redo. Qt itself binds `Ctrl+Shift+Z` as its own native redo inside every text
+widget, on both Windows and Linux, so **every editing surface in the app catches
+the chord before Qt can**, which is the only way to stop Qt's redo from firing
+behind the app's back and editing a buffer without a history entry. In the SQL
+editors that catch now runs shrink; in the XML editors and on a PHP tab it still
+runs nothing, on purpose. It stays reserved either way: a command retargeted onto
+it would be swallowed by whichever editor has focus (see *What cannot be rebound,
+and why*).
+
+The read-only **DDL Explorer** is worth one extra word: `Ctrl+Shift+Z` shrinks the
+selection there like in any other SQL editor — read-only makes no difference to
+selecting — and it does **not** print the *"nothing to undo here"* sentence it
+prints for **Ctrl+Z** / **Ctrl+Y**. The chord is not asking for an undo, so
+answering it with an undo's reason would be a wrong reason, which is worse than
+none.
+
+**Alt+Backspace and Alt+Shift+Backspace are suppressed in the same way.** Qt binds
+them as native undo and redo on **Windows only**, and a chord has to mean the same
+thing on both systems or not be bound at all. Rather than invent them on Linux —
+they appear in no menu, no shortcut table and nowhere in this manual — every
+editing surface consumes them and runs nothing, so the two keys are equally dead
+on both platforms. They are reserved for the same reason `Ctrl+Shift+Z` is.
 
 **Ctrl+A is a special case, and the reason is worth knowing.** Select-all always
 worked in every editor; the **Select** menu only made it findable. While the caret
@@ -3968,11 +5527,60 @@ means. In an **XML editor** the answer is the innermost XML element; in a **code
 editor** it is the innermost balanced bracket pair, because SQL and PHP have no
 tags to enclose. It is one command with one key, not two competing ones.
 
-**Ctrl+Shift+A is absent rather than silently wrong.** "One nesting level up" is
-an XML idea, and a bracket pair has no parent walk that means anything to a reader
-of SQL or PHP — so on a PHP tab, a DDL object tab, either DDL Explorer and the
-Sandbox SQL Console the menu entry is not offered at all, and **Ctrl+Shift+A** is
-inert there rather than doing something approximate.
+### Expanding and shrinking the selection
+
+**Ctrl+Shift+A grows the selection outward one structural unit per press, and
+Ctrl+Shift+Z steps it back inward.** Press **Ctrl+Shift+A** with the caret in a
+plpgsql routine and it selects the word you are on; press it again for the
+enclosing bracket group (its contents first, then the brackets too); again for the
+clause; again for the statement; then once for **each** enclosing block, so an
+`IF` inside a `FOR` inside a `BEGIN` is three more presses; and finally the whole
+`BEGIN … END` body. Inside a `CASE` the current `WHEN … THEN` branch is a rung of
+its own before the whole `CASE`. **Ctrl+Shift+Z** walks back down the same steps.
+
+The point is **identifying** structure fast: selecting a `CASE` to delete it, a
+`LOOP` to reindent it, or a statement to comment it out, without a mouse.
+
+- **Not every rung exists everywhere, and that is deliberate.** Where there is no
+  clause keyword to anchor on — a bare assignment, a `RAISE NOTICE` — there is
+  simply no clause rung, and the press that would have taken it goes straight to
+  the statement. A rung may be missing; a rung that fires and changes nothing
+  never happens, because then you could not tell whether the ladder advanced or
+  ended.
+- **At the top, Ctrl+Shift+A does nothing** rather than announcing anything.
+  Selecting changes no text, so there is nothing to report.
+- **Strings, comments and quoted names are one rung each** — there is no structure
+  to climb inside a literal — while a `$$ … $$` routine body is climbed *into*,
+  because that body is the plpgsql this ladder exists for. A bracket inside a
+  string is not a bracket here.
+- **Ctrl+Shift+Z after a mouse selection, or after any edit, still works** — it
+  selects the largest structural unit lying wholly inside what is currently
+  selected, and does nothing when nothing is. So the key always moves the
+  selection inward, whether or not you got there with **Ctrl+Shift+A**.
+
+**Which surfaces offer which half:**
+
+| Where | Expand Selection (Ctrl+Shift+A) | Shrink Selection (Ctrl+Shift+Z) |
+|---|---|---|
+| DDL object tabs, either **DDL Explorer**, either **SQL Console** | yes — the full plpgsql ladder | yes |
+| **Raw XML**, **Edit XSD**, generated draft fragment tabs | yes — one XML nesting level per press, as before | no — the entry is not offered |
+| **PHP** / **JavaScript** tabs, the **Edit code…** dialog for event code | no | no |
+
+**Read-only makes no difference to either**, in the DDL Explorer or in Caption
+Mode: selecting text mutates nothing, exactly as with **Select All**.
+
+**Shrink Selection is the one Select command you cannot rebind.** Its menu entry
+carries no shortcut of its own: **Ctrl+Shift+Z** is caught inside every editor's
+own key handling, which is what stops Qt from treating it as a second redo (see
+*Ctrl+Shift+Z is not redo*, above), and a key caught there cannot also be a
+window command. So **Ctrl+Shift+A** can be moved through the **Keyboard
+shortcuts** pane while **Ctrl+Shift+Z** cannot, and cannot be given to anything
+else either. The pairing was worth the asymmetry; the asymmetry is real.
+
+**Select Parent Block was renamed.** It is now **Expand Selection**, on the same
+key, because the command means the same thing in the SQL editors as in the XML
+ones. A toolbar button or a custom shortcut you saved under the old name still
+works.
 
 **Ctrl+S and Ctrl+Shift+S are unbound app-wide, and that is stated here rather
 than merely left out of the table.** Every save is a named entry on the Editor
@@ -3999,7 +5607,7 @@ five kinds of "open" — and whichever it picks is a guess about which one you
 meant. Opening is also a once-per-session act the launcher already puts one click
 away (see *Getting Started ▸ The startup launcher*). Pressing **Ctrl+O** now does
 nothing, and the chord is genuinely **free**: if you want it back on a particular
-open, assign it yourself in **View ▸ Customize Shortcuts…**.
+open, assign it yourself in the **Keyboard shortcuts** pane.
 
 **Ctrl+W is in exactly the same position.** It used to close the project from
 the File menu and to cancel the **Edit code…** dialog; both bindings were
@@ -4020,36 +5628,64 @@ irreversible outward effect must not be one keystroke away*.
 purpose** — not **Check and commit to sandbox**, not **Apply to quality**, and not
 either check gesture (**Parsing ▸ Check Object in Sandbox** and **Parsing ▸ Check
 and rollback**), so a write to a database is never one keystroke away.
-**Ctrl+Return** in the Sandbox SQL Console is the one exception, because that
-console can only ever reach the disposable sandbox (see *The Sandbox*).
+**Ctrl+Return** in the two SQL consoles is the one exception, and it holds the
+rule rather than breaking it. In the **Sandbox** console it can only ever reach
+the disposable sandbox (see *The Sandbox*). In the **Quality** console it reaches
+production — but it runs into an **uncommitted** transaction, and the gesture
+that makes anything durable, **Commit**, is a button with no shortcut, no menu
+entry and no mnemonic. The irreversible step is still never one keystroke away
+(see *The Quality SQL Console*).
 
 The other commands added recently are shortcut-free too: **File ▸ New
-Session**, **File ▸ Discard Changes**, **Parsing ▸ Auto Parse XML**, **Parsing ▸
-Validate Project**, **History ▸ History…**, **Navigation ▸ Clear All Bookmarks**,
-**Navigation ▸ List All Bookmarks**, **View ▸ Activity Log**, **View ▸
-Messages**, **Database ▸ DDL Explorer (Quality)**,
-**Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Project Status…** and
+Session**, **File ▸ Discard Changes**, **File ▸ Project Status…** (which lives on
+**File**, directly under **Project Settings…**, and not on **Database** where it
+used to sit), **Parsing ▸ Auto Parse XML**, **Parsing ▸
+Validate Project**, **History ▸ History…**, **History ▸ Undo Project Edit**,
+**History ▸ Redo Project Edit**, **Navigation ▸ Clear All Bookmarks**,
+**Navigation ▸ List All Bookmarks**, all three of **Navigation**'s Compare/Merge
+entries, **View ▸ Activity Log**, **View ▸
+Messages**, **View ▸ Findings**, **Database ▸ DDL Explorer (Quality)**,
+**Database ▸ DDL Explorer (Sandbox)**, **Database ▸ Reload DDL**,
+**Database ▸ Sandbox SQL Console…**, **Database ▸ Quality SQL Console…**,
+**Settings ▸ Software settings…** and
 **Tools ▸ Start MCP Server** are all menu-only. If you use one often, put it on
 the toolbar (see *Appearance & Layout ▸ The toolbar*).
 
+**Select ▸ Sticky Selection and Select ▸ Line Selection are keyless for a
+different reason** — not because a key would be dangerous, but because they
+already have one. `v` and `V` in Command mode are those commands, and one command
+gets exactly one keyboard host, so the menu entries carry nothing (see *Editing
+Modes ▸ Sticky selection*).
+
+**Database ▸ Reload DDL is the interesting one of those**, because a keyboard
+gesture for it *does* exist: **Ctrl+Shift+R**, hosted on the DDL Explorer's
+viewing pane, where the caret says which of the two explorers you mean. A menu
+entry cannot say that, and one gesture gets exactly one keyboard host — so the
+menu entry and both right-click forms are deliberately keyless (see *DDL Explorer
+▸ Reloading an explorer*).
+
 **The Settings menu contributes no chords at all, by rule.** It exists only in
 Maintenance mode, and hiding a menu does not switch off the keys of the entries
-inside it — so a shortcut on **Settings ▸ Edit Snippets…** would open that
-dialog in the middle of ordinary work and make nonsense of where the command
-lives. Nothing on that menu ships with a key. **View ▸ Customize Shortcuts…**
-will still let you assign one, because it lists every menu command in the app —
-but a key you assign there behaves exactly as described: it fires in any mode
-(see *Snippets*).
+inside it — so a shortcut on its one entry, **Settings ▸ Software settings…**,
+would open that dialog in the middle of ordinary work and make nonsense of where
+the command lives. Nothing on that menu ships with a key. The **Keyboard
+shortcuts** pane will still let you assign one, because it lists every menu
+command in the app — but a key you assign there behaves exactly as described: it
+fires in any mode (see *Software Settings*).
 
-**Ten keys have no menu entry at all** — **F3**, **Ctrl+L**, **Ctrl+Alt+F**,
+**Ten keys have no menu-bar entry at all** — **F3**, **Ctrl+L**, **Ctrl+Alt+F**,
 **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G**, and the four SQL editor gestures
 **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J** and **Ctrl+Shift+Space** (see
-*DDL Explorer ▸ Schema-aware completion and gestures in the SQL editors*). That
+*DDL Explorer ▸ Schema-aware completion and gestures in the SQL editors*). Some
+of them do have a right-click form; none has a menu-bar command. That
 is why you can neither put them on the toolbar nor rebind them: a toolbar button
 *is* a menu item and the rebinding dialog lists menu commands, and these have no
-menu entry to be either. They are still **listed** in **View ▸ Customize
-Shortcuts…**, as greyed rows saying why they are locked — a key you can see and
-cannot take is better than one that is simply missing from the list.
+menu-bar entry to be either. **Ctrl+Shift+R** is locked for a near-identical
+reason with the opposite starting point — its command *is* on the menu bar, but
+the chord itself is hosted on a panel. All of them are still **listed** in the
+**Keyboard shortcuts** pane, as greyed rows saying why they are locked — a key
+you can see and cannot take is better than one that is simply missing from the
+list.
 
 In **Caption Mode** the **Navigation** menu's five bookmark entries — and
 **Ctrl+F2** / **F2** /
@@ -4071,17 +5707,19 @@ widget. It matters only if *you* have assigned a chord to a command on **View**,
 **Database**, **Tools** or **Generation** — that chord stays live in Maintenance
 mode even though its menu is gone.
 
-### Changing a shortcut — View ▸ Customize Shortcuts…
+### Changing a shortcut — the Keyboard shortcuts pane
 
-**View ▸ Customize Shortcuts…** lists every menu command in the app with the key
-it currently answers to, and lets you change it. It sits directly under **View ▸
-Customize Toolbar…** and is its sibling: the same set of commands, customized on
-its other axis — one dialog picks a command's icon and place on the toolbar, this
-one picks its key.
+**Settings ▸ Software settings… ▸ Keyboard shortcuts** lists every menu command
+in the app with the key it currently answers to, and lets you change it. It is
+the pane directly under **Toolbar** and is its sibling: the same set of commands,
+customized on its other axis — one picks a command's icon and place on the
+toolbar, this one picks its key. (It used to be **View ▸ Customize Shortcuts…**;
+that entry is gone, and reaching this pane means entering Maintenance mode — see
+*Software Settings*.)
 
-The dialog is one table with three columns:
+The pane is one table with three columns:
 
-- **Command** — the command's menu path, exactly as the toolbar dialog spells it
+- **Command** — the command's menu path, exactly as the **Toolbar** pane spells it
   (`File › Discard Changes`, `Deployment › Save pgtp`, `Navigation › List All
   Bookmarks`).
 - **Shortcut** — the key it answers to right now. Blank means the command has no
@@ -4105,7 +5743,8 @@ Under the table sit a **New shortcut** capture field and four buttons:
 **OK applies your changes immediately** — the new keys work in the window you are
 already in, with nothing to restart — and remembers them for future sessions,
 beside your toolbar arrangement. **Cancel changes nothing**, neither in the
-running window nor on disk.
+running window nor on disk. Both belong to this pane; the settings window's
+**Close** is neither, and closing it saves nothing (see *Software Settings*).
 
 **Assigning a key another command already holds takes it from that command.**
 Before you commit, a line under the table names the current holder (*"Ctrl+F2 is
@@ -4120,7 +5759,7 @@ is ambiguous, and Qt then fires neither of them**. A double binding does not mea
 Stealing is what prevents that, so a key always has exactly one owner.
 
 **A key held by something that is not a menu command is refused, not stolen.**
-The dialog can only change menu commands, so it has no way to release a key that
+The pane can only change menu commands, so it has no way to release a key that
 a window-level shortcut, a per-tab Find field or an editor widget's own key
 handling answers to — and stealing what it cannot release would produce exactly
 the ambiguity above. The refusal appears on the same line as the warnings, naming
@@ -4141,7 +5780,7 @@ gives it.
 > **One caveat: the Edit code… dialog keeps Ctrl+Shift+B.** Rebinding **Select ▸
 > Select Enclosing Block** moves the command everywhere it is a menu command —
 > every editor tab, XML and code alike, including PHP tabs, DDL object tabs, both
-> DDL Explorers and the Sandbox SQL Console. The one place your new key does not
+> DDL Explorers and both SQL Consoles. The one place your new key does not
 > reach is the menu-less **Edit code…** dialog, which carries **Ctrl+Shift+B**
 > itself precisely because it has no menu bar and therefore no command to rebind
 > (see *The Code Editor ▸ Editing*). There the chord stays what it shipped as.
@@ -4155,16 +5794,21 @@ hunting for a row that was never there. None of these is arbitrary:
 | Reserved | Why |
 |---|---|
 | **Ctrl+S** / **Ctrl+Shift+S** | Deliberately unbound app-wide since saving moved to the **Deployment** menu (see *Getting Started ▸ Saving, closing, discarding*). Letting another command take them would bring the old reflex back by the side door. |
-| **Ctrl+Z** / **Ctrl+Y** / **Ctrl+Shift+Z** | Undo and Redo for the project's snapshot history are window-scoped shortcuts, not menu commands, so there is no row to move them from. **Ctrl+Shift+Z**, the second redo chord, is additionally answered inside each editor's own key handling, so a command moved onto it would only fire while no editor had focus. |
-| **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. |
-| **Escape** | Returns focus from a Find/Replace bar to the document — and leaves a template walk, where one is in progress. |
-| **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level, per-panel or context-menu commands with no menu entry at all — the same reason they cannot be put on the toolbar. |
+| **Ctrl+Z** / **Ctrl+Y** | Undo and Redo in whichever surface has focus: a window-scoped shortcut *plus* every editor's own key handling, and not a menu command, so there is no row to move them from. **Ctrl+Y** is bound by this app on every platform rather than inherited from the system, because Qt binds it only on Windows. The project-scoped twins — **History ▸ Undo Project Edit** and **History ▸ Redo Project Edit** — are ordinary menu commands and **are** rebindable. |
+| **Ctrl+Shift+Z** | **Not redo** (see *Undo and Redo*, above) and not free either: every editing surface catches it so Qt's own native redo cannot fire, so a command moved onto it would be swallowed by whichever editor has focus. It answers **Select ▸ Shrink Selection**, which is therefore the one **Select** command you cannot rebind — see *Expanding and shrinking the selection*. |
+| **Alt+Backspace** / **Alt+Shift+Backspace** | Qt binds them as undo and redo on the **Windows** scheme only, so every editing surface consumes them and runs nothing — that suppression is what makes the keyboard identical on both platforms. A command retargeted here would be swallowed the same way. |
+| **Ctrl+F** / **Ctrl+R** | They focus the **current tab's** Find and Replace fields, and each tab's bar owns its own pair. A window-level menu shortcut on either key would be ambiguous against them, and neither would fire. **Ctrl+R** is additionally redo while an editor is in **Command mode** (see *Editing Modes*), which is one more thing no menu command could share it with. |
+| **Ctrl+D** / **Ctrl+K** / **Ctrl+U** | The three line-editing gestures, implemented by the app inside every editing surface so that they mean the same thing on Windows and on Linux. A menu command retargeted onto one of them would be swallowed by whichever editor has focus — and would break the gesture app-wide. |
+| **Escape** | Returns focus from a Find/Replace bar to the document, leaves a template walk where one is in progress, closes the completion popup — and enters **Command mode** in an editable editor. Six meanings answered by six different widgets; a menu command pointed here would be swallowed by whichever one has focus. |
+| **F3**, **Ctrl+L**, **Ctrl+Alt+F**, **Ctrl+Return**, **Ctrl+Space**, **Ctrl+G** | Window-level, per-panel or context-menu commands with no menu-bar entry at all — the same reason they cannot be put on the toolbar. |
+| **Ctrl+Shift+R** | **Reload DDL**. The command *does* have a menu entry — **Database ▸ Reload DDL** — but the chord's one host is a shortcut on the DDL Explorer's viewing pane, because the caret is what says which of the two explorers to re-introspect. There is no menu row holding this key for the dialog to move, and a command pointed here would be swallowed by whichever explorer buffer has focus. |
 | **Ctrl+Alt+E**, **Ctrl+Alt+C**, **Ctrl+Alt+J**, **Ctrl+Shift+Space** | The four SQL editor gestures. Each is answered by the editor or its panel rather than by a menu command, so the dialog has no row it could move — and a menu command retargeted onto one of them would fight for the key and neither would fire. **Ctrl+Alt+J** and **Ctrl+Space** are answered by the *panel* specifically, because they need the database schema and no editor widget is allowed to hold one — that is the same rule that keeps an editor from ever talking to a database. |
-| **Ctrl+C** / **Ctrl+X** / **Ctrl+V** | Copy, cut and paste are the editors' **own** built-ins. A window-level shortcut on one of them would outrank the editor and break copy, cut or paste everywhere in the app. |
+| **Ctrl+C** / **Ctrl+X** / **Ctrl+V**, and **Ctrl+Insert** / **Shift+Insert** / **Ctrl+Shift+Insert** / **Shift+Delete** | Copy, cut and paste are the editors' **own** built-ins, and the Insert/Delete group is the older spelling of the same three — every text field and table in the app answers both spellings, and **Ctrl+Shift+Insert** is a paste the app binds itself in every editor so that it exists on both platforms. A window-level shortcut on any of them would outrank the editor and break copy, cut or paste everywhere in the app. **Ctrl+C** and **Ctrl+V** are additionally the caption grid's own copy and paste. |
 | **F1**, and **Help ▸ Manual** itself | The universal convention, and **Help ▸ Manual** is the one entry no mode may put out of reach — including Maintenance mode (see *Getting Started ▸ Maintenance mode*). It is the only case locked from both ends: nothing else may take **F1**, and Manual may not leave it, so its row is present but read-only. |
 
-**Customize Shortcuts… is itself an ordinary menu command**, so it appears in its
-own list, can be given a key, and can be pinned to the toolbar like anything else.
+**Software settings… is itself an ordinary menu command**, so it appears in this
+pane's own list, can be given a key, and can be pinned to the toolbar like
+anything else — with the caveat above that a key on it fires in every mode.
 
 ---
 
@@ -4177,6 +5821,32 @@ You're reading it. Open it any time with **F1** or **Help ▸ Manual**.
   scroll the manual straight to it.
 
 ---
+
+## About, and which version is which
+
+**Help ▸ About** shows the box with the app's identity, its licence, its authors
+and its credits. Beside it sit **Help ▸ Manual** and **Help ▸ Open Log Folder**
+(see *Troubleshooting: debug mode*).
+
+**Two version numbers appear in that box, and each one says what it versions** —
+because two unlabelled numbers a few lines apart is exactly how they get read as
+one:
+
+- **"PGTP Editor version …"** — this application's own release. It is read from
+  the project's own `pyproject.toml` first, and only falls back to the installed
+  package metadata, rather than being typed anywhere, so it cannot go stale. That
+  order is deliberate and not the obvious one: in a development install the
+  package metadata goes stale while `pyproject.toml` does not, so trusting
+  metadata first would show the wrong version in the one place anyone can check
+  it. Where the version genuinely cannot be determined it reads **`unknown`**,
+  which is a word and not a number, so it can never be mistaken for a release.
+- **".pgtp project format version 22.8 — SQL Maestro's format version, not this
+  application's"** — the **vendor's** file format this editor targets, i.e. which
+  PHP Generator for PostgreSQL projects it understands. It moves when SQL Maestro
+  changes the format, and has nothing to do with the line above it.
+
+Nothing else in the app reports either number, and the two never track each
+other.
 
 ## The MCP Server
 
@@ -4241,7 +5911,7 @@ change your project file or your database.
 
 ## Troubleshooting: debug mode
 
-Launch the editor with `python -m pgtp_editor.main --debug` (or set the
+Launch the editor with `python -m pgtp_editor --debug` (or set the
 environment variable `PGTP_EDITOR_DEBUG=1`) to record a full diagnostic log
 of the session. A red **DEBUG** chip appears in the status bar (see *The Status
 Bar*) and the log file's path is recorded in the **Activity Log** at
@@ -4249,3 +5919,13 @@ startup. Even without debug mode, errors are always
 recorded to a small `errors.log`. **Help ▸ Open Log Folder** opens the folder
 containing both logs — attach the newest `debug_*.log` when reporting a
 problem.
+
+**`python -m pgtp_editor` starts the editor**, with or without `--debug`. The
+longer `python -m pgtp_editor.main` is the same thing and keeps working. An
+installed copy also puts a **`pgtp-editor`** command on your path, which is the
+shortest way to start it — on Windows it launches without dragging a console
+window along, so it is also what a Start-menu or desktop shortcut should point
+at. All three forms are the same program and take the same arguments, including
+`--debug`. For the headless MCP server, stay with a `python -m …` form so the
+process keeps its standard input and output (see *The MCP Server ▸ Headless,
+instead of the GUI*).

@@ -124,13 +124,22 @@ def test_select_menu_contents_and_order(qtbot):
         "Select All",
         "―",
         "Select Enclosing Block",
-        "Select Parent Block",
+        "Expand Selection",
+        "Shrink Selection",
+        "―",
+        "Sticky Selection",
+        "Line Selection",
     ]
 
 
 def test_select_menu_shortcuts_are_the_three_unchanged_chords(qtbot):
     """§27: nothing is rebound. Ctrl+A is new to the MENU only — the widgets
-    have always implemented it."""
+    have always implemented it.
+
+    FQ-034 added a fourth entry and still rebound nothing: `Expand Selection`
+    keeps `Select Parent Block`'s `Ctrl+Shift+A`, and `Shrink Selection` carries
+    **no shortcut at all** (see the next test for why that is the design).
+    """
     window = _window(qtbot)
     menu = _select_menu(window)
     assert find_action(menu, "Select All").shortcut().toString() == "Ctrl+A"
@@ -139,11 +148,35 @@ def test_select_menu_shortcuts_are_the_three_unchanged_chords(qtbot):
         == "Ctrl+Shift+B"
     )
     assert (
-        find_action(menu, "Select Parent Block").shortcut().toString() == "Ctrl+Shift+A"
+        find_action(menu, "Expand Selection").shortcut().toString() == "Ctrl+Shift+A"
     )
     assert find_action(menu, "Select All") is window._select_all_action
     assert find_action(menu, "Select Enclosing Block") is window._select_enclosing_action
-    assert find_action(menu, "Select Parent Block") is window._select_parent_action
+    assert find_action(menu, "Expand Selection") is window._expand_selection_action
+    assert find_action(menu, "Shrink Selection") is window._shrink_selection_action
+
+
+def test_shrink_selection_action_carries_no_shortcut_at_all(qtbot):
+    """FQ-034's DEC-012 reconciliation, pinned.
+
+    `Ctrl+Shift+Z` is claimed by all six editing surfaces
+    (`CLAIMED_NOT_UNDO_REDO`), which accept its `ShortcutOverride` so Qt's native
+    redo cannot fire — a suppression DEC-014 mandates. A window `QAction` bound to
+    the same chord would be starved by exactly that override, so shrink's keyboard
+    host is the per-surface claim and the action is the command form only. The
+    chord must also stay RESERVED, so `Customize Shortcuts…` cannot hand it to
+    anything else.
+    """
+    from pgtp_editor.ui.shortcut_registry import (
+        CLAIMED_NOT_UNDO_REDO,
+        EDITOR_CHORDS,
+        RESERVED_SEQUENCES,
+    )
+
+    window = _window(qtbot)
+    assert window._shrink_selection_action.shortcut().isEmpty()
+    assert EDITOR_CHORDS["Ctrl+Shift+Z"] == CLAIMED_NOT_UNDO_REDO
+    assert "Ctrl+Shift+Z" in RESERVED_SEQUENCES
 
 
 # -- Select All ---------------------------------------------------------------
@@ -332,46 +365,95 @@ def test_select_enclosing_block_dispatch_picks_the_method_the_editor_has(qtbot, 
     assert not hasattr(tab.editor, "select_enclosing_block")
 
 
-# -- Select Parent Block: XML-only, absent where it has no meaning ------------
+# -- Expand / Shrink Selection: present where there is structure to climb -----
 
 
-def test_select_parent_block_in_raw_xml_walks_one_level_up(qtbot):
+def test_expand_selection_in_raw_xml_walks_one_level_up(qtbot):
+    """The XML family's grow is UNCHANGED by FQ-034 -- `select_parent_block` is
+    already one structural level per press, so the rename is all that reached it."""
     window = _window(qtbot)
     editor = window.center_stage.xml_editor
     _put_caret(editor, _RAW_XML.index("<ColumnPresentations/>") + 2)
 
-    window._select_parent_action.trigger()
+    window._expand_selection_action.trigger()
 
     selected = editor.textCursor().selectedText().replace(" ", "\n")
     assert selected.startswith("<Page ") and selected.endswith("</Page>")
 
 
-def test_select_parent_block_is_absent_on_code_editor_tabs(qtbot, tmp_path):
-    """A bracket pair has no "one nesting level up" that means anything in SQL or
-    PHP, so the entry is HIDDEN (the app's two-posture rule: present / absent) —
-    which also drops Ctrl+Shift+A there, since Qt keeps a shortcut live only
-    while its action is enabled AND visible."""
+def test_expand_selection_is_absent_only_where_there_is_no_structure(qtbot, tmp_path):
+    """FQ-034 rescoped this gate: before, the entry was hidden on EVERY
+    `CodeEditor` tab; now it is present wherever the editor answers
+    `supports_structural_expansion()` -- every SQL editor and every XML editor --
+    and hidden on PHP/JS, which have no plpgsql structure to climb. Hidden, never
+    greyed, which is also what drops Ctrl+Shift+A there.
+    """
     window = _window(qtbot, tmp_path)
-    assert window._select_parent_action.isVisible() is True
+    assert window._expand_selection_action.isVisible() is True
 
     panel = _ddl_object_tab(window)
     assert window.center_stage.currentWidget() is panel
-    assert window._select_parent_action.isVisible() is False
+    assert window._expand_selection_action.isVisible() is True
 
     tab = _php_tab(window, tmp_path)
     assert window.center_stage.currentWidget() is tab
-    assert window._select_parent_action.isVisible() is False
+    assert window._expand_selection_action.isVisible() is False
 
     stage = window.center_stage
     stage.setCurrentIndex(stage.ddl_tab_index)
-    assert window._select_parent_action.isVisible() is False
+    assert window._expand_selection_action.isVisible() is True
 
-    # ...and it comes back on an XML editor tab.
     stage.setCurrentIndex(stage.raw_xml_tab_index)
-    assert window._select_parent_action.isVisible() is True
+    assert window._expand_selection_action.isVisible() is True
 
 
-def test_select_parent_block_triggered_on_a_php_tab_is_a_no_op_not_raw_xml(
+def test_shrink_selection_is_hidden_on_xml_and_php_and_shown_on_sql(qtbot, tmp_path):
+    """Shrink is SQL-only, and XML's absence is a scope decision with a reason
+    (§8): XML's grow is stateless and re-derivable, so shrink there would mean
+    giving `XmlEditor` the expansion stack too. So the gate is `hasattr` (a class
+    fact -- `XmlEditor` has no such method) AND the per-instance language
+    predicate, which is what keeps it hidden on a PHP `CodeEditor` that DOES have
+    the method.
+    """
+    window = _window(qtbot, tmp_path)
+    assert not hasattr(window.center_stage.xml_editor, "shrink_structural_selection")
+    assert window._shrink_selection_action.isVisible() is False
+
+    panel = _ddl_object_tab(window)
+    assert hasattr(panel.editor, "shrink_structural_selection")
+    assert window._shrink_selection_action.isVisible() is True
+
+    tab = _php_tab(window, tmp_path)
+    assert hasattr(tab.editor, "shrink_structural_selection")  # the method exists...
+    assert tab.editor.supports_structural_expansion() is False  # ...the language does not
+    assert window._shrink_selection_action.isVisible() is False
+
+    stage = window.center_stage
+    stage.setCurrentIndex(stage.ddl_tab_index)  # the read-only DDL Explorer buffer
+    assert window._shrink_selection_action.isVisible() is True
+
+
+def test_the_sql_ladder_is_repeatable_and_shrink_walks_back_down(qtbot, tmp_path):
+    """The whole feature end to end on a real tab: press grow four times, then
+    shrink three times, landing back exactly where each press came from."""
+    window = _window(qtbot, tmp_path)
+    panel = _ddl_object_tab(window)
+    editor = panel.editor
+    editor.setPlainText("select a, coalesce(b, c) from t where a = 1;")
+    _put_caret(editor, editor.toPlainText().index("b,"))
+
+    grown = []
+    for _ in range(4):
+        window._expand_selection_action.trigger()
+        grown.append(editor.textCursor().selectedText())
+    assert grown == ["b", "b, c", "(b, c)", "select a, coalesce(b, c)"]
+
+    for expected in reversed(grown[:-1]):
+        window._shrink_selection_action.trigger()
+        assert editor.textCursor().selectedText() == expected
+
+
+def test_expand_selection_triggered_on_a_php_tab_is_a_no_op_not_raw_xml(
     qtbot, tmp_path
 ):
     """Second belt behind the visibility gate: a hidden action can still be
@@ -382,7 +464,8 @@ def test_select_parent_block_triggered_on_a_php_tab_is_a_no_op_not_raw_xml(
     _put_caret(tab.editor, _PHP.index("'shout'"))
     before = _raw_xml_state(window)
 
-    window._select_parent_action.trigger()
+    window._expand_selection_action.trigger()
+    window._shrink_selection_action.trigger()
 
     assert tab.editor.textCursor().hasSelection() is False
     assert _raw_xml_state(window) == before
@@ -399,7 +482,7 @@ def test_the_ctrl_shift_a_chord_itself_is_live_on_xml_and_dead_on_a_php_tab(
     editor = window.center_stage.xml_editor
     _put_caret(editor, _RAW_XML.index("<ColumnPresentations/>") + 2)
     fired = []
-    window._select_parent_action.triggered.connect(lambda: fired.append(1))
+    window._expand_selection_action.triggered.connect(lambda: fired.append(1))
     window.show()
     QApplication.processEvents()
     editor.setFocus()
@@ -604,7 +687,195 @@ def test_caret_lands_at_the_start_of_every_structural_selection(qtbot):
     cursor = editor.textCursor()
     assert cursor.position() == cursor.selectionStart()
 
-    window._select_parent_action.trigger()
+    window._expand_selection_action.trigger()
     cursor = editor.textCursor()
     assert cursor.position() == cursor.selectionStart()
     assert isinstance(cursor, QTextCursor)
+
+
+# -- FQ-260812000331: the two sticky-selection command forms ------------------
+
+
+def test_the_sticky_entries_carry_NO_shortcut_because_v_and_V_are_the_host(qtbot):
+    """DEC-012: a command with a command form has exactly ONE keyboard host, and
+    for these two it is the bare `v` / `V` inside the Command-mode grammar. A
+    chord here would be a second host, so both actions must be keyless — and
+    nothing goes into `RESERVED_SEQUENCES`, because no new chord exists."""
+    from pgtp_editor.ui.shortcut_registry import RESERVED_SEQUENCES
+
+    window = _window(qtbot)
+    menu = _select_menu(window)
+    for label in ("Sticky Selection", "Line Selection"):
+        assert find_action(menu, label).shortcut().toString() == ""
+    assert "V" not in RESERVED_SEQUENCES
+
+
+def test_the_sticky_entries_are_checkable_toggles(qtbot):
+    window = _window(qtbot)
+    assert window._sticky_selection_action.isCheckable()
+    assert window._line_selection_action.isCheckable()
+
+
+def test_sticky_selection_acts_on_the_editor_resolved_at_TRIGGER_time(
+    qtbot, tmp_path
+):
+    """The whole point of this menu's dispatch: a PHP tab in front means the PHP
+    editor gets the sticky state and the Raw XML buffer is untouched."""
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot, tmp_path)
+    tab = _php_tab(window, tmp_path)
+    before = _raw_xml_state(window)
+
+    window._sticky_selection_action.trigger()
+
+    assert tab.editor.sticky_selection_mode == vim_mode.STICKY_CHARACTER
+    assert window.center_stage.xml_editor.sticky_selection_mode is None
+    assert _raw_xml_state(window) == before
+
+
+def test_line_selection_acts_on_the_editor_resolved_at_TRIGGER_time(qtbot):
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot)
+    panel = _ddl_object_tab(window)
+    before = _raw_xml_state(window)
+
+    window._line_selection_action.trigger()
+
+    assert panel.editor.sticky_selection_mode == vim_mode.STICKY_LINE
+    assert window.center_stage.xml_editor.sticky_selection_mode is None
+    assert _raw_xml_state(window) == before
+
+
+def test_triggering_twice_toggles_the_state_back_off(qtbot):
+    window = _window(qtbot)
+    window._sticky_selection_action.trigger()
+    assert window.center_stage.xml_editor.sticky_selection_mode is not None
+    window._sticky_selection_action.trigger()
+    assert window.center_stage.xml_editor.sticky_selection_mode is None
+
+
+def test_the_menu_command_and_v_share_ONE_state(qtbot):
+    """`v` writes the same flag the menu entry does, so the check marks must
+    follow a keystroke nothing on the menu knows about."""
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot)
+    window.center_stage.xml_editor.set_sticky_selection(vim_mode.STICKY_LINE)
+
+    window._refresh_sticky_selection_actions()
+
+    assert window._line_selection_action.isChecked()
+    assert not window._sticky_selection_action.isChecked()
+
+
+def test_OPENING_the_menu_re_derives_the_checks_after_a_real_v_keystroke(qtbot):
+    """The gap `test_the_menu_command_and_v_share_ONE_state` leaves open, closed
+    from both ends.
+
+    That test writes the flag through `set_sticky_selection` (the seam `v` uses,
+    not `v` itself) and then calls `_refresh_sticky_selection_actions()` BY HAND
+    — so it stays green whether or not anything in the app ever calls the
+    refresh. Nothing else does on this path: `v` and `V` bypass the actions
+    entirely, so the only thing that can correct a stale check mark is the
+    `aboutToShow` connection. Press the actual key, emit the actual signal the
+    menu emits as it opens, and assert the marks moved.
+    """
+    from pgtp_editor.ui import vim_mode
+
+    window = _window(qtbot)
+    editor = window.center_stage.xml_editor
+    menu = _select_menu(window)
+    window.show()
+    qtbot.waitExposed(window)
+    editor.setFocus()
+    qtbot.wait(1)
+
+    # `V` — Command mode, then the bare key, exactly as the user types it.
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    assert editor.in_command_mode
+    QTest.keyClicks(editor, "V")
+    assert editor.sticky_selection_mode == vim_mode.STICKY_LINE
+    # The marks are stale until the menu is opened — they are not authoritative.
+    menu.aboutToShow.emit()
+    assert window._line_selection_action.isChecked()
+    assert not window._sticky_selection_action.isChecked()
+
+    # ...and `v` moves them the other way, still without touching an action.
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    QTest.keyClicks(editor, "v")
+    assert editor.sticky_selection_mode == vim_mode.STICKY_CHARACTER
+    menu.aboutToShow.emit()
+    assert window._sticky_selection_action.isChecked()
+    assert not window._line_selection_action.isChecked()
+
+
+def test_OPENING_the_menu_CLEARS_the_checks_once_the_gesture_ENDS(qtbot):
+    """The absence direction, which matters more: a sticky gesture ends on its
+    own (a consumed selection, a printable character, focus loss), and none of
+    those endings goes anywhere near the menu. A check mark left set would
+    advertise a mode the editor is no longer in."""
+    window = _window(qtbot)
+    editor = window.center_stage.xml_editor
+    menu = _select_menu(window)
+
+    window._sticky_selection_action.trigger()
+    menu.aboutToShow.emit()
+    assert window._sticky_selection_action.isChecked()  # the anchor
+
+    editor.set_sticky_selection(None)
+    menu.aboutToShow.emit()
+    assert not window._sticky_selection_action.isChecked()
+    assert not window._line_selection_action.isChecked()
+
+
+def test_OPENING_the_menu_HIDES_the_entries_when_read_only_flips_at_RUNTIME(
+    qtbot,
+):
+    """Caption Mode and Compare/Merge make an editor read-only without a tab
+    change, so `_refresh_editor_menu_affordances` never fires — the `aboutToShow`
+    connection is the only thing standing between that and two live entries that
+    toggle a flag nothing reads."""
+    window = _window(qtbot)
+    editor = window.center_stage.xml_editor
+    menu = _select_menu(window)
+
+    menu.aboutToShow.emit()
+    assert window._sticky_selection_action.isVisible()  # the anchor
+
+    editor.setReadOnly(True)
+    menu.aboutToShow.emit()
+    assert not window._sticky_selection_action.isVisible()
+    assert not window._line_selection_action.isVisible()
+
+
+def test_both_entries_are_HIDDEN_on_a_read_only_editor(qtbot):
+    """§8: on a read-only editor the whole editing-mode layer is inactive, so
+    the sticky key handling refuses to answer. An entry that toggles a flag
+    nothing reads is worse than an absent one — hidden, never greyed."""
+    window = _window(qtbot)
+    window.center_stage.xml_editor.setReadOnly(True)
+
+    window._refresh_sticky_selection_actions()
+
+    assert not window._sticky_selection_action.isVisible()
+    assert not window._line_selection_action.isVisible()
+
+    window.center_stage.xml_editor.setReadOnly(False)
+    window._refresh_sticky_selection_actions()
+    assert window._sticky_selection_action.isVisible()
+
+
+def test_the_slot_refuses_on_a_read_only_editor_even_when_triggered_directly(
+    qtbot,
+):
+    """The second belt, for a pinned toolbar button or a programmatic trigger
+    that never consults `isVisible()`."""
+    window = _window(qtbot)
+    window.center_stage.xml_editor.setReadOnly(True)
+
+    window._sticky_selection_action.trigger()
+    window._line_selection_action.trigger()
+
+    assert window.center_stage.xml_editor.sticky_selection_mode is None

@@ -14,18 +14,35 @@ from PySide6.QtWidgets import QDialogButtonBox
 from pgtp_editor.db.ddl_skeleton import (
     TRIGGER_EVENTS,
     TRIGGER_LEVELS,
-    TRIGGER_TIMINGS,
+    TRIGGER_TIMINGS_BY_KIND,
+    SkeletonError,
     trigger_skeleton,
 )
-from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
+from pgtp_editor.db.introspect import TableInfo
+from pgtp_editor.ui.new_trigger_dialog import NO_TRIGGERS_MESSAGE, NewTriggerDialog
+
+#: `(kind, timing)` for every legal combination — the matview row contributes
+#: none, which is the point of it.
+KIND_TIMINGS = [
+    (kind, timing)
+    for kind, timings in sorted(TRIGGER_TIMINGS_BY_KIND.items())
+    for timing in timings
+]
 
 FUNCTIONS = ["public.audit_stamp", "public.touch_updated_at"]
 
 
-def _dialog(qtbot, table="public.orders", functions=None):
-    dialog = NewTriggerDialog(table, FUNCTIONS if functions is None else functions)
+def _dialog(qtbot, table="public.orders", functions=None, kind="table"):
+    dialog = NewTriggerDialog(
+        table, FUNCTIONS if functions is None else functions, kind=kind
+    )
     qtbot.addWidget(dialog)
     return dialog
+
+
+def _offered_timings(dialog):
+    combo = dialog._timing_combo
+    return [combo.itemText(i) for i in range(combo.count())]
 
 
 def _ok(dialog):
@@ -93,10 +110,85 @@ def test_unqualified_table_is_passed_through_verbatim(qtbot):
 
 
 # --- Choices are driven off the emitter's constants -----------------------
-def test_offered_timings_are_exactly_the_emitters(qtbot):
-    dialog = _dialog(qtbot)
-    offered = [dialog._timing_combo.itemText(i) for i in range(dialog._timing_combo.count())]
-    assert offered == list(TRIGGER_TIMINGS)
+@pytest.mark.parametrize("kind", sorted(TRIGGER_TIMINGS_BY_KIND))
+def test_offered_timings_are_exactly_the_emitters_for_that_kind(qtbot, kind):
+    """**Supersedes** the original assertion that the combo equalled
+    `TRIGGER_TIMINGS` verbatim (DEC-260811025733). That union is no longer a
+    legal offer for any single target: a table takes `BEFORE`/`AFTER`, a view
+    takes `INSTEAD OF`, a matview takes nothing. The offer is still not re-typed
+    here — it is read from `TRIGGER_TIMINGS_BY_KIND`, so widget and emitter still
+    cannot drift — but it is now read PER KIND.
+
+    Asserted through the dialog, and the constant only says which kinds exist."""
+    dialog = _dialog(qtbot, kind=kind)
+    assert _offered_timings(dialog) == list(TRIGGER_TIMINGS_BY_KIND[kind])
+
+
+def test_a_table_offers_before_and_after_only(qtbot):
+    """Spelled out rather than derived, so a wrong edit to the constant cannot
+    quietly redefine what "correct" means here."""
+    assert _offered_timings(_dialog(qtbot, kind="table")) == ["BEFORE", "AFTER"]
+
+
+def test_a_view_offers_instead_of_only(qtbot):
+    assert _offered_timings(_dialog(qtbot, kind="view")) == ["INSTEAD OF"]
+
+
+def test_a_partitioned_table_still_gets_the_ordinary_table_timings(qtbot):
+    """`introspect` maps `relkind` `'p'` to the kind string `"table"` alongside
+    `'r'`, so a partitioned table arrives here indistinguishable from a plain
+    one — and must keep `BEFORE`/`AFTER`. Pinned because the mapping is the only
+    thing standing between a partitioned table and a view-shaped offer."""
+    info = TableInfo(name="pr.events", kind="table", columns=[])
+    dialog = _dialog(qtbot, table=info.name, kind=info.kind)
+
+    assert _offered_timings(dialog) == ["BEFORE", "AFTER"]
+    _fill(dialog, "events_audit")
+    assert dialog.is_valid()
+
+
+def test_a_view_target_renders_an_instead_of_trigger(qtbot):
+    dialog = _dialog(qtbot, table="public.orders_v", kind="view")
+    _fill(dialog, "orders_v_ins", ("INSERT",))
+    dialog._function_combo.setCurrentText("public.audit_stamp")
+
+    assert dialog.timing() == "INSTEAD OF"
+    assert dialog.is_valid()
+    assert 'INSTEAD OF INSERT ON "public"."orders_v"' in dialog.skeleton()
+
+
+def test_a_matview_target_offers_nothing_and_says_why(qtbot):
+    """The tree does not offer `Add Trigger…` on a matview at all; this is the
+    safety net behind that gate, and it refuses with a sentence rather than
+    raising."""
+    dialog = _dialog(qtbot, table="public.orders_mv", kind="matview")
+    _fill(dialog, "orders_mv_ins", ("INSERT",))
+
+    assert _offered_timings(dialog) == []
+    assert not dialog._timing_combo.isEnabled()
+    assert dialog.skeleton() == ""
+    assert dialog.validation_error() == NO_TRIGGERS_MESSAGE
+    assert not _ok(dialog).isEnabled()
+
+
+def test_an_unknown_kind_is_refused_rather_than_treated_as_a_table(qtbot):
+    with pytest.raises(SkeletonError, match="unknown relation kind"):
+        NewTriggerDialog("public.orders", FUNCTIONS, kind="sequence")
+
+
+def test_the_target_row_names_what_was_clicked(qtbot):
+    def label(kind):
+        dialog = _dialog(qtbot, kind=kind)
+        return dialog.layout().itemAt(0).layout().itemAt(0).widget().text()
+
+    assert label("table") == "Table:"
+    assert label("view") == "View:"
+
+
+def test_the_kind_is_readable_back(qtbot):
+    dialog = _dialog(qtbot, kind="view")
+    assert dialog.kind() == "view"
+    assert dialog.offered_timings() == ["INSTEAD OF"]
 
 
 def test_offered_levels_are_exactly_the_emitters(qtbot):
@@ -113,10 +205,12 @@ def test_offered_events_are_exactly_the_emitters(qtbot):
     assert list(dialog._event_checks) == list(TRIGGER_EVENTS)
 
 
-@pytest.mark.parametrize("timing", TRIGGER_TIMINGS)
+@pytest.mark.parametrize("kind,timing", KIND_TIMINGS)
 @pytest.mark.parametrize("level", TRIGGER_LEVELS)
-def test_every_offered_timing_and_level_renders(qtbot, timing, level):
-    dialog = _dialog(qtbot)
+def test_every_offered_timing_and_level_renders(qtbot, kind, timing, level):
+    # Each timing is exercised on the kind that may carry it — the pair, not the
+    # cross product, since half of that product is now illegal by design.
+    dialog = _dialog(qtbot, kind=kind)
     _fill(dialog)
     dialog._timing_combo.setCurrentText(timing)
     dialog._level_combo.setCurrentText(level)

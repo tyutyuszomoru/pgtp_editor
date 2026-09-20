@@ -1,3 +1,4 @@
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeyEvent, QTextCursor
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
@@ -446,3 +447,74 @@ def test_no_bar_site_has_a_close_button(qtbot):
         assert labels == {"Find Next", "Find All", "Replace", "Replace All"}, (
             f"{name}: {labels}"
         )
+
+
+# -- BUG-260812002838: the reported gesture, end to end ----------------------
+# The report was made against this bar ("press tab from Find input field jumps
+# to first button then the next etc"), but the bar itself is not the defect and
+# needed no change: it builds plain `QPushButton`s and sets no stylesheet of its
+# own, so its buttons are painted entirely by the app-wide qdarkstyle sheet that
+# `theme.py::apply_theme` installs -- which styled `:hover` and nothing for
+# `:focus`. The fix is in `theme.py`; this test is here because this bar is
+# where the gesture actually lives, and it walks it with real key events rather
+# than calling `setFocus`.
+
+
+def _top_edge_pixel(widget) -> str:
+    """The colour painted at the middle of `widget`'s top edge -- where the 2px
+    focus ring lands. Lower-case, the way `QImage.pixelColor().name()` spells
+    it; the qdarkstyle palette literals are upper case."""
+    image = widget.grab().toImage()
+    return image.pixelColor(widget.width() // 2, 0).name()
+
+
+def _ring_colour(light: bool) -> str:
+    from PySide6.QtGui import QColor
+    from qdarkstyle.dark.palette import DarkPalette
+    from qdarkstyle.light.palette import LightPalette
+
+    return QColor((LightPalette if light else DarkPalette).COLOR_TEXT_1).name()
+
+
+@pytest.mark.parametrize("light", [True, False], ids=["light", "dark"])
+def test_tabbing_out_of_the_find_field_shows_which_button_has_focus(
+    qtbot, qapp, light
+):
+    """Pixels, not stylesheet text: the app-level QSS is the thing under test,
+    and a `"QPushButton:focus" in styleSheet()` assertion would prove the string
+    rather than the paint. The top level is `show()`n because `hasFocus()` and
+    the QSS polish both require it."""
+    # tests/ui/conftest.py's autouse fixture restores the app style, palette
+    # AND stylesheet afterwards, so this theme flip cannot leak.
+    from pgtp_editor.ui.theme import apply_theme
+
+    apply_theme(qapp, light)
+    editor = _editor(qtbot, "alpha")
+    host = QWidget()
+    qtbot.addWidget(host)
+    layout = QVBoxLayout(host)
+    bar = FindReplaceBar(editor)
+    layout.addWidget(bar)
+    host.show()
+    qapp.processEvents()
+
+    bar.focus_find()
+    qapp.processEvents()
+    assert bar._find_field.hasFocus()
+    ring = _ring_colour(light)
+    # Anchor the absence assertion: with focus still in the text field, no
+    # button wears the ring.
+    assert _top_edge_pixel(bar._find_next_button) != ring
+
+    qtbot.keyClick(bar._find_field, Qt.Key.Key_Tab)
+    qapp.processEvents()
+    focused = QApplication.focusWidget()
+    assert focused is bar._find_next_button
+    assert _top_edge_pixel(bar._find_next_button) == ring
+    assert _top_edge_pixel(bar._find_all_button) != ring
+
+    qtbot.keyClick(focused, Qt.Key.Key_Tab)
+    qapp.processEvents()
+    assert QApplication.focusWidget() is bar._find_all_button
+    assert _top_edge_pixel(bar._find_all_button) == ring
+    assert _top_edge_pixel(bar._find_next_button) != ring

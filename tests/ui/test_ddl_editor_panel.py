@@ -3,9 +3,10 @@
 sql-mode CodeEditor plus its own FindReplaceBar instance (the same per-tab
 routing precedent as the Edit XSD tab)."""
 from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QKeyEvent, QKeySequence
 
 from pgtp_editor.ui.code_editor import CodeEditor, _SQL_KEYWORDS
+from pgtp_editor.ui.ddl_buffer_panel import RELOAD_LABEL
 from pgtp_editor.ui.ddl_editor_panel import EditorPanel
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 
@@ -535,13 +536,41 @@ def test_the_panel_claims_the_shortcut_override_for_the_undo_chords(qtbot):
     for key, mods in (
         (Qt.Key.Key_Z, _CTRL),
         (Qt.Key.Key_Y, _CTRL),
-        (Qt.Key.Key_Z, _CTRL_SHIFT),  # the second redo chord (BUG-050)
+        # Still claimed, no longer redo (DEC-015): Qt binds it as native Redo
+        # under `KB_Win | KB_X11`, so the claim is what keeps Qt out.
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
     ):
         consumed, event = _deliver(
             panel, QEvent.Type.ShortcutOverride, key, mods
         )
         assert consumed is True
         assert event.isAccepted() is True
+
+
+def test_the_chords_that_run_nothing_are_claimed_without_a_wrong_reason(qtbot):
+    """`Ctrl+Shift+Z` (freed from redo by DEC-015) and the suppressed
+    `Alt+Backspace` pair are consumed here — otherwise Qt answers them — but the
+    read-only refusal must NOT be stated for them: none of them asks for an undo,
+    and "nothing to undo here" would be a wrong reason, which is worse than
+    none."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    said = []
+    panel.editor.report_refusal = said.append
+    alt = Qt.KeyboardModifier.AltModifier
+
+    for key, mods in (
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
+        (Qt.Key.Key_Backspace, alt),
+        (Qt.Key.Key_Backspace, alt | Qt.KeyboardModifier.ShiftModifier),
+    ):
+        consumed, _ = _deliver(panel, QEvent.Type.KeyPress, key, mods)
+        assert consumed is True
+
+    assert said == []
+    # ...while the chords that DO ask for one still get it.
+    _deliver(panel, QEvent.Type.KeyPress, Qt.Key.Key_Y, _CTRL)
+    assert said == ["this buffer is read only — there is nothing to undo here"]
 
 
 def test_the_panel_states_why_there_is_nothing_to_undo(qtbot, monkeypatch):
@@ -558,6 +587,40 @@ def test_the_panel_states_why_there_is_nothing_to_undo(qtbot, monkeypatch):
     assert said == ["this buffer is read only — there is nothing to undo here"]
 
 
+def test_the_editing_chords_are_refused_with_their_own_reason_here(qtbot):
+    """This panel's buffer is synthesized and read-only (§18.1), so its answer to
+    the four chords the app took ownership of on 2026-08-10 —
+    `Ctrl+Shift+Insert` (paste) and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` — is a stated
+    refusal, not an edit. Both halves matter: `apply_editor_operation` refuses a
+    read-only editor on its own, so without the refusal here the key would be
+    silently dead, which FQ-023 rules out.
+
+    The reason is a DIFFERENT sentence from the undo one, deliberately: none of
+    these asks for an undo, and "there is nothing to undo here" would be a wrong
+    reason — worse than none. This is the same distinction the suppressed chords
+    make in the test above, one step further."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.editor.setPlainText("create function f() ...")
+    said = []
+    panel.editor.report_refusal = said.append
+
+    for key, mods in (
+        (Qt.Key.Key_D, _CTRL),
+        (Qt.Key.Key_K, _CTRL),
+        (Qt.Key.Key_U, _CTRL),
+        (Qt.Key.Key_Insert, _CTRL_SHIFT),
+    ):
+        override = QKeyEvent(QEvent.Type.ShortcutOverride, key, mods)
+        assert panel.eventFilter(panel.editor, override) is True
+        assert override.isAccepted() is True
+        consumed, _ = _deliver(panel, QEvent.Type.KeyPress, key, mods)
+        assert consumed is True, (key, mods)
+
+    assert said == ["this buffer is read only — edit the object in its own tab"] * 4
+    assert panel.editor.toPlainText() == "create function f() ..."
+
+
 def test_other_keys_still_fall_through_the_panel_filter(qtbot):
     """The filter must not become a key sink: anything else goes to super()."""
     panel = EditorPanel()
@@ -567,3 +630,274 @@ def test_other_keys_still_fall_through_the_panel_filter(qtbot):
     assert consumed is False
     consumed, _ = _deliver(panel, QEvent.Type.KeyPress, Qt.Key.Key_F, _CTRL)
     assert consumed is False
+
+
+# --- BUG-062: Reload DDL from the viewing pane -------------------------------
+#
+# The gesture the user had to close and reopen the tab for. The panel never
+# fetches: it asks (§18.5 D1's injection idiom), and the host answers with the
+# same `_open_ddl_explorer(role)` re-introspection the Database-menu toggle runs.
+
+
+def test_the_context_menu_offers_reload_anywhere_in_the_buffer(qtbot):
+    """Offered OUTSIDE every span, where `Edit DDL` is absent: reload is a
+    property of the connection, not of the clicked object."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT + "\n-- not inside any span\n", spans=[])
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+
+    assert _edit_action_target(menu) is None
+    assert RELOAD_LABEL in [a.text() for a in menu.actions()]
+
+
+def test_the_context_menu_reload_entry_emits_the_signal(qtbot):
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+    [a for a in menu.actions() if a.text() == RELOAD_LABEL][0].trigger()
+
+    assert got == [True]
+
+
+def test_a_browse_only_panel_still_offers_reload(qtbot):
+    """§18.7's sandbox instance suppresses `Edit DDL` and nothing else. Applying
+    to a sandbox is exactly the operation whose result the user re-reads."""
+    panel = EditorPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+
+    assert RELOAD_LABEL in [a.text() for a in menu.actions()]
+
+
+def test_the_context_menu_reload_entry_carries_no_shortcut(qtbot):
+    """DEC-012's one-keyboard-host invariant, from the side that is easiest to
+    break silently: the menu form is click-only."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+
+    menu = panel._build_context_menu_at(_local_pos_for_line(panel, 1))
+
+    action = [a for a in menu.actions() if a.text() == RELOAD_LABEL][0]
+    assert action.shortcut().isEmpty()
+
+
+def test_ctrl_shift_r_is_the_gestures_one_keyboard_host(qtbot):
+    """The chord itself, driven as a real key press at the top level's
+    `windowHandle()` -- `qtbot.keyClick(widget, …)` bypasses `QShortcutMap` and
+    would prove nothing about whether the chord is bound (DEC-012's
+    implementation note). `QShortcut` does fire offscreen; what it needs is a
+    shown top level."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(_TEXT, spans=[])
+    panel.show()
+    qtbot.waitExposed(panel)
+    panel.editor.setFocus()
+    got = []
+    panel.reload_requested.connect(lambda: got.append(True))
+
+    qtbot.keyClick(panel.windowHandle(), Qt.Key.Key_R, _CTRL | Qt.KeyboardModifier.ShiftModifier)
+
+    assert got == [True]
+
+
+def test_the_reload_shortcut_is_scoped_to_this_panel_and_its_children(qtbot):
+    """Per-ROLE, which is the whole reason the host is the widget and not a
+    window-level QAction: §18.7 gives the target and the sandbox their own
+    Explorer, and only focus can say which one `Ctrl+Shift+R` meant."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+
+    assert panel._reload_shortcut.key() == QKeySequence("Ctrl+Shift+R")
+    assert (
+        panel._reload_shortcut.context()
+        == Qt.ShortcutContext.WidgetWithChildrenShortcut
+    )
+
+
+def test_reload_is_a_signal_so_the_panel_never_touches_a_database(qtbot):
+    """§18.5 D1: this panel has no connection, no params and no fetch -- BUG-045
+    is what reaching for one from here looks like. It also carries NO role: the
+    host connects each instance to its own."""
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+
+    assert panel.reload_requested.__class__.__name__ == "SignalInstance"
+    got = []
+    panel.reload_requested.connect(lambda *args: got.append(args))
+    panel.reload_requested.emit()
+    assert got == [()]  # no role argument to get wrong
+
+
+# ---------------------------------------------------------------------------
+# BUG-062's HOST side. The panel-side tests all connect their own lambda, so
+# they prove the panels emit while asserting nothing about a consumer -- which
+# is exactly how this shipped half-done with a green suite. These assert the
+# real wiring instead.
+# ---------------------------------------------------------------------------
+
+
+def _fresh_window(qtbot, tmp_path):
+    from PySide6.QtCore import QSettings
+
+    from pgtp_editor.ui.main_window import MainWindow
+
+    settings = QSettings(str(tmp_path / "app.ini"), QSettings.Format.IniFormat)
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    return window
+
+
+def test_each_role_reloads_only_its_own_explorer(qtbot, tmp_path, monkeypatch):
+    """Both panel families, both roles, four emitters -- and never the other
+    role's connection. Per-role binding is the whole reason the chord is hosted
+    on the panel rather than the window."""
+    from pgtp_editor.ui.center_stage import (
+        DDL_EXPLORER_SANDBOX,
+        DDL_EXPLORER_TARGET,
+    )
+
+    window = _fresh_window(qtbot, tmp_path)
+    seen = []
+    monkeypatch.setattr(
+        type(window), "_open_ddl_explorer", lambda self, role: seen.append(role)
+    )
+
+    for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+        seen.clear()
+        window._ddl_browser_panels[role].reload_requested.emit()
+        assert seen == [role], f"browser panel for {role} reloaded {seen}"
+
+        seen.clear()
+        window.center_stage.ddl_explorer_panel(role).reload_requested.emit()
+        assert seen == [role], f"editor panel for {role} reloaded {seen}"
+
+
+def test_the_database_menu_reload_entry_exists_and_carries_no_shortcut(
+    qtbot, tmp_path
+):
+    """The entry two comments claimed existed before it did. No shortcut:
+    Ctrl+Shift+R is hosted on the panel, and DEC-012 allows exactly one host."""
+    from pgtp_editor.ui.ddl_buffer_panel import RELOAD_LABEL
+
+    from tests.ui._menu_helpers import action_labels, find_top_menu
+
+    window = _fresh_window(qtbot, tmp_path)
+    # `_database_menu` is not stored on the host, so locate it the way the menu
+    # tests do rather than adding an attribute just for this assertion.
+    labels = action_labels(find_top_menu(window, "Database"))
+    assert RELOAD_LABEL in labels, labels
+    assert window._reload_ddl_action.shortcut().isEmpty()
+
+
+# ---------------------------------------------------------------------------
+# Non-editable kinds refuse with a REASON (`FQ-260810183812`, FQ-023).
+# ---------------------------------------------------------------------------
+
+
+def _table_buffer_panel(qtbot):
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+    from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
+
+    schema = DatabaseSchema(
+        tables={
+            "pr.orders": TableInfo(
+                name="pr.orders",
+                kind="table",
+                columns=[ColumnInfo("id", "integer", True, False, False, None)],
+            )
+        }
+    )
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel()
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    return panel, spans
+
+
+def test_a_click_inside_a_table_offers_no_edit_ddl_but_states_why(qtbot):
+    """`_span_at_line` now resolves to kinds that cannot be edited here. The
+    answer is a stated reason, not an absent entry: the span exists and the
+    click landed somewhere real."""
+    from pgtp_editor.ui.ddl_buffer_panel import NOT_EDITABLE_REFUSALS
+
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    pos = _local_pos_for_line(panel, table_span.start_line + 1)
+    menu = panel._build_context_menu_at(pos)
+
+    labels = [action.text() for action in menu.actions()]
+    assert not any(label.startswith("Edit DDL") for label in labels)
+    assert NOT_EDITABLE_REFUSALS["table"] in labels
+
+
+def test_the_refusal_is_disabled_because_it_is_a_sentence_not_a_command(qtbot):
+    from pgtp_editor.ui.ddl_buffer_panel import NOT_EDITABLE_REFUSALS
+
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    menu = panel._build_context_menu_at(
+        _local_pos_for_line(panel, table_span.start_line + 1)
+    )
+    action = next(
+        a for a in menu.actions() if a.text() == NOT_EDITABLE_REFUSALS["table"]
+    )
+    assert action.isEnabled() is False
+
+
+def test_reload_ddl_is_still_offered_inside_a_table(qtbot):
+    """Reload is a property of the CONNECTION, not of the clicked object."""
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    menu = panel._build_context_menu_at(
+        _local_pos_for_line(panel, table_span.start_line + 1)
+    )
+    assert RELOAD_LABEL in [action.text() for action in menu.actions()]
+
+
+def test_a_browse_only_instance_states_no_refusal_either(qtbot):
+    """The sandbox tree gains the new NAVIGATION without gaining any editing
+    gesture -- including the sentence explaining an absent one."""
+    from pgtp_editor.db.ddl_buffer import build_ddl_text
+    from pgtp_editor.db.introspect import ColumnInfo, DatabaseSchema, TableInfo
+    from pgtp_editor.ui.ddl_buffer_panel import NOT_EDITABLE_REFUSALS
+
+    schema = DatabaseSchema(
+        tables={
+            "pr.orders": TableInfo(
+                name="pr.orders",
+                kind="table",
+                columns=[ColumnInfo("id", "integer", True, False, False, None)],
+            )
+        }
+    )
+    text, spans = build_ddl_text(schema)
+    panel = EditorPanel(browse_only=True)
+    qtbot.addWidget(panel)
+    panel.set_ddl_text(text, spans, schema=schema)
+    table_span = next(s for s in spans if s.kind == "table")
+    menu = panel._build_context_menu_at(
+        _local_pos_for_line(panel, table_span.start_line + 1)
+    )
+    labels = [action.text() for action in menu.actions()]
+    assert NOT_EDITABLE_REFUSALS["table"] not in labels
+    assert RELOAD_LABEL in labels
+
+
+def test_a_tables_body_is_foldable_under_its_banner(qtbot):
+    """Tables join the existing per-object folding -- which is what keeps a
+    multi-table buffer readable."""
+    panel, spans = _table_buffer_panel(qtbot)
+    table_span = next(s for s in spans if s.kind == "table")
+    document = panel.editor.document()
+    block = document.findBlockByNumber(table_span.start_line - 1)
+    assert panel.editor._foldable_region_starting_at(block) is not None

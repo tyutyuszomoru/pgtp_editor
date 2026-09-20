@@ -5279,7 +5279,7 @@ cases, and they are not equally load-bearing:
 ---
 
 ## BUG-054: `Ctrl+Alt+F` in the DDL object tab has THREE hosts, and the redundancy is still justified by the offscreen premise BUG-046 measured false
-**Status:** OPEN
+**Status:** RESOLVED (`a54c32c`)
 **Reported:** 2026-08-10
 **Report (verbatim):** (found by `bug-triager` while verifying BUG-052's fix at `f533350`, not filed by
 the user) "`pgtp_editor/ui/ddl_object_editor.py:781-785` still reads *'The redundant eventFilter branch
@@ -5347,10 +5347,69 @@ distinguishes *gesture with no menu command* (widget-hosted, fine) from *gesture
 menu-bar action. §8 should say which side of the line that falls on, because the answer also governs
 any future context-menu-only gesture.
 
+**RESOLUTION (`a54c32c`, on `main`; verified in-tree at `f89e078` after the `0.4.0` release commit
+from another machine — the fix survived that merge intact).** Option (a): the duplicate host was
+deleted, not justified. Verified point by point in the current tree:
+
+- **The `eventFilter` `Key_F` + `Ctrl|Alt` branch is gone.** `grep -n "Key_F\b"
+  pgtp_editor/ui/ddl_object_editor.py` now returns exactly one hit — line `:794`, inside a comment
+  that says the branch was deleted. A second note sits where the branch used to be
+  (`ddl_object_editor.py:925-927`, in `eventFilter`) telling a future reader not to re-add it.
+- **The `QShortcut` is the sole keyboard host** (`ddl_object_editor.py:811-814`): same
+  `WidgetWithChildrenShortcut` scope, `activated` → `format_selection`, still `setEnabled(False)`
+  until `_update_format_shortcut_enabled` sees a selection. The context-menu action
+  (`:985`, `menu.addAction("Format Selection", self.format_selection)`) was kept — it is a separate
+  *affordance*, not a second keyboard host, which is the distinction the ruling turns on.
+  `RESERVED_SEQUENCES` untouched, as required by gotcha (b); the `Ctrl+Space`/`Ctrl+Alt+J` branches
+  untouched, as required by gotcha (c).
+- **The dead comment is replaced by DEC-012's rule**, stated positively at `:783-792`: *any gesture
+  with a command form — menu bar OR context menu — has exactly one keyboard host*, with DEC-009's
+  carve-out explicitly narrowed to gestures with **no command form at all** (`Ctrl+Alt+E`,
+  `Ctrl+Alt+C`, `Ctrl+Alt+J`, `Ctrl+Space`). Both dead justifications are named as dead: the
+  offscreen premise (BUG-046 measured it false) and the `CodeEditorDialog` `Ctrl+S`/`Ctrl+W`
+  double-hosting precedent (BUG-046 deleted it). `SqlConsolePanel` is cited as the shape that already
+  worked.
+- **The `Ctrl+Space` comment now stands on its own** (`:929-937`): `grep -rn "for the same reason as"
+  pgtp_editor/ui/ddl_object_editor.py` returns nothing, so no comment dangles off the deleted
+  antecedent any more. It states its own reason (no menu command at all; needs the injected
+  `SchemaIndex` and the panel's caret/popup state; intrinsically focus-scoped).
+
+**Three things about this resolution that are easy to mistake later — record, don't re-derive:**
+
+1. **It is a behavioural change, not a comment/refactor tidy.** The deleted branch was
+   *unconditional*, so a selection-less `Ctrl+Alt+F` used to reach `format_selection` and silently
+   no-op there. It now does **nothing at all**, because the one surviving host is disabled without a
+   selection. That is deliberate and is now the answer the context-menu action and `SqlConsolePanel`
+   already gave — gotcha (a) in the proposal called for deciding this explicitly, and this is the
+   decision. `tests/ui/test_ddl_object_editor.py::test_ctrl_alt_f_has_exactly_one_keyboard_host`
+   pins it.
+2. **A second test was passing *on the deleted branch*, not only the one the proposal named.**
+   `test_shortcut_override_claims_ctrl_alt_f` was the known case (it drove `panel.eventFilter`
+   directly and was replaced by `test_ctrl_alt_f_has_exactly_one_keyboard_host`), but
+   `test_ctrl_alt_f_triggers_format_selection` was **also** false-green: it used
+   `QTest.keyClick` on an **unshown** panel, which posts straight at the widget and never reaches
+   `QShortcutMap`. Both tests now `show()` the panel, `waitExposed`, and send at
+   `panel.windowHandle()`. Three negative controls were run to prove they exercise the `QShortcut`
+   rather than passing incidentally — **restoring the branch**, **removing the `activated`
+   connection**, and **removing the `show()`** each make them fail.
+3. **Offscreen-lore refinement measured during that work:** once the top level is shown,
+   `QTest.keyClick(widget, …)` *also* reaches `QShortcutMap`. **The `show()` is the decisive part,
+   not the `windowHandle()` target.** The implementation kept `windowHandle()` because it is the
+   faithful delivery path, but anyone writing a shortcut test needs the `show()` far more than the
+   target — a test that targets `windowHandle()` without showing still proves nothing.
+
+Full suite at the time of the fix: **6343 passed, 45 skipped**. Re-confirmed in the current tree:
+`tests/ui/test_ddl_object_editor.py -k "ctrl_alt_f or format_selection"` → 12 passed.
+
+**Spec follow-up still open:** the §8 question flagged above (which side of the one-host line a
+**context-menu-only** command falls on) is answered by DEC-012 and by this code, but folding DEC-012
+into `CONSOLIDATED_SPEC.md` §8 remains `spec-maintainer`'s to do — the code comments are currently the
+only place the rule is written down in that form.
+
 ---
 
 ## BUG-055: RE-SCOPED — "the refusals are lost" is FALSE (every one is journalled); what actually survives is two comments that lie and ~15 dead `timeout` arguments, plus an owner question about immediacy
-**Status:** OPEN (RE-SCOPED 2026-08-10, second triage pass — the original premise is REFUTED; do **not** implement the original three-part fix below the fold without an owner ruling)
+**Status:** RESOLVED (`a9efb67`) — the RE-SCOPED fix only. Verified in the tree 2026-08-10: both lying comments rewritten (`ui/main_window.py:2145` *"this window's own call sites no longer pass one (BUG-055)"*, `:3648` *"gap to be filled here (BUG-055 / DEC-013)"*), the dead `timeout` arguments swept (no `showMessage`/`show_message` call site in `pgtp_editor/` passes a numeric timeout any more, across 58 call sites), and the absence is now asserted by `tests/ui/test_status_bar_static.py:93`. **No refusal was re-routed** — DEC-013 answered the immediacy question by leaving the Activity Log as the channel, so the original three-part fix below the fold stays UNIMPLEMENTED by decision, not by omission.
 **Reported:** 2026-08-10 — found by `spec-maintainer` during a harmonization pass; **not** reported by the user. Re-triaged the same day at the owner's request, who flagged the premise as his own error.
 **Report (verbatim):** "Claim: BUG-048's refusal message is never shown to the user. BUG-048 (RESOLVED `e8df6c3`) added a refuse-with-a-stated-reason path for project-history writes against a read-only Raw XML buffer. The queue entry records the result as 'refused-with-a-reason (logged, plus a 4-second status-bar message naming the read-only reasons)', and the implementation deviated from the proposed greying *specifically* in order to state the reason instead. … So the reason lands as an Activity Log line in the bottom dock, which may not even be the visible tab, while the user pressing `Ctrl+Z` (or clicking `History ▸ Undo`) in Caption Mode or Compare/Merge mode sees the chord do **nothing at all**. … The surviving `4000` timeout argument is the evidence the fix was written against the pre-FQ-028 status-bar contract."
 
@@ -5576,7 +5635,7 @@ a toast and do not make the bar paint.)*
 ---
 
 ## BUG-056: the reported `Ctrl+Shift+Z` platform divergence is NOT real — but `Ctrl+Y` is, and it is dead in the Sandbox SQL Console on Linux (plus: the offscreen test platform runs the **Windows** keyboard scheme, so no test can ever see it)
-**Status:** OPEN
+**Status:** RESOLVED (`a9efb67`). Verified in the tree 2026-08-10: `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` (`:368`) is the single Qt-free table — `Ctrl+Z`→`UNDO`, `Ctrl+Y`→`REDO`, `Ctrl+Shift+Z`→`CLAIMED_NOT_UNDO_REDO` (re-routed for FQ-034's shrink-selection, **not** removed), `Alt+Backspace`/`Alt+Shift+Backspace`→`SUPPRESSED` on both platforms. Its Qt-side matcher `code_editor.classify_undo_redo_chord` (`:114`) *classifies* rather than returning a boolean and takes no per-surface parameter; exactly six surfaces call it — `code_editor.py:1045`, `xml_editor.py:1210`, `ddl_object_editor.py:916`, `ddl_editor_panel.py:212`, `php_file_tab.py:406`, `sql_console_panel.py:610`. `Ctrl+Y` is bound by the app on every platform, never inherited from Qt's table (DEC-015). Chord rows are registered in `docs/KEYBINDINGS.md`, which now exists and is verified by `tests/test_keybindings_ledger.py` — **any future change to the reserved set must edit the ledger in the same commit**, because that test's Reserved-column set-equality is what caught `Ctrl+Shift+R` missing a row during this merge.
 **Reported:** 2026-08-10
 
 **Report (verbatim):** "`Ctrl+Shift+Z` in a **PHP tab** and in the **Sandbox SQL Console** is unspecified in
@@ -5793,5 +5852,2841 @@ answers it: it already means redo on every platform. The question that *does* su
 - The manual is **correct as it stands** and needs no change from this entry: it deliberately documents
   only the four surfaces whose behaviour was verifiable and asserts nothing about the PHP tab or the
   Sandbox console. Once step 1/2 land, `manual-maintainer` can state all six.
+
+---
+
+## BUG-057: Curated XSD should be included in releases (add a packaging guard)
+**Status:** RESOLVED (`70578cb`). Verified in the tree 2026-08-10: `docs/curated_20260807.xsd` is git-tracked as the owner's authoritative dated drop, `pgtp_editor/resources/curated.xsd` remains the single shipped home, and the two are byte-identical (`cmp` clean, 110 487 bytes each) — asserted by `tests/test_curated_xsd_packaging.py::test_shipped_curated_xsd_is_identical_to_the_newest_snapshot`, alongside the wheel-`package_data`, frozen-bundle and installed-layout guards and `optimized_build.REQUIRED_RESOURCE_FILES = ("curated.xsd", "manual.md")` (`optimized_build.py:49`, checked in `build()` at `:251`, with a source-level guard test so the check cannot be silently deleted). **Three defects in the new curation were fixed before shipping**, each with its own regression test: the `editAbilityMode` labels/hints restored (BUG-002's regression, `test_shipped_curated_xsd_keeps_the_hand_authored_labels_and_hints`), a `dateTimeKind` truncated to `d` (`test_shipped_curated_xsd_keeps_detail_view_date_time_kind`), and a mis-nested `sortable` that swallowed `totalFunction` (`test_no_attribute_is_nested_inside_another_attribute`).
+**Reported:** 2026-08-10
+**Report (verbatim):** "the curated xsd should be included in the releases."
+
+**Root cause:** No confirmed broken code path — I could not reproduce an actual packaging gap by
+reading the build chain, and I am flagging that explicitly rather than inventing a root cause.
+
+The curated schema is `pgtp_editor/resources/curated.xsd` (git-tracked; 100 KB; added in `b94f625`,
+"Curated v1.2"). It is loaded at runtime by
+`pgtp_editor/schema_learning/storage.py:51` `bundled_curated_xsd_text()` via
+`resources.files("pgtp_editor") / "resources" / "curated.xsd"` (line 56) — the *identical* resolver
+shape used by `pgtp_editor/ui/manual_panel.py:37` (`manual.md`) and `pgtp_editor/ui/icons.py:76`
+(`resources/icons/breeze`). It is the one-time first-run seed for the user's app-data `curated.xsd`
+(`pgtp_editor/ui/xsd_controller.py:247` `ensure_bootstrap`), which is the SOLE feed for
+completion/hover/Properties labels (spec §11). If `bundled_curated_xsd_text()` returns `None` because
+the resource is missing from a frozen build, `ensure_bootstrap` falls through to generating a stub from
+the learned model — a silent degradation, not a crash: exactly the asymmetric-silent-failure class that
+already motivated the QtSvg guard in `optimized_build.py:66-69` and `tests/test_build_excludes.py`.
+
+Tracing the two release channels, the XSD *should* ship in both today:
+- **Windows PyInstaller/Inno release (the primary "release"):** `optimized_build.py:246,254` bundles the
+  ENTIRE `pgtp_editor/resources` folder via one `--add-data "<RESOURCES_SRC>:pgtp_editor/resources"`
+  (`RESOURCES_SRC` at line 41 = the whole dir), so `curated.xsd` rides along with `manual.md` and the
+  icons. The prune step `_prune_bundle` (lines 181-210) only deletes `Qt6*.dll` outside the allowlist,
+  `PRUNE_EXTRA_BINARIES`, and `PRUNE_QT_DIRS` (all under `PySide6/`) — it does NOT touch
+  `pgtp_editor/resources`. `docs/installer.iss:105` then copies `dist\PGTPEditor\*` recursively, so
+  nothing between build and installer drops it. The recent "tighten PyInstaller pruning" commit
+  (`ae3ad1e`) changed only Qt-DLL/dir pruning; it did not add or remove any `resources` handling.
+- **pip/wheel install:** `pyproject.toml:31` `[tool.setuptools.package-data]` lists `"resources/*.xsd"`,
+  so `curated.xsd` is packaged. Spec §11 (CONSOLIDATED_SPEC.md line 3129) explicitly asserts this.
+
+Because both paths already include it structurally, the plausible readings of the report are: (a) a
+release was cut before `curated.xsd` was git-tracked / before the package-data glob covered `.xsd` and
+the reporter saw the stub-generation fallback (historical, now fixed); (b) the reporter wants an
+enforced guarantee so a future prune/refactor can't silently drop it, matching the existing QtSvg-guard
+philosophy in this very build script; or (c) an actual on-disk release is missing it for a reason not
+visible in the source tree (a stale `dist/` reused across a checkout where the file was untracked). I
+cannot distinguish these from the code alone, and there is no runtime resolver bug to fix.
+
+**Proposed fix:** Do NOT change the runtime resolver or the `--add-data`/package-data wiring — both are
+already correct. Add a **packaging guard** so the guarantee is enforced and any future regression fails
+loudly (the same rationale as `tests/test_build_excludes.py`):
+
+1. **Build-script assertion (`optimized_build.py`).** In `build()`, after the existing
+   `RESOURCES_SRC.is_dir()` check (lines 238-243), assert the curated XSD is actually present in the
+   folder being bundled — e.g. `if not (RESOURCES_SRC / "curated.xsd").is_file(): raise SystemExit(...)`
+   with a message naming the file and that completion/hover break without it. This makes a clean-checkout
+   build refuse to produce a silently-degraded bundle. Follow the wording style of the existing
+   `RESOURCES_SRC`/`ICON_PATH` `SystemExit` guards. (Gotcha: keep it a check on `RESOURCES_SRC`, the
+   source dir PyInstaller reads — not on `dist/`, which does not exist yet at that point.)
+2. **Static presence test (`tests/`).** Add a test mirroring
+   `tests/ui/test_manual_resource.py` that asserts `files("pgtp_editor") / "resources" / "curated.xsd"`
+   resolves and its text contains the version marker
+   `<!-- PGTP Editor curated schema v1.2 -->` (spec §11 pins this marker and
+   `storage.CURATED_BUNDLED_VERSION = "1.2"`). This guards the pip/wheel channel and the resolver
+   contract `bundled_curated_xsd_text()` depends on.
+3. Optionally extend `tests/test_build_excludes.py` (or a sibling) with a check that
+   `optimized_build.RESOURCES_DEST == "pgtp_editor/resources"` and that the `--add-data` spec is still
+   wired into `build()` — a parallel to that file's `test_excluded_modules_are_wired_into_build_args`,
+   guarding the destination that makes `files("pgtp_editor")` resolve inside the frozen app (the
+   invariant called out in the comment at `optimized_build.py:37-40`).
+
+If investigation of an actual shipped installer confirms reading (c) — the file genuinely absent from a
+real `dist/` — the fix is to rebuild from a clean checkout (the source wiring is correct); the guard in
+step 1 is what prevents that state from recurring.
+
+**Test impact:** Existing `tests/ui/test_manual_resource.py` is the exact pattern to mirror for the new
+curated-XSD presence test (same `importlib.resources.files` shape). `tests/test_build_excludes.py`
+already guards `optimized_build.py`'s exclusion lists and is where the optional `--add-data`/RESOURCES_DEST
+wiring check belongs. `tests/schema_learning/test_storage.py` covers `bundled_curated_xsd_text()` and
+`curated_xsd_path()` — verify it (or add a case) asserts `bundled_curated_xsd_text()` returns non-`None`
+in the dev tree so the seed path is exercised. No new test file is needed for the build-script assertion
+itself (it is a `SystemExit` guard), though a unit test loading `optimized_build` and asserting the
+assertion string is present is cheap and matches the existing static-guard style.
+
+**Spec impact:** none — CONSOLIDATED_SPEC §11 (line 3129) already states `curated.xsd` ships in
+`[tool.setuptools.package-data]` and is the primary first-run seed, and this entry adds no new behaviour,
+only a guard around an already-specified guarantee. The spec has no PyInstaller/Inno release-packaging
+section (`optimized_build.py`/`installer.iss` are not spec'd); if the owner wants the "curated XSD ships
+in the frozen release" guarantee stated authoritatively, that is a small addition for `spec-maintainer`
+to fold into §11 after the guard lands — flag, do not edit here.
+
+---
+
+## BUG-058: Move "Project Status…" from the Database menu to File, directly below "Project Settings…"
+**Status:** RESOLVED (`3a6098c`). Verified in the tree 2026-08-10: the action is built in the File menu directly under `Project Settings…` (`ui/main_window.py:3055`, with the move recorded at `:3039`) and the Database menu carries a comment at `:3840` marking where it used to stand. The command id moved `database.project-status` → `file.project-status` with a `RENAMED_ID_ALIASES` row (`ui/toolbar_registry.py:206`), so a toolbar pinned before the move still resolves; `ui/shortcut_registry.py:633` applies the same alias table, so a shortcut override made against the old id resolves too. Availability was verified unchanged — the handler is `File ▸ Project Status…` at `ui/main_window.py:4603`.
+**Reported:** 2026-08-10
+**Report (verbatim):** "Project status should be in File, just below Project settings"
+
+**Root cause:** Not a defect — a menu-placement request. The two actions exist and are wired; only their
+locations differ from what the owner wants. This is a MOVE, not an ADD.
+- `Project Settings…` is built in the **File** menu: `pgtp_editor/ui/main_window.py`,
+  `MainWindow._build_file_menu`, line 2964 —
+  `project_settings_action = menu.addAction("Project Settings…")`, connected (2965-2967) to
+  `lambda: self._ddl_project_ui.open_settings()`. It sits inside §18.2's project group
+  (`New Project…`, `Open Project…`, `Close Project`, `Project Settings…`), followed by a
+  `menu.addSeparator()` at line 2972.
+- `Project Status…` is built in the **Database** menu: `MainWindow._build_database_menu`, line 3695 —
+  `project_status_action = menu.addAction("Project Status…")`, connected (3696) to
+  `lambda: self._open_project_status()`. It is the LAST entry in the Database menu, added after a
+  `menu.addSeparator()` (3686) and immediately before the `self._refresh_sandbox_affordances()` call
+  (3699). The action is a plain always-enabled item: it is NOT held on an attribute, NOT gated, and NOT
+  in any refresh/affordance set (unlike its Database-menu neighbours). `_open_project_status` itself
+  (line 4456) handles the projectless case at runtime, so no menu-level enablement gate exists to carry
+  over. This makes the move clean — nothing else references the `project_status_action` local.
+
+**Proposed fix:** In `pgtp_editor/ui/main_window.py`:
+1. In `_build_database_menu`, DELETE the two lines that create and connect `project_status_action`
+   (3695-3696) and the explanatory comment above them (the `# §18.8: opening the window is itself a
+   probe trigger…` block at 3693-3694). Leave the preceding `menu.addSeparator()` (3686) — re-check
+   whether removing this last item leaves a now-trailing separator that should also go; the block above
+   it (the deleted `Sandbox Setup…` comment) ends in a separator, so verify the Database menu does not
+   end on a dangling `addSeparator()` after the removal.
+2. In `_build_file_menu`, INSERT the action immediately AFTER the `project_settings_action` wiring
+   (after line 2967, before the `menu.addSeparator()` at 2972) so it becomes the fifth item of §18.2's
+   project group, directly below `Project Settings…`:
+   ```python
+   project_status_action = menu.addAction("Project Status…")
+   project_status_action.triggered.connect(lambda: self._open_project_status())
+   ```
+   Mirror the exact label string ("Project Status…" with the U+2026 ellipsis) and the lambda-wrapped
+   connect (the lambda matters — a bare connect passes `triggered`'s `checked: bool`, the BUG-021
+   lesson noted in the same method).
+Gotchas:
+- Keep the `# Database ▸ Project Status… (§18.8)` docstring line inside `_open_project_status`
+  (line 4457) accurate — after the move it should read `File ▸ Project Status…`. Same for the
+  `_project_status_window` comment at line 700 if it names a menu path (it says "the menu entry", so
+  it is fine).
+- `_MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")` (line 317) governs which File items survive
+  Maintenance mode; `Project Status…` is NOT in that tuple, so — correctly — it will be trimmed away in
+  Maintenance mode just like `Project Settings…`. No change needed there, but confirm this matches the
+  owner's intent (it is consistent with `Project Settings…`, its new neighbour).
+- Toolbar/pinning: the action's menu-path command id changes with the move (Database → File), so a user
+  who pinned it to the toolbar would lose the button silently. `toolbar_registry.RENAMED_ID_ALIASES`
+  is the established mechanism for exactly this (see the FQ-020 / FQ-027 rows). Add an alias row mapping
+  the old Database-scoped id to the new File-scoped id. Derive both ids the way §7's menu-path id
+  derivation does (verify the exact strings against `toolbar_registry` / `_walk_menu_actions`; likely
+  `database.project-status` → `file.project-status`). This is the one easy-to-miss part of the move.
+
+**Test impact:**
+- `tests/ui/test_menus.py::test_file_menu_contents` (line 13, the exact-order list at 33-35) MUST gain
+  `"Project Status…"` after `"Project Settings…"` in §18.2's project group — the expected list becomes
+  `… "Close Project", "Project Settings…", "Project Status…", "―", …`. This is a hard-equality contract,
+  so it fails until updated.
+- `tests/ui/test_ddl_creation_wiring.py::test_database_menu_offers_new_function_procedure_and_project_status`
+  (line 236: `assert "Project Status…" in labels` against the Database menu) will now FAIL — the item is
+  no longer in Database. Split/rename it: assert `"New Function/Procedure…"` stays in Database and move
+  the `"Project Status…"` presence assertion to the File menu (the two concerns no longer share a menu).
+- No test asserts the exact full Database-menu order (`test_menus.py` has no `test_database_menu_contents`
+  equivalent — searched), so no Database order contract breaks beyond the `in` check above.
+- `tests/ui/test_sandbox_setup_wiring.py` line 489/506 only asserts the refusal message does NOT contain
+  "Project Status" — unaffected by the move (the string is about refusal wording, not menu location).
+- New case to add: a File-menu wiring test that `Project Status…` triggered() opens the Project Status
+  window (mirror the `Project Settings…` wiring test at `tests/ui/test_ddl_project_wiring.py:528`), so a
+  broken lambda/connect is caught the BUG-021 way rather than by a direct method call.
+
+**Spec impact:** diverges from CONSOLIDATED_SPEC — the Database location is settled, spec'd design, not an
+accident. The spec names `Database ▸ Project Status…` in multiple places: §18.8 / TOC (line 490), the §18
+status table (line 4097), §26's Database-menu enumeration (line 9669-9671, which explicitly says
+"Everything §18 adds lives in **this** [Database] menu (except §18.2's five project actions, which are on
+**File**)"), and §26 line 10619 ("shipped: Database ▸ Project Status…, no shortcut"). Moving it to File
+makes it the SIXTH §18.2-style File action and contradicts all four spots. Flag for `spec-maintainer`
+after the fix lands: update those references to `File ▸ Project Status…`, and reconcile §26's "everything
+§18 adds lives in the Database menu except §18.2's five project actions" sentence (Project Status is a
+§18.8 action that now also lives on File). Do not edit the spec here.
+
+---
+
+## BUG-059: The startup launcher is dismissable, leaving the app in the invalid "No Mode" state
+**Status:** RESOLVED (`3a6098c`). Verified in the tree 2026-08-10 — "No Mode" is made **unreachable**, not merely guarded. In `ui/launcher_dialog.py`: `dismissable` defaults to `False` (`:217`), the undismissable regime gets **no** `Close` button and its hints stripped (`:264`), `closeEvent` → `event.ignore()` as the authoritative barrier since `WindowCloseButtonHint` is advisory and covers neither `Alt+F4` nor a WM close (`:383`), `reject()` is neutralised so `QDialogButtonBox.rejected`, `QDialog`'s own Escape handling and any programmatic `reject()` all dead-end (`:376`), `cancel()` is inert (`:369`), Escape is swallowed in `keyPressEvent` before `QDialog`'s default reject (`:388`), and `choose()` refuses a pick whose column names no mode (`:360`) — so the only exit is an `accept()` carrying a mode. `MainWindow.new_session` (`:3136`) no longer clears the mode; the mode STANDS while the launcher is up, which is what makes *that* launcher legitimately dismissable. `set_workflow_mode(None)` now appears **only** in tests (`tests/ui/test_launcher_dialog.py`, `tests/ui/test_edit_snippets_menu.py`) — no production write of `None` remains.
+**Reported:** 2026-08-10
+**Report (verbatim):** "When launcher is closed without making a choice the software should either stay in the mode it was previously or if it's right after opening the app, it should enter in Standalone mode. \"No Mode\" is not an option."
+
+**SUPERSEDING OWNER REQUIREMENT (verbatim, replaces the above — this one wins):** "I've changed my mind, do not permit to close the launcher without having chosen a mode. If launcher is opened with a mode already chosen (new session), let it be closed, otherwise make choice obligatory. this means that also window close button must be disabled"
+
+**Root cause:** `pgtp_editor/ui/launcher_dialog.py` — three dismissal paths: the QDialogButtonBox Close button + rejected→reject (lines 225-231), Escape via keyPressEvent/cancel (304-316), and native ✕ / Alt+F4 from default window flags; `show_launcher` returns early on dismissal before `set_workflow_mode`. `pgtp_editor/ui/main_window.py`: `_workflow_mode=None` init (647); `new_session` clears the mode to None at line 3074 BEFORE showing the launcher, making "stay in previous mode" impossible. `pgtp_editor/ui/mode_indicator.py` renders None as `NO_MODE_LABEL="No Mode"` (70-74,119).
+
+**Proposed fix:** Thread a `dismissable` flag through `LauncherDialog.__init__` / `show_launcher`. When NOT dismissable (startup, no current mode): no Close button; strip `WindowCloseButtonHint`/`WindowContextHelpButtonHint`; override `closeEvent` to `ignore()` (the AUTHORITATIVE barrier — covers Alt+F4, since `WindowCloseButtonHint` is only advisory on some Linux WMs); neutralise `reject()`; swallow Escape in `keyPressEvent`; make `cancel()` a no-op; modality already handles click-outside. When dismissable (re-invoked with a mode already set, e.g. new session): allow dismissal and RETAIN the previously-set mode — rework the `main_window.py:3074` clear so the previous mode survives (capture `previous`, thread it in, re-apply on dismissal). Result: "No Mode" is never reachable because dismissal is impossible at startup, not because of a fallback.
+
+**Test impact:** `tests/ui` launcher/startup tests + `tests/ui/test_menus.py` mode-indicator. New cases: undismissable regime (no Close button, `WindowCloseButtonHint` cleared, `closeEvent` ignored, Escape/`reject()`/`cancel()` inert, pick still accepts) and dismissable regime (dismissal allowed, previous mode retained); `new_session` mode retention.
+
+**Spec impact:** overrules FQ-028 open-question-8 ("the indicator is NEVER blank") AND narrows FQ-010 ("Escape never quits / returns None") to the already-in-a-mode case — CONSOLIDATED_SPEC §7 / mode-indicator subsection (~line 1343). Flag for spec-maintainer with a Supersession Ledger row after the fix lands; do not edit spec.
+
+---
+
+## BUG-060: Find All is an unwired no-op in the DDL Explorer, DDL object, PHP file, and draft fragment tabs — its results reach no output
+**Status:** RESOLVED (`8d489f8`). Verified in the tree 2026-08-10 — **and the root cause was upstream of the router, not in it**: `[Find]` already routed to the Findings tab (`ui/audit_router.py:104`, `FIND_PREFIX`), and `FindReplaceBar.__init__` defaulted `on_find_all` to a no-op lambda (`ui/find_replace_bar.py:144`), so only the two bars `main_window` wired by hand ever reported. **No new prefix was needed.** Unwired bars now publish to a module-level observer registry — `add_find_all_observer` / `remove_find_all_observer` / `_notify_find_all_observers(bar, term, reason)` (`ui/find_replace_bar.py:86-140`), holding bound methods as `WeakMethod` and pruning dead entries, mirroring `editor_gutter.add_bookmark_observer` — with `FindController` as the sole subscriber (`ui/find_controller.py:242`). A wired bar never publishes, so one click cannot start two runs, and the draft-fragment bar is covered **with no host edit**. Covered by `tests/ui/test_find_all_surfaces.py`. **Record rather than smooth over: this retired §18.5 carve-out 3 and its test** — no `carve-out 3` reference survives in `CONSOLIDATED_SPEC.md`.
+**Reported:** 2026-08-10
+**Report (verbatim):** "Find All's results are not wired in to any output."
+
+**Root cause:** The streaming Find-All engine `FindValidateController.find_all` (`pgtp_editor/ui/find_controller.py:550-574`) recognizes only two hardcoded targets — "raw" (searches `stage.xml_editor`) and "xsd" (searches `stage.xsd_editor`). Only two `FindReplaceBar`s are wired via `set_on_find_all` (`pgtp_editor/ui/main_window.py:990` and `:1198`). Every other bar is constructed with the default no-op callback `lambda term: None` (`pgtp_editor/ui/find_replace_bar.py:52`), so Find All in those tabs computes nothing and appends nothing to the Findings output surface.
+
+**Proposed fix:** NOT a regression — an owner-confirmed v1 scope carve-out (CONSOLIDATED_SPEC §18.5 carve-out 3 at line 6721; Supersession Ledger at 10242; lines 3756/6389/6420). The report is a request to finally do the deferred "generalize the dispatcher to arbitrary per-tab editors" work. Reuse the existing left-dock Findings tab / AuditRouter and the `_on_audit_item_clicked` router (do NOT invent a new panel), and factor the per-tab enumeration to agree with the existing `active_find_bar` / `_bookmark_audit_route` tables. NOTE: depends on / complements the "Findings tab not in View menu" entry (BUG-061) — resolve that one first so the surface is discoverable for manual verification.
+
+**Test impact:** `tests/ui` find/search tests, `tests/ui/test_findings_surfaces.py`; new cases per newly-wired tab kind.
+
+**Spec impact:** retire §18.5 carve-out 3 (flag for spec-maintainer); manual-maintainer must update the "one inert control" text at `manual.md:955/1080/1632/1797` after the fix lands. Do not edit spec/manual.
+
+---
+
+## BUG-061: The Findings tab exists in code but is unreachable from the View menu, so with no auto-reveal event it appears "not to exist"
+**Status:** RESOLVED (`3a6098c`). Verified in the tree 2026-08-10: `View ▸ Findings` is built at `ui/main_window.py:3285` and triggers `self._reveal_findings_tab` (`:3286`) — **the same slot `AuditRouter` is handed as `on_findings=` at `:894`**, so the menu entry and the auto-reveal path cannot disagree about what "reveal Findings" means. Carries **no shortcut**, matching its View-menu siblings (rationale recorded in the comment at `:3270`).
+**Reported:** 2026-08-10
+**Report (verbatim):** "The \"Findings\" tab doesn't exist, it's not in View to turn on and off."
+
+**Root cause:** The Findings surface IS built — `main_window.py:847-851` adds `findings_panel` (a `FindingsPanel`, title "Findings") as a hidden tab inside the left-dock `left_tabs` QTabWidget — but its only reveal path is the router callback `_reveal_findings_tab` (wired via `AuditRouter(..., on_findings=...)` at `main_window.py:884`; the callback itself at 2134-2140). `_build_view_menu` (`main_window.py:3105-3191`) gives focus entries to the two BOTTOM-dock tabs (Activity Log, Messages, lines 3147-3158) but NO entry for the left-dock Findings tab, so there is no user gesture to summon it. Confirmed against the shipped View-menu contract in `tests/ui/test_menus.py:427-445` (no "Findings" entry). `FindingsPanel FINDINGS_TAB_TITLE` at `findings_panel.py:51`.
+
+**Proposed fix:** Add a one-line focus action to `_build_view_menu` following the existing bottom-dock-tab precedent (`activity_action`/`results_action`), reusing the already-correct `_reveal_findings_tab`; not checkable.
+
+**Test impact:** `tests/ui/test_menus.py` (View-menu label list changes) and `tests/ui/test_findings_surfaces.py`.
+
+**Reconcile:** complementary to the Find-All entry (BUG-060), not blocking. Recommended resolve order: THIS entry first (tiny, self-contained, makes the surface discoverable so the Find-All wiring can be verified), then BUG-060. If they land together, avoid clobbering the shared `test_menus.py` label-list edit.
+
+**Spec impact:** flag for spec-maintainer; do not edit spec.
+
+---
+
+## BUG-062: DDL Explorer / DDL Objects has no reload gesture; re-introspecting after applying changes requires closing and reopening the tab
+**Status:** RESOLVED (panels `8d489f8`, host half `42a28b1`). Verified in the tree 2026-08-10 — the *Remaining gap* recorded below (which is why this stayed OPEN through the previous sweep, correctly) is closed. `MainWindow.reload_ddl_explorer(role=DDL_EXPLORER_TARGET)` (`ui/main_window.py:4042`) is the **sole** consumer of `reload_requested`, and it is bound **per role** for both panel families: the browser panels at `ui/main_window.py:854-861` and the `CenterStage` explorer panels at `:999-1000`, each with a `lambda role=_role:` default-argument capture so the two roles cannot collapse onto one. `Database ▸ Reload DDL` exists at `ui/main_window.py:3798`, quality-scoped (`lambda: self.reload_ddl_explorer(DDL_EXPLORER_TARGET)`) and carrying **no** shortcut, so `Ctrl+Shift+R`'s single keyboard host stays the panel `QShortcut` per DEC-012. Two host-side tests in `tests/ui/test_ddl_editor_panel.py`: `test_each_role_reloads_only_its_own_explorer` (`:760`) emits from **all four real emitters** — both roles × both panel families — and asserts each reloads only its own explorer; `test_the_database_menu_reload_entry_exists_and_carries_no_shortcut` (`:786`) asserts the menu label via `RELOAD_LABEL` and `window._reload_ddl_action.shortcut().isEmpty()`. The reserved row (`ui/shortcut_registry.py:302`) and the ledger row were updated to say the menu-bar and context-menu forms carry no shortcut.
+
+**Present (verified):** `EditorPanel.reload_requested` (`ui/ddl_editor_panel.py:86`) and `BrowserPanel.reload_requested` (`ui/ddl_buffer_panel.py:472`), both signals with the reasoning recorded on them (re-introspection, never a re-render of a cached `SchemaIndex`; no role carried, because the host owns the role). `Ctrl+Shift+R` as a `WidgetWithChildrenShortcut` `QShortcut` on `EditorPanel` (`ui/ddl_editor_panel.py:161-165`). Context-menu `Reload DDL` items on both panels, using the shared `RELOAD_LABEL` constant (`ui/ddl_buffer_panel.py:325`, added at `:837` and `ui/ddl_editor_panel.py:283`), offered *anywhere* in the tree including a blank area and a `browse_only` sandbox tree — neither carries a `setShortcut`. The reserved row in `ui/shortcut_registry.py:296`. And the ledger row in `docs/KEYBINDINGS.md:97`.
+
+**Remaining gap (two items, both required for the report to be answered):**
+1. **No host connection — the fix's whole point is missing.** `grep -rn "reload_requested" pgtp_editor/` finds exactly three references outside the two `Signal()` declarations, and **all three are emitters** (`ddl_editor_panel.py:165`, `:283`, `ddl_buffer_panel.py:837`). Nothing anywhere in `pgtp_editor/` connects either signal, so pressing `Ctrl+Shift+R` or clicking `Reload DDL` emits into the void. `MainWindow` wires `edit_requested` for both panels (`main_window.py:795`, `:985`) and is where the missing `reload_requested.connect(...)` pair belongs — per-instance, bound to that instance's role, exactly as `edit_requested` is. The shared handler the entry proposed (`reload_ddl_explorer`, delegating to the existing `MainWindow._open_ddl_explorer(role)` at `main_window.py:4047`) **was never added**; `_open_ddl_explorer`'s only caller is still `_on_ddl_explorer_toggled` (`:4006`).
+2. **No `Database ▸ Reload DDL` menu action** (report item 1). There is no `addAction` for it anywhere; the only `RELOAD_LABEL` uses are the two context menus. Two comments already **describe it as existing** and are therefore lying: `ui/shortcut_registry.py:292` (*"The command's menu-bar form (Database ▸ Reload DDL) and its two…"*) and `ui/ddl_editor_panel.py:145` (*"Reload has three affordances: this panel's context menu, the tree's, and the host's Database-menu action"*). The `docs/KEYBINDINGS.md:97` row inherits the same claim (*"the Database-menu action carries no `setShortcut`"*) — it is accurate about the absence of a shortcut and inaccurate about the action existing. **Do not "fix" the ledger by deleting that clause: add the action.** If instead the owner rules the Database-menu form out, then the ledger row, both comments, and the DEC-012 justification below all have to change together, and the gate flips — with no command form on the menu bar, the widget host would rest on DEC-009 rather than DEC-012.
+
+**Why the test suite is green anyway (so this gap can't be caught by re-running it):** every BUG-062 test connects its *own* lambda to the signal (`tests/ui/test_ddl_editor_panel.py:626`, `:672`, `:702`; `tests/ui/test_ddl_buffer_panel.py:832`, `:851`), which proves the panels emit but asserts nothing about a consumer. No test asserts a `Database ▸ Reload DDL` action exists, and no test asserts an emission re-introspects. **The fix needs a host-level wiring test** (patch the injectable `MainWindow._fetch_ddl_schema` seam, emit `reload_requested` on each role's panel, assert a fresh fetch happened for *that* role only) plus a Database-menu presence test.
+
+**Keyboard gate (settled, record it rather than re-deriving it):** `Ctrl+Shift+R` is hosted on the **widget, not the `QAction`, deliberately**. §18.7 gives each Explorer role its own panel, so a window-level chord would have two candidate actions and no way to choose between them; the answer can only come from which buffer the caret is in. DEC-012's principle is *exactly one* host, which this satisfies, and the Database-menu action must therefore carry no `setShortcut`. `CLAUDE.md`'s paraphrase read *"that host is the `QAction`"* — stricter than the decision itself — and **has been corrected**. **The stated cost:** a widget-hosted chord no longer follows a rebinding, because `_apply_shortcut_bindings` only walks menu actions. Also: `Ctrl+Shift+R` was verified free across all six binding mechanisms and is platform-uniform — **no Qt `StandardKey` binds any chord on the R key on either scheme** (Refresh is `F5` on both), so there was nothing to bind-or-suppress under DEC-015.
+
+**Ledger note for whoever finishes this:** `docs/KEYBINDINGS.md` now exists and is verified by `tests/test_keybindings_ledger.py`, whose Reserved-column set-equality **already caught `Ctrl+Shift+R` missing a row during this merge**. Any further reservation change must edit the ledger in the same commit.
+**Reported:** 2026-08-10
+**Report (verbatim):** "DDL Objects and DDL Explorer has no refresh button, therefore when applying changes, we need to close the tab and reopen again to reload.\n1. There should be a menupoint in Database to \"Reload DDL\",\n2. the same should be added to right click menu wherever in DDL Objects\n3. should also be triggered by Ctrl+Shift+R from the DDL Explorer Viewing pane (readonly editor tab)."
+
+**Root cause:** The full re-introspection path already exists in `MainWindow._open_ddl_explorer(role)` (`pgtp_editor/ui/main_window.py:3898-4009`) — re-fetches, rebuilds the tree, re-sets the read-only buffer, recomputes drift markers, rebuilds the completion index. But its ONLY caller is the checkable Database-menu toggle `_on_ddl_explorer_toggled` (`main_window.py:3855`), so reloading an already-open Explorer requires toggling off (just hides) then on (fetches).
+
+**Proposed fix:** Expose the existing path as ONE shared handler (e.g. `reload_ddl_explorer`) reached three ways: (1) a Database-menu QAction "Reload DDL" in `_build_database_menu`; (2) a "Reload DDL" item in the DDL explorer tree context menu (`customContextMenuRequested` handler), available on right-click anywhere in the tree; (3) `Ctrl+Shift+R` as a widget-scoped `QShortcut` on the READ-ONLY `EditorPanel` (`ddl_editor_panel.py` — NOTE the viewing pane is `EditorPanel`, NOT the editable `DdlObjectEditorPanel`; mirror `DdlObjectEditorPanel._format_shortcut` at `ddl_object_editor.py:811`). GOTCHA — DEC-012 one-keyboard-host rule (`docs/DECISION_QUEUE.md:857`): because Reload has both a menu-bar form and a context-menu form, it may have exactly ONE keyboard host — so `Ctrl+Shift+R` lives ONLY on the widget-scoped `QShortcut` and the Database-menu QAction must NOT also carry the shortcut; add a RESERVED_BINDINGS row in `shortcut_registry.py`. Reload does not clobber unsaved editable-tab work (only the completion index is replaced), so NO dirty-tab prompt is needed.
+
+**Test impact:** `tests/ui` DDL explorer / menu / shortcut tests.
+
+**Spec impact:** flag for spec-maintainer (§18.1 and §27); do not edit spec.
+
+---
+## BUG-063: Sandbox SQL Console has no "Format Selection" context-menu item — Ctrl+Alt+F is chord-only there, contradicting DEC-012's classification and three spec assertions
+**Status:** RESOLVED (`a9efb67`). Verified in the tree 2026-08-10 — the spec was right and the code was wrong, as triaged. `SqlConsolePanel` now builds a context menu on top of `self.editor.createStandardContextMenu()` and adds the verbatim `Format Selection` item wired to `self.format_selection` (`ui/sql_console_panel.py:649-651`, documented at `:634` as the gesture's *second, CLICK-ONLY host*). The action carries **no** `setShortcut`, so `Ctrl+Alt+F`'s single keyboard host remains the panel's `QShortcut` (DEC-012); that absence is asserted, not assumed — `tests/ui/test_sql_console_panel.py:633` (`assert action.shortcut().isEmpty()`, under the `BUG-063` block opened at `:578`). Both lying comments are fixed (`:512`, `:520`).
+**Reported:** 2026-08-10
+**Report (verbatim):** "Bug report from `spec-maintainer`'s harmonization pass while folding FQ-033 into `docs/superpowers/CONSOLIDATED_SPEC.md` §18.4. This is a **code-wrong / spec-right** finding: the spec asserts a user-visible command that does not exist. […] `pgtp_editor/ui/sql_console_panel.py` **builds no context menu at all.** […] Its Format Selection gesture is therefore **the `Ctrl+Alt+F` `QShortcut` only** […] **DEC-012 (ANSWERED, `docs/DECISION_QUEUE.md`) rests on this command form existing.** […] the fix direction the spec implies is **add the context-menu item to `SqlConsolePanel`**, matching the DDL object tab's shape (label verbatim `Format Selection`, enabled only with a selection […]). Please verify that is the right call rather than assuming it."
+
+**Root cause:** Verified — `pgtp_editor/ui/sql_console_panel.py` contains **no** `addAction(`, no `contextMenuEvent`, no `createStandardContextMenu`, and no `eventFilter`/`installEventFilter` at all (grepped over the whole file; the class is `SqlConsolePanel`, `sql_console_panel.py:377`). Its editor is a plain `CodeEditor(language="sql")` (`:460`), and `pgtp_editor/ui/code_editor.py` defines no `contextMenuEvent` either, so right-clicking the console editor yields Qt's default `QPlainTextEdit` menu (cut/copy/paste/undo/select-all) with **no** Format Selection entry. The console's only Format Selection host is the shortcut: `sql_console_panel.py:538-544` (`QShortcut(QKeySequence("Ctrl+Alt+F"), self)`, `WidgetWithChildrenShortcut`, `activated → self.format_selection`, `setEnabled(False)` initially, re-gated by `_update_format_shortcut_enabled` at `:802`); `format_selection` itself at `:805-821`.
+
+The sibling DDL object tab has both forms: `pgtp_editor/ui/ddl_object_editor.py:811-815` (the identical `QShortcut`) **and** `:977-1005` `_build_context_menu()`, which does `menu = self.editor.createStandardContextMenu()`, `menu.addSeparator()`, then `:985` `action = menu.addAction("Format Selection", self.format_selection)` / `:986` `action.setEnabled(self.editor.textCursor().hasSelection())`. That menu is reached from its `eventFilter` (`ddl_object_editor.py:771-775`: `if obj is self.editor and event.type() == QEvent.Type.ContextMenu: menu = self._build_context_menu(); menu.exec(event.globalPos()); return True`), with `self.editor.installEventFilter(self)` at `:779`.
+
+Secondary source of the drift, in code: the comment block at `sql_console_panel.py:507-517` justifies the whole `Ctrl+Alt+`/`Ctrl+Space` family on this panel as DEC-009's widget-owned family *"which has no menu command at all"* — a blanket claim that is false for `Ctrl+Alt+F` (it IS a context-menu command on the DDL tab, and per DEC-012 that is why it sits inside the one-keyboard-host rule). `pgtp_editor/ui/shortcut_registry.py:236-238` already **over-claims** the fixed state: *"Format Selection — a context-menu command plus a shortcut inside the Sandbox SQL Console and the DDL object tabs"*.
+
+**Verified fix direction (the reporter asked for this to be checked, not assumed):** adding the context-menu item is the right call. Three independent reasons, all read from the code rather than the report: (a) `shortcut_registry.py:236` already asserts the console offers it as a context-menu command, so the shipped registry reason text is wrong today and becomes correct after the fix — the code already disagrees with itself; (b) `ddl_object_editor.py:981-984`'s own docstring calls Format Selection tab-local and "genuinely tab-local" content of a right-click menu, so the console (whose users hand-write ad-hoc SQL) is the case the pattern was built for; (c) declaring the console chord-only would require re-classifying `Ctrl+Alt+F` from DEC-012's family into DEC-009's, which is an owner ruling reversing a recorded decision — the strictly smaller change is to make the code match. No owner decision is needed for the fix as scoped below.
+
+**Proposed fix:** In `pgtp_editor/ui/sql_console_panel.py`, mirror the DDL object tab's shape exactly:
+1. Add `self.editor.installEventFilter(self)` in `SqlConsolePanel.__init__` (near the shortcut wiring at `:538`), and add an `eventFilter(self, obj, event)` override — the class currently has none, so it is a new method: handle only `obj is self.editor and event.type() == QEvent.Type.ContextMenu` by `menu = self._build_context_menu(); menu.exec(event.globalPos()); return True`, and `return super().eventFilter(obj, event)` otherwise. **Gotcha:** `SqlConsolePanel` inherits `SchemaGestureHostMixin, CompletionPopupHostMixin, QWidget`; neither mixin defines `eventFilter`, so the `super()` call lands on `QWidget` — but keep the `super()` fallthrough so a mixin can add one later. Also `QEvent` must be imported from `PySide6.QtCore` if it is not already in scope.
+2. Add `_build_context_menu(self)` returning (not exec'ing) the menu — split out for exactly the reason `ddl_object_editor.py:977` and `xml_editor.py:1237` do it: tests inspect it instead of driving a real modal `QMenu.exec`. Body: `menu = self.editor.createStandardContextMenu()`, `menu.addSeparator()`, `action = menu.addAction("Format Selection", self.format_selection)`, `action.setEnabled(self.editor.textCursor().hasSelection())`, `return menu`.
+3. **Label verbatim `Format Selection`** — same string as `ddl_object_editor.py:985`; the manual and the registry reason text both name it that way.
+4. **Do NOT call `action.setShortcut(...)` on the new action.** The `QShortcut` at `:538` stays the sole keyboard host. Adding a shortcut to the QAction creates the two-hosts-for-one-gesture defect DEC-004 was filed for and BUG-046 removed from `CodeEditorDialog`; DEC-012 permits exactly one keyboard host and it is already taken. The menu action is a click-only command form.
+5. Keep the selection gate identical to the chord's (`self.editor.textCursor().hasSelection()`) so a selection-less right-click shows the item **disabled** rather than absent — matching the DDL tab, and matching the "the same answer the console gives" note in `ddl_object_editor.py:806-810`.
+6. Add nothing else to this menu. In particular there is no `Run in Sandbox Console` bridge here (the console *is* the target) and no apply gestures (FQ-026 removed those from the DDL tab's menu for a reason stated at `ddl_object_editor.py:989-1000`).
+7. **Amend the now-false comment** at `sql_console_panel.py:507-517`: it must stop claiming the family it covers "has no menu command at all" for `Ctrl+Alt+F`, and instead state that Format Selection is a DEC-012 gesture with one keyboard host (this `QShortcut`) plus a click-only context-menu command form, while `Ctrl+Space`/`Ctrl+Alt+J`/`Ctrl+Shift+Space` remain DEC-009's menu-less family. Likewise soften the precedent claim in `ddl_object_editor.py:800-804` (*"The sibling `SqlConsolePanel` already ships this exact gesture with the QShortcut alone"*) — after this fix the console ships it with a QShortcut **and** a menu item, and the point being made there (one keyboard host, no `eventFilter` key branch) still holds and should be re-worded to say that instead.
+8. `pgtp_editor/ui/shortcut_registry.py:236-238` needs **no change** — its text becomes accurate once the item exists. Do not "fix" it in the other direction.
+
+**Manual impact (rides in the same commit, per the manual policy):** `pgtp_editor/resources/manual.md:3404` currently reads *"**Ctrl+Alt+F** reformats the selection, exactly as in a DDL object editor tab."* It does **not** over-claim a right-click item — it under-states, and the "exactly as in a DDL object editor tab" clause is what is false today. After the fix, bring it to the DDL tab's phrasing at `manual.md:1985` (*"**Format Selection** (**Ctrl+Alt+F**, or right-click ▸ **Format Selection**)"*) so the console bullet names the right-click path too. `manual.md:3880` (the shortcut-table `Ctrl+Alt+F` row) is host-agnostic and needs no change. Dispatch `manual-maintainer` as usual rather than hand-editing.
+
+**Test impact:** Existing coverage to EXTEND, not duplicate:
+- `tests/ui/test_sql_console_panel.py:563-575` — `test_format_selection_requires_a_selection_and_reindents_in_place` already covers the console's `format_selection` behavior and the no-selection no-op. New cases belong in this file, next to it.
+- `tests/ui/test_ddl_object_editor.py:433-452` — the three canonical assertions to mirror for the console: `test_context_menu_has_a_format_selection_entry`, `test_context_menu_format_selection_disabled_without_a_selection`, `test_context_menu_format_selection_enabled_with_a_selection_and_triggers_it`. All three drive `panel._build_context_menu()` directly and never `exec` it — do the same for the console (never let a test reach a real `QMenu.exec`).
+- New cases needed: (i) `SqlConsolePanel._build_context_menu()` action labels contain `"Format Selection"`; (ii) it is disabled with no selection and enabled with one, and triggering it reindents in place; (iii) a **regression guard** that the new action's `shortcut()` is empty / `isEmpty()` — the one-keyboard-host invariant from point 4 above, which is the easiest thing for a future edit to break silently; (iv) optionally, that the console menu contains no `"Run in Sandbox Console"` and no apply entries, mirroring `tests/ui/test_ddl_object_editor.py:866-872`.
+- `tests/ui/test_shortcut_registry.py` asserts on `RESERVED_SEQUENCES` reason text; since `shortcut_registry.py:236` is unchanged, no update is expected there — but re-run it, since it is the test that encodes the claim this bug is about.
+
+**Spec impact:** none pending — `spec-maintainer` has ALREADY corrected the three over-claiming assertions (`CONSOLIDATED_SPEC.md` §27's `Ctrl+Alt+F` row, §26's Format-Selection parenthetical, §8's DEC-012 block) to describe the shipped tree and to point at this entry, explicitly noting the claim is dispatched rather than deleted. **When this fix lands, those three passages become stale in the opposite direction** (they will describe a gap that no longer exists), so re-dispatch `spec-maintainer` after the commit to restore them to the "both hosts, plus a context-menu item on both" wording and retire the pointer to BUG-063. Do not edit the spec by hand. No `owner-decision` filing is needed (see "Verified fix direction" above); one WOULD be needed only if someone chose the rejected alternative of declaring the console deliberately chord-only.
+
+---
+## BUG-064: `Undo`/`Redo` are TWO commands wearing ONE name — the DEC-012 report is half right: the chord has one host, but the menu twin means something different and its row in Customize Shortcuts cannot reach the chord
+**Renumbered:** this entry was originally appended as **BUG-063** on 2026-08-10 and moved to **BUG-064** on 2026-08-10. Two `bug-triager` instances ran concurrently and neither could see the other's append, so both claimed 063. The other 063 (the Sandbox SQL Console "Format Selection" entry, immediately above) keeps the number because `CONSOLIDATED_SPEC.md` already cites BUG-063 for it in four places (§18.4 status banner, §26 Format-Selection parenthetical, §27 `Ctrl+Alt+F` row, §8 DEC-012 bullet). **An external reference to "BUG-063 undo/redo" means THIS entry, BUG-064.**
+**Status:** RESOLVED (`a9efb67`). Verified in the tree 2026-08-10: the History menu's two entries are renamed to `Undo Project Edit` / `Redo Project Edit` (`ui/main_window.py:2573`, `:2576`, docstring at `:2541`) — **named apart rather than merged**, per this triage, because they are a project-scoped command and not the menu twin of the editor chord. **Both alias tables moved in the same commit**, so nothing pinned or rebound against the old names breaks: `ui/toolbar_registry.py:159` (`RENAMED_ID_ALIASES`, with the rename recorded at `:81`/`:89`) and the `RESERVED_BINDINGS` reasons in `ui/shortcut_registry.py:222`/`:227`, which now say in so many words that the project-wide command *is* `History ▸ Undo Project Edit` and *is* rebindable. `xml_editor.undo_requested` is re-pointed to the scoped slot `MainWindow._undo_raw_xml_history` (`ui/main_window.py:1212`), closing the latent BUG-048 re-opener; the warning against repeating that mistake is left at `:5342`. `tests/ui/test_history_wiring.py:382-383` asserts both actions' shortcuts are empty.
+**Reported:** 2026-08-10
+**Report (verbatim):** "`Undo` and `Redo` are hosted twice, in violation of DEC-012 — the rule the owner set for exactly this shape. `History ▸ Undo` and `History ▸ Redo` are menu actions with no `setShortcut` (`main_window.py:2502-2507`), wired to `self._undo`/`self._redo`. Their chords live in separate window-level `QShortcut`s (`:1179-1182`) wired to different slots — `_undo_from_shortcut`/`_redo_from_shortcut`. So one command has two keyboard-reachable hosts and two distinct entry points."
+
+**VERDICT FIRST, because it determines the whole fix: these are TWO DIFFERENT COMMANDS SHARING A NAME, not one command hosted twice.** The asymmetry is deliberate, recorded design in four independent places, all verified today:
+1. `main_window.py:2003-2008` — `_undo`'s docstring: *"Deliberately NOT tab-scoped: the History menu's `Undo` is an explicit, deliberate click that means 'undo the project', wherever the user is. It IS lock-scoped."*
+2. `CONSOLIDATED_SPEC.md` §18.5 carve-out 1 (~`:6965`) — *"`History ▸ Undo` stays UNSCOPED BY TAB, deliberately — an explicit menu click means 'undo the project', wherever the user is — but it is lock-scoped."*
+3. §27's Supersession Ledger row dated 2026-08-10 (`:10788`) repeats it verbatim as what shipped at `e8df6c3`/`f533350`.
+4. `manual.md:3920-3923` already tells the **user** they are different: *"`History ▸ Undo` and `History ▸ Redo` on the Editor menu bar are a different thing again: they always drive the project's snapshot history, whatever tab is in front, and they carry no shortcut."*
+
+**And the two behaviours are not merge-able even in principle.** The distinction is *which host fired* — a keystroke means "undo here" (tab-scoped), a click means "undo the project" (unscoped). A single `QAction` cannot tell how it was triggered, so one host cannot serve both meanings. DEC-012 therefore does not permit "merge them and keep both behaviours"; it forces a choice, and choosing merge would **reverse a recorded decision** (all four sources above) and re-open BUG-048 (a `Ctrl+Z` on the read-only DDL Explorer rewriting the Raw XML project buffer). **So the fix is to SAY they are two commands, not to merge them.** If the owner nonetheless wants one command, that is an `owner-decision` (it reverses §18.5 carve-out 1), not a bug fix — do not decide it here.
+
+**Root cause (what is actually wrong today, precisely):**
+
+- **DEC-012 is NOT strictly violated.** Counted properly, the *chord* `Ctrl+Z` has one keyboard host: the window `QShortcut` (`main_window.py:1179-1182`). `XmlEditor.keyPressEvent` (`xml_editor.py:1165-1180`) also claims it, but that is the `ShortcutOverride` hand-off pattern — the focused editor consumes the key so the window shortcut cannot also fire, so exactly one of the two ever runs (documented at `main_window.py:1183-1187`). The menu actions carry `QKeySequence()` — **zero** chords. Two hosts of *one* chord is what DEC-012 outlaws; that is not this shape.
+- **DEFECT 1 — the name collision itself.** `History ▸ Undo` (`main_window.py:2502-2507`) is labelled identically to the operation `Ctrl+Z` performs, while meaning something materially different (project-wide vs. current-surface). The manual has to spend a paragraph undoing the label. This is the exact ambiguity FQ-022 resolved by renaming `Database ▸ DDL Explorer` → `DDL Explorer (Quality)` when it gained a sibling (`toolbar_registry.py:115-117`: *"a bare 'DDL Explorer' next to it would be ambiguous — and the label IS the id"*). Same problem, same remedy.
+- **DEFECT 2 — Customize Shortcuts… shows the collision and cannot resolve it (BUG-046's shape, confirmed).** `history.undo`/`history.redo` are ordinary rebindable rows (they are **not** in `RESERVED_COMMAND_IDS`, which holds only `help.manual` — `shortcut_registry.py:266-269`) with an **empty** captured default, because `_shortcut_commands` (`main_window.py:3212-3241`) reads `action.shortcut()` and the action has none. Meanwhile `Ctrl+Z`/`Ctrl+Y` appear as greyed **reserved** rows whose reasons (`shortcut_registry.py:216-219`) say only *"project history Undo — a window-scoped shortcut, not a menu action (§27)"*. So the dialog shows the user "Undo" twice, tells them nothing about the difference, and rebinding `History ▸ Undo` **cannot move `Ctrl+Z`** — `_apply_shortcut_bindings` (`:3244-3272`) only ever calls `setShortcut` on menu `QAction`s and its own docstring states reserved sequences are never touched. That is user-visible and, given the two-command verdict, is *correct behaviour described by a misleading row*, not broken plumbing.
+- **DEFECT 3 — one chord, two entry points with different guards (latent BUG-048 re-opener).** `Ctrl+Z` reaches the scoped `_undo_from_shortcut` (`:1965-1976`: returns unless `center_stage.currentIndex() == raw_xml_tab_index` **and** `not _history_write_refused()`) via the `QShortcut`, but reaches the **unscoped** `_undo` via `xml_editor.undo_requested` (`:1188`). They are equivalent **only** because a `QStackedWidget` hides the departed page and Qt clears focus from a hidden widget, so focus in `xml_editor` implies the Raw XML tab is current. Nothing states or tests that invariant; the day an `XmlEditor` is hosted in a dock or a splitter beside another tab, the keystroke path silently loses its tab scope. This is the "two distinct entry points" the report names, and it is real.
+- **The shared floor is intact — verified, no change needed.** `_apply_history_text` (`:1986-2001`) refuses outright when `xml_editor.isReadOnly()`, which is BUG-048's second, independent cause (`setPlainText` is a `QTextCursor`-level write that `setReadOnly(True)` does not gate). `_raw_xml_history_lock_reason`/`_history_write_refused` (`:1941-1963`) additionally guard `_undo`, `_redo`, `_history_jump` **and** both `_from_shortcut` slots. Both paths already sit on the same floor; do not add another.
+
+**Proposed fix — three parts, all behaviour-preserving except the labels. No undo/redo logic changes (DEC-015's constraint applies here too: "not the underlying logics").**
+
+**(A) Name the two commands apart (`main_window.py._build_history_menu`, `:2500-2507`).** Relabel the two menu entries to state their scope — recommended: `Undo Project Edit` / `Redo Project Edit` (any wording is fine; it must contain the project scope). Update the docstring at `:2489-2497`, which currently asserts the opposite (*"Undo/Redo are the same single-step actions the Ctrl+Z/Ctrl+Y shortcuts drive"* — that is the sentence that made this look like one command). **THE GOTCHA THAT BREAKS THINGS IF MISSED: the label IS the command id** (`toolbar_registry.command_id_for`, `:217-221`, slugifies the whole menu path). So `history.undo` → `history.undo-project-edit`, and three tables must move in the SAME commit or two DEFAULT toolbar buttons ship empty and iconless:
+  - `LEGACY_ID_ALIASES["undo"]`/`["redo"]` (`toolbar_registry.py:86-92`) re-pointed at the new ids — this is the FQ-016 precedent documented at `:70-84`, and it is what keeps `DEFAULT_TOOLBAR_IDS` (`:98-100`) **and** `ICON_ID_BY_COMMAND` (`:196-199`, that dict *inverted*) correct in one edit.
+  - `RENAMED_ID_ALIASES` (`:150`) gains `"history.undo" → "history.undo-project-edit"` and the redo twin, so a toolbar/icon assignment saved under the menu-path id survives. **Do NOT put these rows in `LEGACY_ID_ALIASES` instead** — `:107-113` explains why (the inversion would make `icon_id_for` return a menu-path id and permanently defeat the default icon, swallowed by a bare `except`). Apply the table's own "applied exactly once, not transitively" rule.
+  - Persisted `shortcutOverrides`/`toolbarIds` naming the old id are handled by `resolve_ids`/`resolve_icon_assignments`, which already run both tables — nothing else to write.
+
+**(B) Make the Customize Shortcuts story honest (`shortcut_registry.py:216-222`).** Rewrite the `Ctrl+Z` and `Ctrl+Y` reserved reasons so each **classifies its own operation and points at its rebindable twin** — e.g. `Ctrl+Z`: *"undo in the surface that has focus — a window-scoped shortcut plus each editor's own key handling, not a menu action. The project-wide command is `History ▸ Undo Project Edit`, which IS rebindable (§27)."* and the matching redo sentence for `Ctrl+Y`. **Keep them as two separate rows with two separate reasons** — DEC-014 forbids collapsing undo and redo into one "is an undo/redo chord" statement; they are different operations. Optionally consider `RESERVED_COMMAND_IDS` for the two new ids if the owner would rather they be un-rebindable, but the default recommendation is to **leave them rebindable**: a user who wants a chord for project-wide undo should be able to have one, and now the row's name says what they are getting.
+
+**(C) Give `Ctrl+Z` ONE entry point (`main_window.py:1188-1189`).** Re-point `xml_editor.undo_requested`/`redo_requested` from `self._undo`/`self._redo` to the scoped `_undo_from_shortcut`/`_redo_from_shortcut`, so every *keystroke* path is scoped and every *click* path is not. Recommended alongside: rename those two slots away from "which host fired" to what they are — `_undo_raw_xml_history`/`_redo_raw_xml_history` — and update the comment at `:1183-1187`, which currently says *"Both paths call the same _undo/_redo"* and will otherwise be false. **PLACEMENT-GATE TRAP, stated explicitly: this is NOT an app-level undo router.** It is one command, one function, one surface. Do not grow it into a "one undo function every surface calls" — that is §7's `_save_active_tab` failure with a different noun (a four-way dispatcher with an `else` fall-through made `Ctrl+S` on the SQL console write the `.pgtp`), and §7 also forbids a fourth per-tab dispatcher. Every other surface (`DdlEditorPanel._is_undo_redo_chord`, `DdlObjectEditorPanel.eventFilter`, `PhpFileTab`, the draft fragment tab) keeps answering its own chord locally, unchanged.
+
+**Interaction with DEC-015 (Redo is always `Ctrl+Y`, on all systems) — nothing to do here, and one collision to sequence.** `Ctrl+Y` is *already* explicitly bound at the window level (`main_window.py:1181`), so this fix leaves that line alone; DEC-015's remaining work is **inside the editing surfaces** (`ddl_object_editor.py:913`, `xml_editor.py:1178`, `ddl_editor_panel.py:164` — re-routing `Ctrl+Shift+Z` so Qt's native `KB_Win|KB_X11` redo cannot fire), which is BUG-056 rescoped and is **not** part of this entry. There is no window-level `Ctrl+Shift+Z` `QShortcut` to touch (verified: only the `Ctrl+Z` and `Ctrl+Y` ones exist). **Collision:** BUG-056 rewrites the `Ctrl+Shift+Z` reason at `shortcut_registry.py:220-222`, immediately adjacent to part (B)'s two rows. Whichever lands second must re-read the block rather than apply a stale hunk.
+
+**Test impact.** Existing coverage to EXTEND, not duplicate:
+- `tests/ui/test_history_wiring.py` — owns this area. `:338` `test_undo_redo_actions_exist_with_shortcuts` finds the actions by the literal text `"Undo"`/`"Redo"` (label change), `:386` `test_history_menu_undo_and_redo_step_distinctly` likewise, and the BUG-048 block from `:404` (`_armed_history_window`, `_press_ctrl_z`) is the right harness for the new cases. **New cases:** (1) the two menu actions carry `QKeySequence()` — no chord — while `Ctrl+Z` still works, i.e. the two-command shape is asserted rather than assumed; (2) part (C): with the Raw XML editor focused, a real `Ctrl+Z` still undoes, *and* the editor's `undo_requested` now lands on the scoped slot (patch/spy the slot rather than asserting Qt internals); (3) the menu action still undoes from a **non**-Raw-XML tab (the unscoped meaning, which is the thing a careless part-(C) change would silently delete).
+- `tests/ui/test_menus.py:180-181` asserts `find_action(menu, "Undo") is window._undo_action` — label change. **This file is currently in a conflicted (`UU`) state in the working tree; re-read it before editing and do not clobber the in-flight resolution.**
+- `tests/ui/test_toolbar.py` (`:113`, `:125`, `:187`, `:193` — asserts the label `"History › Undo"` — `:209`, `:280`) and `tests/ui/test_toolbar_registry.py` (`:48`, `:106`, `:113-114`, `:139`, `:159`) hard-code `history.undo`/`history.redo`; both files need the new ids, and `test_toolbar_registry.py` should gain a case that a toolbar saved as `undo` **and** one saved as `history.undo` both still resolve (the two alias tables from part (A)).
+- `tests/ui/test_mainwindow_surface.py` (`:257-259`, `:358-360`) is a name inventory listing `_undo`, `_undo_action`, `_undo_from_shortcut`, `_undo_shortcut` and the redo twins — update it if part (C)'s rename is taken.
+- `tests/ui/test_customize_shortcuts_dialog.py` / whichever test asserts the reserved rows — the reason strings in part (B).
+- **Measured test facts, so the new cases prove something.** `QShortcut` **does** activate under `QT_QPA_PLATFORM=offscreen`; the decisive requirement is that the widget's **top level has been `show()`n**, not the key-delivery target — once shown, `QTest.keyClick(widget, …)` reaches `QShortcutMap` too (the existing block at `test_history_wiring.py:404-430` sends to `window.windowHandle()`, which is the most faithful and should stay). And the offscreen platform runs Qt's **Windows** keyboard scheme, so Linux-only key behaviour is invisible to the suite: **assert the handler that ran, never Qt's native redo.**
+
+**Spec impact:** flag for `spec-maintainer` after the fix lands — do not edit the spec here (a `spec-maintainer` pass is folding FQ-033 concurrently). Diverging text: §18.5 carve-out 1 (~`:6935-6970`) quotes `_undo_from_shortcut`/`_redo_from_shortcut` by name and by line, and states `History ▸ Undo` by its **current label**; §27's 2026-08-10 Ledger row (`:10788`) does the same; §27's `Ctrl+Z`/`Ctrl+Y` reserved-key text and the `undo → history.undo` alias row (`:1912`, `:10340`, `:10463`) all name the old ids; and §7/§26/§27's FQ-016 Ledger row (`:10733`) lists the History menu as *"`History…`, `Undo`, `Redo`"*. **The two-command distinction itself is already spec'd and must be preserved, not rewritten** — what changes is the labels, the ids and the slot names. `manual.md` also needs `manual-maintainer`: `:750`, `:1082`, `:1633`, `:1800`, `:1949`, `:2363`, `:3654` (the default-toolbar list names *"History ▸ Undo"*), `:3823`, `:3920-3953` (the whole undo-by-tab table and the *"History ▸ Undo and History ▸ Redo refuse out loud"* paragraph), `:4158` (the reserved-keys table row this fix rewrites).
+
+---
+
+## BUG-260810140553: `Ctrl+Shift+Ins` pastes on Linux and is dead on Windows — the clipboard family's platform split (BUG-056's defect class, one family over)
+**Status:** RESOLVED (Part 1 `d0a0804`, Part 2 `55c2538`). Verified in the tree 2026-08-10, both halves.
+
+**Part 1 — the older spellings reserved, and Qt's table no longer inherited.** `Ctrl+Insert`, `Shift+Insert` and `Shift+Delete` have their own `RESERVED_SEQUENCES` rows (`ui/shortcut_registry.py:348-355`) with a comment recording that they are native on **both** schemes, so they were never a platform split and needed no bind-or-suppress ruling — they were reserved because they were free targets in Customize Shortcuts…, where a command on `Shift+Insert` would kill paste-by-`Shift+Insert` in every editor on every platform. Matching ledger rows, and `tests/ui/test_shortcut_registry.py::test_the_older_clipboard_spellings_are_reserved` asserts each is present *and* that `normalize_sequence` round-trips the ledger's canonical spelling. The `StandardKey` inheritance is gone at **both** sites: no live `QKeySequence.StandardKey` reference survives anywhere in `pgtp_editor/` (every remaining mention is explanatory comment). `XmlEditor` asks `is_mutating_editor_operation(classify_editor_chord(event))` (`ui/xml_editor.py:1196`) instead of `event.matches(StandardKey.Paste)`, and the caption grid spells its chords (`ui/caption_management_panel.py:1101-1108`), pinned by `test_the_grid_clipboard_shortcuts_are_spelled_chords_not_standard_keys`, which asserts on `keys()` rather than `key()` — `key()` reporting only the first chord is exactly what hid the defect.
+
+**Part 2 — the owner ruling.** `Ctrl+Shift+Insert` is **bound as paste on both platforms**, unconditionally and with no `sys.platform` test: `EDITOR_CHORDS["Ctrl+Shift+Insert"] = PASTE` (`ui/shortcut_registry.py:503`), reserved with a reason naming the app as the binder per DEC-015 (`:369`), answered at all six editing surfaces through the one matcher (`classify_editor_chord` → `apply_editor_operation`: `code_editor.py:1205`, `xml_editor.py:1227`, `ddl_object_editor.py:918`, `ddl_editor_panel.py:223`, `php_file_tab.py:408`, `sql_console_panel.py:617`), and added to `EDITOR_PASTE_CHORDS` (`:528-533`) so a read-only surface owes it the same *"this editor is read-only"* hint as `Ctrl+V`. `PASTE` is in `MUTATING_EDITOR_OPERATIONS` (`:493`), which is what makes that hint automatic rather than per-surface. The KDE-only `F18` Paste key is deliberately still absent, under the physically-absent-keys carve-out (see BUG-260810143059).
+**Reported:** 2026-08-10
+**Report (verbatim):** "Qt binds `Ctrl+Shift+Ins` as `StandardKey.Paste` under `KB_X11` only. So it pastes on Linux and does nothing on Windows — the same defect class as BUG-056's `Ctrl+Y` (which was `KB_Win` only and dead on Linux), one keyboard family over: clipboard rather than undo/redo. Check the rest of the clipboard family in the same pass — `Cut`, `Copy`, `Paste`, and `Shift+Ins` / `Ctrl+Ins`, which are the older spellings."
+
+**Measured binding table (do not re-derive from documentation — this was read out of the installed PySide6 on 2026-08-10):**
+
+| StandardKey | Windows scheme (`QT_QPA_PLATFORM=offscreen`, no platform theme) | X11 scheme (`xcb` **and** `wayland`, identical) |
+|---|---|---|
+| `Cut` | `Ctrl+X`, `Shift+Del` | `Ctrl+X`, `Shift+Del`, **`F20`** |
+| `Copy` | `Ctrl+C`, `Ctrl+Ins` | `Ctrl+C`, `Ctrl+Ins`, **`F16`** |
+| `Paste` | `Ctrl+V`, `Shift+Ins` | `Ctrl+V`, `Shift+Ins`, **`Ctrl+Shift+Ins`**, **`F18`** |
+
+Reproduce with:
+`QT_QPA_PLATFORM=offscreen venv/bin/python -c "from PySide6.QtWidgets import QApplication; from PySide6.QtGui import QKeySequence; a=QApplication([]); print([s.toString() for s in QKeySequence.keyBindings(QKeySequence.StandardKey.Paste)])"` and again with `QT_QPA_PLATFORM=xcb`.
+
+Two conclusions, and the second one is the good news:
+
+1. **The split set for the clipboard family is exactly `{Ctrl+Shift+Ins, F16, F18, F20}` — all four X11-only.** The report's hypothesis that `Ctrl+Shift+Ins` might not be alone is confirmed; the F-key trio is the same defect on physically rare keys.
+2. **The older spellings are NOT split.** `Shift+Ins`, `Ctrl+Ins` and `Shift+Del` are native on **both** schemes. They need no uniformity work — but see root cause (c), where their being native-on-both is a *different* latent bug.
+
+**Adjacent splits found in the same read, deliberately NOT part of this entry** (different families, worth their own entries — the caller/owner should decide whether to file): `StandardKey.Delete` is `Del` on Windows and `Del` + **`Ctrl+D`** on X11 — a *letter* chord, so the highest-risk of the three remaining splits, since a future `Ctrl+D` command would be swallowed by every editor on Linux only. `StandardKey.Undo` carries **`F14`** on X11 only (BUG-056 handled that family's `Alt+Backspace` pair but not `F14`).
+
+**Root cause:** three distinct mechanisms, all reachable from the one table above.
+
+(a) **`pgtp_editor/ui/caption_management_panel.py:1080-1081`** — the app's own bindings inherit Qt's platform table:
+```python
+QShortcut(QKeySequence.StandardKey.Copy, self._table, self.copy_selection)
+QShortcut(QKeySequence.StandardKey.Paste, self._table, self.paste_into_new_value)
+```
+Passing a `StandardKey` (not a spelled chord) makes these `QShortcut`s answer **whatever the running platform's scheme lists**. So on Linux `paste_into_new_value` also fires on `Ctrl+Shift+Ins` and `F18`, and `copy_selection` also on `F16`; on Windows neither does. This is the clearest defect of the three because it is *the app's own code* being platform-conditional, which DEC-015 states it must never be (*"an operation's chord is bound by this app, not inherited from Qt's platform table"*). `manual.md:3903` documents this grid's chords as `Ctrl+C` / `Ctrl+V` only, so the extra Linux chords are undocumented as well as non-uniform.
+
+(b) **`pgtp_editor/ui/xml_editor.py:1179`**, in `XmlEditor._is_text_modifying_key`: `if event.matches(QKeySequence.StandardKey.Paste): return True`. Same inheritance, milder consequence — in read-only Caption Mode, `Ctrl+Shift+Ins`/`F18` raise the *"this editor is read-only"* hint on Linux and fall through silently on Windows. (`Shift+Ins` is caught on both, correctly, since it is native on both.)
+
+(c) **Nothing in the app claims the native clipboard chords other than `Ctrl+C`/`Ctrl+X`/`Ctrl+V`.** `pgtp_editor/ui/shortcut_registry.py:305-311` reserves exactly those three, with the reason *"Ctrl+C/X/V remain Qt built-ins"* (§26/§27, FQ-016). **That stance survives the new rule but is INCOMPLETE, not wrong:** its own stated reason — *"a window-level shortcut on one of them would take precedence over the widget and break copy/cut/paste everywhere"* — applies verbatim to `Shift+Ins`, `Ctrl+Ins` and `Shift+Del`, which are native clipboard chords on **both** schemes and are currently **free targets** in `Customize Shortcuts…`. Assigning a menu command to `Shift+Ins` today would silently kill paste-by-`Shift+Ins` in every editor on every platform. That is a live hole independent of the platform split, and it is the cheapest, least controversial part of this fix.
+
+(d) **Everywhere else** (every `QPlainTextEdit`/`QLineEdit`/`CodeEditor`/`XmlEditor`), `Ctrl+Shift+Ins` is answered by Qt's own built-in `QPlainTextEdit` key handling: pastes on Linux, does nothing on Windows. No app code intercepts it — `EDITOR_UNDO_REDO_CHORDS` (`shortcut_registry.py:356-362`) covers only the five undo/redo-family chords.
+
+**Proposed fix:**
+
+**Part 1 — free, uncontroversial, do this regardless of how Part 2 is decided.**
+
+- `pgtp_editor/ui/caption_management_panel.py:1080-1081`: replace the two `StandardKey` `QShortcut`s with **explicitly spelled** sequences, so the panel's chords are identical on both platforms: `QKeySequence("Ctrl+C")` and `QKeySequence("Ctrl+V")` (add `Ctrl+Ins`/`Shift+Ins` as extra `QShortcut`s only if Part 2 decides the older spellings are supported gestures for this grid — do not add them silently). Gotcha: the two `QShortcut`s here are `self._table`-scoped with the **default** `WindowShortcut`-vs-widget behaviour that the current construction gives them (`QShortcut(seq, widget, slot)` parents to `_table`); preserve the existing parent and context exactly — the only change is how the chord is named.
+- `pgtp_editor/ui/xml_editor.py:1179`: replace `event.matches(QKeySequence.StandardKey.Paste)` with a match against an app-owned set of paste chords, so the read-only hint fires on the same keys on both platforms. Keep the ordering comment at `:1163-1178` intact — it explains why paste is tested *before* the printable-text test, and that reasoning is unchanged.
+- `pgtp_editor/ui/shortcut_registry.py` `RESERVED_SEQUENCES`: add rows for **`Shift+Ins`**, **`Ctrl+Ins`**, **`Shift+Del`**, extending the existing `Ctrl+C`/`Ctrl+X`/`Ctrl+V` block with the *same* reason shape (*"Paste — a Qt built-in inside every editor widget on both keyboard schemes (§26/§27)"*). This is a pure widening of an existing stance, and it is what makes the customize dialog refuse them as targets (`refusal_for` → `reserved_reason` already does the work once the rows exist).
+
+**Part 2 — the direction for `Ctrl+Shift+Ins` and the `F16`/`F18`/`F20` trio: OWNER CALL, do not decide it in the implementation pass.** The rule (*bind on both, or suppress on both*) leaves two legal outcomes and they are not symmetric here, so this needs a ruling before code. The caller has said they will file it; **do not write to `docs/DECISION_QUEUE.md` from a bug-fix pass either.** The framing, so whoever files it does not have to re-derive it:
+
+- **`Ctrl+Shift+Ins` is the OPPOSITE case to BUG-056's `Alt+Backspace` pair, and the analogy should not be applied mechanically.** `Alt+Backspace`/`Alt+Shift+Backspace` were suppressed because they were *dead on the machine the owner was using* — legacy Windows-only spellings with no presence anywhere in the app, so binding them on Linux would have been *inventing* a keybinding. `Ctrl+Shift+Ins` is the reverse: it is **live on Linux today**, on the platform this project is developed on, and suppressing it *removes a working paste gesture* from users who may reach for it. **Recommendation: bind on both** — i.e. install it explicitly and unconditionally (redundant on X11, new on Windows), which is exactly the shape DEC-015 used for `Ctrl+Y`. Cost of binding: a third paste spelling that appears in no menu. Cost of suppressing: interception code at every editing surface *and* a capability regression on Linux. Binding is the cheaper and less destructive side of the same rule.
+- **`F16`/`F18`/`F20` are the `Alt+Backspace` case, not this one.** Dedicated Sun/HP `Copy`/`Paste`/`Cut` keys, absent from essentially every keyboard in use, no presence in the app, no discoverability. If the owner rules "suppress on both" for these, the implementation is the DEC-014 machinery (see below); if the owner rules "leave them, physically-absent keys are outside the uniformity rule", that carve-out must be **stated in the spec**, not left implicit, or this gets re-filed.
+- **If — and only if — "suppress on both" is chosen for any of these four**, the mechanism already exists and must be reused rather than reinvented: `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` + `code_editor.classify_undo_redo_chord` (`code_editor.py:103-131`) is the single-source chord table every editing surface consults, with the `SUPPRESSED` answer meaning *consume and run nothing* (see the four call sites: `code_editor.py:1045`, `ddl_editor_panel.py:164`, `php_file_tab.py:406`, `ddl_object_editor.py:916`). Gotchas: (i) the table and matcher are named for undo/redo — extending them with clipboard chords needs a rename or a second table, and the DEC-014 invariant test at `tests/ui/test_code_editor.py:442` and `tests/ui/test_shortcut_registry.py:318` (`test_every_chord_the_surfaces_intercept_is_a_reserved_sequence`) both key off that table, so any restructuring must keep "every intercepted chord is reserved" true; (ii) the `ShortcutOverride` branch at `code_editor.py:1047-1048` must be preserved for any added chord, or a window-level shortcut can still outrank the editor; (iii) `caption_management_panel`'s `QTableWidget` and `XmlEditor` are *also* editing surfaces for this family and would each need a stated answer.
+
+**Do not** make any part of this fix `sys.platform`-conditional. The uniformity is in the *behaviour*; the code binds unconditionally and is simply redundant on the scheme where Qt already agrees.
+
+**Test impact:**
+- `tests/ui/test_shortcut_registry.py` — extend, do not duplicate. `test_reserved_sequences_encode_what_section_27_pins` (`:127`) needs the three new uniform-clipboard rows; the nearest precedent to copy in shape is `test_the_windows_only_native_undo_pair_is_reserved_and_stated_as_dead` (`:331`). Add a case that `Shift+Ins` is **refused as a target, not stolen** (mirror `test_ctrl_shift_z_is_refused_as_a_target_not_stolen`, `:380`).
+- `tests/ui/test_caption_management_panel.py` — new case: the panel's copy/paste shortcuts are bound to **explicitly spelled** chords, asserted by reading back `QShortcut.key().toString()` off the panel's children, **not** by comparing against `QKeySequence.keyBindings(StandardKey.Paste)` (that comparison passes on Windows-scheme offscreen and is meaningless).
+- `tests/ui/test_xml_editor.py` — existing read-only-hint cases for `_is_text_modifying_key` live here; extend them with the app-owned paste chord set rather than adding a new file.
+- `tests/ui/test_code_editor.py` — only if Part 2 rules "suppress"; `:442`'s DEC-014 fixed-set test is the one to extend.
+- **The environment warning is load-bearing:** `QT_QPA_PLATFORM=offscreen` runs Qt's **Windows** scheme, so every X11-only chord in the table above is invisible to the entire suite, and a Linux-only dead key passes green. **Assert the app's handler ran (or was suppressed); never assert Qt's native answer, and never assert against `QKeySequence.keyBindings(...)`** — that call returns different lists in CI and on the developer's desktop. `QShortcut` *does* activate offscreen provided the top-level widget has been `show()`n (BUG-056 measured this).
+
+**Spec impact:** flag for `spec-maintainer` after the fix lands — do not edit the spec here. §27's reserved-key table (`CONSOLIDATED_SPEC.md:10804`) and the FQ-012 Ledger row (`:10968`) both state the clipboard stance as exactly *"`Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets"*; that sentence needs widening to the uniform native set (`Shift+Ins`, `Ctrl+Ins`, `Shift+Del`) and, once Part 2 is ruled, a stated answer for `Ctrl+Shift+Ins` and the `F16`/`F18`/`F20` trio alongside the existing `Alt+Backspace` reasoning. `manual.md` needs `manual-maintainer` at `:302`, `:992`, `:3786`, `:3903` (the caption-grid row, if its chords change) and `:4163` (the non-rebindable table, which must gain the newly reserved chords). **Note for whoever picks this up:** `docs/KEYBINDINGS.md` — the standalone chord ledger referenced by `.claude/agents/bug-triager.md` — **does not exist in this checkout**; the de facto ledger is §27 plus `shortcut_registry.RESERVED_SEQUENCES` plus `tests/ui/test_shortcut_registry.py`. That gap is itself worth an entry, since the agent instructions direct triagers to a file that is not there.
+
+**Amendment (2026-08-10, the `docs/KEYBINDINGS.md` build sweep). Three corrections and one new obligation — this entry ABSORBS gaps 1 and the clipboard half of gap 5 from that ledger's Known-gaps list; do not file them again.**
+
+1. **`docs/KEYBINDINGS.md` now EXISTS**, with `tests/test_keybindings_ledger.py` asserting it against the code in both directions. The "does not exist in this checkout" note above is obsolete. **Consequence for this fix:** `test_keybindings_ledger.py::test_every_reserved_sequence_has_a_row_marked_reserved` asserts `RESERVED_SEQUENCES` and the ledger's **Reserved** column are the *same set*, so Part 1's three new rows (`Ctrl+Insert`, `Shift+Insert`, `Shift+Delete`) must flip that column to `yes` on `KEYBINDINGS.md:82`, `:83`, `:85` **in the same commit** or the suite reddens. Their Notes cells currently read "**Not reserved** — see [Known gaps]" and must be rewritten; Known gap 1 must be struck from `:164-171`. Note also that the ledger's canonical spelling is `Ctrl+Insert` / `Shift+Insert` / `Shift+Delete` (what `normalize_sequence` produces from `Ctrl+Ins`), and that `RESERVED_SEQUENCES` keys must be written in that canonical form — `test_every_chord_the_surfaces_intercept_is_a_reserved_sequence` (`tests/ui/test_shortcut_registry.py:318`) asserts `normalize_sequence(key) == key` for the editor-chord subset, and the ledger test normalizes both sides.
+2. **Root cause (c) understates the hole for `Ctrl+Insert` and `Shift+Insert`: they have a REAL app-owned host, not just Qt's built-in.** Measured 2026-08-10 on this checkout: `QShortcut(QKeySequence.StandardKey.Copy, table, slot).keys()` returns **`['Ctrl+C', 'Ctrl+Ins', 'Copy']`** — Qt 6's `StandardKey` constructor installs *every* chord of the standard key on the one `QShortcut`, not just the first. So `caption_management_panel.py:1080-1081` genuinely answers `Ctrl+Insert`, `Shift+Insert`, the `Copy`/`Paste` media keys (and on X11 `F16`/`F18`/`Ctrl+Shift+Ins`) today. That makes Part 1's reservation *not* merely a widening of a Qt-built-in stance: leaving `Ctrl+Insert` assignable puts a menu `QAction` against a live `QShortcut` in the same window, which is the two-enabled-shortcuts case where Qt fires **neither**. **Test gotcha, load-bearing:** assert with `shortcut.keys()`, never `shortcut.key()` — `key()` returns only `Ctrl+C` and hides the whole defect.
+3. **The `Ctrl+C`/`Ctrl+V` reason strings are separately wrong and are tracked as BUG-260810143057.** They say only *"a Qt built-in inside every editor widget"* while both also have that caption-grid `QShortcut` host. If Part 1 is implemented first, fold that entry's text change into the same edit of the same dict block rather than touching those rows twice.
+4. **Part 2 (owner call) is narrowed, and the rest of gap 5 is now filed separately.** `Ctrl+Shift+Insert` and `F16`/`F18`/`F20` remain exactly this entry's Part 2. The *non*-clipboard X11-only chords the sweep re-confirmed — **`F14`** (native Undo, bypasses the app's undo routing) and **`Ctrl+D`/`Ctrl+K`/`Ctrl+U`** — are now **BUG-260810143059**; do not pull them into this entry, they need a different mechanism (`EDITOR_UNDO_REDO_CHORDS`) and a different ruling.
+
+---
+
+## BUG-260810141459: the bundled curated XSD's content changed but its `v1.2` marker did not — bump to v1.3 in one commit
+**Status:** RESOLVED (`11de120` — the merge; the fix itself is `55bea98`, *"fix(BUG-260810141459): the curated schema's marker is its identity, so bump it to v1.3"*). **Re-verified 2026-08-12 against the working tree, all eight sites:** `schema_learning/storage.py:27` is `CURATED_BUNDLED_VERSION = "1.3"`; both halves of the byte-pinned pair carry the same marker line (`pgtp_editor/resources/curated.xsd:2` and `docs/curated_20260807.xsd:2` are both `<!-- PGTP Editor curated schema v1.3 -->`); `ui/xsd_controller.py` holds **no** version literal at all any more (its four version-bearing strings at `:324`, `:343`, `:738`, `:772` all read the imported constant); `resources/manual.md:1447` says *"Curated v1.3"*; and the two literal-pinned assertions are updated (`tests/schema_learning/test_storage.py:38`, `:44`). **The guard the entry asked for exists**: `tests/schema_learning/test_storage.py:48` `test_bundled_curated_xsd_marker_agrees_with_the_version_constant` — it parses the marker out of the shipped resource and asserts it equals the constant, so the next curation cannot move one without the other. `spec-maintainer` has struck §11's to-do table as stale, so nothing is outstanding on this entry. Original resolution note follows: the marker reads `v1.3` at every site, in one commit as the entry required — `schema_learning/storage.py:27` (`CURATED_BUNDLED_VERSION = "1.3"`), the shipped file's header comment (`pgtp_editor/resources/curated.xsd:2`), the manual (`resources/manual.md:1391`, *"Curated v1.3"*), and the assertions (`tests/schema_learning/test_storage.py:38`, `:44`). **The hardcoded literal at `ui/xsd_controller.py` was DELETED rather than retyped** — the status line is now `f"(v{CURATED_BUNDLED_VERSION})"` (`:260`) against the imported constant (`:77`), so there is no second place for the next bump to miss. The new guard is `tests/schema_learning/test_storage.py:50-63`: it parses the marker out of the **shipped file** and asserts it equals `CURATED_BUNDLED_VERSION`, with a docstring stating that the resource and the constant are two independent facts — a same-commit bump is enforced, not assumed. `tests/ui/test_curated_feed_wiring.py:100` checks the user-visible "bundled" line carries the constant rather than a literal.
+**Reported:** 2026-08-10
+**Report (verbatim):** "the bundled curated XSD's content changed but its version marker did not — two different schemas both stamped `v1.2`. BUG-057 (`70578cb` / `aa1aab6`) made `docs/curated_20260807.xsd` the tracked authoritative dated drop of the owner's curated schema, kept `pgtp_editor/resources/curated.xsd` as the single shipped home, and added `tests/test_curated_xsd_packaging.py::test_shipped_curated_xsd_is_identical_to_the_newest_snapshot` to pin the two byte-for-byte. That part is correct and is not the bug. The bug: the new curation genuinely changed content — `editAbilityMode` restored, a truncated `dateTimeKind` fixed, a mis-nested `sortable` fixed, `totalFunction` and `smpt_encryption` plus enum labels added — and shipped still stamped `v1.2`, because that is what `pgtp_editor/schema_learning/storage.py::CURATED_BUNDLED_VERSION` and `tests/schema_learning/test_storage.py` pin. The implementer said v1.3 was arguably right but needed a spec edit they could not make. `spec-maintainer` has now made that spec edit and ruled for v1.3."
+
+**Root cause:** Not a broken code path — a **stale identity constant**, verified against the tree at triage time (every line number and literal below was read, not inferred).
+
+`pgtp_editor/schema_learning/storage.py:27` holds `CURATED_BUNDLED_VERSION = "1.2"`, and `pgtp_editor/resources/curated.xsd:2` / `docs/curated_20260807.xsd:2` both carry `<!-- PGTP Editor curated schema v1.2 -->` (the two files are currently byte-identical — confirmed by `diff`, so the byte-identity test is green today). The 2026-08-07 re-curation changed the schema's *content* while leaving the marker where it was, because the marker is pinned by two assertions (`tests/schema_learning/test_storage.py:38`, `:44`) and moving it alone would have gone red. The result is one version number naming two different schemas — the same defect class as BUG-044's ALTER bookkeeping key: **one identity for two artifacts**.
+
+Why it is structural and not cosmetic: `CONSOLIDATED_SPEC.md` §29's still-OPEN "bundled-curated version upgrades" question is answered *by comparing versions* against the user's app-data `curated.xsd`, which `ui/xsd_controller.py::XsdController.ensure_bootstrap` (`:237`) seeds **only when absent** and never overwrites. An opt-in re-seed or merge cannot be built on a marker that does not move when the content does, and the failure mode is silent: a user keeps a schema with a truncated `dateTimeKind` while the app believes them current. (Per §11 this must not be redesigned around a content hash — a hash would also fire on the user's own hand edits, which are exactly what seed-only-when-absent protects.)
+
+Secondary root cause, same entry: `ui/xsd_controller.py:240` hardcodes the literal *"Prefers copying the schema bundled with the app (Curated v1.2)"* in `ensure_bootstrap`'s docstring, while the audit line it documents (`:257-260`) already interpolates `f"(v{CURATED_BUNDLED_VERSION})"`. That docstring is the drift-prone second copy of the version and is why the bump has a sixth site at all.
+
+**Proposed fix:** One coordinated change, **committed as a single commit** — two of the sites are byte-pinned to each other and two are test assertions, so any partial application fails the suite.
+
+| # | Site (verified) | Today | Must become |
+|---|---|---|---|
+| 1 | `pgtp_editor/schema_learning/storage.py:27` | `CURATED_BUNDLED_VERSION = "1.2"` | `CURATED_BUNDLED_VERSION = "1.3"` |
+| 2 | `pgtp_editor/resources/curated.xsd:2` | `<!-- PGTP Editor curated schema v1.2 -->` | `<!-- PGTP Editor curated schema v1.3 -->` |
+| 3 | `docs/curated_20260807.xsd:2` | the identical marker line | the identical `v1.3` edit, **same commit** — the two files must stay byte-identical or `test_shipped_curated_xsd_is_identical_to_the_newest_snapshot` fails. Do **not** rename the snapshot; the date identifies the *drop*, the marker identifies the *content* (§11) |
+| 4 | `tests/schema_learning/test_storage.py:38` | `assert CURATED_BUNDLED_VERSION == "1.2"` | `== "1.3"` |
+| 5 | `tests/schema_learning/test_storage.py:44` | `assert "v1.2" in text` | `assert "v1.3" in text` |
+| 6 | `pgtp_editor/ui/xsd_controller.py:240` | docstring: *"Prefers copying the schema bundled with the app (Curated v1.2); falls back to…"* | **delete the literal rather than retype it.** Reword to name no version, e.g. *"Prefers copying the schema bundled with the app (see `CURATED_BUNDLED_VERSION`); falls back to…"*. The audit line at `:257-260` already interpolates the constant, so the correct fix is to stop having a second copy — a `v1.3` here just re-arms the same drift |
+
+Gotchas:
+- **Do not touch the schema's XML body.** This bump is marker-and-constant only; the content change already shipped. Sites 2 and 3 must remain byte-identical after the edit (`diff pgtp_editor/resources/curated.xsd docs/curated_20260807.xsd` must be silent).
+- **Do not edit `docs/TEST_LOG.md:122`**, which records "Curated v1.2" as historical fact about the 2026-07-31 run. The log is append-only history, not a live reference.
+- `pgtp_editor/schema_learning/storage.py:53` reads `v{CURATED_BUNDLED_VERSION}` inside a **plain, non-f-string** docstring (verified: no `f` prefix at `:52`), so the braces render literally. §11 notes this is **deliberately not filed** — harmless and arguably clearer than a baked number. **Leave it alone**; do not "fix" it into an f-string in passing.
+
+**Two extra sites found during triage that the report did not enumerate** (neither blocks the suite; both are stale prose, so fix or route deliberately rather than by accident):
+- `pgtp_editor/resources/manual.md:1344` — *"copying the curated schema bundled with the editor (**Curated v1.2**, a real hand-commented starting schema)"*. This is a real user-facing statement of the version and it goes stale with this commit. Route to `manual-maintainer` after the fix lands (per the manual policy) rather than hand-editing it in the fix commit.
+- `tests/ui/test_curated_feed_wiring.py:93` — a **docstring** saying *"with the app-bundled Curated v1.2 resource present"*. The assertion two lines below (`:100`) correctly uses `CURATED_BUNDLED_VERSION`, so nothing goes red; the docstring is just a third stale copy. Recommended: make it version-agnostic (*"the app-bundled curated resource"*) in the same commit, for the same reason site 6 deletes rather than retypes.
+
+**Verified as needing NO change:** `tests/test_curated_xsd_packaging.py` hardcodes **no** version anywhere. Its failure message at `:87` uses the placeholder `'<!-- PGTP Editor curated schema vX.Y -->'` (literally `vX.Y`, deliberately generic), and `:125` asserts the version-agnostic prefix `"<!-- PGTP Editor curated schema v" in text`. That file stays green across the bump and should be left as-is.
+
+**Test impact:** Extend, do not add files.
+- `tests/schema_learning/test_storage.py` — sites 4 and 5 above are the whole change: `test_curated_bundled_version_constant` (`:37-38`) and `test_bundled_curated_xsd_text_is_present_and_versioned` (`:41-46`). Both are literal-pinned by design and are the intended tripwire, so updating them *is* the test work, not a workaround.
+- `tests/test_curated_xsd_packaging.py` — run it, change nothing. `test_shipped_curated_xsd_is_identical_to_the_newest_snapshot` (`:79`) is the guard that catches a partial application (site 2 without site 3); it must be green in the same commit.
+- `tests/ui/test_curated_feed_wiring.py` — `test_init_seeds_curated_from_bundled_and_audits_version` (`:91`) already asserts through the constant, so it passes unchanged; only its docstring is stale.
+- **New case worth adding** (the one thing no test asserts today, and the reason this bug existed): a guard in `tests/schema_learning/test_storage.py` that the XML marker in `resources/curated.xsd` and `CURATED_BUNDLED_VERSION` **agree** — parse `v(\d+\.\d+)` out of the marker line and assert it equals the constant. Without it, the next curation can once again move one and not the other, and only a human reading two files would notice. This is the structural fix; the two literal bumps are just today's values.
+
+**Spec impact:** None outstanding — this entry *implements* a ruling already folded into the spec. `CONSOLIDATED_SPEC.md` §11 (`:3280`, `:3288-3309`) states the governing rule ("the version marker is the SCHEMA's identity, not the app's release counter — any content change to the bundled `curated.xsd` bumps it"), enumerates the same six sites, and carries the 2026-08-10 Supersession Ledger row (`:11287`). The spec text at `:3280` currently notes parenthetically that *"the code still says `1.2` as this is written"* — **once this lands, that parenthetical is stale and should be dropped**; flag for `spec-maintainer` after the fix commit, and do not edit the spec from the fix pass. §29's upgrade question (`:11421-11426`) stays **OPEN** with its precondition now satisfied.
+
+---
+
+## BUG-260810143056: three caption-panel shortcuts are window-scoped by accident, contained only by an untested invariant
+**Status:** RESOLVED (`d0a0804`). Verified in the tree 2026-08-10, and the split the entry asked for was honoured rather than flattened: **Copy/Paste are scoped to the GRID** because their slots act on the grid's selection (`QShortcut(QKeySequence("Ctrl+C"), self._table, …)` / `…("Ctrl+V"), self._table, …`, `ui/caption_management_panel.py:1101-1108`), while **`Ctrl+G` stays parented to the PANEL** (`:1117`) — `WidgetWithChildrenShortcut` in all three cases, never `WidgetShortcut`, since the grid is a `QTableView` with an editing delegate and a widget-only scope would die the moment a cell editor took focus. **The Find-field behaviour is preserved and pinned by a real key-click test**: `tests/ui/test_caption_management_panel.py::test_ctrl_g_still_fires_from_inside_the_panels_find_field` drives it with `QTest`, so *find a caption, jump to its line in the XML without leaving the Find field* now works because of the panel parent rather than by accident of window scope. The untested invariant is replaced by `test_no_shortcut_the_panel_owns_is_window_scoped` (`:1460`), deliberately a `findChildren(QShortcut)` loop with **no allow-list**, so a fourth shortcut added here later fails immediately; `test_the_clipboard_shortcuts_are_scoped_to_the_grid_and_ctrl_g_to_the_panel` asserts each parent and context individually. The reasoning, including why `Ctrl+G` must not be "tidied" down to `self._table`, is recorded in the code at `:1079-1116`.
+**Reported:** 2026-08-10
+**Report (verbatim):** "Three shortcuts rely on Qt's implicit `WindowShortcut`. `caption_management_panel.py` sets `WidgetWithChildrenShortcut` on its `Ctrl+F`/`Ctrl+R` pair but **not** on `StandardKey.Copy`, `StandardKey.Paste` or `Ctrl+G` on the same panel. Measured: `Ctrl+G` fires from inside that panel's Find field. It is contained today only because a hidden `CenterStage` tab page's shortcuts do not fire — also measured, but an **unstated, untested invariant**. That is BUG-048's shape: correct behaviour resting on something nothing asserts."
+
+**Root cause:** `pgtp_editor/ui/caption_management_panel.py:1080-1082`, in the panel's construction:
+
+```python
+QShortcut(QKeySequence.StandardKey.Copy, self._table, self.copy_selection)
+QShortcut(QKeySequence.StandardKey.Paste, self._table, self.paste_into_new_value)
+QShortcut(QKeySequence("Ctrl+G"), self._table, self.go_to_line_current)
+```
+
+None of the three calls `setContext(...)`, so all three take Qt's default, `Qt.ShortcutContext.WindowShortcut` — **measured on this checkout** (each shortcut's `context()` printed after constructing the panel):
+
+| Shortcut | parent | context |
+|---|---|---|
+| `Ctrl+C` (`StandardKey.Copy`) | `QTableView` | `WindowShortcut` |
+| `Ctrl+V` (`StandardKey.Paste`) | `QTableView` | `WindowShortcut` |
+| `Ctrl+G` | `QTableView` | `WindowShortcut` |
+| `Ctrl+F` | `CaptionManagementPanel` | `WidgetWithChildrenShortcut` |
+| `Ctrl+R` | `CaptionManagementPanel` | `WidgetWithChildrenShortcut` |
+
+The last two rows are the pattern being violated: `caption_management_panel.py:1091-1098` sets the context explicitly on its own Find/Replace pair (and `find_replace_bar.install_focus_shortcuts` does the same at its six sites), precisely because a window-scoped focus shortcut would be ambiguous against the per-tab ones. The Copy/Paste/`Ctrl+G` trio predates that care and never got it.
+
+Two aggravating facts, both verified here:
+
+- **The `StandardKey` constructor installs every chord of the standard key on one `QShortcut`.** `QShortcut(StandardKey.Copy, ...).keys()` returns `['Ctrl+C', 'Ctrl+Ins', 'Copy']` (measured). So the window-scoped reach is not one chord each but the whole family — three window-scoped chords for Copy, three-to-five for Paste depending on the platform scheme. (`.key()` returns only `Ctrl+C`, which is why this reads as innocuous.)
+- **The containment is exactly the report's diagnosis.** `center_stage.py:255-257` adds the panel as a tab page and `:335`/`:604` call `setTabVisible(self.caption_management_tab_index, False)`; a `WindowShortcut` whose parent widget is not visible does not fire. Nothing in `tests/` asserts that, so the day the panel is shown alongside another tab (a split view, a dock, a detached window — all live directions in §12/§18) `Ctrl+G` and the clipboard family start firing from wherever focus happens to be in the window. `Ctrl+G` already fires from inside the panel's own Find field today, which is the visible tip of it.
+
+**Gate.** `Ctrl+G` is `DEC-012`: it has a command form — the click-only *Go to line in XML* context-menu entry on the same panel — so it gets **exactly one** keyboard host, and this `QShortcut` is it. That is satisfied already and must stay satisfied: **do not add a second host** while narrowing the scope. `Ctrl+C`/`Ctrl+V` are `Qt` + `DEC-009` (no command form; the Edit menu's Cut/Copy/Paste stubs were deleted under FQ-016). All three chords are already in `RESERVED_SEQUENCES`, so this fix does **not** change the reserved set and does not touch the ledger's Reserved column.
+
+**Proposed fix:** in `pgtp_editor/ui/caption_management_panel.py`, at the same construction site, state the scope on all three — keep the parents, keep the `QShortcut(seq, parent, slot)` shape, add nothing else:
+
+- `StandardKey.Copy` and `StandardKey.Paste`: parent stays `self._table`, add `.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)`. Correct scope because both slots act on the **grid's** selection (`copy_selection`, `paste_into_new_value` write `newValue` cells) — a copy fired while focus is in the Find field would silently copy the grid selection instead of the field's text, which is the current behaviour and is wrong.
+- `Ctrl+G`: parent it to **`self`** (the panel) rather than `self._table` and set `WidgetWithChildrenShortcut`, i.e. exactly the shape of the `Ctrl+F`/`Ctrl+R` pair three lines below. This **deliberately preserves** the measured behaviour that `Ctrl+G` works from inside the panel's Find field — that is useful (find a caption, jump to its line) and it becomes *stated and tested* instead of an accident of window scope. Say so in a comment; a later reader must not "tidy" it down to the table.
+
+Gotchas:
+
+- **Keep a Python reference or a C++ parent for every `QShortcut`.** These three currently survive only because they are parented to `self._table`; if the `Ctrl+G` one is reparented to `self`, that is still a C++ parent and fine, but do not restructure into a bare local with no parent (`code_editor.py:990-996` documents this exact GC trap for `Ctrl+Shift+B`).
+- **Do not "fix" this by narrowing to `WidgetShortcut`.** The grid is a `QTableView` with an editing delegate; `WidgetShortcut` would die the moment a cell editor takes focus.
+- **Do not solve it by relying on the hidden-tab behaviour** — the point of the entry is to stop resting on it.
+- Import note: `Qt` is already imported in this module (used at `:1005` for `ContextMenuPolicy`), so no new import is needed.
+
+**Test impact:**
+
+- `tests/ui/test_caption_management_panel.py` — **extend, do not add a file.** `test_panel_owns_panel_scoped_focus_shortcuts_for_ctrl_f_and_ctrl_r` (`:1427`) is the precedent to copy verbatim in shape: walk `panel.findChildren(QShortcut)` and assert each one's `context()`. New cases: (1) every `QShortcut` the panel owns states a non-`WindowShortcut` context — write it as a loop over `findChildren(QShortcut)` with no allow-list, so a fourth window-scoped shortcut added later fails immediately; (2) `Ctrl+G` still reaches `go_to_line_current` with focus in the panel's Find field (the deliberately preserved behaviour), patching the slot; (3) Copy fires with focus in the grid and **not** with focus in the Find field. Existing behaviour cases at `:340-410` (`test_go_to_line_invokes_callback_with_row_line`, `test_copy_selection_produces_tsv`, the paste trio) call the slots directly and are unaffected.
+- **Assert `keys()`, not `key()`,** anywhere the `StandardKey` shortcuts are inspected — `key()` reports only `Ctrl+C` and would hide both this bug and BUG-260810140553's.
+- `QShortcut` does activate under `QT_QPA_PLATFORM=offscreen` provided the top level has been `show()`n (measured, BUG-056); `qtbot.addWidget` + `panel.show()` is enough here.
+- `tests/test_keybindings_ledger.py` — no assertion changes, but `docs/KEYBINDINGS.md` rows `:71` (`Ctrl+C`), `:73` (`Ctrl+G`), `:78` (`Ctrl+V`) each say *"implicit `WindowShortcut` (see Known gaps)"* in their Notes, and Known gap 2 (`:172-179`) must be struck. Update them in the same commit — the ledger's prose is not test-enforced, so nothing will catch it going stale.
+
+**Spec impact:** none for the *rule* — DEC-009/DEC-012 and §27 already require a stated scope, so this is code catching up to recorded design, not a divergence. After the fix, flag for `spec-maintainer` only if §12's caption-grid section names the chords' scope (it should now state grid-scoped Copy/Paste and panel-scoped `Ctrl+G`). `manual.md` documents the caption grid's chords around `:3903`; `manual-maintainer` should confirm the *"from the Find field"* nuance for `Ctrl+G` matches what ships.
+
+---
+
+## BUG-260810143057: the reserved-key reasons for `Ctrl+C`/`Ctrl+V` misdescribe why — user-facing text that omits the real host
+**Status:** RESOLVED (`d0a0804`). Verified in the tree 2026-08-10: both reasons now name Qt's built-in **and** the caption grid — `ui/shortcut_registry.py:334` (*"Copy — Qt's built-in inside every editor widget, and a shortcut on the Caption Management grid (§26/§27)"*) and `:337`, whose text additionally keeps the Raw XML read-only-hint clause. **`Ctrl+X` is byte-identical to before and that is asserted, not merely left alone**: nothing in the app hosts a Cut shortcut, so *"a Qt built-in"* is the whole truth there and adding a host for symmetry would make user-facing text a different kind of wrong (`:329-333` records this; `tests/ui/test_shortcut_registry.py::test_the_clipboard_reasons_name_both_hosts_and_leave_ctrl_x_alone` asserts the exact string and that `"grid" not in cut`). The same test asserts `copy != paste` — two operations, two reasons, per DEC-014, never one merged "the clipboard chords" sentence.
+**Reported:** 2026-08-10
+**Report (verbatim):** "`RESERVED_SEQUENCES`' reasons for `Ctrl+C`/`Ctrl+V` are incomplete. Both say *"a Qt built-in inside every editor widget"*; both **also** have a real `QShortcut` host. That string is what the user is shown when the dialog refuses the key, so it is user-facing text that misdescribes why."
+
+**Root cause:** `pgtp_editor/ui/shortcut_registry.py:307-309`:
+
+```python
+"Ctrl+C": "Copy — a Qt built-in inside every editor widget (§26/§27)",
+"Ctrl+X": "Cut — a Qt built-in inside every editor widget (§26/§27)",
+"Ctrl+V": "Paste — a Qt built-in inside every editor widget (§26/§27)",
+```
+
+These strings are not comments: `refusal_for()` (`:454-472`) interpolates them into the message the Customize Shortcuts dialog shows when it refuses a key, and `RESERVED_BINDINGS` (`:382-385`) turns each into the greyed row's *reason* column — FQ-012 settled decision 1 chose read-only reserved rows precisely so the user is told **why**. For `Ctrl+C` and `Ctrl+V` the stated why is incomplete: besides Qt's widget built-in there is a real, app-owned host — `caption_management_panel.py:1080-1081` binds `StandardKey.Copy`/`StandardKey.Paste` on the caption grid to `copy_selection`/`paste_into_new_value`. `Ctrl+X` is **not** affected: nothing in the app hosts a Cut shortcut, so its string is accurate and must not be changed for symmetry.
+
+The precedent that this class of string gets fixed rather than tolerated is `Ctrl+Alt+F`: `tests/ui/test_shortcut_registry.py:388` (`test_the_format_selection_reason_names_its_shortcut_hosts`) exists because that reason *"used to say only 'a context-menu command'"* while the chord additionally had `QShortcut` hosts. Same defect, same remedy.
+
+**Proposed fix:** in `pgtp_editor/ui/shortcut_registry.py`, rewrite only the `Ctrl+C` and `Ctrl+V` values so each names **both** hosts and keeps the consequence sentence that already justifies the reservation. Shape (wording is the implementer's, these two facts are not):
+
+- `Ctrl+C`: *"Copy — Qt's built-in inside every editor widget, **and** a shortcut on the Caption Management grid (§26/§27)"*.
+- `Ctrl+V`: *"Paste — Qt's built-in inside every editor widget, **and** a shortcut on the Caption Management grid; the Raw XML editor also refuses it with the read-only hint in Caption Mode (§26/§27)"*.
+
+Gotchas:
+
+- **Keep the `(§26/§27)` citation suffix** — every value in the dict carries one and the reader/tests rely on the shape.
+- **Leave `Ctrl+X` alone** and leave the block comment at `:303-306` (which explains the FQ-016 stub deletion) intact; it is still the origin of the reservation.
+- **Do not merge the two rows into one clipboard statement.** DEC-014's "two operations, two reasons" rule is asserted for `Ctrl+Z`/`Ctrl+Y` (`tests/ui/test_shortcut_registry.py:360`) and applies here for the same reason — Copy and Paste are different operations with different surfaces.
+- **Sequencing:** BUG-260810140553's Part 1 adds `Ctrl+Insert`/`Shift+Insert`/`Shift+Delete` rows to this same block, and those new rows' reasons should be written in the shape this entry establishes. If both are implemented in one pass, edit the block once. If this one lands first, its wording is the template.
+
+**Test impact:**
+
+- `tests/ui/test_shortcut_registry.py` — **extend**. Copy the shape of `test_the_format_selection_reason_names_its_shortcut_hosts` (`:388`) into a new case asserting the `Ctrl+C` and `Ctrl+V` reasons each mention the caption grid **and** the widget built-in, and that `RESERVED_SEQUENCES["Ctrl+C"] != RESERVED_SEQUENCES["Ctrl+V"]`. `test_reserved_sequences_encode_what_section_27_pins` (`:127`) only asserts non-empty reasons and needs no change.
+- `tests/ui/test_customize_shortcuts_dialog.py` — check whether any case asserts a reserved reason string literally before editing (the dialog renders these); it is the other consumer.
+- No change to `tests/test_keybindings_ledger.py`: the Reserved **set** is untouched, and the ledger's own Notes for `:71`/`:78` already name the caption-grid host correctly (the ledger is *ahead* of the code here — which is the tell that this is a real gap, not a documentation preference).
+
+**Spec impact:** §27's reserved-key table states the clipboard stance as *"`Ctrl+C` · `Ctrl+X` · `Ctrl+V` | Qt built-ins **inside** the editor widgets"* (`CONSOLIDATED_SPEC.md:10804`, and the FQ-012 Ledger row at `:10968`) — the same omission, in the source the code was transcribed from. Flag for `spec-maintainer` after the fix lands; do not edit the spec from the fix pass. `manual.md:4163`'s non-rebindable table has the same row and needs `manual-maintainer`.
+
+---
+
+## BUG-260810143058: `Ctrl+W` is dead-but-unreserved — and the ledger, the manual and the code disagree about whether that is a bug
+**Status:** RESOLVED (`55c2538`) — **test-only, per the owner's ruling: the report's premise was rejected.** Verified in the tree 2026-08-10: `Ctrl+W` and `Ctrl+O` stay **assignable** and are deliberately absent from `RESERVED_SEQUENCES`. They are not in `Ctrl+S`'s state — `Ctrl+S`/`Ctrl+Shift+S` are reserved because FQ-020 removed the *capability*, whereas `Ctrl+W`'s reason is narrower (this app closes six different things, so no single "close" is the obvious default), which argues against a default and not against a user who knows which close they mean; `manual.md` invites the user to assign both. The fix is the missing assertion, because **an unreserved-on-purpose chord needs a test exactly as a reserved one does — the absence of that assertion is what let a deliberate decision be filed as an oversight**: `tests/ui/test_shortcut_registry.py::test_ctrl_w_and_ctrl_o_stay_assignable_on_purpose` (`:395`) asserts, for both chords, `chord not in RESERVED_SEQUENCES`, `reserved_reason(chord) is None` and `refusal_for("file.close", chord) is None`, with the full reasoning in its docstring. `docs/KEYBINDINGS.md` Known gap 4 is struck through and marked **CLOSED** (`:192`), and `Ctrl+W`'s ledger row (`:120`) records the ruling plus the pointer to the test that defends it.
+**Reported:** 2026-08-10
+**Report (verbatim):** "`Ctrl+W` is dead but unreserved. It was unbound app-wide on 2026-08-09 for the same reason as `Ctrl+S`, but only `Ctrl+S`/`Ctrl+Shift+S` were written into `RESERVED_SEQUENCES` — so `Customize Shortcuts…` can quietly reverse a deliberate decision."
+
+**Root cause — and the finding is that the report's premise does not hold: `Ctrl+W` was NOT unbound for the same reason as `Ctrl+S`, and the app currently states, in the manual, that it is deliberately free to assign.** Verified in three places:
+
+- `pgtp_editor/ui/shortcut_registry.py:204-212` reserves `Ctrl+S`/`Ctrl+Shift+S` with the reason *"deliberately unbound app-wide — every save is a named Deployment menu click (§27)"*. That is a **capability** decision (FQ-020: there is no save gesture anywhere, so no command may ever sit on those chords).
+- `pgtp_editor/ui/main_window.py:3068-3073`, at `close_action = menu.addAction("Close")`, gives a **different** reason: *"NO `Ctrl+W` (owner decision, 2026-08-09), for the same reason `Ctrl+O` lost its binding: this app closes projects, `.pgtp` documents, PHP tabs, DDL object tabs, the XSD tab and console tabs, so one `Ctrl+W` has to pick which 'close' it means — and the one it meant was the rarest, closing the whole project."* That is a **default-binding** decision: the chord is ambiguous *as a default*, not forbidden.
+- `pgtp_editor/resources/manual.md:3850` states the consequence to the user outright: *"**Ctrl+O** / **Ctrl+W** — **Nothing.** Both were unbound rather than moved, and both are free for you to assign (see below)"*, and `:4066` expands it (*"Ctrl+W is in exactly the same position"* as `Ctrl+O`). `tests/ui/test_launcher_dialog.py:627` records the same pairing.
+
+So `Ctrl+W` is unreserved **on purpose**, paired with `Ctrl+O` — which is also unreserved, and which the ledger's Known gap 4 does not mention at all. Reserving `Ctrl+W` alone would (a) contradict a documented invitation to the user, and (b) split a deliberately symmetric pair. `RESERVED_SEQUENCES`' own docstring (`:190-201`) draws exactly this line: reserved means *"something the dialog does not own already answers it (or the spec pins it as deliberately dead)"* — and nothing answers `Ctrl+W`, while "pinned dead" is a stronger claim than the 2026-08-09 decision made.
+
+**Two things ARE wrong, and they are both documentation:**
+
+1. **Known gap 4 in `docs/KEYBINDINGS.md:184-187` is itself incorrect** — it asserts the `Ctrl+S` rationale for `Ctrl+W` and calls the non-reservation an oversight. The ledger's machine-checked columns are right (`:116` says Reserved `no`, matching the code); only its prose is wrong, and prose is the part no test covers. The `Ctrl+W` row's *gate* token is also arguable: `dead` reads as "deliberately answered by nothing, app-wide" — true for `Ctrl+S`, but `Ctrl+W` is "no default, freely assignable", which the gate vocabulary at `:47-57` has no token for.
+2. **`pgtp_editor/ui/main_window.py:3074-3077` is stale.** It says *"This does NOT touch `CodeEditorDialog`'s own `Ctrl+W`, which is a dialog-local Cancel bound as a `QShortcut`"* — but `code_editor.py:979-985` removed exactly that (*"NO `Ctrl+S` / `Ctrl+W` (owner decision, 2026-08-09) — this dialog was the last carve-out for either chord"*), and `manual.md:3978` agrees the dialog no longer answers them. Grepped: no `Ctrl+W` binding exists anywhere in `pgtp_editor/`. So the comment describes a shortcut that does not exist and would send the next reader looking for it.
+
+**Proposed fix — the code change is a comment, and the direction needs a ruling. OWNER CALL, do not decide it in an implementation pass.**
+
+The question, self-contained: **is `Ctrl+W` (and `Ctrl+O`) "pinned dead like `Ctrl+S`" or "no default, yours to assign"?** They cannot be both, and the app currently ships the second answer while the ledger claims the first.
+
+- **Recommendation: keep them assignable** (i.e. no change to `RESERVED_SEQUENCES`). The 2026-08-09 reason was that no single "close" is the obvious default — that is an argument against a *default*, not against a user who knows which close they want. `Ctrl+S` is different in kind: FQ-020 removed the *capability* of a save gesture, so a command on `Ctrl+S` would contradict the design rather than exercise it. Reserving `Ctrl+W` would also cost the customize dialog two of the handful of genuinely free, conventional chords it can offer.
+- **If the owner instead rules "pinned dead":** then `Ctrl+O` must be reserved in the same commit (the pair is stated as symmetric in two places), both reasons must say *which* decision pins them (2026-08-09, ambiguous-close), `manual.md:3850` and `:4066` must be rewritten by `manual-maintainer` because they currently invite the opposite, and `KEYBINDINGS.md:116` needs a new `Ctrl+O` row plus a Reserved flip on both.
+
+**Regardless of the ruling, two edits are unblocked and should just be made:**
+
+- `pgtp_editor/ui/main_window.py:3074-3077`: delete or correct the stale `CodeEditorDialog`-owns-`Ctrl+W` paragraph, replacing it with a pointer to `code_editor.py:979-985` (the dialog's carve-out was removed the same day). Nothing functional changes.
+- `docs/KEYBINDINGS.md`: Known gap 4 must be rewritten to record the *actual* position — unbound with no default, deliberately assignable, paired with `Ctrl+O` — or struck and folded into the `Ctrl+W` row's Notes, with a `Ctrl+O` row added for the twin. **Not this triager's edit** (the ledger is outside my write scope) and not a code fix; whoever resolves this entry owns it.
+
+**Test impact:**
+
+- `tests/ui/test_shortcut_registry.py` — if the recommendation stands, add a case that **pins the distinction** so the next sweep does not re-file this: `"Ctrl+W" not in RESERVED_SEQUENCES and "Ctrl+O" not in RESERVED_SEQUENCES`, with the docstring carrying the reason (no default because "close" is ambiguous; not a capability ban like `Ctrl+S`), sitting next to `test_reserved_sequences_encode_what_section_27_pins` (`:127`). An unreserved-on-purpose chord needs an assertion exactly as much as a reserved one — that asymmetry is why this reached the queue. Note `test_reserved_lookup_is_spelling_insensitive` (`:150`) already relies on an unreserved chord (`reserved_reason("Ctrl+U") is None`).
+- `tests/ui/test_customize_shortcuts_dialog.py:20`, `:99`, `:122`, `:159`, `:219` and `tests/ui/test_shortcut_registry.py:32`, `:95`, `:102`, `:118`, `:216` all use `CommandBinding("file.close", …, "Ctrl+W")` as a **fixture default** and assign/steal it freely. If the owner rules "reserve", every one of those becomes a refusal and the fixtures must change chord — that blast radius is itself an argument for the recommendation, and whoever files the decision should say so.
+- `tests/ui/test_menus.py:49` asserts `"Close": ""` (no shortcut on the action) — unaffected either way, and it is the assertion that keeps the *default* unbound. **That file is in a conflicted (`UU`) state in the working tree; re-read before touching it.**
+- `tests/test_keybindings_ledger.py` — `test_rows_claiming_a_chord_is_dead_are_bound_by_nothing` (`:640`) covers the `Ctrl+W` row today and stays green under the recommendation. Under "reserve", `test_every_reserved_sequence_has_a_row_marked_reserved` (`:508`) forces the ledger flip in the same commit.
+
+**Spec impact:** likely a real gap. §27 pins `Ctrl+S`/`Ctrl+Shift+S` as deliberately dead; whether it states the weaker `Ctrl+O`/`Ctrl+W` position ("no default, assignable") needs checking, and if it does not, that omission is what let the ledger sweep read them as the same case. Flag for `spec-maintainer` once the ruling lands — the spec should carry **both** categories with the distinction named, since the queue has now spent one triage pass rediscovering it.
+
+---
+
+## BUG-260810143059: Qt's Linux-only editing chords reach the editors unfiltered — `F14` bypasses the app's undo routing, `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are live on one platform only
+**Status:** RESOLVED (`55c2538`) — **and the proposal below was PARTLY REJECTED by the owner; the shipped shape differs deliberately, so do not re-file the difference.**
+
+Verified in the tree 2026-08-10.
+
+**Rejected half — `F14`/`F16`/`F18`/`F20`.** There is **no `"F14": SUPPRESSED` row and no reservation**, and that is the ruling, not an omission. The owner granted a **physically-absent-keys carve-out**: the uniformity rule does not reach keys no keyboard in use actually has, and adding a suppression row would *state* that the rule reaches absent keys. `F14`'s undo-routing bypass — on the KDE scheme it runs `QPlainTextEdit`'s native undo inside every editing surface, with no re-emission into snapshot history, no read-only refusal and no journal line, i.e. exactly BUG-056's defect — is **knowingly accepted as unreachable**, recorded in the block comment above `EDITOR_CHORDS` (`ui/shortcut_registry.py:462-477`) together with the hardware trigger for revisiting it: *if a keyboard with an `F13`…`F20` block ever comes into use this is a live defect again, and the carve-out is what must be revisited — not the rule.* Mirrored in `docs/KEYBINDINGS.md:138`, `:220-222`. Do not re-file while the carve-out stands.
+
+**Accepted half, and stronger than proposed — `Ctrl+D`/`Ctrl+K`/`Ctrl+U` were BOUND, not reserve-only.** The owner was offered reserve-only as a cheaper floor and rejected it: reserving protects the customize dialog while leaving the editing behaviour split, i.e. a stated rule half-applied, which is what the next sweep re-files. These are letter chords on keys every keyboard has, so the carve-out cannot reach them. They are `EDITOR_CHORDS` rows `DELETE_CHARACTER` / `DELETE_TO_END_OF_LINE` / `DELETE_LINE` (`ui/shortcut_registry.py:504-506`), reserved with reasons naming this app as the implementer (`:392-403`), and app-implemented at **all six** editing surfaces through the single `classify_editor_chord` → `apply_editor_operation` path — so **Windows gains three gestures it never had**. The accepted cost is recorded at `:388-391`: the app now owns these primitives' edge cases forever, settled in one place (`code_editor.apply_editor_operation`).
+
+**Three collateral decisions from this fix and BUG-260810140553's Part 2, recorded because each is a thing someone could mistake for an oversight:**
+
+1. **`EDITOR_UNDO_REDO_CHORDS` was RENAMED to `EDITOR_CHORDS`** (and `classify_undo_redo_chord` → `classify_editor_chord`) rather than joined by a second table. A second matcher means two calls per surface, and a surface that answers one set and forgets the other **is** BUG-048/049/053/056 — one table, one matcher, **one call site per surface** is what keeps "every intercepted chord is reserved" checkable in one place and makes a newly added chord automatically answered at all six surfaces. The names are wider; the invariant is unchanged. Reasoning at `ui/shortcut_registry.py:411-420`. The table still maps chord → **operation**, never chord → `True`.
+2. **`Ctrl+U` and `Ctrl+K` were the free-chord FIXTURES in two test files** (sixteen sites across `tests/ui/test_shortcut_registry.py` and `tests/ui/test_customize_shortcuts_dialog.py`). Binding them made them reserved, so the standing example **moved to `Ctrl+M`/`Ctrl+J`** with a docstring saying why and what to do next time (`test_shortcut_registry.py:165-172`: *"the assertions were not weakened, which is the only wrong way to answer this kind of failure. If a future ruling claims `Ctrl+M`, move the example again."*). No assertion was relaxed to accommodate the binding.
+3. **The line-editing edge cases are now the app's answers, not Qt's, and each is asserted** (`tests/ui/test_code_editor.py:571-700`): `Ctrl+U` on a last line with no trailing newline takes the **preceding** newline, so no empty last line is left behind; `Ctrl+K` at the end of a line joins the next line (and is a no-op at document end rather than an empty undo step); `Ctrl+D` at document end returns `False` and **never opens an edit block**; all three delete exactly the selection when one exists — including `Ctrl+U`, which would otherwise discard a whole line the selection only partly touched; and `Ctrl+U` is **one undo step**, text and newline inside a single edit block, because the ruling requires a destructive gesture to be one `Ctrl+Z`. The four absent-key chords are also asserted absent: `classify_editor_chord` returns `None` for `F14`/`F16`/`F18`/`F20` (`:565-567`), which pins the carve-out without asserting the rule reaches them.
+**Reported:** 2026-08-10
+**Report (verbatim):** "Qt's Linux-only chords reach the editors unfiltered. The KDE scheme binds `F14` (Undo), `F16`/`F18`/`F20`, `Ctrl+Shift+Insert`, `Ctrl+D`, `Ctrl+K` and `Ctrl+U` inside every text widget where Windows binds nothing. **`F14`'s native undo bypasses the app's undo routing entirely** — a correctness gap, though no keyboard in use has an F13–F20 block. `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are reachable today and simply do nothing on Windows."
+
+**Scope — read this first.** The clipboard half of the report (`Ctrl+Shift+Insert`, `F16`, `F18`, `F20`) belongs to **BUG-260810140553** and is its Part 2; that entry has the measured clipboard table and the framing for the ruling. **This entry is the remainder: `F14` (Undo) and `Ctrl+D`/`Ctrl+K`/`Ctrl+U`.** They are split off deliberately — a different mechanism (`EDITOR_UNDO_REDO_CHORDS` rather than the caption grid's `StandardKey` hosts) and, for `Ctrl+D`/`Ctrl+K`/`Ctrl+U`, a different question (plain editing keys, not a command family).
+
+**Root cause:** nothing in the app filters these chords, and the platform asymmetry comes straight out of Qt's per-scheme table (measured; `docs/KEYBINDINGS.md` Appendix A `:132-157` is the record, and its `test_appendix_a_matches_the_running_keyboard_scheme` re-measures the running scheme):
+
+| `StandardKey` | Windows scheme | Linux/KDE scheme | Effect of the app's silence |
+|---|---|---|---|
+| `Undo` | `Ctrl+Z`, `Alt+Backspace`, `Undo` | `Ctrl+Z`, **`F14`**, `Undo` | `F14` runs `QPlainTextEdit`'s **native** undo on Linux |
+| `Delete` | `Delete` | `Delete`, **`Ctrl+D`** | deletes a character on Linux, nothing on Windows |
+| `DeleteEndOfLine` | *(nothing)* | **`Ctrl+K`** | deletes to end of line on Linux, nothing on Windows |
+| `DeleteCompleteLine` | *(nothing)* | **`Ctrl+U`** | deletes the line on Linux, nothing on Windows |
+
+(a) **`F14` is the correctness gap, and it is BUG-056's defect exactly.** `shortcut_registry.EDITOR_UNDO_REDO_CHORDS` (`:356-362`) lists five chords — `Ctrl+Z`, `Ctrl+Y`, `Ctrl+Shift+Z`, `Alt+Backspace`, `Alt+Shift+Backspace` — and `code_editor.classify_undo_redo_chord` (`code_editor.py:114-131`) is the single matcher every editing surface consults (six call sites: `code_editor.py:1045`, `xml_editor.py:1210`, `php_file_tab.py:406`, `ddl_editor_panel.py:164`, `ddl_object_editor.py:916`, `sql_console_panel.py:610`). `F14` is not in that table, so on Linux it falls through to Qt and undoes the buffer **without** the routing DEC-014 exists to guarantee: no re-emission into the project's snapshot history, no read-only refusal in Caption Mode, no journal line. That is precisely what BUG-056 fixed for `Ctrl+Shift+Z` (which Qt binds as native Redo on both schemes and every surface now actively intercepts). Reachability is the only difference: no keyboard the owner uses has an `F13`…`F20` block, so this is a correctness gap rather than a live bug.
+
+(b) **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are the same platform split with a lower stake but a higher blast radius.** They are letter chords, so unlike the F-keys they are physically reachable on every keyboard: an editor on Linux deletes a character / to end of line / the whole line, and the identical keystroke on Windows does nothing. Nothing in the app binds them (grepped) and none is in `RESERVED_SEQUENCES`, so `Customize Shortcuts…` will hand any of the three to a menu command — which would then be **swallowed by every editor on Linux and work fine on Windows**, the nastiest shape available: a rebinding that works on one of the owner's two machines. BUG-260810140553 already flagged `Ctrl+D` as *"the highest-risk of the remaining splits"* for this reason.
+
+**Proposed fix — direction is an OWNER CALL, per family. Do not decide it in an implementation pass; the mechanism below is settled either way.**
+
+The rule (`CLAUDE.md`, owner 2026-08-10: a chord means the same thing on every system, so the app binds or suppresses on both) leaves two legal outcomes, and the two families do not obviously get the same one:
+
+- **`F14` — recommendation: SUPPRESS on both.** This is the `Alt+Backspace` case, not the `Ctrl+Shift+Insert` case: a legacy dedicated-key spelling with no presence in any menu, manual page or shortcut table, on a key essentially no keyboard in use has. Binding it on Windows would be *inventing* a keybinding; DEC-015 already settled one chord per operation (undo is `Ctrl+Z`, full stop). Suppressing also closes the routing bypass, which binding-as-undo would equally close — so the choice is between two correct answers, and suppression is the one consistent with the pair already suppressed for the same reason. **If the owner instead rules "bind it as undo everywhere"**, the only change is the operation constant (`UNDO` instead of `SUPPRESSED`); the mechanism is identical.
+- **`Ctrl+D`/`Ctrl+K`/`Ctrl+U` — genuinely open, and the two halves can be answered separately.** These are *editing behaviours*, not commands: Emacs/readline line-editing that a Linux user may well expect from muscle memory, and that BUG-260810140553's reasoning about `Ctrl+Shift+Insert` applies to ("live on Linux today; suppressing removes a working gesture"). Three outcomes are defensible: **suppress on both** (uniform, costs Linux users three working keys); **bind on both** (uniform, adds three real editing gestures on Windows — the most work, and it means the app owns delete-line behaviour it currently gets free); or **reserve-only** (accept the platform difference for a plain built-in editing key, but stop `Customize Shortcuts…` from handing the chord to a command — the split stays, the *silently-broken rebinding* goes away). **Recommendation: reserve-only as the floor, done regardless, and ask the owner only about suppress-vs-bind on top.** Reserving is cheap, purely subtractive and removes the one outcome that is unambiguously a bug.
+- **Note for whoever files the ruling:** `KEYBINDINGS.md:19-23` and its gate token `DEC-015` state the rule without a carve-out for physically-absent keys. If the owner wants such a carve-out (*"the uniformity rule does not reach keys no keyboard has"* — which would retire `F14`, `F16`, `F18`, `F20` in one line), that carve-out must be **stated in the spec**, or the next sweep re-files all four. BUG-260810140553's Part 2 raises the identical question for the clipboard trio; **the two entries should be ruled together, in one decision, or the answers will diverge.**
+
+**Mechanism, settled whichever way it is ruled — reuse, do not reinvent:**
+
+- **`F14`:** add `"F14": SUPPRESSED` (or `UNDO`) to `shortcut_registry.EDITOR_UNDO_REDO_CHORDS`. That is the whole functional change: `classify_undo_redo_chord` builds its lookup from that dict via `QKeySequence(sequence)[0]` → `(key, keyboardModifiers)` (`code_editor.py:103-111`), so a bare `F14` keys correctly as `(Key_F14, NoModifier)` and all six surfaces pick it up with no per-surface edit. **Verify the `QKeySequence("F14")[0]` round-trip on the actual PySide6 build before assuming it** — that is the one mechanical risk, and it is a two-line check.
+- **Every non-None answer must be consumed by its caller**, including `SUPPRESSED` — that is stated at `code_editor.py:115-120` and is what makes the key dead on Linux instead of falling through to Qt. Check each of the six call sites individually; they are not identical (`ddl_editor_panel.py:164` discards the return value, `xml_editor.py:1210` branches on Caption Mode).
+- **Preserve the `ShortcutOverride` branch** (`code_editor.py:1047-1048`) for any chord added, or a window-level shortcut can still outrank the editor.
+- **`RESERVED_SEQUENCES` must gain a row for every chord added to `EDITOR_UNDO_REDO_CHORDS`** — `tests/ui/test_shortcut_registry.py:318` asserts that invariant (and that the key is already in canonical spelling: `normalize_sequence("F14") == "F14"`, `"Ctrl+D"`, `"Ctrl+K"`, `"Ctrl+U"` all pass, verified against `_normalize_key`).
+- **TRIPWIRE:** `tests/ui/test_shortcut_registry.py:150` (`test_reserved_lookup_is_spelling_insensitive`) asserts **`reserved_reason("Ctrl+U") is None`** — it uses `Ctrl+U` as its example of a *free* chord. Reserving `Ctrl+U` reddens that test, and the fix is to move the example to a chord that is still free (**not** to weaken the assertion). Easy to mis-diagnose as a regression.
+- **The ledger must move in the same commit:** `test_every_reserved_sequence_has_a_row_marked_reserved` (`tests/test_keybindings_ledger.py:508`) makes `RESERVED_SEQUENCES` and the Reserved column one set, and `test_editor_chord_set_rows_state_the_operation_and_every_surface` (`:532`) requires any new `EDITOR_UNDO_REDO_CHORDS` row to have a `KEYBINDINGS.md` row naming its operation **and all six surfaces**. So each new chord needs a full new ledger row (`Ctrl+D`/`Ctrl+K`/`Ctrl+U` have none today; `F14` appears only in Appendix A `:134`). Known gap 5 (`:188-196`) must be struck or narrowed to whatever the ruling leaves open.
+- **Do not make any of it `sys.platform`-conditional.** The uniformity is in the behaviour; the code binds or suppresses unconditionally and is simply redundant on the scheme where Qt already agrees.
+
+**Test impact:**
+
+- `tests/ui/test_code_editor.py:432-442` — the DEC-014 fixed-set test for `classify_undo_redo_chord`; extend it with the new chord(s), asserting the classification and that the event is **accepted**. This is the file that owns the matcher.
+- `tests/ui/test_shortcut_registry.py` — extend `test_the_windows_only_native_undo_pair_is_reserved_and_stated_as_dead` (`:331`) or add its twin for the X11-only side; that test's shape (reserved + reason mentions the platform + `refusal_for` refuses it) is exactly right here. Plus the `Ctrl+U` tripwire fix at `:150`.
+- Per-surface suppression cases belong with the surfaces that already have undo/redo key cases (`tests/ui/test_xml_editor.py`, `tests/ui/test_php_file_tab.py`, `tests/ui/test_ddl_object_editor.py`, `tests/ui/test_sql_console_panel.py`, `tests/ui/test_ddl_editor_panel.py`) — **extend those, do not add a file.** For `xml_editor.py` specifically, `_is_text_modifying_key` (`:1179` area) is a second place `Ctrl+D`/`Ctrl+K`/`Ctrl+U` matter: in read-only Caption Mode they should raise the read-only hint on both platforms, and today they do not on either (they are not in its match set) while Qt happily edits on Linux if the editor is not actually `setReadOnly`. Worth a case.
+- `tests/test_keybindings_ledger.py` — no new assertions needed, but the ledger edits above are what keep it green.
+- **The suite cannot see this bug.** `QT_QPA_PLATFORM=offscreen` runs Qt's **Windows** scheme, so `F14`/`Ctrl+D`/`Ctrl+K`/`Ctrl+U` are unbound there and every Linux-only behaviour passes green either way. **Assert the app's handler ran / the event was consumed — never Qt's native answer, and never compare against `QKeySequence.keyBindings(...)`,** which returns different lists on CI and on the developer's desktop. `QShortcut` does activate offscreen provided the top level has been `show()`n (measured, BUG-056).
+
+**Spec impact:** flag for `spec-maintainer` after the ruling and the fix land; do not edit the spec from the fix pass. §27's undo/redo material states the `Alt+Backspace` pair's suppression and DEC-015's "redo is always `Ctrl+Y`" but says nothing about the X11-only `F14`, and §27's reserved-key table has no `Ctrl+D`/`Ctrl+K`/`Ctrl+U` row — both need the ruling's answer written down, in the same place as the `Alt+Backspace` reasoning so the two halves of the same rule are read together. If the owner grants the physically-absent-keys carve-out, that must be spec text, not a comment. `manual.md` needs `manual-maintainer` for the per-editor shortcut tables (`:3845` onwards) and the non-rebindable table (`:4163`) for any newly reserved chord.
+
+---
+
+## BUG-260810173246: the "attached but not linked" `.pgtp` state is now unreachable from creation — but the three consumers still trust `working_copy_path` blindly, and a half-link on disk is unrepairable
+**Status:** RESOLVED (`ce08fe1`, merged `73f55c9`). Verified in the tree 2026-08-10.
+
+**One predicate for all three readers.** `DdlProjectController._linked_working_copy(link=None)` (`ui/ddl_project_controller.py:807`) is the single definition of *"this project has a working copy"* — the recorded path **and** a real file behind it — consumed by all three readers: `resolve_pgtp_path` (`:855`), `auto_open_linked_pgtp` (`:512`) and `report_project_drift` (`:782`). Three separate `.exists()` checks would age apart, which is the same argument that made `check_out_pgtp` the one copier.
+
+**The parse-error misdiagnosis is gone.** `resolve_pgtp_path` only redirects when the working copy exists (`:854-858`); previously a recorded-but-missing path sent an open of the real, healthy source at a missing file and `load_project`'s `OSError` surfaced as a `PgtpParseError` dialog naming a file the user never asked to open. It now falls through and returns the source unchanged — no raise, no prompt, since this runs before every load including the projectless path.
+
+**A missing working copy self-heals on opening the source.** `link_pgtp_if_needed` (`:860`) gates on `_linked_working_copy(link) is not None` (`:901`), so a half-link is re-copied via `check_out_pgtp`. **The repair rule was checked against *"never silently relinked"* rather than assumed**: a `working_copy_path` with nothing behind it is not a link at all, and re-copying the *same* source restores fields rather than changing them, so `DEC-260810134914`'s "do not relax the guard" is intact — a whole link still returns early untouched. A **second guard** keeps a *different* source from ever being silently repointed: when the recorded `source_path` names another file than the one being opened, it returns early (`:904-907`), because that would be the forbidden relink, whole link or not. The reasoning is written into the docstring at `:877-897`, including why the repair does not prompt (a half-link written by a pre-`caed134` build has no UI gesture that could repair it).
+
+**The false journal line was reworded, not made true by a third writer.** `report_project_drift`'s *"checksum recorded"* line was false every time it appeared — nothing in that method calls `save_settings` — and now reads *"No .pgtp checksum recorded yet for this project (…) — recorded by the next Deploy .pgtp."* (`:791-795`). Rewording rather than persisting is the deliberate half: `open_project` writes nothing, and a **third writer of `settings.json` in the open flow is exactly how these records come to disagree**; `deploy_pgtp` remains the gesture that records a checksum (`:764-778`).
+**Reported:** 2026-08-10
+**Report (verbatim):** "A project created with a `.pgtp` attached in the New Project dialog ends up in an 'attached but not linked' state, and nothing tells the user which state they are in. `_new_project_pgtp_link(dialog)` returns `PgtpLink(source_path=...)` with `working_copy_path` and `last_known_source_checksum` empty; `DEC-260810134914` is now ANSWERED and the spec states the rule in `CONSOLIDATED_SPEC.md` §18.2 under 'The copy at accept — ONE copier, and the broken state is made UNREACHABLE'."
+
+**FIRST, THE PART THAT IS ALREADY DONE — do not re-implement it.** The four ruled items in the report (one copier with an explicit source path, copy before `ProjectSettings`, no-link-plus-Audit-line on failure, guard stays on the entry point) **all shipped in `caed134` "feat(FQ-035): the .pgtp is checked out at accept, through one copier"**, which is in the tree on `dev_review_01`. Verified by reading:
+
+- `pgtp_editor/ui/ddl_project_controller.py:132-167` — `check_out_pgtp(folder, source_path)`, a module-level function, is now **the one copier**, takes an explicit source path, raises `OSError` on an unreadable source, and adopts (never overwrites) an existing destination.
+- `:351-390` `create_project` — calls `self._check_out_attached_pgtp(dialog, folder)` at `:359`, **before** the `ProjectSettings(...)` construction at `:360`, and files the failure line only after `set_active_project` (`:384-385`) because a `[Project]` row emitted earlier is wiped by the project transition (FQ-019/BUG-042).
+- `:392-426` `_check_out_attached_pgtp` — returns `(PgtpLink(), "")` for no attachment, and on `OSError` returns `(PgtpLink(), "[Project] Could not copy the attached .pgtp …")`, i.e. **no link at all**.
+- `:796-812` `link_pgtp_if_needed` — still opens with `if self._folder is None or self._settings is None: return` then `if self._settings.pgtp.working_copy_path: return`; the guard survived the split, and the body is now a `check_out_pgtp` call.
+- `_new_project_pgtp_link` **no longer exists anywhere in the tree** (grepped); the report's `:127-155` citation describes the pre-`caed134` code.
+- Tests already pin all of it: `tests/ui/test_ddl_project_wiring.py:2098` (one copier), `:2127` (`test_an_unreadable_source_costs_the_link_not_the_project`, which asserts `load_settings(project_dir).pgtp == PgtpLink()` — this is the "failure path leaves NO `pgtp` link" test the report asks for; it exists), `:2154` (existing destination adopted), `:2178`, `:2198`.
+
+**Root cause (what is genuinely still open).** The ruling's own argument names three consumers that misbehave on a `PgtpLink` whose `working_copy_path` does not point at a real file (`CONSOLIDATED_SPEC.md:6192-6199`). `caed134` closed the **creation route** into that state; it did not touch any of the three consumers, so the state is still reachable by other routes and its consequences are unchanged. All line numbers are current `pgtp_editor/ui/ddl_project_controller.py`:
+
+1. **`resolve_pgtp_path` (`:763-778`) — the sharp edge, and it makes a half-link unrepairable.** `:776` is a pure string comparison — `if link.source_path and link.working_copy_path and str(path) == link.source_path: return link.working_copy_path` — with **no existence check on `working_copy_path`**. So an open of the real, perfectly valid source is redirected to a path that is not there. Traced downstream: `pgtp_document_controller.py:399` resolves first, `:412` calls `load_project(path)`, and `model/parser.py:77-85` converts the `OSError` into a `PgtpParseError` — so the user opens a healthy `.pgtp` and gets a **parse-error dialog naming a file they never asked for**, a missing file misdiagnosed as malformed XML, with the tree and tracked path left untouched (`pgtp_document_controller.py:451-457`). And because `link_pgtp_if_needed`'s guard (`:798`) sees the recorded `working_copy_path` and returns, **the recovery the ruling promises — "the user can still attach the file later by opening it" — is unavailable for exactly this state.** There is no UI gesture that repairs it; only hand-editing `settings.json`.
+2. **`auto_open_linked_pgtp` (`:483-513`) — the fallback is suppressed, not merely skipped.** `:493-497`: `if working_copy_path:` → `if Path(working_copy_path).exists(): self._open_pgtp_file(...)` → **unconditional `return`**. It does check existence (that much is better than the report assumes), but on a missing file it returns *inside* the `if`, so the project opens with **nothing loaded** and the "exactly one `.pgtp` in the folder" rescue branch (`:500-505`) — which would very often find the copy the user still has — never runs, silently.
+3. **`report_project_drift` (`:734-759`) — keys on `source_path` alone.** `:741` returns only when `source_path` is empty, never consults `working_copy_path`, so a project with no working copy still gets a drift verdict. Worse, the `last_known_source_checksum is None` branch (`:750-751`) emits *"Source .pgtp checksum recorded (…)"* while **nothing is saved** — `report_project_drift` never calls `save_settings`. That sentence is false every time it appears, and it is reachable for any project created by a build between `82f2be6`/`dd2a16c` (FQ-035 shipped) and `caed134` (this fix), whose `settings.json` on disk holds `source_path` with both other fields empty.
+4. **`offer_pgtp_deploy_on_close` (`:621-639`) and `deploy_pgtp` (`:814-847`) are NOT the problem — name them so nobody "fixes" them.** Both require `working_copy_path` *and* `source_path` (`:623`, `:823`) and both wrap the read in `except OSError` (`:627`, `:829`) — the close prompt silently skips, deploy shows a `Deploy Failed` critical box. Tolerant and non-crashing. Leave them alone.
+
+**Reachable routes into the state, now that creation is closed** (this is why it stays a defect and not a closed item): a `settings.json` written by a pre-`caed134` build; the user deleting or renaming the working copy inside the project folder; the project folder moved or copied to another machine (absolute paths are stored); a working copy on a volume/mount that is not present this session; `check_out_pgtp`'s adopt-an-existing-destination path followed by a later delete. §18.2's ruling is about **which states can exist**, not only about which gestures create them.
+
+**Proposed fix.** All in `pgtp_editor/ui/ddl_project_controller.py`; no signature changes leak outside the lane.
+
+1. Add one private predicate next to the link triangle, e.g. `def _linked_working_copy(self, link=None) -> "Path | None"` returning the `Path` only when `link.working_copy_path` is set **and** `Path(link.working_copy_path).exists()`. One definition, for the same reason there is one copier — three separate `.exists()` calls would age apart.
+2. `resolve_pgtp_path` (`:776`): redirect only when the working copy actually exists; otherwise **fall through and return `str(path)` unchanged**, so the open loads the real source. Do **not** raise, do not prompt — this method runs before every load and is on the projectless path too.
+3. `link_pgtp_if_needed` (`:798`): the guard becomes "already linked **to a working copy that exists**". This is **not a relaxation of "never silently relinked"** and the docstring (`:786-795`) must say why in one sentence: a recorded path with no file behind it is not a link, so re-linking is repair, not a silent overwrite. It still returns early for every genuinely linked project (the existing `:970` test `test_opening_a_second_pgtp_does_not_relink_an_already_linked_project` must stay green untouched). This is the change that restores the ruling's promised recovery path, and it is the one place where a reviewer could reasonably think DEC-260810134914's "do not relax the guard" is being violated — say explicitly in the comment that the ruling forbids relaxing it *for a link that is whole*, and cite the spec heading.
+4. `auto_open_linked_pgtp` (`:493-497`): on a recorded-but-missing working copy, file **one** Audit line (`[Project] The linked .pgtp working copy is missing (<path>) — the link will be re-created the next time you open the source.`) and then **fall through** to the candidate scan instead of returning. Move the `return` inside the `exists()` branch. Note the interaction: if the scan finds exactly one candidate and opens it, `link_pgtp_if_needed` (now repaired by step 3) relinks it — which is the intended self-healing, so put a comment there saying the two steps are one behaviour.
+5. `report_project_drift` (`:741`): return early unless the link is whole — `source_path` **and** an existing working copy. Kill the false *"checksum recorded"* branch (`:750-751`): either actually persist the checksum via `replace`/`save_settings` (matching `deploy_pgtp:837-846`, and `replace` is mandatory here — see the module docstring at `:66-73` about `sandbox_mode`), or reword it to *"no checksum recorded yet"*. **Do not add a third writer to `settings.json` in the open flow without checking `open_project`'s single-write discipline** (`create_project:374-376` is explicit that a third writer is how these come to disagree) — the safer half of the choice is the reword.
+6. Gotchas: `_shell.audit.addItem` rows are read in tests via `window.activity_panel.row_texts()`, not the Messages tab (see the `_journal_rows` helper at `tests/ui/test_ddl_project_wiring.py:2216`). Any new `[Project]` row filed during `create_project` must stay **after** `set_active_project` or the transition wipes it. No keyboard shortcut, no menu action and no dialog is added by this fix, so `docs/KEYBINDINGS.md` is untouched.
+
+**Explicitly NOT part of this bug:** the second half of FQ-035's remainder — the **accept-time advisory when the quality section is blank or untested** (`DEC-260810134915`) — is additive new surface and belongs to FQ-035's remaining feature scope, not here. (Finding, for whoever picks that up: it appears to have shipped in the same commit as `_report_quality_advisory` at `:428-444`, with tests from `tests/ui/test_ddl_project_wiring.py:2222` — so that item may need flipping to built rather than building.)
+
+**Test impact:** everything lives in `tests/ui/test_ddl_project_wiring.py` — **extend it, do not start a new file**; the `.pgtp`-link cluster is at `:952-1060`, drift at `:434-500`, auto-open at `:225-360`, the FQ-035 creation cluster at `:2098-2213`. New cases needed: (a) `resolve_pgtp_path` passes the source through unchanged when the recorded working copy has been deleted, and the open loads the source rather than showing a parse error; (b) opening the source on such a project **relinks** it and the working copy reappears, while (c) the existing already-linked no-relink assertion at `:970` still holds; (d) `auto_open_linked_pgtp` with a recorded-but-missing working copy and exactly one `.pgtp` in the folder opens that one and files the missing-working-copy Audit row; (e) `report_project_drift` on a `source_path`-only legacy link files no drift verdict and no false *"checksum recorded"* row; (f) a regression pin for the migration shape — a hand-written `settings.json` with `source_path` set and the other two fields empty (the pre-`caed134` on-disk artifact) opens cleanly and self-heals. The failure-path-leaves-no-link case the report asks to pin **already exists** at `:2127`; leave it as is.
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` §18.2 is **stale against the tree and should be corrected by `spec-maintainer`, not from the fix pass**. `:6155` and `:6162-6168` still carry "⏳ NOT YET BUILT, and this is the ONE hole left in shipped FQ-035 code" and cite `_new_project_pgtp_link` at `ui/ddl_project_controller.py:127-155`, a function that no longer exists; `:6201`/`:6207` likewise say the advisory does not ship. The ledger row at `:12047` ends with two "⏳ Still to build" clauses that `caed134` closed. Separately, the three consumer behaviours at `:6192-6199` are written as *arguments against a rejected option* — after this fix they become **stated requirements** (a link is only honoured when the working copy exists; a missing working copy is reported and self-heals on the next open of the source), and §18.2 should say so, since that is a genuine extension of the ruling to states the ruling only closed one route into.
+
+---
+
+## BUG-260810174126: Mode indicator labels bare mode name, should read "<Mode> mode"
+**Status:** RESOLVED (195449c)
+**Reported:** 2026-08-10
+**Report (verbatim):** "Mode panel should explicitely say \"Mode\" eg. \"Project mode\" instead of Project."
+
+**Root cause:** `pgtp_editor/ui/mode_indicator.py:64-68`, the `MAJOR_LABELS` dict — the single mapping every mode readout renders through — maps each major mode to a bare noun (`MODE_STANDALONE: "Standalone"`, `MODE_PROJECT: "Project"`, `MODE_MAINTENANCE: "Maintenance"`). `mode_text(major, minor)` (`:112-122`) looks the major up here (`MAJOR_LABELS.get(major, major)`, `:119`) and returns it verbatim (or `"<major> · <minor>"` when a minor mode is active). Both surfaces — the toolbar `ModeIndicator` panel and the status bar's mirror — render exactly this string via `set_mode`/`_render` (`:147-181`), so the panel reads a bare "Project" / "Standalone" / "Maintenance" with no "mode" word. `NO_MODE_LABEL = "No Mode"` (`:74`) already carries the word "Mode"; the reachable majors are the ones missing it. Note: the pre-FQ-028 status label used to read "Editing Mode" / "Caption Mode" (per the spec ledger at `CONSOLIDATED_SPEC.md:12058`), i.e. the "Mode" suffix existed before the FQ-028 rewrite dropped it — this restores the owner's expected wording.
+
+**Proposed fix:** Change only the three values in `MAJOR_LABELS` (`mode_indicator.py:64-68`) to append the word "mode". Nothing else in the module needs touching — `mode_text`, `_render`, and both surfaces already flow through this dict.
+- Casing: the report writes lowercase "mode" ("Project mode"). The existing labels are title-case single words and `NO_MODE_LABEL` is title-case "No Mode", so there is a mild inconsistency either way. Follow the report's literal intent: `"Standalone mode"`, `"Project mode"`, `"Maintenance mode"` (lowercase "mode"). This is a one-word wording choice, not a design decision — do NOT file an owner-decision for it; if the owner later prefers title-case "Mode" it is a trivial follow-up. State the casing chosen in the commit message so it is visible.
+- Do NOT touch `NO_MODE_LABEL` — it already reads "No Mode" and re-wording it ("No mode" for casing consistency) is out of scope for this report; leave it exactly as is.
+- Minor-mode shape is unaffected: with the change, an active minor mode renders as `"Project mode · Caption"` (the middle-dot join in `mode_text` is unchanged). This reads correctly; no extra work.
+- Gotcha: the launcher's own column headings ("Standalone" / "Project" / "Maintenance") are a SEPARATE mapping in `launcher_dialog` (see `tests/ui/test_launcher_dialog.py:103-125`) and are NOT the mode indicator. The report is about the mode panel/indicator only — do not rename the launcher columns.
+- No keyboard shortcuts are involved; the indicator is passive-only (no chord, no action). Ledger (`docs/KEYBINDINGS.md`) needs no change.
+
+**Test impact:** `tests/ui/test_mode_indicator_wiring.py` is the owner of the pure-label contract — extend it, do not add a file. Update the verbatim assertions: `:65` `mode_text(MODE_PROJECT) == "Project"` → `"Project mode"`; `:66` `mode_text(MODE_PROJECT, MINOR_CAPTION) == "Project · Caption"` → `"Project mode · Caption"`; and the host-wiring assertions `_both(window)` at `:122` (`("Maintenance", "Maintenance")`), `:139`/`:145` (`("Project", "Project")`), `:181` (`("Standalone", "Standalone")`) → the corresponding "<X> mode" strings on both surfaces. Also update the two other files that assert the bare labels verbatim against the live widgets: `tests/ui/test_status_bar_static.py:351` (`window._mode_label.text() == "Project"` → `"Project mode"`) and `tests/ui/test_main_window.py:762-763` (`_mode_label` and `toolbar_mode_indicator` both `"Project"` → `"Project mode"`). Leave `test_main_window.py:741-742` ("No Mode") unchanged — `NO_MODE_LABEL` is not being touched. No new test cases are needed beyond the wording updates; the label-mapping contract is the case.
+
+**Spec impact:** Diverges from `CONSOLIDATED_SPEC.md` §7 "The mode indicator" — the **Text shape** bullet at `:1689` gives the example `mode_text(major, minor)` → `"Project"` / `"Project · Caption"`, which the fix changes to `"Project mode"` / `"Project mode · Caption"`. Flag for `spec-maintainer` after the fix lands (update `:1689`). Also **manual impact**: `pgtp_editor/resources/manual.md` §606-618 describes the chip reading the major mode; it does not quote the exact "Project"/"Standalone" strings verbatim there, but the manual-maintainer should confirm the wording change is reflected wherever the chip's reading is illustrated. Do not edit spec or manual from the fix pass — route through `spec-maintainer` / `manual-maintainer` per policy. Independent of BUG-059 (launcher "No Mode" reachability): that bug concerns whether the "No Mode" state is reachable; this bug only changes the reachable majors' wording. The two do not conflict — "No Mode" already contains "Mode" and is left as is here.
+
+---
+
+## BUG-260810174459: New Project checks out the attached `.pgtp` but never opens it into the editor — auto-open runs on Open Project, not on Create
+**Status:** RESOLVED (`dadc5bc`, merged `df8d908`; verified in tree at `9c65a4c`)
+**Reported:** 2026-08-10
+**Report (verbatim):** "when adding a new project and selecting a pgtp after copying the file, it doesn't open it automatically."
+
+**Root cause:** `pgtp_editor/ui/ddl_project_controller.py`, `create_project` (`:351-390`). Creation now checks out the attached `.pgtp` into the project folder and records the link (`_check_out_attached_pgtp` at `:359`, via the one copier `check_out_pgtp`; the `PgtpLink` with a populated `working_copy_path` is saved at `:377`), then calls `set_active_project(folder, settings)` at `:378` and files its status/advisory/sandbox steps — **but it never calls `auto_open_linked_pgtp`.** The sibling path `open_project` (`:446-481`) does exactly what is missing: after `set_active_project` (`:468`) it calls `self.auto_open_linked_pgtp(folder_path, settings)` at `:481` (BUG-021) precisely so the linked working copy populates the editor without a manual File > Open. `create_project` was never given that call, so a New Project with an attached `.pgtp` ends with the file copied and linked on disk but nothing loaded in the editor — the reported symptom. The copied destination path is correct and present (`settings.pgtp.working_copy_path` points at the copy inside the folder, confirmed by `tests/ui/test_ddl_project_wiring.py:2198` `test_auto_open_loads_the_working_copy_written_at_creation`, which has to call `auto_open_linked_pgtp` MANUALLY after `create_project` to see the file open — i.e. the test documents that create alone does not open it). This is a purely missing call, not a wrong path and not a failing guard: `auto_open_linked_pgtp`'s `working_copy_path`-set-and-exists branch (`:493-496`) would open the copy immediately if invoked.
+
+**Proposed fix:** In `pgtp_editor/ui/ddl_project_controller.py`, make `create_project` auto-open the linked working copy after the project is active, mirroring `open_project`'s BUG-021 wiring — reuse `auto_open_linked_pgtp`, do NOT add a second load path.
+- Add `self.auto_open_linked_pgtp(folder, settings)` inside `create_project`. Placement matters: put it AFTER `set_active_project` (`:378`) so the project is active and the document-lane loader targets the right project; it can go right after `set_active_project`/`status`, before or after the audit/advisory/sandbox steps — those touch the Audit panel, not the editor, so ordering among them is not load-bearing for the open itself.
+- **The `on_ready` gotcha — respect the same double-load guard `open_project` uses.** `create_project` is reached from `new_project` (`:339-349`), whose `handle()` closure (`:342-345`) calls `create_project(dialog)` then runs the caller's `on_ready` if callable. `require_project` (`:531-532`) routes its "Create…" choice through `new_project(on_ready=...)`, and in that case the caller has its OWN `.pgtp` to load next — auto-opening the linked working copy here too would be the exact silent double-load race BUG-021's `open_project` guards against (`:471-481`: auto-open only when `on_ready` is None). Since `create_project` does not currently receive `on_ready`, the cleanest shape is to move the auto-open decision UP into `new_project`'s `handle()`: call `create_project(dialog)`, then `if callable(on_ready): on_ready()` `else: self.auto_open_linked_pgtp(self._folder, self._settings)` — the else-branch is the plain File > New Project path, matching `open_project`'s structure exactly. (Do NOT unconditionally auto-open inside `create_project`, or the `require_project` create path double-loads.) Note `create_project` stores `folder`/`settings` on `self._folder`/`self._settings` via `set_active_project`, so `handle()` can read them back if you prefer not to thread them out of `create_project`.
+- Do NOT switch or set the workflow mode here. `set_active_project` (`:536-548`) already emits `project_changed` and refreshes affordances/capability status; mode transition is downstream of that and out of scope for this bug — the report is only that the file does not open. No new prompt, no save/close-of-previous handling is needed either: this is the same active-project transition `open_project` already performs.
+- No keyboard shortcut, menu action, or dialog is added — `docs/KEYBINDINGS.md` is untouched.
+
+**Test impact:** All in `tests/ui/test_ddl_project_wiring.py` — extend, do not add a file. `test_auto_open_loads_the_working_copy_written_at_creation` (`:2198`) currently calls `auto_open_linked_pgtp` MANUALLY after `create_project`; that manual call is the very step the fix makes automatic. Add a new case (do not rewrite `:2198`, which still validly pins `auto_open_linked_pgtp`'s own behaviour): create a New Project with an attached `.pgtp` through the plain path (`create_project(dialog)` with no `on_ready`, or better drive `new_project()` with `on_ready=None` and fire the dialog's accepted signal so `handle()` runs) and assert `window._current_project_path == str(project_dir / "erp.pgtp")` WITHOUT any manual `auto_open_linked_pgtp` call. Add the complementary guard case: the `require_project`-style create path (`new_project(on_ready=<cb>)`) must run the caller's `on_ready` and must NOT auto-open the linked copy — mirror the existing `on_ready` double-load-guard tests around `:281` (`test_new_project_action_signal_path_does_not_treat_checked_as_on_ready`) and the `require_project` create test at `:563`. Reuse the existing helpers `_new_project_dialog_with_pgtp` and `_ATTACHED_PGTP` used at `:2198-2213`.
+
+**As shipped (`dadc5bc`, merged `df8d908`) — read this before "tidying" the placement.** The auto-open call landed in `new_project`'s `handle()` closure (`ddl_project_controller.py:400-427`), **not** inside `create_project`, and the placement does double duty:
+- it mirrors `open_project`'s BUG-021 wiring exactly — same loader (`auto_open_linked_pgtp`), same `on_ready` guard (`if callable(on_ready): on_ready()` / `elif` auto-open), so the `require_project` "Create…" route still runs the caller's continuation and does not double-load;
+- being *after* `create_project` returns puts it past `set_active_project`, so any `[Project]` row the open files (missing working copy, multiple candidates) cannot be wiped by the journal-buffer replacement that transition performs (FQ-019/BUG-042).
+Existence goes through the single predicate `_linked_working_copy` (`:1000`) — no fourth `.exists()` check was added. Verified in tree at `9c65a4c`; `tests/ui/test_ddl_project_wiring.py` extended (green).
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` §18.2 auto-open block (`:6308-6332`) is written entirely around **Open Project** ("Once the project folder is validated and made active, `_auto_open_linked_pgtp` runs…") and is SILENT on the New Project / create path — so the fix extends a stated behaviour to a path the spec does not currently mention. Flag for `spec-maintainer` after the fix lands: §18.2 should state that creating a project with an attached `.pgtp` auto-opens the freshly checked-out working copy too, under the SAME `on_ready` guard (skip when the caller supplied its own continuation, e.g. the `require_project` create path). This also touches the FQ-035 creation area (§18.2, around `:6131-6241`), which describes checkout-at-accept but stops at recording the link, not opening it. Do not edit the spec from the fix pass. Manual (`pgtp_editor/resources/manual.md`) may need a one-line note that New Project opens the attached `.pgtp` automatically — leave to `manual-maintainer`.
+
+---
+
+## BUG-260810174919: New Project sandbox provisioning gives no live progress feedback — the Messages tab is silent from provision-start until the single terminal line lands
+**Status:** RESOLVED (`dadc5bc`, merged `df8d908`; verified in tree at `9c65a4c`)
+**Reported:** 2026-08-10
+**Report (verbatim):** "when sandbox is provisioned from new project window, in messages it must say: [sandbox] provision: started\nThen every second it should output [sanbox] provision: . increasing the number of dots so the user has the feeling it's doing it, until at the end, the actual message [sandbox] provision: done"
+
+**Root cause:** There is no start line, no heartbeat, and only one terminal line — and that terminal line is the *only* narration the whole provisioning run produces. Trace, all verified by reading:
+
+- New Project's sandbox step is `MainWindow._provision_new_project_sandbox` (`pgtp_editor/ui/main_window.py:3930-3953`). It calls `self.sandbox_controller.provision_new_database(self._on_new_project_sandbox_provisioned, admin_params=…, name_candidates=…)` (`:3949-3953`). No Messages/Audit row is emitted at this point — provisioning starts silently.
+- `SandboxController.provision_new_database` (`pgtp_editor/ui/sandbox_controller.py:837-964`) does all the slow work (create database, snapshot baseline, `provision_sandbox`, probe, install `plpgsql_check`) inside a single `work()` closure handed to `self._run_async` (`:962`). The **entire operation is one worker job**: `db/sandbox.py`'s `create_sandbox_database` + `provision_sandbox` + `clone_data` (WITH_DATA) can each take many seconds against a real server, and nothing reports progress while `work()` runs. Completion arrives on the GUI thread as one `SandboxOperationResult` via `on_result`/`_finish`/`_report` → `operation_finished` (`:942-964`, `:1425-1447`).
+- The single terminal line is authored in `MainWindow._on_sandbox_operation_finished` (`main_window.py:6203-6235`). For `SandboxOperation.PROVISION` it renders `f"{_SANDBOX_PREFIX}{name}: " + (reason or "done.")` on success or `f"{_SANDBOX_PREFIX}{name} failed" + …` on failure (`:6224-6235`), where `_SANDBOX_PREFIX = "[Sandbox] "` (`main_window.py:292`) and `name = operation.value` = `"provision"`. So today the run produces exactly one row — `[Sandbox] provision: done.` (or `…provision: <notes>` / `…provision failed: <reason>`) — and nothing before it. The report's three-part narration (started / ticking dots / done) is entirely absent between dispatch and that one row.
+- **Why the dots cannot be worker-driven.** `pgtp_editor/ui/async_task.py`'s `_TaskSignals` carries only `result` and `error` signals (`:38-41`) — there is no progress channel, and `work()` runs on a `QThreadPool` worker that must not touch widgets. A per-second heartbeat therefore has to be a **GUI-thread `QTimer`** started at dispatch and stopped when `operation_finished` lands, not anything emitted from inside `work()`.
+- **The Messages tab is append-only for `[Sandbox]` rows — it has no in-place line update.** `[Sandbox]` routes to the bottom Messages tab (`audit_router.py:46`, `:119` `SANDBOX_PREFIX="[Sandbox]"`, `:146` `SANDBOX_PREFIX: TO_RESULTS`). `AuditRouter.addItem`→`_route_results` (`:227-251`, `:263-271`) only ever appends via `self.results.addItem`, and `takeItem` on a Messages row *refuses* removal (`:281-296`). `FindingsPanel` (accumulate=True for Messages) exposes no replace-last-row API (`findings_panel.py:79-129`). So a naive "emit a dot every second" would spam N new Messages rows, not animate one line in place — this is the hard part the fix must solve deliberately.
+
+**Note on wording / scope divergence from the report (do NOT silently "fix" the case):** the report writes `[sandbox]` lowercase; the shipped prefix is title-case `[Sandbox] ` and every other sandbox row uses it. **Keep the existing `[Sandbox] ` prefix** — matching the report's lowercase would fork the one prefix wording (`audit_router.py:119`, `main_window.py:292`) and break `[Sandbox]` classification/routing, which keys on the exact bracket token. The resulting lines read `[Sandbox] provision: started` / `[Sandbox] provision: .` / `[Sandbox] provision: done` — same shape the report wants, canonical casing. If the owner truly wants lowercase, that is a separate prefix-rename decision touching `audit_router.py` classification, not this bug.
+
+**Proposed fix.** The controller already owns the async lifecycle but is deliberately Qt-light and widget-free (`sandbox_controller.py:78-81` — "touches no widget"), so the start/tick/stop narration belongs in the **host** (`MainWindow`), driven by a `QTimer` it owns, keyed to the provisioning call it dispatches. Two shapes are viable; the first is preferred:
+
+1. **Host-owned heartbeat around `_provision_new_project_sandbox` (preferred).** In `main_window.py`:
+   - Add a private helper `_begin_sandbox_provision_narration()` and `_end_sandbox_provision_narration(done_line: str)`. On begin: append one Messages row `[Sandbox] provision: started` (via `self.audit_panel.addItem(QListWidgetItem(f"{_SANDBOX_PREFIX}provision: started"))`), then start a `QTimer` (parent `self`, interval 1000 ms) whose `timeout` slot increments a dot counter and updates a SINGLE persistent Messages row's text in place.
+   - **In-place update capability is the one genuinely new mechanism.** The cleanest place is a small method on `FindingsPanel` (`findings_panel.py`) — e.g. `set_last_text(text)` or a dedicated `update_status_row(key, text)` that appends once and thereafter rewrites `self.item(self.count()-1).setText(text)` — plus a thin `AuditRouter` pass-through so the host can reach it without bypassing routing. Alternatively, hold a reference to the `QListWidgetItem` returned/created at `started` time and `setText` it directly each tick; this avoids touching `AuditRouter` but the host must keep the item reference alive and must ensure no other Messages row is appended between ticks (a concurrent producer would land *after* the heartbeat row, leaving the animated row stranded mid-list). Prefer the explicit panel method so the "which row animates" question has one answer.
+   - Dot string: tick N renders `f"{_SANDBOX_PREFIX}provision: " + ("." * N)` with N starting at 1 and growing each second. Optionally cap/cycle the dot count (e.g. modulo 3–6) so a very long provision does not produce an absurd line; the report says "increasing", so a cap that cycles is acceptable but state the choice.
+   - `_provision_new_project_sandbox` (`:3944-3953`) calls `_begin_…()` immediately BEFORE `provision_new_database(...)`, but only in the branch that actually dispatches — note the early `return` at `:3946-3947` when the sandbox group was left blank (no sandbox to provision). Do NOT emit `started`/`done` for a project created without a sandbox.
+2. **Stop-and-finalize on completion, on BOTH paths.** The timer MUST be stopped and the terminal `done`/`failed` line written when the operation finishes. `_on_new_project_sandbox_provisioned` (`:3955-3987`) is the New-Project-specific `on_done` callback and is the natural stop point, but note `_on_sandbox_operation_finished` (`:6203-6235`) ALSO fires for the same result (it is the `operation_finished` signal receiver and already authors the terminal `[Sandbox] provision: …` row). Decide ONE owner of the terminal line to avoid a double row:
+   - Simplest: keep `_on_sandbox_operation_finished` as the sole author of the terminal row (it already produces `[Sandbox] provision: done.`), and make the heartbeat stop there. But that handler is generic (fires for every sandbox op and every project, not just New Project) — gate the timer-stop on "a New-Project provision heartbeat is currently running" (a `self._sandbox_provision_timer` attribute that is non-None only between begin and stop). This keeps the terminal line exactly as it is today and only adds start+ticks.
+   - The heartbeat's animated row is a transient: on stop, either leave the final `.` row and let `_on_sandbox_operation_finished` append the real `done.`/`failed` row after it, OR rewrite the animated row in place to the terminal text. Choose leaving the terminal line as a fresh appended row (matches existing behavior; the transient dots row becomes history) unless the owner wants the dots row to morph into `done` — state which.
+3. **Lifetime hazards (BUG-043 is the precedent, cite it).** The worker can land after the window/panel is gone (`sandbox_controller.py:1411-1423` documents exactly this). The `QTimer` must be:
+   - stopped on completion (both success and failure — the error path routes through the SAME `_finish`/`operation_finished`, so a single stop point covers it);
+   - stopped on project close / window teardown so it does not tick against a dead panel — hook `clear_project`/the project-transition path or `closeEvent`. A leaked 1 s timer ticking `setText` on a deleted `QListWidgetItem` would raise `RuntimeError` exactly like BUG-043's dead receivers. Guard the tick slot to no-op when `self._sandbox_provision_timer is None`.
+   - Parent the `QTimer` to `self` (MainWindow) so Qt tears it down with the window as a backstop.
+4. **Scope — narrate New-Project provisioning, and consider generalizing.** The report says "from new project window". The mechanism (start line + QTimer heartbeat + terminal line) is generic to any long PROVISION run — the Project Settings "Provision"/"create a database for me" path (`provision_new_database`/`provision`) is the same operation. Propose implementing it for the New Project path first (the report's literal scope, and the one place with zero existing feedback), structured so the same `_begin_/_end_` helpers can later wrap `provision`/`run_data_clone`/`reset_session` (all long, all currently one-terminal-line). Do not silently wire the heartbeat into Project Settings' provision in this fix unless trivial; note it as the coherent follow-up.
+
+**Gotchas:** (a) `self.audit_panel` is an `AuditRouter`, not a `QListWidget` (`main_window.py:895-900`) — append through it, and the in-place update must go through a method it exposes or through a held item reference, never `QListWidget` internals it does not have. (b) The heartbeat's `started` row is a Messages row; `_route_results` opens a new run block when the prefix/kind changes (`audit_router.py:263-267`) — appending the terminal row later with the same `[Sandbox]` kind keeps them in one block, which is desired. (c) Under the offscreen test platform a real 1 s `QTimer` is untestable by waiting; the tick slot must be directly invokable (a named method, not an inline lambda) so tests call it N times without a real clock. (d) Do NOT block the GUI thread or `time.sleep` — the whole point is the worker runs async while the timer animates.
+
+**Test impact:** `tests/ui/test_new_project_sandbox_provisioning.py` (525 lines) is the owner of this wiring — extend it, do not add a file. It already drives provisioning with the synchronous `sync_run` stub and `stub_sandbox_provisioning` from `tests/ui/_sandbox_stubs.py`, and reads emitted rows via `window.audit_panel` / `window.activity_panel.row_texts()` (`:76-78`). New cases needed: (1) dispatching New-Project provisioning emits a `[Sandbox] provision: started` Messages row before the worker completes — with a synchronous stub the worker completes immediately, so to observe the *start* line either assert it is present in the final row set, or inject a deferred `_run_async` that lets the test invoke the completion callback manually; (2) invoking the tick slot directly (no real clock) N times rewrites ONE row to `[Sandbox] provision: ` + N dots (assert row count does not grow per tick — this pins the in-place behavior, the whole point of the bug); (3) on completion the timer is stopped (`window._sandbox_provision_timer is None` and `.isActive()` False) and the terminal `[Sandbox] provision: done.` row is present exactly once; (4) the failure path (stub raising / an error result) also stops the timer and emits `[Sandbox] provision failed: …`, no orphaned ticking; (5) the no-sandbox branch (blank sandbox group, early return at `main_window.py:3946`) emits NO started/dots/done rows and starts no timer. If a `FindingsPanel.set_last_text`/`update_status_row` method is added, add a focused unit case in `tests/ui/test_findings_surfaces.py` (or wherever `FindingsPanel` row APIs are pinned) that a second call rewrites rather than appends.
+
+**As shipped (`dadc5bc`, merged `df8d908`) — the decisions a later reader could undo.** Narration lives in `pgtp_editor/ui/ddl_project_controller.py` (`begin_provision_narration` `:537`, `tick_provision_narration` `:583`, `end_provision_narration` `:607`, `_on_sandbox_operation_finished` `:626`; constants `:146-170`), not in `MainWindow` — the controller already owns the create-time lifecycle.
+- **One destination, one prefix.** Rows go to the existing **Messages** tab under the existing `[Sandbox]` prefix, and the prefix is *imported* (`from pgtp_editor.ui.audit_router import SANDBOX_PREFIX`, `:133`) rather than retyped. The report's lowercase `[sandbox]` was deliberately **not** adopted: that bracket token is exactly what `audit_router.classify` routes on.
+- **The heartbeat rewrites ONE held `QListWidgetItem` in place** (`setText` on `self._provision_heartbeat_item`) rather than appending, because Messages is append-only and `takeItem` refuses removal. A run therefore produces **three rows total** (`started`, the animated dots row, the terminal line), not one row per second.
+- **Dots cycle at ten** (`PROVISION_HEARTBEAT_DOT_CAP = 10`, `provision_heartbeat_line`) so a three-minute provision does not render a 180-character line.
+- **Rows carry no item roles** — §18.5 carve-out 6: a heartbeat has no source location, so the rows are deliberately unclickable, like `[SQL]` refusals and the `[Find]` summary.
+- **GUI-thread `QTimer`, not worker progress**, because `ui/async_task.py::_TaskSignals` has no progress channel; the tick's surface touch is wrapped in `except RuntimeError` per BUG-043 (timer outliving its window). The tick is a **named slot**, never a lambda, so offscreen tests invoke it without a real clock.
+- `end_provision_narration` writes **no** terminal line: `[Sandbox] provision: done.` keeps its single author in the host's `operation_finished` receiver. The stop is gated on both "a heartbeat is running" and "this result is a PROVISION". The dispatch is gated on `settings.sandbox.host` (`:477`), so a sandbox-less tier-2 project is not narrated as if a database were being built.
+Verified in tree at `9c65a4c`; `tests/ui/test_new_project_sandbox_provisioning.py` extended (green).
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` §18.2 (New Project sandbox step, around `:6131-6241`) and §18.5 D2/FQ-007 describe *what* provisioning does but say nothing about progress narration in the Messages tab; the `audit_router.py` module doc's `[Sandbox]` routing table (`:46`) and the spec's narration/Audit-channel section would gain a "provisioning emits a live heartbeat between `started` and `done` on the Messages tab" statement. This is a genuinely new, user-visible behavior, so flag for `spec-maintainer` AFTER the fix lands (do not edit the spec from the fix pass) to record it — and to record the decision that the heartbeat is a GUI-thread QTimer, not worker progress (async_task has no progress channel). Manual (`pgtp_editor/resources/manual.md`) likely needs a one-line note in the New Project / sandbox section that provisioning shows live progress in Messages — leave to `manual-maintainer`.
+
+---
+
+## BUG-260810193333: Apply to quality silently no-ops on a renamed (signature-changed) buffer; sandbox runs it — owner rules "run the SQL", plus a new "Discard local change" checkout-drop action
+**Status:** RESOLVED (1b6bf98)
+**Reported:** 2026-08-10
+**Report (verbatim):** "I checked out kb.jc_template_to_jobcard() for DDL editing
+then changed it to:
+CREATE OR REPLACE FUNCTION kb.jc_template_to_std_jobcard()
+Applied to quality
+
+And... nothing happened. the new function was not created.
+
+Applying to sandbox, it did create the new function
+
+I know it's an edge case, because it contradicts checkout and all, but should be handled differently: trust the user that they know what they are doing, run the sql.
+
+For the checkout mismatch (*) let's implement instead a right click option \"Discard local change\" that deletes the local files of the same ddl."
+
+**Root cause (why quality no-ops while sandbox runs):** The two apply paths are asymmetric by design in `pgtp_editor/ui/ddl_object_editor.py`, class `DdlObjectEditorPanel`:
+- `apply_to_sandbox()` (`:1182-1241`) has NO signature/identity precondition. It runs the confirm-gate, then calls the write seam (`self._apply_to_sandbox(self._ref, text)`, `:1223`) unconditionally. So the renamed buffer (`CREATE OR REPLACE FUNCTION kb.jc_template_to_std_jobcard()`) is executed and the new function is created — exactly as the report observed on sandbox.
+- `apply_to_target()` (`:1268-1336`) enforces §18.5's four hard preconditions **before** the write seam. Precondition 1, `_precondition_signature(text)` (`:1338-1396`), parses the identity the BUFFER declares (`parse_buffer_identity`, `:448-486`) and compares it to the live catalog identity (`self._live_identity(self._ref)`, `:1366`). Because the user renamed the routine, `_comparable(buffer_ref) != _comparable(live_ref)` at `:1384` is TRUE, so it takes the refusal branch (`:1384-1395`): it emits a `[Check]` Audit line ("refused: the buffer's signature differs from the live object…") via `_report` and returns `False`. `apply_to_target()` then returns `False` at `:1289` WITHOUT ever reaching the write seam (`self._apply_to_target`, `:1320`).
+- **Why the user perceived "nothing happened" / silent:** the refusal is NOT a blocking dialog. `_report` (`:1493-1498`) only emits the `check_reported` signal, which the host renders as a `[Check]` line in the bottom Audit/Messages panel. No modal, no error popup, no created function — just one Audit line the user did not notice. So from the user's seat: clicked Apply to quality, nothing visible changed. This is the reported symptom precisely, and it is technically a *reported* refusal, not a truly silent swallow — but the Audit-line-only surfacing made it read as silent.
+
+The rename-via-`CREATE OR REPLACE` is the exact hazard precondition 1 was written to catch: `_precondition_signature`'s own docstring (`:1341-1345`) explains that `CREATE OR REPLACE` on a changed `(schema, name, argtypes)` creates a SECOND function and leaves the old one live. The owner is knowingly overriding that guard ("trust the user … run the sql").
+
+**Proposed fix — Part A (WARN-THEN-RUN on a signature-identity mismatch — SETTLED by owner ruling 2026-08-10):** The change is in `_precondition_signature` (`pgtp_editor/ui/ddl_object_editor.py:1338-1396`) — the ONLY place the quality path diverges from sandbox. Owner ruling (2026-08-10, relayed): on an apply-to-target checkout/signature MISMATCH, show exactly ONE confirmation that NAMES the mismatch; on confirm run the buffer SQL through the same write seam the sandbox path uses; on cancel abort and surface that it was cancelled — never a silent no-op. This is decided; there is no open question here.
+- **The mismatch branch becomes a confirm-gated warning.** In the mismatch branch (`:1384-1395`), instead of `return False`, surface the mismatch through the existing `self._confirm(...)` seam — the SAME standard modal confirm pattern used for target applies (`apply_to_target` `:1305`, `_precondition_validation`'s override `:1427`), NOT a non-blocking toast — titled in the `GESTURE_APPLY_TO_QUALITY` vocabulary (`GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]`, "Apply to quality"). The dialog must NAME the mismatch: the checked-out/live identity vs. the identity the buffer creates, e.g. "You checked out `kb.jc_template_to_jobcard()` but the buffer creates `kb.jc_template_to_std_jobcard()`. Apply to quality anyway?" — the two identities are already in hand as `live_ref.qualified` and `buffer_ref.qualified` (reuse the wording already at `:1387-1392`, which names both), and note it will CREATE A SECOND OBJECT leaving the old one live. On CONFIRM: `_report` a "proceeding despite identity mismatch" line (mirroring `_precondition_validation`'s override at `:1445-1448`) and `return True`, so `apply_to_target` proceeds to the write seam (`self._apply_to_target(self._ref, text)`, `:1320`) — the same seam the sandbox path uses. On CANCEL: `_report` the cancellation and `return False` (aborts, but the Audit line makes the cancellation visible — never a silent no-op).
+- **Only the signature-identity mismatch changes; every other branch stays a HARD refusal exactly as today:** unparseable buffer (`:1348-1356`), live-identity lookup FAILURE / connection error (`:1367-1375`), object-absent (`:1376-1383`). Do NOT relax the connection-error branch: turning an unreachable database into a cleared precondition is the one failure mode the docstring at `:1357-1363` (FQ-009) explicitly guards, and the ruling is about the user's *intent* on a deliberate rename, not about swallowing a driver error.
+- **Non-negotiable:** the path must NEVER silently no-op. Every branch either runs the seam or emits a `[Check]` line saying exactly why it did not. That invariant is already mostly there; the fix must preserve it.
+- No keyboard shortcut is added or moved by Part A; `docs/KEYBINDINGS.md` is untouched.
+
+**Proposed fix — Part B (right-click "Discard local change" to drop a checked-out DDL object):** This is the owner-prescribed replacement for the checkout-mismatch friction. NOTE: Part B is more a FEATURE than a defect fix — it could alternatively be tracked in `docs/FEATURE_QUEUE.md`; it is captured here because the owner prescribed it as the resolution to *this* report. Route it through `feature-triage`/`spec-maintainer` if the resolver prefers, but the design below is concrete enough to implement directly.
+
+What constitutes a checked-out DDL object's "local files/state" (verified by reading `pgtp_editor/ui/main_window.py::_edit_ddl_checked_out`, `:5138-5185`, and `_register_checked_out_object`, `:5187-5217`):
+1. The on-disk working file `ddl/<relpath>.sql` under the project folder — `relpath` computed by `_ddl_checkout_relpath(ref, schema)` (`:5121-5136`); the write of this file IS the checkout (`:5164-5169`).
+2. The last-deployed reference entry `ProjectSettings.deployed[relpath]` seeded at checkout (`:5216`, persisted via `save_settings`); this drives the `*`/`!` drift markers.
+3. The open editable tab in `CenterStage`, keyed on `ref.key` (`center_stage.py::open_ddl_object_tab` `:662-687`, looked up via `ddl_object_tab(key)` `:658-660`).
+
+Implementation:
+- **Tree entry:** in `pgtp_editor/ui/ddl_buffer_panel.py`, `_menu_for_item` (`:840-866`), the span-row branch that currently offers only `menu.addAction("Edit DDL", …)` (`:865`). Add a "Discard local change" entry BESIDE Edit DDL, emitting a NEW signal `discard_local_requested(ref)` (declare it alongside `edit_requested` around `:388`). Gate its VISIBILITY on the object actually being checked out — the panel cannot know that alone, so either (a) have the host set a predicate/callback the panel consults (mirror how `browse_only` and the schema seam are injected), or (b) always offer it and let the host no-op-with-a-message when there is no local file. Prefer (a) so a dead entry is not shown (carve-out 2 discipline: an unavailable gesture is not a selectable-but-dead entry). Do NOT add it to the `browse_only` sandbox tree (`:850-851`) — discard is an edit gesture.
+- **Host handler:** wire `discard_local_requested` in `MainWindow` next to `self.ddl_browser_panel.edit_requested.connect(self._on_ddl_edit_requested)` (`main_window.py:796`). The handler must, for THAT object only: (1) CONFIRM (destructive — reuse the app's standard confirmation seam / `_confirm` pattern; name the object and say the local edits will be deleted and the object returned to not-checked-out); (2) close the open editable tab if present — `center_stage.ddl_object_tab(ref.key)` then `center_stage.close_ddl_object_tab(ref.key)` (`center_stage.py:690-700`, the same removal path `_on_tab_close_requested` uses); (3) delete the `ddl/<relpath>.sql` file (`_ddl_checkout_relpath(ref, schema)` then `(self._ddl_project_folder / relpath)` — the exact path `_edit_ddl_checked_out` writes at `:5153`); (4) remove `ProjectSettings.deployed[relpath]` and `save_settings` so drift markers reset; (5) refresh the tree/markers so the object no longer shows as checked-out/`*`.
+- **Gotchas:** (a) target ONLY that object's `relpath` — never a broader delete; routines share a `ddl/*.sql` set by overload disambiguation, so `_ddl_checkout_relpath` is the authority on which file. (b) The open tab may be DIRTY — discard is explicitly "throw away local edits," so the confirm IS the save-prompt substitute; bypass the normal unsaved-changes prompt on this path (this is a deliberate discard, like a revert). (c) Handle the not-checked-out case gracefully (no file / no `deployed` entry) — report one Audit line rather than raising. (d) This deletes the LOCAL working file only; it never touches the live DB (unlike Part A). (e) If the panel-visibility predicate approach is taken, the host must recompute it on tree refresh so a just-discarded object stops offering the entry.
+- **Keyboard:** no chord is proposed for "Discard local change" — it is a context-menu-only command. Per DEC-012, a command form gets exactly one keyboard host (the QAction) IF a chord is wanted; none is proposed here, and `docs/KEYBINDINGS.md` needs no change. Do NOT invent a shortcut.
+
+**Test impact:**
+- Part A: `tests/ui/test_ddl_object_editor.py` owns the precondition contract. The case that pins the CURRENT (buggy) behavior is `test_precondition_1_refuses_a_changed_signature_naming_the_mismatch` (`:1031-1046`) — it asserts `panel.apply_to_target() is False` on a renamed buffer, which the settled warn-then-run behavior INVERTS. Rewrite it into two cases: (1) with the mismatch confirm ACCEPTED (`stub_confirm=True`) a renamed buffer runs the write seam, `apply_to_target()` returns `True`, and the "proceeding despite identity mismatch" line is emitted; (2) with the confirm DECLINED (`stub_confirm=False`) it returns `False`, does NOT invoke the write seam, and reports the cancellation (assert a `[Check]` cancellation line — proving no silent no-op). Also assert the confirmation TEXT names both identities (`live_ref.qualified` and `buffer_ref.qualified`). Keep `test_precondition_1_refuses_a_buffer_whose_signature_cannot_be_parsed` (`:1054`) and the connection-failure/absent cases UNCHANGED — those branches stay HARD refusals. Reuse the existing `_FakeSeams`/`apply_to_target` harness (`:810-831`); monkeypatch the confirm seam, never a live modal.
+- Part B: `tests/ui/test_ddl_buffer_panel.py` (context-menu entries — assert "Discard local change" appears on a span row and is absent on `browse_only`, following the existing `_menu_for_item` assertions) plus a host-wiring case in `tests/ui/test_ddl_object_editor_wiring.py` or `tests/ui/test_ddl_project_wiring.py`: check out an object (drive `_edit_ddl_checked_out`), then invoke the discard handler and assert the `ddl/*.sql` file is gone, the `deployed[relpath]` entry is removed, and the open tab (`center_stage.ddl_object_tab(ref.key)`) is closed. Monkeypatch the confirmation modal — never let a real `QMessageBox`/`QDialog.exec` run (CLAUDE.md test rule).
+
+**Spec impact:** Part A DIVERGES from a recorded HARD rule and must be flagged prominently for `spec-maintainer` with a **Supersession Ledger** row. `CONSOLIDATED_SPEC.md` §18.5's Apply-to-quality preconditions list precondition 1 as **"Signature-change refusal — no override, no consent path"** (the phrasing is echoed in `apply_to_target`'s docstring at `ddl_object_editor.py:1272` and `_precondition_signature`'s at `:1338-1345`). The owner's ruling ("trust the user, run the sql", SETTLED 2026-08-10 as warn-then-run) converts that hard, override-less refusal into a confirm-gated override on the signature-identity mismatch specifically. This reverses shipped, spec'd design, so it needs a ledger row recording the 2026-08-10 owner decision, not a quiet edit — do NOT edit the spec from the fix pass. Part B ADDS a new gesture to §18.2's checkout model / §18.5 D1's Explorer right-click ("Discard local change" deletes the `ddl/*.sql` working file + the `deployed` reference and closes the tab, returning the object to not-checked-out); flag for `spec-maintainer` to fold into §18.2/§18.5 after it lands. Manual (`pgtp_editor/resources/manual.md`) needs: (a) the Apply-to-quality section updated to say a renamed/identity-changed buffer now prompts-and-runs rather than refusing; (b) a note on the new "Discard local change" right-click entry — leave both to `manual-maintainer`.
+
+---
+
+## BUG-260810194657: `BEGIN TRANSACTION` / `BEGIN WORK` opens a plpgsql block frame — the formatter refuses valid transaction control
+
+**Status:** RESOLVED (`b8619e7`, merged `9c65a4c`; verified in tree at `9c65a4c`)
+**Reported:** 2026-08-10
+**Report (verbatim):** "Investigate a latent formatter defect found — and deliberately not fixed — while FQ-034 lifted the block-detection rules out of `sql/formatter.py` into the new `sql/blocks.py` (`cde65fa`). The claim: `BEGIN_NOT_BLOCK_FOLLOWERS` never fires. It exists to stop `BEGIN TRANSACTION` / `BEGIN WORK` being treated as a plpgsql block opener. But it matches through `Token.keyword`, and neither `transaction` nor `work` is in `SQL_KEYWORDS` — so only the bare `BEGIN;` half of the guard is live, and `BEGIN TRANSACTION` opens a plpgsql block frame that never closes as the author intended."
+
+**VERDICT: the claim is correct, and it is a real user-visible defect, not a dormant-guard cleanup.** It is also a code-vs-spec divergence: the spec *requires* the behaviour the guard fails to deliver. Verified by execution, not by reading.
+
+**Root cause**
+
+`pgtp_editor/sql/blocks.py:183-193`, `begin_is_transaction()`:
+
+```python
+follower = next_keyword(items, index)          # -> Token.keyword
+if follower in BEGIN_NOT_BLOCK_FOLLOWERS:      # {"transaction","work","isolation"}
+    return True
+after = next_token(items, index)
+return after is not None and after.kind == PUNCT and after.text == ";"
+```
+
+`next_keyword` (`blocks.py:152-159`) returns `items[target][0].keyword`, and `Token.keyword`
+(`sql/tokenizer.py:134-139`) is `None` unless the lowercased text is in
+`sql/keywords.py::SQL_KEYWORDS`. Measured against the shipped set: `transaction` → `False`,
+`work` → `False`, `isolation` → `False`. So `next_keyword` returns `None` for all three, the
+first branch is unreachable for every member of `BEGIN_NOT_BLOCK_FOLLOWERS`, and **only the
+`;` half of the guard is live**. The frozenset at `blocks.py:88` is dead code.
+
+Both consumers read the same broken predicate, so both are wrong in the same direction:
+`formatter.py:614` (`_Reindenter._open_frames`) and `block_spans.py:247`. The anti-fork
+guarantee holds — they agree, on the wrong answer.
+
+**What actually breaks today (measured with `venv/bin/python`, default `DEFAULT_FORMAT_CONFIG`)**
+
+1. **A refusal on valid, balanced SQL — the headline symptom.** `BEGIN TRANSACTION` pushes a
+   `begin` frame; `COMMIT`/`ROLLBACK` are not closers, so `_report_unclosed`
+   (`formatter.py:731`) fires. Input:
+
+   ```sql
+   BEGIN TRANSACTION;
+   UPDATE t SET a = 1;
+   COMMIT;
+   ```
+
+   Output: `ok=False`, text handed back verbatim, one fatal Issue
+   `"Unmatched BEGIN -- no matching END in the selection (line 1, column 1)."`
+   Format Selection appears to do nothing and reports a bogus error. Same for `BEGIN WORK;`,
+   `BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;`, `BEGIN TRANSACTION … ROLLBACK;`, and for
+   a mixed selection (`BEGIN TRANSACTION; CREATE FUNCTION … $$…$$; COMMIT;`) — the whole
+   selection is refused because of the wrapper. The bare-`BEGIN;` equivalent formats fine, so
+   the two spellings of the same statement behave differently.
+
+2. **Accepted but misformatted when the block is closed with `END;`** (legal in Postgres —
+   `END` is a synonym for `COMMIT`). Input `BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nEND;\n`
+   currently yields:
+
+   ```
+   BEGIN
+       TRANSACTION;
+       UPDATE t
+       SET a = 1;
+   END;
+   ```
+
+   Two wrongs: `TRANSACTION` is split onto its own line (`_breaks_after`, `formatter.py:575-576`,
+   sees `self._top.kind == "begin"` and forces a break after `BEGIN`), and the whole transaction
+   body is indented one level as if it were a routine body. This is *stable and idempotent*, so
+   it is cosmetic-not-corrupting — but it is wrong output, so "nothing user-visible goes wrong"
+   is **not** the finding.
+
+3. **The span model (§8) emits a bogus rung.** `structure_chain` on the `END;` variant returns a
+   `kind='begin'` span with `inner=(6, 38)` — i.e. an expand-selection step whose selection
+   **starts in the middle of the `BEGIN TRANSACTION` phrase**, at `TRANSACTION`. On the
+   `COMMIT;` variant the frame simply never closes, so no span is emitted (silent, benign).
+
+Invariants checked and **not** violated today: refuse-don't-guess holds (symptom 1 is a
+false-positive refusal, not a guess); idempotence holds in symptom 2; opaque regions untouched;
+the `AS_IS` byte-identity of non-whitespace tokens holds. So the defect's cost is *false
+refusals and wrong indentation*, never corruption.
+
+**Proposed fix: match the phrase on `Token.lowered`, and DO NOT widen `SQL_KEYWORDS`.**
+
+The blast radius of widening is disqualifying — measured by monkeypatching
+`sql.tokenizer.SQL_KEYWORDS` to include the three words and re-running the engine:
+
+| input | today (`AS_IS`) | with the set widened (`AS_IS`) |
+|---|---|---|
+| `select work(1), transaction from t;` | `select work(1), transaction` | `select work (1), transaction` |
+| `select t.work - 1 from t;` | `select t.work - 1` | `select t.work -1` |
+
+Both change **default** output. `_call_paren` (`formatter.py:793-799`) glues `(` only when
+`prev.keyword is None`, and `_unary_minus_before` (`formatter.py:807-819`) reads a preceding
+keyword as unary context — so a column or function named `work` would lose its call glue and
+turn a binary minus into a unary one. Under `UPPER` it additionally recases the identifier
+(`WORK`, `TRANSACTION`), and `SQL_KEYWORDS` is *shared with the highlighter*
+(`ui/code_editor.py:354`, identity asserted by `tests/ui/test_code_editor.py:81`), so `work`
+would paint as a keyword in every editor in the app. That breaks FQ-033's "defaults are
+byte-identical to the pre-FQ-033 engine" promise (§18.4 / ledger 2026-08-10, pinned by
+`tests/ui/test_autoformat_host_wiring.py::test_an_untouched_install_formats_exactly_as_before`,
+~60 goldens in `tests/sql/test_formatter.py`, and the out-of-band 6 699-input comparison recorded
+in `docs/TEST_LOG.md`). **Widening is the wrong fix. Reject it.**
+
+**There is already a precedent for a non-keyword phrase word, thirty lines below the bug.**
+`declare_is_cursor` (`blocks.py:208-226`) matches `tok.lowered == "cursor"` — because `cursor`
+is *also* absent from `SQL_KEYWORDS`. `formatter.py:778/787` does the same for `%TYPE`/`%ROWTYPE`
+(`type`/`rowtype`, also absent). So the established mechanism for "a word that participates in a
+phrase but is not a dialect keyword" is `Token.lowered`, and it costs nothing outside the guard.
+
+Concrete change, all of it inside `pgtp_editor/sql/blocks.py` — **no formatter.py edit, no
+block_spans.py edit**, which is what preserves the FQ-034 anti-fork guarantee automatically
+(both consumers already call the one predicate, and `formatter.py:127`'s
+`_BEGIN_NOT_BLOCK_FOLLOWERS = BEGIN_NOT_BLOCK_FOLLOWERS` `is`-alias keeps holding):
+
+1. Add a `next_lowered(items, index, offset=1) -> str | None` helper beside `next_keyword`
+   (`blocks.py:152`), returning `items[target][0].lowered` for word tokens. Document *why*
+   it exists (the `declare_is_cursor` precedent) so nobody "tidies" it back to `next_keyword`.
+2. Rewrite `begin_is_transaction` to match the **two-token phrase**, confirmed by what follows
+   it, rather than a single follower keyword:
+   - follower is `;` → transaction control (unchanged, keeps `BEGIN;` working);
+   - follower lowers to `transaction` / `work`, **or** to a transaction-mode head
+     (`isolation` / `read` / `deferrable` / `not` — Postgres allows the mode directly after
+     `BEGIN`, and §18.4's guard table lists `BEGIN ISOLATION …`), **and** the token after
+     *that* is `;`, end-of-input, or a mode continuation
+     (`level` / `write` / `only` / `read` / `committed` / `uncommitted` / `repeatable` /
+     `serializable` / `deferrable` / `not` / `isolation`) → transaction control;
+   - otherwise → a plpgsql block.
+3. Rename/repurpose the tables: keep `BEGIN_NOT_BLOCK_FOLLOWERS` as the phrase words
+   (`transaction`, `work`) and add a mode-head/mode-continuation set. Do not leave the old
+   frozenset in place unused — a dead table is what produced this bug.
+
+**The confirmation step in (2) is load-bearing, not defensive padding.** Matching on `lowered`
+alone re-introduces a false positive the `keyword` accident was accidentally suppressing:
+`BEGIN\nwork := 1;\nEND;` — a plpgsql block whose first statement assigns to a variable named
+`work` — would be misread as transaction control, and the `END;` would then be swallowed by
+`_close_block`'s `_saw_transaction_begin` early return (`formatter.py:692`), silently dropping a
+real block frame. That is a *worse* bug than the one being fixed. I prototyped the rule above
+in-process and confirmed all of these come out right:
+
+| input | result with the prototype |
+|---|---|
+| `BEGIN; … COMMIT;` | ok, unchanged from today |
+| `BEGIN TRANSACTION; … COMMIT;` | ok — `BEGIN TRANSACTION;` on one line, body at level 0 |
+| `BEGIN WORK; … COMMIT;` | ok |
+| `BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE; … COMMIT;` | ok, header on one line |
+| `BEGIN ISOLATION LEVEL SERIALIZABLE; … COMMIT;` | ok |
+| `BEGIN READ ONLY; … COMMIT;` | ok |
+| `BEGIN TRANSACTION; … END;` | ok, no bogus indent, no split phrase |
+| `BEGIN\nwork := 1;\nEND;` | **still a block** — body indented, `END;` closes it |
+| `BEGIN\ntransaction := 1;\nEND;` | **still a block** |
+
+All nine are idempotent under a second `format_selection` pass.
+
+**Gotchas for the implementer**
+
+- Do **not** touch `sql/keywords.py`. See the table above.
+- Do **not** duplicate the guard into `formatter.py` or `block_spans.py`; the whole point of
+  FQ-034 is that both call `blocks.begin_is_transaction`. `tests/sql/test_blocks.py:40`
+  asserts the `is`-identity of the alias — keep it.
+- `_saw_transaction_begin` (`formatter.py:349`, set at `:614`, read at `:692`) becomes reachable
+  for the `TRANSACTION`/`WORK` spellings for the first time. That is intended (it is what makes
+  a later bare `END;` at root accepted rather than reported as unmatched, exactly as §18.4's
+  guard table requires) — but it is a flag that was previously only ever set by `BEGIN;`, so the
+  `END;` path deserves a test of its own.
+- `blocks.py` must not import `formatter.py` (module docstring, `blocks.py:29-31`) and must stay
+  Qt-free (`tests/sql/test_package_purity.py`).
+
+**Test impact**
+
+- `tests/sql/test_blocks.py:102-118`
+  `test_transaction_begin_is_told_apart_from_a_plpgsql_begin` — **the pin must CHANGE, not stay
+  and not simply go.** Its docstring (lines 105-112) documents the limitation and its line 118
+  asserts `begin_is_transaction(items("begin transaction;"), 0) is False` with the comment *"The
+  dormant half, asserted as dormant so the day it is fixed this test says so."* This is that day:
+  flip the assertion to `is True`, replace the docstring's limitation paragraph with the
+  `Token.lowered` rationale and the reason `SQL_KEYWORDS` was **not** widened, and add cases for
+  `begin work;`, `begin transaction isolation level serializable;`, `begin isolation level …`,
+  `begin read only;`, plus the two false-positive guards (`begin\nwork := 1;\nend;` and
+  `begin\ntransaction := 1;\nend;` → `is False`). Also add a direct test for the new
+  `next_lowered` helper alongside the existing `next_keyword` coverage.
+- `tests/sql/test_formatter.py` — add golden-output cases for symptoms 1 and 2. Note the existing
+  golden at line 216 (`"begin; update t set a = 1; end;"`) exercises the `;` half only and must
+  come out unchanged. **A grep confirms `tests/` mentions `BEGIN TRANSACTION`/`BEGIN WORK` in
+  `test_blocks.py` and nowhere else**, so no existing golden moves.
+- `tests/sql/test_formatter_properties.py` — add `BEGIN TRANSACTION … COMMIT;` and
+  `BEGIN WORK … END;` to the corpus / adversarial rows (idempotence + refusal-free).
+- `tests/sql/test_block_spans.py:386`
+  `test_the_span_model_and_the_reindenter_agree_on_block_nesting` — the anti-fork corpus test.
+  Add the transaction-control rows to its corpus so the equal-nesting guarantee is re-asserted
+  over the fixed guard, and add a `structure_chain` case proving the bogus `begin` rung
+  (`inner=(6, 38)` above) is gone.
+- Baseline for the fix pass: `QT_QPA_PLATFORM=offscreen venv/bin/python -m pytest tests/sql -q -n 8`
+  is currently **1199 passed in ~4s**.
+
+**Spec impact: none needed — the fix brings the CODE into line with the spec, which already says
+so.** `CONSOLIDATED_SPEC.md:7695` (§18.4's "False-positive guards" table) states the requirement
+verbatim: *"`BEGIN;` and `BEGIN TRANSACTION|WORK|ISOLATION …` | transaction control, **not** a
+plpgsql block — and a later bare `END;` at root level is then accepted instead of reported as
+unmatched"*. So the current behaviour is **not** an intentional recorded decision — it is an
+undetected implementation gap against a spec assertion, which is why widening `SQL_KEYWORDS`
+(with its FQ-033 default-output consequences) is not on the table: the spec does not ask for
+`transaction`/`work` to be dialect keywords, only for the phrase to be recognized. Nothing to
+flag for `spec-maintainer` beyond, optionally, a one-line note that the guard is realized via
+`Token.lowered` rather than `SQL_KEYWORDS` membership and *why* — worth having, since this is the
+second guard in `blocks.py` to need it (`declare_is_cursor` was the first) and the pattern is now
+a rule rather than an exception. §18.4's spec text quoted above was read at a moment when a
+concurrent `spec-maintainer` may be rewriting the file; re-read §18.4's guard table before
+relying on the exact line number.
+
+**As shipped (`b8619e7`, merged `9c65a4c`) — five decisions a later reader could undo, recorded here because each one looks like a simplification opportunity and is not.**
+
+- **`SQL_KEYWORDS` was deliberately NOT widened, and the reason is measured rather than aesthetic.** Adding `transaction`/`work`/`level`/… moves default `AS_IS` output (`select work(1)` → `select work (1)`, `t.work - 1` → `t.work -1`), because the formatter reads `Token.keyword` for call-paren gluing and unary minus; and the set is shared with the editor's highlighter **by asserted identity**, so a column named `work` would paint as a keyword app-wide — breaking FQ-033's byte-identity promise. The fix instead matches on lowered text via the new `next_lowered` (`pgtp_editor/sql/blocks.py:202-228`), following the `declare_is_cursor` / `%TYPE`-`%ROWTYPE` precedent that already sits ~30 lines below the bug. Its docstring states all of this explicitly so nobody "simplifies" it back to `next_keyword`.
+- **The confirmation step exists to stop a worse regression, and is not padding.** Matching the phrase on `lowered` alone would make `BEGIN\nwork := 1;\nEND;` read as transaction control and have its real `END;` silently swallowed. `begin_is_transaction` (`blocks.py:256-285`) therefore only *believes* a phrase word or mode head when what follows is `;`, end-of-input, or a `BEGIN_TRANSACTION_MODE_WORDS` member (`:=` is not one). Pinned in three places, including a formatter golden: `tests/sql/test_blocks.py:143-157`, `tests/sql/test_formatter.py:289`, `tests/sql/test_formatter_properties.py:113`, plus `tests/sql/test_block_spans.py:351`.
+- **`isolation` moved OUT of `BEGIN_NOT_BLOCK_FOLLOWERS`** (now just `{"transaction", "work"}`, `blocks.py:97`) into the new `BEGIN_TRANSACTION_MODE_HEADS` (`{"isolation","read","deferrable","not"}`, `:103`) — it heads a mode list (`BEGIN ISOLATION LEVEL SERIALIZABLE`, `BEGIN READ ONLY`, `BEGIN NOT DEFERRABLE`), it was never a noise word. `tests/sql/test_blocks.py:166` asserts `BEGIN_TRANSACTION_MODE_HEADS <= BEGIN_TRANSACTION_MODE_WORDS`, so the two tables cannot diverge into a head that is unreachable because its own continuation set does not contain it.
+- **The span model now contributes NO rung at all for transaction control, in every spelling** — matching what the bare `BEGIN;` spelling already did. Measured in tree: `structure_chain` at the `UPDATE` inside `BEGIN TRANSACTION;` / `BEGIN WORK;` / `BEGIN ISOLATION LEVEL SERIALIZABLE;` / `BEGIN;` yields `['word', 'statement']` in all four cases — no `begin` frame rung. Both consumers read the one predicate (`formatter.py:614`, `block_spans.py:247`), so the anti-fork guarantee still holds, now on the right answer.
+- **The dormancy pin was CHANGED, not removed**, as its own comment asked (`is False` → `is True`): `tests/sql/test_blocks.py:124-137` now reads "the half that used to be dormant, and is not any more", and the old limitation paragraph was replaced by the user-visible symptom plus the two rationales.
+
+Measured after the merge, at `9c65a4c`: `BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nCOMMIT;` formats with **zero issues** (the false unclosed-block refusal is gone), `BEGIN\nwork := 1;\nEND;` still indents as a block, and `select work(1)` / `t.work - 1` are byte-identical. `tests/sql/test_blocks.py tests/sql/test_block_spans.py tests/sql/test_formatter.py tests/ui/test_new_project_sandbox_provisioning.py tests/ui/test_ddl_project_wiring.py` → 349 passed.
+
+**Two follow-ups belonging to other agents — noted here, deliberately not acted on:**
+1. `spec-maintainer` is owed the one-line note contemplated in the Spec impact paragraph above: this guard is realised via `Token.lowered` rather than `SQL_KEYWORDS` membership, and with `declare_is_cursor` that is now **a rule rather than an exception** (`blocks.py:52-55` already states it in code).
+2. `docs/TEST_LOG.md` has **no entry for any of 2026-08-10's later work** — BUG-260810174459, BUG-260810174919 and BUG-260810194657 all landed without one. That append is `feature-tester`'s to make, not this queue's.
+
+---
+
+## BUG-260811021804: SQL Results panel's error/warning colours are never painted — a failed query reads in ordinary text
+**Status:** RESOLVED (8b980f3)
+
+**Resolution notes (2026-08-11).** Both sites fixed with widget-level stylesheets, following
+`ui/connectivity.py`'s working precedent. In `sql_results_panel.py`, `_ERROR_COLOR`/`_WARN_COLOR` became
+`STATUS_ERROR`/`STATUS_WARNING` *kinds* plus a pure `status_colour(kind, light)`; the error red is
+imported from `mode_colors(light)[MODE_MAINTENANCE][1]` so no second red literal exists, and the warning
+pair (`#8a5a00` light / `#e0a83a` dark) is new and local. All seven call sites converted and the
+`setPalette` is gone. In `project_status_panel.py`, `_dim` became `_apply_dim()` using `rgba(...)` at
+`DIM_ALPHA = 165`, reading its base colour from **the node, not the label**, so re-applying cannot
+compound the fade. Both re-apply on theme flip via `changeEvent`, idempotently.
+
+Measured on rendered pixels (error status): dark 0 reddish → 35; light 0 reddish → 240; clearing restores
+the theme colour. Both pairs clear 4.5:1 on their chrome. The dim now renders `#81878c` dark / `#83898e`
+light where it was previously pixel-identical to undimmed.
+
+The false-green test this entry named (`tests/ui/test_sql_results_panel.py:163-168`, asserting the two
+palettes differ) was **deleted** and replaced by pixel-sampling tests. 119 passed across the two files.
+
+Two corrections to this entry, both material for whoever writes the next pixel test:
+- The class in `project_status_panel.py` is **`_DiagramNode`** (`project_status_panel.py:342`), not
+  `StatusNode` — the name used above matches nothing in the file.
+- `mode_colors` stores **upper-case** colour literals while `QImage.pixelColor().name()` returns
+  **lower-case**, so a naive dict lookup on a colour name reads 0 forever — the same false-negative class
+  as the bug itself.
+**Reported:** 2026-08-11
+**Report (verbatim):** "Suspected defect: the SQL Results panel's error/warning status colours are very likely never painted, so a failed query's message reads in ordinary text instead of red. Mechanism, verified as far as a read-only sweep can take it: (1) `pgtp_editor/ui/sql_results_panel.py` defines `_ERROR_COLOR = QColor("#d02020")` and `_WARN_COLOR = QColor("#d08a1a")` (around lines 98-99) and applies them through `_set_status`, a QPalette override on a QLabel. (2) `pgtp_editor/ui/theme.py::apply_theme` ends with `app.setStyleSheet(_qdarkstyle_stylesheet(light))` — an application-wide stylesheet, set unconditionally for both themes. (3) That generated stylesheet contains a universal `QWidget` rule that sets `color`. Qt resolves a stylesheet-declared property over the widget's palette. If that holds for this QLabel, `_set_status`'s colour argument is inert and the red/amber never appears. Verify empirically, offscreen, on both themes; check whether any other place colours text through a palette override under the same app-wide QSS; if it IS inert propose the fix; if it is NOT inert say so plainly and close as not-a-bug."
+
+**CONFIRMED — the suspicion is correct, and it was measured, not inferred.** Rendered the real
+`SqlResultsPanel` offscreen under `apply_theme(app, light)` for both themes, drove
+`panel.show_result(QueryResult.failed("select 1", "boom: syntax error"))`, then sampled every pixel of
+`panel.status_label.grab().toImage()`:
+
+| theme | `label.palette().color(foregroundRole())` says | pixels exactly `#d02020` | pixels merely reddish (`r>150, g<100, b<100`) | colour the text is ACTUALLY painted in |
+|---|---|---|---|---|
+| dark  | `#d02020` | **0** | **0** | `#dfe1e2` (the QSS `QWidget` colour) |
+| light | `#d02020` | **0** | **0** | `#19232d` (the QSS `QWidget` colour) |
+
+The palette faithfully reports the red in both themes while **not one red pixel is drawn**. The same
+measurement confirms the fix mechanism works: `status_label.setStyleSheet("color: #d02020;")` on the
+same label produces 20 exact-`#d02020` and 210 reddish pixels in **both** themes, and
+`setStyleSheet("")` returns it to 0 — so a widget-level sheet outranks the app sheet, and clearing it
+cleanly restores the theme colour.
+
+**Root cause:** `pgtp_editor/ui/sql_results_panel.py:543-550`, `SqlResultsPanel._set_status` —
+
+```python
+def _set_status(self, text: str, colour: QColor | None = None) -> None:
+    self.status_label.setText(text)
+    palette = self.status_label.palette()
+    palette.setColor(
+        self.status_label.foregroundRole(),
+        colour if colour is not None else self.palette().windowText().color(),
+    )
+    self.status_label.setPalette(palette)
+```
+
+`theme.py:142` (`apply_theme`) applies `app.setStyleSheet(_qdarkstyle_stylesheet(light))` unconditionally
+for **both** themes, and the generated qdarkstyle sheet declares `color` on a universal `QWidget` rule
+(`#DFE1E2` dark / `#19232D` light). QSS wins over QPalette for every property it declares, so the
+`setPalette` in `_set_status` sets a value nothing ever reads. Every colour argument at every call site
+is inert: `_ERROR_COLOR` at `:433` (query failed) and `:473` (a statement of a Run failed), `_WARN_COLOR`
+at `:400` (Run disabled with a reason), `:410` (no sandbox to run against), `:415` (`EMPTY_SQL_TEXT`),
+`:444` (result **TRUNCATED** — the "silently short result set" case the module docstring at `:46-48`
+calls this project's worst failure class), and `:487` (`report_notice`). A failed query, a truncated
+result and an ordinary successful `SELECT` are today pixel-for-pixel the same colour.
+
+**The precedent cited in the spec is the bug.** `CONSOLIDATED_SPEC` §18.7 cites
+`sql_results_panel.py:543-550` as the pattern `FQ-260810165518` should reuse. It must not be reused as
+written; §7's invariant (*"for anything the app-level QSS declares, a per-widget `setPalette` is
+INERT"*) is now confirmed on a second, independent site.
+
+**One sibling site, same defect, same mechanism — and the rest of the family is FINE.** Grepped
+`setPalette(` / `setColor(` / `foregroundRole()` across `pgtp_editor/ui/`. Only two non-`theme.py` hits:
+
+- `pgtp_editor/ui/project_status_panel.py:384-391`, `StatusNode._dim` — fades a caption by setting the
+  label palette's foreground to the same colour at alpha 165. **Measured inert too:** replicating it on
+  a `QLabel` under `apply_theme` gives a *pixel-identical* grab before and after, in both themes. The
+  state captions under the status nodes are not dimmed at all today.
+- `pgtp_editor/ui/sql_results_panel.py:543-550` — this bug.
+
+Everything else that colours already uses a mechanism the QSS does not intercept, and needs **no**
+change: `activity_panel.py:199`, `coherence_panel.py:423/513/516` colour through
+`QTreeWidgetItem.setForeground(QBrush(...))`, which **does** paint (measured: 0 reddish pixels before
+`setForeground(0, QBrush(QColor("#d02020")))`, 200 after, in both themes — item views paint from item
+data, not the widget QSS `color`). `connectivity.py:113-117`
+(`self.setStyleSheet(f"QLabel {{ color: {colour}; padding: 1px 6px; }}")`) is the in-repo **working**
+precedent for exactly this problem on exactly this kind of status label.
+
+**Proposed fix** — all in `pgtp_editor/ui/sql_results_panel.py`; nothing outside it is required.
+
+1. **Rewrite `_set_status` to use a widget-level stylesheet instead of a palette override.** Shape,
+   following `connectivity.py::ConnectivityIndicator._render`:
+
+   ```python
+   def _set_status(self, text: str, colour: QColor | None = None) -> None:
+       self.status_label.setText(text)
+       self._status_colour = colour          # remembered, for the theme flip (step 3)
+       self.status_label.setStyleSheet(
+           f"QLabel {{ color: {colour.name()}; }}" if colour is not None else ""
+       )
+   ```
+
+   The `None` branch must set the **empty** sheet, not the palette's `windowText()` — measured, the
+   empty sheet returns the label to the app QSS colour, which is the right neutral in both themes and is
+   what the current `None` branch was trying and failing to express. Delete the `setPalette` entirely;
+   leaving it alongside the sheet just leaves a second, lying source of truth.
+
+2. **The two colours must become per-theme pairs — a single value is measurably wrong in one theme
+   each.** Contrast against the live qdarkstyle chrome (`#19232D` dark panel, `#FAFAFA` light panel),
+   which is the surface §7 already requires colours to be judged against:
+
+   | colour | on dark `#19232D` | on light `#FAFAFA` |
+   |---|---|---|
+   | `#d02020` (today's error) | **2.96 : 1** — fails even 3:1 | 5.15 : 1 ✓ |
+   | `#d08a1a` (today's warn)  | 5.56 : 1 ✓ | **2.74 : 1** — fails even 3:1 |
+
+   So today's error red is unreadable on the dark theme and today's amber is unreadable on the light
+   one — which is precisely the *"the DEBUG chip's hardcoded red that reads wrong in one theme"* defect
+   `ui/mode_indicator.py::mode_colors`' docstring already records. Measured candidates that clear 4.5:1
+   on both sides: error `#8B1E1E` light (8.74) / `#F2B8AE` dark (9.28) — these are exactly
+   `mode_colors`' `MODE_MAINTENANCE` **foregrounds**, so reusing them adds **no new red**, satisfying
+   §18.7's *"no second red beside `mode_colors`"* rule. Warning has no existing pair anywhere in the
+   app; measured candidates are `#8a5a00` light (5.68) / `#e0a83a` dark (7.45).
+
+   **Where the pairs live is a placement question, not a mechanism question, and the fix should not be
+   blocked on it.** Two defensible homes: (a) extend `ui/mode_indicator.py`'s `_LIGHT_COLORS` /
+   `_DARK_COLORS` + `mode_colors(light)` — but that table is keyed by *major mode* and its values are
+   `(background, foreground)` **chip** pairs, so a status **foreground** is a different kind of thing;
+   (b) a small local `_STATUS_COLORS: dict[bool, tuple[str, str]]` in `sql_results_panel.py` that
+   **imports** the maintenance foregrounds from `mode_indicator` for the red rather than re-typing them.
+   (b) is the smaller, honest change and keeps the "one red" rule; flag (a)-vs-(b) to
+   `spec-maintainer` after the fix lands. Do **not** reuse the maintenance *background* `#FDECEA` — it is
+   near-white and useless here.
+
+3. **Re-apply on a theme flip, via `changeEvent` on the panel — do NOT add host wiring.** There is no
+   generic theme broadcast in this app (`main_window.py::_on_light_theme_toggled` at `:1992-1999` calls
+   out to each affected widget by hand, and the panel is nested inside `SqlConsolePanel` inside a tab
+   that may not exist at flip time). Use the existing self-detection precedent,
+   `ui/code_editor.py:655-666`:
+
+   ```python
+   def _palette_is_light(self) -> bool:
+       return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
+
+   def changeEvent(self, event) -> None:
+       super().changeEvent(event)
+       if event.type() in (QEvent.Type.ApplicationPaletteChange, QEvent.Type.PaletteChange):
+           if hasattr(self, "status_label"):
+               self._reapply_status_colour()   # re-derive from the remembered kind
+   ```
+
+   **Two measured gotchas here.** (i) Only `PaletteChange` was observed to reach a nested child widget
+   under `apply_theme` — `ApplicationPaletteChange` did not — so keep **both** in the tuple exactly as
+   `code_editor.py` does. (ii) The event fires **four times per flip on one widget, and the first two
+   report the OLD lightness**; only the last carries the new palette. The handler must therefore be
+   **idempotent and last-write-wins** (just recompute and re-set), and a test must let the flip settle
+   (`processEvents`) before asserting rather than checking after the first event.
+
+4. **Remember the *kind*, not the resolved QColor.** Because the value is now theme-dependent, storing
+   `self._status_colour = QColor(...)` and re-applying it on a flip would re-apply the *old theme's*
+   colour. Store an enum/str kind (`None` / `"error"` / `"warning"`) on the panel and resolve it to a
+   colour at paint time from `_palette_is_light()`. This is the single easiest thing to get wrong in
+   this fix. Adjust the `_set_status` signature accordingly (it is private; the seven call sites listed
+   above are all in this file — `:400`, `:410`, `:415`, `:433`, `:444`, `:473`, `:487`).
+
+5. **Optionally fix `project_status_panel.py:384-391::StatusNode._dim` in the same pass** — same
+   mechanism, same one-line shape (`label.setStyleSheet(f"QLabel {{ color: rgba(...) }}")`, or drop the
+   alpha idea and use an explicit dim colour). Separable; if it is split out, it deserves its own queue
+   entry rather than being forgotten.
+
+**Test impact:** `tests/ui/test_sql_results_panel.py` (364 lines) is the file to extend.
+
+- **One existing test is a false green and must be rewritten, not merely extended:**
+  `test_truncation_is_coloured_differently_from_a_plain_result` at `:163-168` reads
+  `panel.status_label.palette().color(panel.status_label.foregroundRole())` before and after and asserts
+  they differ. That assertion passes today while the two states render **pixel-identically** — it is the
+  reason this bug shipped. Re-point it at the effective colour.
+- New cases needed: (a) an error status renders red **pixels** — grab the label and assert the error
+  colour is present, in **both** themes (the palette read is not evidence; this entry's whole finding is
+  that the palette lies); (b) a plain result renders **no** error/warning colour; (c) truncation renders
+  the warning colour and differs from a plain result *in pixels*; (d) a theme flip while an error is
+  displayed re-colours it to the other theme's value (`apply_theme(app, True)` → `processEvents()` →
+  assert, per gotcha 3ii); (e) a pure assertion that both pairs clear 4.5:1 against the two chrome
+  backgrounds, so a later "tidy" to one value fails loudly. A reusable pixel helper (grab → count
+  matching pixels) belongs in this file or in `tests/ui/` conftest — `tests/ui/test_theme.py` and
+  `tests/ui/test_main_window_theme.py` deliberately *"assert palette roles rather than pixels"* (§7), and
+  this bug is the documented boundary of that policy: for anything the app QSS declares, only pixels are
+  evidence.
+- `tests/ui/test_project_status_panel.py` has **no** palette/dim assertions today; if step 5 is done here
+  it needs a first one.
+
+**Spec impact:** The current behaviour is **not** an intentional decision — it is the exact trap
+`CONSOLIDATED_SPEC` §7's Theme block already names (*"for anything the app-level QSS declares, a
+per-widget `setPalette` is INERT"*, measured 2026-08-11 under `FQ-260810165518`), and this is that
+invariant's **second confirmed instance**, now with rendered-pixel evidence rather than a stylesheet
+read. Two things for `spec-maintainer` **after the fix lands**, neither of them mine to write:
+(1) **§18.7 cites `sql_results_panel.py:543-550` as the precedent to reuse** — that citation points at
+the bug and must be re-pointed (at the fixed `_set_status`, or at
+`ui/connectivity.py::ConnectivityIndicator._render`, which was already correct); (2) §7's invariant can
+be strengthened from a caution to a settled rule with its complement stated —
+`QTreeWidgetItem.setForeground` **is** honoured under the same app QSS (measured), so the rule is
+specifically about *widget* palettes, not item brushes, and §18.5/§18.7's item-colouring code is not
+implicated. The per-theme-pair question in step 2 (extend `mode_colors`' table vs. a local
+`_STATUS_COLORS`) is a placement call for `spec-maintainer` under §18.7's colour-vocabulary rule; it does
+not gate the fix.
+
+---
+
+## BUG-260811021816: Two Apply-to-quality strings send the user to `Database ▸ Compare Schemas…`, a command that has never been built
+**Status:** RESOLVED (d162607)
+
+**Resolution notes (2026-08-11).** A new `_drop_statement(ref)` (`ddl_object_editor.py:491`) renders
+`DROP FUNCTION pr.recalc(integer);`, with a separate trigger branch emitting
+`DROP TRIGGER name ON schema.table;`. Site 1 now points at the sandbox gesture that actually exists;
+site 2 hands the user the DROP statement and states that the editor has no gesture that drops it, and
+why. The `_precondition_signature` docstring's dead path was replaced by a note naming this bug id and
+`db/schema_snapshot.py:81` so it is not re-added (`ddl_object_editor.py:1374-1377`).
+`tests/ui/test_ddl_object_editor.py:1107` passed **unchanged** — the refusal substring was preserved as
+the proposal intended. 110 passed, 5 new.
+
+One deliberate divergence from the proposal, worth recording: proposed test (a) asked for a raw
+**source** scan for `Compare Schemas`, which is incompatible with proposal item 3 (a docstring that
+deliberately names the command). The guard instead parses the module with `ast` and scans
+**non-docstring string constants only** — strictly stronger, because `ast` joins implicitly concatenated
+fragments itself, so the split-across-two-source-lines form that hid site 2 from `grep` is caught
+structurally rather than by regex. Verified to have teeth by temporarily reinserting a wrapped literal
+and watching it fail.
+**Reported:** 2026-08-11
+**Report (verbatim):** "Two user-facing strings in `pgtp_editor/ui/ddl_object_editor.py` direct the user to a menu command **that does not exist**: `Database ▸ Compare Schemas…`. Both sites are in the Apply-to-quality signature-check path: (1) line ~1383, the refusal when the buffer's identity cannot be parsed — `"refused: could not determine the object's signature from the buffer, so a changed signature cannot be ruled out. Use the deployment-script path (Database ▸ Compare Schemas…)."`; (2) line ~1423, the consequence text in the signature-mismatch confirmation (split across two source lines as `"Database ▸ Compare "` + `"Schemas… produces a reviewable script)."`), telling the user how to drop the object left behind — `"Dropping the old one is up to you (Database ▸ Compare Schemas… produces a reviewable script)."` Note the line-wrapping: a naive `grep "Compare Schemas"` finds only the first site. Search for `Compare` alone."
+
+**Root cause:** Not a stale reference to a *renamed* feature and not a cut feature — the text was
+**aspirational**, written against `CONSOLIDATED_SPEC.md` §18.3's design rather than against the app.
+Established by reading, not assumed:
+
+- **The menu entry has never existed.** `main_window.py::_build_database_menu` (line 2917's sibling
+  builder region) offers `Connection Setup…`, `Database/XML Coherence`, `DDL Explorer (Quality)`,
+  `DDL Explorer (Sandbox)`, `Reload DDL`, `New Function/Procedure…`, `Sandbox SQL Console…`. A repo-wide
+  `grep "Compare Schemas"` over `pgtp_editor/` returns **only the two report sites** — zero
+  `addAction` anywhere.
+- **The capability is NOT merely renamed.** The only shipped command whose label contains "Compare" is
+  `Deployment ▸ Compare/Merge pgtp` (`main_window.py:2957`, `compare_action.triggered → self._diff_ui.compare_two_files()`),
+  which diffs two **`.pgtp` XML files** via `diff/differ.py`. It is a different lane entirely from schema
+  comparison and produces no SQL. `Database/XML Coherence` (§17) compares the database against the
+  `.pgtp`'s pages/details; it also emits no deployment script.
+- **A real schema-compare feature is BUILT but UNREACHABLE.** `pgtp_editor/ui/schema_compare_panel.py`
+  (490 lines: grouped diff, default-unchecked review discipline, `Save Migration As…`) over
+  `db/schema_diff.py::diff_schemas` + `db/migration_gen.py::generate_migration` + `db/schema_snapshot.py`.
+  `SchemaComparePanel` appears outside its own module **only** in `tests/ui/test_schema_compare_panel.py` —
+  nothing in `pgtp_editor/` instantiates it. `db/schema_snapshot.py:81,96` says so in as many words:
+  *"`Save Schema Snapshot…` has never been built."* This is exactly `docs/UX_REVIEW.md` C5 (the string
+  bug) and D1 (the unreachable panel).
+- **So the promised escape route is genuinely unavailable today**, and site 2 is the worse of the two:
+  the user is standing in front of a duplicate object PostgreSQL just created for them (the accepted
+  consequence of the BUG-260810193333 owner ruling, *"trust the user … run the sql"*) and the one
+  sentence that tells them how to clean it up names nothing. **The app has no gesture that drops a
+  routine in the target at all** — `Sandbox SQL Console` is structurally sandbox-only
+  (`ui/sql_console_panel.py:21-30`: *"can never target the production/target database — not behind a
+  confirmation"*), the DDL Explorer's `Drop …` entries (`ui/ddl_buffer_panel.py:148-166`) are
+  table/column/index/constraint ALTER-generators with no routine-drop, and an ad-hoc
+  `DROP FUNCTION …` typed into a DDL object buffer would be refused by **this very precondition**
+  (`parse_buffer_identity` returns `None` for a buffer with no `CREATE` header). So site 2 must state an
+  honest out-of-app remedy, not a menu path.
+- A **third, non-user-facing** site carries the same dead path: the `_precondition_signature` docstring,
+  `ddl_object_editor.py:1360-1361` (*"the deployment-script path, Database ▸ Compare Schemas…, is still
+  the reviewable way to do it"*). Fix it in the same edit or it becomes the next reader's source of the
+  same wrong string.
+
+**Proposed fix:** Rewrite the two strings (plus the docstring) so they name only things that exist.
+**Do not wire `SchemaComparePanel` as part of this fix** — that is a feature (`UX_REVIEW` D1 /
+§18.3's `Compare Schemas…`), it needs an owner-level placement call, and shipping it inside a
+string-correction bug fix would hide it. All edits are in
+`pgtp_editor/ui/ddl_object_editor.py::_ApplyMixin._precondition_signature` (the method beginning at
+line 1348 — one method, three literals).
+
+1. **Site 1** (lines 1379-1385, the unparseable-buffer refusal). Replace with — note the first clause is
+   preserved verbatim because an existing test greps it:
+
+   ```python
+   self._report(
+       [
+           "refused: could not determine the object's signature from the "
+           "buffer, so a changed signature cannot be ruled out. Nothing was "
+           "applied. Apply to quality needs a single CREATE [OR REPLACE] "
+           "FUNCTION/PROCEDURE or CREATE TRIGGER header with a complete "
+           "argument list; an ALTER or a bare statement has no signature to "
+           "compare. Use Deployment ▸ Check and commit to sandbox to run this "
+           "buffer where trying things is free."
+       ]
+   )
+   ```
+
+   Why that remedy: it is the route `manual.md` **already** documents for exactly this refusal on ALTER
+   buffers (*"The intended run path for an ALTER is Deployment ▸ Check and commit to sandbox"*), the
+   label is `GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]` and the entry really exists
+   (`main_window.py:2985`). Ending with "Nothing was applied." also matches the sibling refusal three
+   branches down (line 1400-1403), which currently reads more completely than this one.
+
+2. **Site 2** (lines 1419-1425, the mismatch confirmation's `consequence`). This is the one that
+   matters — keep the diagnosis, replace only the parenthetical, and say plainly that the app cannot do
+   the cleanup:
+
+   ```python
+   consequence = (
+       "PostgreSQL identifies a routine by (schema, name, argument "
+       "types), so this does NOT replace the object you checked out: "
+       f"it CREATES A SECOND OBJECT and leaves {live_ref.qualified} "
+       "live. This editor has no gesture that drops it — the Sandbox "
+       "SQL Console can never reach the target database — so you must "
+       "drop it yourself against the target, with:\n\n"
+       f"    {_drop_statement(live_ref)}"
+   )
+   ```
+
+   and add one small module-level helper beside `_comparable` (line 491), so the sentence hands over a
+   statement rather than a chore:
+
+   ```python
+   def _drop_statement(ref: DdlObjectRef) -> str:
+       """The DROP the user must run themselves to remove the object a renamed
+       buffer left behind. TEXT ONLY -- nothing in this app executes it; there
+       is no target-database ad-hoc execution path (sql_console_panel.py:21-30)."""
+       if ref.is_trigger:
+           return f"DROP TRIGGER {ref.name} ON {ref.schema}.{ref.table};"
+       return f"DROP {ref.kind.upper()} {ref.qualified};"
+   ```
+
+   `DdlObjectRef.qualified` (line 276-282) already renders a routine as `pr.recalc(integer)` — the exact
+   argument form `DROP FUNCTION` wants — and `kind` is `"function"`/`"procedure"`/`"trigger"`
+   (`parse_buffer_identity` lowercases it at line 484), so `DROP FUNCTION`/`DROP PROCEDURE` fall out
+   without a lookup table. **Gotchas:** (a) use `live_ref`, never `buffer_ref` — the object to drop is
+   the one that was already there; (b) the trigger branch must not use `qualified`, which renders
+   `schema.table.name`, not `name ON schema.table`; (c) this string is fed to `self._confirm(...)` inside
+   an f-string at line 1429 (`f"{mismatch}\n\n{consequence}\n\n{gesture} anyway?"`) — a `QMessageBox`
+   body, so the embedded newlines render, but do not let a stray `<` in a type name make Qt guess rich
+   text; the current text has none and the helper introduces none.
+
+3. **Docstring** (lines 1359-1361): replace *"the deployment-script path, Database ▸ Compare Schemas…,
+   is still the reviewable way to do it"* with a statement of the truth the fix encodes — that the app
+   has **no** drop gesture for the target, so the confirmation hands the user the `DROP` statement to run
+   themselves, and that §18.3's `Compare Schemas…` is designed but unbuilt (`db/schema_snapshot.py:81`).
+   That note is what stops the aspirational path from being re-added.
+
+4. **Search discipline for the implementer:** grep `Compare` (not `Compare Schemas`) across
+   `pgtp_editor/` before and after, since site 2 is line-wrapped mid-phrase. After the fix the only
+   remaining `Compare` hits in `pgtp_editor/ui/` should be `Compare/Merge pgtp` and its comments.
+
+**Test impact:** `tests/ui/test_ddl_object_editor.py` already owns this path — extend it, do not add a
+new file.
+- `test_precondition_1_refuses_a_buffer_whose_signature_cannot_be_parsed` (line 1098) asserts only
+  `"could not determine the object's signature"` (line 1107), so it **passes unchanged** with the
+  proposed site-1 text. That is deliberate in the wording above; keep that substring intact.
+- `test_precondition_1_declining_the_mismatch_aborts_and_says_so` (line 1083) and the confirming
+  sibling above it exercise site 2 via `_Seams(confirm=[...])` but assert on the **Audit** lines, not on
+  the confirmation body, so they also pass unchanged.
+- **New cases needed:** (a) no user-facing string in the module names a menu entry that
+  `_build_database_menu` does not build — cheapest as a targeted regression assert that the module's
+  source contains no `"Compare Schemas"`, since a wrapped literal is exactly what the naive grep missed;
+  (b) the mismatch confirmation body handed to `_confirm` contains the literal
+  `DROP FUNCTION pr.recalc(integer);` for the existing `_LIVE_OTHER` routine fixture — the `_Seams` stub
+  must record the message text, so check whether it currently keeps it and widen it if not;
+  (c) `_drop_statement` unit cases for `function`, `procedure` and `trigger`
+  (`DROP TRIGGER trg_audit ON pr.orders;`), the trigger one being the branch most likely to be got
+  wrong; (d) the site-1 refusal names `Check and commit to sandbox`.
+
+**Spec impact:** The dead menu path is **not** a divergence introduced by code — `CONSOLIDATED_SPEC.md`
+§18.3 genuinely specifies `Database ▸ "Compare Schemas…"` and `"Save Schema Snapshot…"`, and the spec
+already records them as unbuilt in three places (§18.3's status table: *"**Absent.**
+`MainWindow._build_database_menu` has no such actions"*; §18.5's *"what genuinely does not ship is
+exactly three things"* list; and the §29-side note). So the spec is right and the **code's prose was
+ahead of it**. Two things to flag for `spec-maintainer` **after the fix lands**, neither of them mine to
+write: (1) §18.5 precondition 1's narrative should state the *current* remedy (hand the user the `DROP`;
+no in-app target-drop exists) with `Compare Schemas…` named as the future replacement, so the next
+implementer does not restore the aspirational sentence; (2) the built-but-unreachable
+`ui/schema_compare_panel.py` + `db/schema_snapshot.py` deserve an explicit "shipped module, no entry
+point" row rather than living only in `docs/UX_REVIEW.md` D1 — and wiring `Compare Schemas…` is a
+**feature** for `feature-triage`/`FQ`, not part of this bug.
+
+**Manual impact:** none required — `manual-maintainer` correctly declined to write the nonexistent path,
+so `manual.md` is already consistent. One optional courtesy cross-check when the fix lands: the ALTER
+bullet at `pgtp_editor/resources/manual.md:2541` says the refusal *"point[s] at the reviewable
+deployment-script path"*, which after this fix points at `Check and commit to sandbox` instead — a
+one-clause rewording, and that bullet already names `Check and commit to sandbox` in its next sentence.
+
+---
+
+## BUG-260811024600: §18.5 D4's mandatory statement timeout is specified and does not exist
+**Status:** RESOLVED (fc0b3e1)
+**Reported:** 2026-08-11
+**Report (verbatim):** "Found by spec-maintainer during a harmonization sweep (2026-08-11; spec-right / code-missing). CONSOLIDATED_SPEC §18.5 D4, under *Long-running statements, and the honest gap*, specifies: '**A statement timeout is mandatory, and it is the primary control**: `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000`, adjustable in the console with a **minimum of 1 000 ms and no "unlimited" setting**. A timeout comes back as a named `QueryError` (sqlstate `57014`) reading *"statement cancelled: exceeded the console's statement timeout of N s — raise the timeout or narrow the query"* — never a hang and never a bare stack trace.' and the seam signature `fetch(params, sql, *, row_limit: int, statement_timeout_ms: int) -> FetchResult`. None of it exists. Filed now rather than left as a known gap because §18.5 D4b (`FQ-260811020328`, owner-ruled) adds a Quality SQL Console running full read/write ad-hoc SQL against the production database: today an unbounded statement ties up a disposable sandbox, after D4b it ties up production, and there is no Cancel button either. Please triage and propose a fix covering: widening `SandboxExecutor.fetch` (protocol + `_RealSandboxExecutor` + every fake executor in tests) with `statement_timeout_ms`, where the constant and its 1 000 ms floor live, how the console spin box passes it, and how a `57014` failure is turned into the specified `QueryError` sentence rather than a raw driver message. Note that D4b's quality path (`db/quality_query.py::run_quality_query`, not yet built) must take the same parameter from day one."
+
+**Root cause:** Confirmed exactly as reported; nothing here is a misreading of the code. The timeout has
+**three** missing signatures, not two — the third is the one most likely to be missed:
+
+1. `pgtp_editor/db/sandbox.py:901-919` — `SandboxExecutor.fetch(self, params, sql, *, max_rows: int) -> FetchedRows`
+   (protocol). No timeout parameter.
+2. `pgtp_editor/db/sandbox.py:965-1003` — `_RealSandboxExecutor.fetch`, same signature. It connects,
+   `cursor.execute(sql)` (line 979), reads `cursor.description`, `fetchmany(max_rows + 1)`, commits. **No
+   `SET LOCAL statement_timeout` and no `set_config` anywhere in the method.**
+3. **`pgtp_editor/db/sandbox_query.py:107-125` — `QueryRunner.__call__(self, params, sql, *, max_rows) -> RawResult`.**
+   This is a *second, independent* declaration of the same seam (the injection point `run_sandbox_query`
+   takes as `runner=`). Widening only the two in `db/sandbox.py` leaves the injected path narrower than the
+   real one and every `runner=` test double wrong-shaped.
+
+Downstream of those: `run_sandbox_query` (`db/sandbox_query.py:277-350`) takes `max_rows` only, calls
+`fetch(params, sql, max_rows=max_rows)` at line 318, and on exception builds
+`QueryError.from_exception(exc, sql)` (line 322) — which goes through `db/apply.py::diagnose` and therefore
+already carries `sqlstate`, so a `57014` **is** structurally recognisable today; nothing looks at it.
+`grep -rn "57014\|statement_timeout\|DEFAULT_STATEMENT_TIMEOUT" pgtp_editor/` returns **only** the docstring
+mentions in `db/sandbox_query.py:139` (`QueryError`'s "D4's statement-timeout `57014`" rationale) and
+`ui/sql_console_panel.py:94-98`, which states the gap honestly:
+
+> **Still missing from D4, deliberately, and reported rather than faked:** the mandatory per-statement
+> timeout. `SandboxExecutor.fetch(params, sql, *, max_rows)` has no timeout parameter, so there is nowhere
+> for the UI to pass one; inventing a channel here would change the `db/` contract from the UI.
+
+The UI side is exactly as described: `ui/sql_console_panel.py` has `row_limit_spin` (`:488-498`), the
+`row_limit()`/`set_row_limit()` accessors (`:723-730`) and `_execute` reading `max_rows = self.row_limit()`
+once at `:784` and passing it per statement at `:798` — a complete, working template for the second control,
+with no timeout counterpart.
+
+**Proposed fix:** Five files, no new concepts — the row-cap path is the pattern to mirror end to end.
+
+**(a) Where the constants live — `pgtp_editor/db/sandbox.py`, beside the seam, not beside `DEFAULT_MAX_ROWS`.**
+Add near `FetchedRows`:
+- `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000`
+- `MIN_STATEMENT_TIMEOUT_MS = 1_000`
+
+They must live in `db/sandbox.py` rather than `db/sandbox_query.py` because `sandbox_query` imports
+`sandbox` (`db/sandbox_query.py:74`) and never the reverse — putting them in `sandbox_query` and importing
+them back into the executor is a cycle. This is the same "a seam owns its own vocabulary" reasoning that
+already moved `FetchedRows` into `db/sandbox.py`. Then re-export from `db/sandbox_query.py` in the same
+import line and note it in the docstring, exactly as `RawResult = FetchedRows` (`:104`) does, so the UI and
+D4b keep importing policy constants from one module. `DEFAULT_MAX_ROWS` stays where it is — do **not**
+relocate it; that is unrelated churn in a file with source-scanning tests.
+
+**(b) Widen the three signatures** to
+`fetch(self, params, sql, *, max_rows: int, statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS)`.
+Give it a **default** rather than making it required: the protocol, the real executor and `QueryRunner`
+should all carry the same default so an out-of-tree/older implementation is not silently un-timed-out, and
+so "mandatory" means *there is always a timeout in force*, which a required parameter does not guarantee any
+better. Update all three docstrings (`db/sandbox.py:904-918`, `:965`, `db/sandbox_query.py:111-119`).
+
+**(c) `_RealSandboxExecutor.fetch` sets the timeout inside the same transaction, before the statement.**
+Insert as the first thing in the `with connection.cursor() as cursor:` block, ahead of `cursor.execute(sql)`:
+
+```python
+cursor.execute(
+    "SELECT set_config('statement_timeout', %s, true)",
+    (f"{max(int(statement_timeout_ms), MIN_STATEMENT_TIMEOUT_MS)}ms",),
+)
+```
+
+**Use `set_config(..., true)`, not `SET LOCAL statement_timeout = %s`.** PostgreSQL's `SET` is a utility
+statement and does **not** accept bind parameters, so the `SET LOCAL` form the spec's prose names would have
+to be built by string interpolation; `set_config`'s third argument `true` is precisely `SET LOCAL` semantics
+(transaction-scoped) and takes a parameter. psycopg 3 is **not** in autocommit here (the method commits
+explicitly at `:997`), so an implicit transaction is open and the `true` scope holds for the statement and is
+discarded at commit — the connection is closed per call anyway, so nothing leaks either way. The `max(...,
+MIN_STATEMENT_TIMEOUT_MS)` clamp is defence in depth; the loud rejection belongs in (d).
+
+**(d) `run_sandbox_query`** gains `statement_timeout_ms: int = DEFAULT_STATEMENT_TIMEOUT_MS`, validates it
+beside the existing `max_rows < 0` check (`db/sandbox_query.py:306-307`) —
+`if statement_timeout_ms < MIN_STATEMENT_TIMEOUT_MS: raise ValueError(...)`, with a message that says there
+is deliberately no unlimited setting — and forwards it at `:318`. The `ValueError` is a caller bug and must
+stay outside the never-raises contract, exactly like the `max_rows` one and the `_sandbox_params` `TypeError`
+(the never-raises promise covers *the database*, not the caller).
+
+**(e) The `57014` sentence, in `db/sandbox_query.py` and nowhere else.** Add module-level:
+
+```python
+TIMEOUT_SQLSTATE = "57014"
+
+def timeout_error(error: QueryError, statement_timeout_ms: int) -> QueryError: ...
+```
+
+returning `dataclasses.replace(error, message=...)` with the spec's sentence —
+`f"statement cancelled: exceeded the console's statement timeout of {statement_timeout_ms / 1000:g} s — raise the timeout or narrow the query"`
+— **preserving `sqlstate`, `detail`, `hint`, `position` and `line`**; only `message` is replaced, because
+`error_text` (`:370`) already prefixes the sqlstate and a surface that lost `position` would lose the
+clickable line. Apply it in the `except` branch at `:319-325`, i.e. the message is rewritten once, above the
+seam, where the timeout that was actually in force is known — not in the executor, which would put UI wording
+in the driver layer, and not in the panel, which would have to be duplicated for D4b. Gotcha worth stating in
+the code: a user-issued `pg_cancel_backend` also reports `57014`, so this sentence is the app's best
+interpretation, not a certainty; the spec asks for exactly this mapping, so ship it and say so in a comment.
+
+**(f) The console control — `ui/sql_console_panel.py`, mirroring `row_limit_spin` line for line.**
+- Constants beside `DEFAULT_ROW_LIMIT`/`MIN_ROW_LIMIT`/`MAX_ROW_LIMIT` (`:164-176`):
+  `DEFAULT_TIMEOUT_MS = DEFAULT_STATEMENT_TIMEOUT_MS` and `MIN_TIMEOUT_MS = MIN_STATEMENT_TIMEOUT_MS`, both
+  imported from `db/sandbox_query.py` rather than re-declared (the existing "one number, not two that can
+  drift" comment applies verbatim), plus a **new** `MAX_TIMEOUT_MS`. The spec states no maximum but forbids
+  "unlimited", and a `QSpinBox` needs one: propose `MAX_TIMEOUT_MS = 600_000` (10 minutes) with a comment
+  giving the reason (long enough for a genuine bulk statement, short enough that a forgotten run cannot hold
+  a connection for an afternoon). **This number is a choice the spec does not make — flag it to
+  `spec-maintainer` with the fix rather than inventing it silently.**
+- `self.timeout_spin = QSpinBox()` with `setRange(MIN_TIMEOUT_MS, MAX_TIMEOUT_MS)`,
+  `setValue(DEFAULT_TIMEOUT_MS)`, `setSingleStep(1_000)`, `setSuffix(" ms")`, `setGroupSeparatorShown(True)`,
+  a tooltip in the shape of the row-limit one (states the floor and that there is no unlimited setting), a
+  `QLabel("Statement timeout:")` with `setBuddy`, added to the existing `controls` `QHBoxLayout` (`:500-504`)
+  **before** the `addStretch(1)`.
+- Accessors `statement_timeout_ms()` / `set_statement_timeout_ms(ms)` mirroring `row_limit`/`set_row_limit`
+  (`:723-730`), and add both to the "Wiring surface for the host" list in the class docstring (`:415-420`).
+- In `_execute`, read it **once** beside `max_rows = self.row_limit()` (`:784`) and pass it on every
+  `self._run_query(...)` call at `:798`. Reading once per Run, not per statement, is deliberate and matches
+  the row cap: a control changed mid-Run must not change the rules halfway through.
+- Update the class docstring's seam line (`:399`) to `run_query(session, sql, *, max_rows, statement_timeout_ms)`.
+- **Delete the "Still missing from D4" paragraph at `:94-98`** and replace it with a statement of what the
+  timeout now does — but **keep the Cancel-button sentence**: no Cancel button is a separate, still-real gap
+  (§18.5 D4's own, per-call connections leave no handle to `cancel()`), and this fix does not close it.
+  Update the module docstring's row-cap paragraph (`:46-53`) to mention the timeout as its sibling control.
+
+**(g) D4b, from day one.** `db/quality_query.py::run_quality_query(params, sql, *, max_rows, runner)` (spec
+§18.5 D4b, ⏳ not yet built) must be
+`run_quality_query(params, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS, runner)`,
+importing the same constants and reusing `timeout_error`/`TIMEOUT_SQLSTATE` — the point of putting the
+mapping in `db/sandbox_query.py` at module level rather than inside `run_sandbox_query` is that the quality
+lane gets the identical sentence without a copy. If D4b's console reuses `SqlConsolePanel`, it inherits the
+spin box; if it is a sibling class, the constants and accessors must come from the same place.
+
+**Gotchas, ordered by how easy they are to miss:**
+1. **Three signatures, not two** — `QueryRunner.__call__` in `db/sandbox_query.py:122` is the one that gets
+   forgotten, and forgetting it breaks every `runner=` injection instead of failing at import.
+2. **Every test double takes `*, max_rows` explicitly** and will `TypeError` the moment the panel passes the
+   new kwarg — see Test impact for the exact list.
+3. **`SET` does not take bind parameters** — see (c); reaching for `SET LOCAL statement_timeout = %s` fails
+   at runtime against a real server and passes every fake-executor test.
+4. **`tests/db/test_sandbox.py:1213-1224` reads `_RealSandboxExecutor.fetch`'s source text** and asserts the
+   literals `"import psycopg"`, `"max_rows + 1"` and `"description is None"`. Keep all three intact; the new
+   `set_config` line goes *above* them, and that test is the natural place to add the timeout assertion.
+5. **Do not add a keyboard shortcut.** This fix is a spin box and a parameter. `docs/KEYBINDINGS.md` has no
+   free-standing timeout chord and needs none — the console's only panel-hosted chords are `Ctrl+Return`
+   (Run, `QShortcut`, DEC-009), `Ctrl+Alt+F`, `Ctrl+Space`, `Ctrl+Alt+J`, `Ctrl+Shift+Space` — and no ledger
+   row changes. If someone proposes one, it needs a gate ruling first, not a chord.
+6. **`QueryResult` gains no field.** The timeout in force is not currently reported back on the result; the
+   spec does not ask for it, and adding a field would ripple into D4b's "the identical `QueryResult` shape"
+   claim. The sentence carries the number.
+
+**Test impact:** All three files exist; extend, do not duplicate.
+- `tests/db/test_sandbox.py` — `test_sandbox_executor_protocol_declares_fetch` (~`:1200`) and
+  `test_real_executor_fetch_imports_psycopg_lazily_and_caps_by_one` (~`:1213`). New: the source-scan asserts
+  `set_config` / `statement_timeout` appears **before** the `cursor.execute(sql)` line; an
+  `inspect.signature` assertion that all three `fetch` declarations carry a keyword-only
+  `statement_timeout_ms` with `DEFAULT_STATEMENT_TIMEOUT_MS` as its default.
+- `tests/db/test_sandbox_query.py` — `RecordingRunner.__call__` (`:53`) and the inline fake executor's
+  `fetch` (`:238`) both need the new kwarg; the tuple appends at `:54`/`:239` and the unpack at `:93` change
+  shape, so every assertion around `:96` is touched. New cases: the default 30 000 is passed down when the
+  caller says nothing; an explicit value is passed down verbatim; below the 1 000 ms floor raises
+  `ValueError` and does **not** call the runner; a runner raising an exception whose `sqlstate` is `57014`
+  produces a `QueryResult` whose `error.message` is the exact spec sentence with the right `N s` **and whose
+  `sqlstate`/`position`/`line` survive**; a `57014`-free failure is left completely untouched.
+- `tests/ui/test_sql_console_panel.py` — the fakes at `:73`, `:103` and the `boom` runner at `:295` all take
+  `*, max_rows` and must accept `statement_timeout_ms`. New cases: the spin box defaults to 30 000 and its
+  minimum is 1 000 (`.minimum()`, i.e. there is no unlimited setting); `set_statement_timeout_ms(10)` clamps
+  to the floor rather than being accepted; a multi-statement Run passes the **same** value on every
+  statement; changing the spin box between Runs changes what the next Run sends.
+- No new test file. `tests/ui/test_sql_results_panel.py` should not need touching — the results panel never
+  sees the timeout.
+
+**Spec impact:** **The spec is right and the code was missing; no spec requirement changes.** After the fix
+lands, `spec-maintainer` should (a) delete the `⛔ THE MANDATORY STATEMENT TIMEOUT IS SPECIFIED AND NOT BUILT`
+block at `CONSOLIDATED_SPEC.md` §18.5 D4 (~`:11131-11145`) and the `⚠ The SHIPPED signature differs and the
+difference is the missing timeout` note (~`:11067-11074`), replacing them with the shipped signature
+`fetch(params, sql, *, max_rows, statement_timeout_ms) -> FetchedRows`; (b) record the two facts the spec does
+not currently state — the `set_config('statement_timeout', …, true)` form rather than `SET LOCAL … = %s`, and
+the console's spin-box **maximum** (proposed 600 000 ms), which is a genuine new choice; (c) update the
+Supersession Ledger row dated 2026-08-11 that records this as divergence (2), since it names the gap as
+outstanding; (d) leave the **Cancel button** gap and §29's open item exactly as they are — untouched by this
+fix. §18.5 D4b's ⏳ `run_quality_query` signature (~`:11203`) should gain `statement_timeout_ms` in the same
+pass so the not-yet-built function is specified with it rather than acquiring it later.
+
+**Manual impact:** `pgtp_editor/resources/manual.md:3796` documents the console's **Row limit** spin box;
+`manual-maintainer` should add the sibling **Statement timeout** bullet beside it (default 30 s, floor 1 s,
+no unlimited setting, and what the cancellation message says), after the feature-tester is green.
+
+**Resolution (fc0b3e1, 2026-08-11):** Shipped essentially as proposed.
+
+- `db/sandbox.py`: `DEFAULT_STATEMENT_TIMEOUT_MS = 30_000` and `MIN_STATEMENT_TIMEOUT_MS = 1_000`, placed
+  beside the seam rather than beside `DEFAULT_MAX_ROWS` (which would cycle), with the reason written down.
+  Both `SandboxExecutor.fetch` and `_RealSandboxExecutor.fetch` widened with a keyword-only
+  `statement_timeout_ms`.
+- The timeout is issued as `SELECT set_config('statement_timeout', %s, true)`, first statement in the cursor
+  block, value clamped up to the floor.
+- `db/sandbox_query.py`: re-exports both constants, adds `TIMEOUT_SQLSTATE = "57014"` and a module-level
+  `timeout_error(...)` that `dataclasses.replace`s **only** `message`, so `sqlstate`/`detail`/`hint`/
+  `position`/`line` survive. `QueryRunner.__call__` widened — the third declaration this triage identified.
+- `ui/sql_console_panel.py`: `timeout_spin` + `timeout_label` in the controls row,
+  `statement_timeout_ms()`/`set_statement_timeout_ms()`, read once per Run and applied to every statement.
+  `MAX_TIMEOUT_MS = 600_000` matches the spec's `MAX_STATEMENT_TIMEOUT_MS`, folded in the same pass.
+- Full suite: **7478 passed, 51 skipped** (baseline 7453), +25 tests, no regressions.
+
+Confirmations: all four findings held. The third seam was exactly `QueryRunner.__call__` and there was **no
+fourth** — a sweep for the protocol method across `pgtp_editor/` and `tests/` found only the two real
+declarations plus one inline fake, the remaining three doubles being `run_query`/`runner` callables. All five
+doubles were widened. The **no-Cancel-button gap is not closed** by this fix, and the panel's docstring now
+restates it rather than dropping the paragraph.
+
+Two corrections to this entry, recorded rather than edited away:
+
+1. **The suggested source-scan test was unsafe as written.** Asserting `"SET LOCAL"` does not appear in the
+   source fails, because `_RealSandboxExecutor.fetch`'s comment deliberately *explains* the spelling it must
+   not use — precisely so nobody "fixes" it back. The shipped test
+   (`tests/db/test_sandbox.py`, ~`:1258-1275`) strips comment lines before scanning. The same trap applies to
+   any future "this string must not appear in the source" guard.
+2. Minor line drift in this entry's references (the panel's `max_rows = self.row_limit()` was cited as
+   `:784`); every named **symbol** was correct.
+
+Follow-up for `spec-maintainer`, beyond the Spec impact list above — two implementation choices the spec does
+not yet carry: (i) the executor **clamps up to the floor** as defence in depth while `run_sandbox_query`
+**rejects** out-of-range values loudly — two different disciplines on purpose; (ii) `timeout_error` /
+`TIMEOUT_SQLSTATE` and both constants are module-level and importable specifically so
+`FQ-260811020328`'s `db/quality_query.py` reuses them rather than copying the wording.
+
+---
+
+## BUG-260811232724: audit-item click (Find All finding OR bookmark) navigates everywhere EXCEPT the DDL Explorer read-only viewing pane (`EditorPanel`) — that one buffer alone is routed as `_NO_AUDIT_ROUTE` and has no navigation route, while raw XML and the editable DDL object editor both work
+**Status:** RESOLVED (`1ff2b11`) — see **Resolution** at the end of this entry.
+**Reported:** 2026-08-11
+**Report (verbatim):** "in ddl explorer find all -> findings / clicking the list is not jumping to the point in the code (EditorPane)" — plus the owner's follow-up: "all bookmarks have the same limitation."
+
+**Which of the two possibilities this is:** Option (a), not (b). Since **BUG-060** (RESOLVED `8d489f8`) the DDL Explorer's Find All **does** produce rows into the Findings surface — the report's "-> findings" is accurate, the matches appear. What is broken is the *click → navigate* step for that source. This is a distinct bug from BUG-060 (which was "results reach no output"); it is the second half BUG-060 explicitly left undone. Confirmed by the shipped test `tests/ui/test_find_all_surfaces.py::test_the_ddl_explorer_buffer_reports_matches_as_inert_rows` (line 128), which asserts the rows arrive but carry `None` line/target and clicking them is a deliberate no-op.
+
+**Findings-click and bookmark-click are ONE code path, so one fix covers both.** Both `[Find]` Find-All rows (`FindValidateController._start_find_all`/`_find_all_step`, `ui/find_controller.py:644-694`) and `[Bookmark]` List-All-Bookmarks rows (`FindValidateController.list_all_bookmarks`, `:733-780`) resolve their row payload through the **same** table — `_bookmark_audit_route(editor)` (`:792-838`) — and are navigated by the **same** click router, `MainWindow._on_audit_item_clicked` (`ui/main_window.py:2502-2530`). This sharing is called out as "the design" in `find_all_in_bar`'s docstring (`:607-617`). So both symptoms have one root and one fix.
+
+**Root cause (owner-narrowed to exactly one surface).** Click→navigate is wired and working for **every** audit source *except one*: the owner confirms it works in the raw/XML editor **and in DDL *editing*** (the editable `DdlObjectEditorPanel` object tab), and fails **only** in the DDL Explorer read-only *viewing* pane — the read-only `EditorPanel` the original report named "EditorPane." The two are different classes with different route status:
+- **editable `DdlObjectEditorPanel` (works):** `_bookmark_audit_route` returns its `panel.ref.key` **tuple** (`ui/find_controller.py:822-825`), `_on_audit_item_clicked` has an `isinstance(target, tuple)` branch that calls `_navigate_to_ddl_object(target, line)` (`main_window.py:2522-2528` → `:5783-5800`), which focuses that object tab and places the caret. A real route exists end to end.
+- **read-only `EditorPanel` (fails):** for `editor is panel.editor` over `stage.ddl_explorer_panels()`, `_bookmark_audit_route` returns the sentinel `_NO_AUDIT_ROUTE` (`ui/find_controller.py:147`, `:811-821`). A `_NO_AUDIT_ROUTE` row is emitted **roles-less** on purpose — no `UserRole` line, no `UserRole+1` target (`:682-689` for Find All, `:761-765` for bookmarks) — so `_on_audit_item_clicked` returns immediately at its `if line is None` guard (`main_window.py:2503-2505`), and there is **no branch in the router that resolves a target to the read-only `EditorPanel`** even if a payload were emitted. Both halves of the route are absent for this one pane.
+
+So the defect is precisely: **the navigation route registered for the editable `DdlObjectEditorPanel` (and for raw XML) has no counterpart for the read-only `EditorPanel` the DDL Explorer uses for viewing.** The row is inert by construction — clicking never reaches any jump.
+
+**Reference paths (owner-confirmed working: raw XML AND "ddl editing").** Two known-good sources prove the mechanism is sound and isolate the missing piece to the read-only pane's route:
+- **Raw XML:** the row carries `UserRole = line`, `UserRole+1 = "raw"`; `_on_audit_item_clicked`'s fallback (`main_window.py:2529-2530`) does `center_stage.setCurrentIndex(raw_xml_tab_index); xml_editor.navigate_to_line(line)`.
+- **Editable DDL object editor (`DdlObjectEditorPanel`):** the row carries `UserRole = line`, `UserRole+1 = ref.key` (a tuple); the `isinstance(target, tuple)` branch (`main_window.py:2522-2528`) calls `_navigate_to_ddl_object` which focuses the object tab and sets the caret.
+
+The **read-only `EditorPanel`** the DDL Explorer views with is the single surface lacking this, and it lacks **exactly two things** the two working routes have, and nothing else: (1) a **route-table entry** — `_bookmark_audit_route` returns `_NO_AUDIT_ROUTE` instead of a real `(target, line-bearing)` payload, so the row is emitted with no line and no target (this is the whole failure — there is no offset→line mapping problem, the match line is already 1-based and correct, and no signal is disconnected: `itemClicked → _on_audit_item_clicked` is wired at `main_window.py:1062-1063` and fires); and (2) a **matching branch in `_on_audit_item_clicked`** that resolves that target to the read-only `EditorPanel` — the analogue, for this pane, of the tuple branch that already serves the editable object editor. Add both and the DDL Explorer viewing pane becomes a mirror of the two paths that already work.
+
+Why it was left inert (and why the naïve fix is wrong): the router's **fallback** branch (`main_window.py:2529-2530`) navigates the **Raw XML** editor. A DDL Explorer buffer is a *different document* (synthesized by `build_ddl_text`, §18.1), so a row carrying a bare line with no target discriminator would yank the user to Raw XML and land the caret on the wrong document — §7's unmapped-line rule, cited at `:798-802`. The buffer was made inert rather than given a real route because **no branch existed in `_on_audit_item_clicked` that resolves to the read-only `EditorPanel`**. That branch is what must be added; the navigation mechanism it needs already exists.
+
+**The jump mechanism already exists and is proven** — this is purely a missing route, not missing navigation. `EditorPanel.navigate_to_line(line)` (`ui/ddl_editor_panel.py:190-194`) already does focus + caret + scroll (`self.editor.navigate_to_line(line); self.editor.setFocus()`), and `MainWindow._on_ddl_navigate_requested` (`main_window.py:4434-4444`) already focuses the right tab and calls it for the DDL-tree leaf-click case: `stage.setCurrentIndex(stage.ddl_explorer_tab_index(role)); stage.ddl_explorer_panel(role).navigate_to_line(line)`. The fix reuses exactly this, the way `_navigate_to_ddl_object` (`main_window.py:5783-5800`) is the analogous branch for the *editable* DDL object tab.
+
+**Proposed fix (one shared change, three edit sites):**
+
+1. **Give the DDL Explorer buffer a real route discriminator in `_bookmark_audit_route`** (`ui/find_controller.py:811-821`). Today it returns `_NO_AUDIT_ROUTE, label, None`. The discriminator must encode **which role** (Sandbox vs Quality/Target), because the two Explorer buffers are different documents with different line numbers (§18.7 divergence rule) — mirror the PHP route, whose target is a discriminator string plus an `extra` key. Return e.g. `DDL_EXPLORER_AUDIT_TARGET, label, role`, where `DDL_EXPLORER_AUDIT_TARGET` is a new module-level string constant (sibling to `LINT_AUDIT_TARGET`) and `role` is the `DDL_EXPLORER_SANDBOX`/`DDL_EXPLORER_TARGET` key already in hand in that loop. The `extra` (role) then rides `UserRole+2`, which `_start_find_all`/`_find_all_step` and `list_all_bookmarks` already propagate when `extra is not None` (`:685-689`, `:764-765`) — so **no change is needed in the two emitters**; giving the route a non-`_NO_AUDIT_ROUTE` target with a non-None extra makes both Find All and bookmark rows carry line + target + role automatically.
+
+2. **Add the navigate branch to `_on_audit_item_clicked`** (`ui/main_window.py:2502-2530`), before the Raw XML fallback and shaped exactly like the existing `"xsd"` / `LINT_AUDIT_TARGET` / tuple branches:
+   ```python
+   if target == DDL_EXPLORER_AUDIT_TARGET:
+       role = item.data(Qt.ItemDataRole.UserRole + 2)
+       self._on_ddl_navigate_requested(line, role)
+       return
+   ```
+   Reuse `_on_ddl_navigate_requested(line, role)` verbatim — it already sets the current index to that role's Explorer tab and calls `navigate_to_line` (focus + caret + scroll). Import `DDL_EXPLORER_AUDIT_TARGET` from `find_controller` (or a shared constants module) into `main_window.py`.
+
+**Gotchas:**
+- **The role MUST be carried, not inferred from the current tab.** Sandbox and Quality buffers have independent line numbering (§18.7); resolving "which Explorer" from the active tab at click time would jump the wrong buffer whenever the user clicked a finding while a different tab was focused. Put the role on `UserRole+2` and read it back — same shape as §22's PHP `extra`.
+- **`UserRole+2` is overloaded across branches but never collides:** it holds the XSD mode on the `"xsd"` branch, the PHP CenterStage key on the `LINT_AUDIT_TARGET` branch, and now the Explorer role — each read only inside its own `target` branch, exactly as the existing code notes (`main_window.py:2508-2520`).
+- **Do not touch the `"raw"`-fallback safeguard in `find_all_in_bar`** (`:621-627`): that guard re-maps an *unknown* editor (a not-yet-registered tab kind) to `_NO_AUDIT_ROUTE`, and is correct to keep — only the *known* DDL Explorer buffer is being given a route.
+- The draft-fragment buffer stays `_NO_AUDIT_ROUTE` — it is out of scope and genuinely has no navigable home tab yet.
+
+**Test impact:**
+- `tests/ui/test_find_all_surfaces.py` — `test_the_ddl_explorer_buffer_reports_matches_as_inert_rows` (line 128) currently **asserts the bug** (rows carry `None` line/target; click does not move). It must be **inverted**: after the fix the row carries `line`, the target discriminator, and the role on `UserRole+2`, and `_on_audit_item_clicked(row)` must switch to that Explorer tab and land the caret on the match line — mirror the existing `test_a_ddl_object_row_carries_its_ref_key_and_navigates_that_tab` (line 93) as the pattern. The module docstring's "read-only Explorer buffer … get roles-less, inert rows" note (lines 18/34) must be updated. Add a two-role case if not already covered (a match in the Sandbox buffer navigates the Sandbox tab, not Quality).
+- `tests/ui/test_list_all_bookmarks.py` — extend to cover a bookmark in a DDL Explorer buffer navigating on click (the bookmark half of the same fix); today it will only exercise routable editors. The raw/xsd click-navigate assertions there are the pattern to extend, not duplicate.
+- No new test *file* is needed; both existing files own this area.
+
+**Spec impact:** The current inert behavior is an intentional decision recorded in shipped code and reflected in `CONSOLIDATED_SPEC.md` §18.5 (BUG-060's Find-All-generalization work) and §7's unmapped-line rule — the DDL Explorer/draft buffers were named as "no route." The fix narrows that: the DDL Explorer buffer **now has a route** (it gains a role-tagged discriminator), while the draft fragment stays unrouted. This diverges from the as-shipped §18.5/§7 statement that the read-only DDL Explorer emits inert audit rows. **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here. (BUG-061 — Findings tab missing from the View menu — is a separate concern; mentioned only because it is the same surface's discoverability, and is worth resolving alongside so the navigation fix is manually verifiable.)
+
+**Resolution (`1ff2b11`)** — verified in the tree 2026-08-12. Both symptoms were one path exactly as triaged, so one fix covered both. `pgtp_editor/ui/find_controller.py:160` gained `DDL_EXPLORER_AUDIT_TARGET = "ddl-explorer"`, and the Explorer branch of `_bookmark_audit_route` now returns `DDL_EXPLORER_AUDIT_TARGET, label, role` (`:841`) instead of `_NO_AUDIT_ROUTE`. The role rides `UserRole+2`, which **both emitters already propagated**, so neither emitter changed. `main_window._on_audit_item_clicked` (`:2556`) delegates to the existing `_on_ddl_navigate_requested`. **No new navigation mechanism was built** — the tree's leaf-click route already did caret + scroll, as the entry predicted. The shipped test asserting the rows are deliberately inert was rewritten with the supersession recorded in its docstring (`tests/ui/test_find_all_surfaces.py:34`, `:141`, `:161`), and a two-role case proves a Sandbox finding navigates Sandbox while Quality is current; `tests/ui/test_list_all_bookmarks.py:206` covers the bookmark half. `_NO_AUDIT_ROUTE` survives for the draft fragment (`find_controller.py:857`), per the entry's scoping. **The spec flag above is CLEARED** — the read-only Explorer's audit route was folded into `CONSOLIDATED_SPEC.md` in `a804a2d` (§8's audit-disposition table now carries the `DDL_EXPLORER_AUDIT_TARGET` row with the required role, plus a Supersession Ledger row). Do not re-dispatch `spec-maintainer` for it.
+
+---
+
+## BUG-260811234853: Vim mode has no `a`/`i` text objects — `caw`/`daw`/`yaw` (and `iw`) do nothing
+**Status:** RESOLVED (`e60e0d0`) — see **Resolution** at the end of this entry.
+**Reported:** 2026-08-11
+**Report (verbatim):** "in vim mode the following combinations don't work:
+1. caw / daw / yaw  (cw  dw yw yes)"
+
+**Root cause:** This is a *deliberately deferred* capability, not a regression — the text-object grammar was never implemented. The vim command grammar is hand-rolled in `pgtp_editor/vim/grammar.py` (`VimGrammar.feed`, lines 202-240). After an operator (`d`/`c`/`y`) the machine accepts only: another copy of the same operator (`dd`→linewise), a count, `g`, a `CHAR_MOTION` (`f t F T`), or a `SIMPLE_MOTION` (`grammar.py:74` — `h j k l w b e 0 ^ $ G gg % { }`). The letters **`a`** and **`i`** are *not* motions and *not* operators, so in operator-pending state they hit the `_SHORTHANDS`/`INSERT_ENTRY_ACTIONS`/`_ACTIONS` branch (`grammar.py:234-238`): `a` and `i` are both in `INSERT_ENTRY_ACTIONS` (`grammar.py:88`), and that branch's `if self._operator is not None: self.reset()` path **discards the whole command**. So `da` resets and the trailing `w` is then parsed as a bare word-forward motion — `caw`/`daw`/`yaw` silently do nothing coherent. There is no "text object" slot anywhere in `Command` (`grammar.py:117-149`) and no `aw`/`iw` range computation in the Qt half. `cw`/`dw`/`yw` work because `w` is a genuine `SIMPLE_MOTION` and `_vim_motion_span` (`ui/vim_mode.py:1003-1012`) computes their range via `word_forward` (`vim/words.py:55`). The spec confirms the deferral explicitly: `CONSOLIDATED_SPEC.md:493` shapes `sql/block_spans.py`'s interface "for **FQ-032's deferred vim text objects as a second caller**," and `vim_mode.py:145-147` names `structure_chain` as "the DEFERRED text objects' dependency" not consumed by v1.
+
+**Proposed fix:** Add a text-object slot to the grammar and its range computation to the Qt half; reuse the existing operator execution so all three operators (`d`/`c`/`y`) gain text objects at once.
+
+Scope recommendation: implement **`aw` and `iw`** (the reported case plus its inner sibling — same word machinery, no new dependency). Everything beyond `aw`/`iw` (quoted-string objects `a"`/`i"`, bracket/paren objects `ab`/`ib`, paragraph `ap`/`ip`, SQL-structural objects via `structure_chain`) is a **larger, optional** expansion and should be left out of this fix — flag it, do not build it here.
+
+Concrete changes:
+1. **`pgtp_editor/vim/grammar.py` — parse `a`/`i` + object char in operator-pending state.**
+   - Add a `text_object: str | None = None` field to `Command` (e.g. value `"aw"` or `"iw"`), and a pending flag `self._pending_textobject: str | None = None` initialized in `reset()` and reflected in `is_pending`/`pending_text`.
+   - In `feed`, **before** the generic `if key in _SHORTHANDS or ...` branch, add: `if self._operator is not None and key in ("a", "i"): self._pending_textobject = key; return None`. This must be gated on `self._operator is not None` so bare `a`/`i` in Command mode stay their insert-entry actions (append / — note plain `i` is insert-at-caret; `a` is append). Do **not** widen this to non-operator state.
+   - Add a `_pending_textobject` handler near the top of `feed` (peer to the `_pending_char`/`_pending_g` handlers, lines 204-210): when a text-object is pending, accept object chars — for this fix only `w` — and resolve to a `Command(count, operator, text_object=pending+key)`; any other char resets (discard rather than guess, matching the `g`-then-other precedent at `grammar.py:207-210`).
+   - Note: an operator IS required — bare `aw`/`iw` (no operator, no visual mode) has no meaning here since there is no visual mode, so only the operator-pending path needs it. Verify `has_count`/`count` are carried onto the resolved command as the other resolvers do.
+2. **`pgtp_editor/vim/words.py` — add `aw`/`iw` range functions.** Add two pure functions taking `(text, pos)` and returning `(start, end)` half-open offsets, reusing `char_class`:
+   - `inner_word_span(text, pos)`: the maximal run of the class of the char under the caret (keyword run, punctuation run, or — vim quirk — a whitespace run counts as an "inner word" when the caret sits on whitespace). `iw` = that run only.
+   - `a_word_span(text, pos)`: the inner-word run **plus trailing whitespace**; if there is no trailing whitespace (end of line/buffer), take **leading** whitespace instead — vim's `aw` rule. These mirror the class-run logic already in `word_forward`/`word_backward`/`word_end`.
+3. **`pgtp_editor/ui/vim_mode.py` — compute and execute the text-object span.** In `_vim_run_operator` (line 966) or a new `_vim_textobject_span(command)` peer to `_vim_motion_span` (line 1003), branch when `command.text_object is not None`: call the words.py span function on `self.toPlainText()` at the caret, get `(start, end)`, and return `(start, end, self._vim_text_between(start, end))` in the **exact tuple shape** `_vim_run_operator` already consumes (lines 982-1001). This gives `daw`/`caw`/`yaw` for free: delete removes the span, `c` removes it and calls `_exit_command_mode()` (line 1001), `y` writes it to the clipboard and leaves the caret at `start` (lines 985-989). Wire the branch selection in `_vim_run_operator` alongside the existing linewise-vs-motion choice (lines 975-979).
+
+**Gotchas:**
+- **`a`/`i` must stay insert-entry actions when NO operator is pending** — only intercept them in operator-pending state. Getting this wrong breaks `a` (append) and `i` (insert) in ordinary Command mode.
+- Text objects are **not motions and not linewise**: do not route them through `_vim_motion_span` (they are not caret-relative min/max ranges — `iw` on the caret's own word extends *backward* to the word start too) and not through `_vim_linewise_span`. They need their own span function, which is why step 3 adds one.
+- **No `sql/` call and no tokenizer** — same boundary rule as `_vim_word` (`vim_mode.py:793-799`): this layer serves XML/PHP/JS buffers too, so `aw`/`iw` must be pure character-class arithmetic in `vim/words.py`, exactly like `w`/`b`/`e`.
+- **No keyboard-ledger impact.** These are editor-internal chords answered inside `handle_command_mode_key` → `VimGrammar.feed` while Command mode holds; they are not `QAction`/`QShortcut` app-level shortcuts and add no row to `docs/KEYBINDINGS.md` and no `RESERVED_SEQUENCES` entry. `a`/`i`/`w` are already bare letters the vim layer consumes.
+
+**Test impact:** `tests/vim/test_grammar.py` (the operator+motion cases at lines 130-186 are the pattern) needs new cases: `caw`/`daw`/`yaw`/`ciw`/`diw`/`yiw` each resolve to a `Command` with the operator set and the new `text_object` field, `has_count` carried (`2daw`), and `da`+non-`w` discarded. `tests/vim/test_words.py` (the `w`/`b`/`e` class-rule cases at lines 38-100 are the pattern) needs `inner_word_span`/`a_word_span` cases: caret mid-word, caret on whitespace, `aw` taking trailing vs leading whitespace, keyword vs punctuation runs, buffer boundaries (must not raise, per that module's contract). `tests/ui/test_vim_mode.py` needs end-to-end cases that `daw`/`caw`/`yaw` mutate the buffer / clipboard / caret correctly (mirror the existing `dw`/`cw`/`yw` operator tests there). No new test file — the three existing vim test files own this area.
+
+**Scope (SETTLED by owner ruling, 2026-08-11):** `aw` + `iw` ONLY — the reported `caw`/`daw`/`yaw` plus the inner siblings `ciw`/`diw`/`yiw`. Quoted-string objects (`a"`/`i"`), bracket/paren objects (`ab`/`ib`), paragraph objects (`ap`/`ip`), and SQL-structural objects (via `structure_chain`) are **explicitly OUT of scope for this entry** and remain a deferred future item, not part of this fix. This scoping is decided; it is not an open question for the implementer to reopen.
+
+**Spec impact:** Diverges from `CONSOLIDATED_SPEC.md` §8 / FQ-032, which record text objects as **deferred** (`:493` "FQ-032's deferred vim text objects"; `vim_mode.py:145-147`). Implementing `aw`/`iw` promotes part of that deferred scope into shipped behavior, so §8's vim vocabulary list and the deferral note must be updated. **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here.
+
+**Resolution (`e60e0d0`)** — verified in the tree 2026-08-12. Shipped at the settled scope, `aw`/`iw` only. The range functions live in `pgtp_editor/vim/words.py` (`:85` `iw`, `:110` `aw`) as pure character-class run arithmetic and are **line-local** by construction — a `daw` that swallowed the newline would silently join two lines (`:96`). `a`/`i` are intercepted **only** when an operator is pending, so bare `a`/`i` stay their insert-entry actions. Counts compose both ways and multiply across the operator (`2d3iw` = 6). An overshooting count returns `None` and is **refused, never clamped**. `pgtp_editor/vim/` stays Qt-free — the purity test passes. The spec flag above still stands for `spec-maintainer`.
+
+---
+
+## BUG-260812001031: Vim Command mode uses a thin between-chars caret — should be a colored block caret, which also fixes `%`/`y%` bracket semantics
+**Status:** RESOLVED (`e60e0d0`; colours relocated in `de75617`) — see **Resolution** at the end of this entry, which corrects two claims in the body below.
+**Reported:** 2026-08-12
+**Report (verbatim):** "in vim mode the caret should be (as in vim) a whole character wide, so % jumps when under the caret.
+also would resolve the bug that y% now excludes one of the brackets, because caret must stand before or behind (within the brackets) to find bracket.
+please color the new wide caret so it also instantly identifies visually when we are in vim mode"
+
+**Three linked requests, one root cause (the between-chars caret model):** (1) block caret in Command mode, (2) `%`/`y%` bracket correctness, (3) a colored caret as an in-editor mode cue. Same hand-rolled vim layer as BUG-260811234853 (`pgtp_editor/vim/grammar.py`, `pgtp_editor/vim/words.py`, `pgtp_editor/ui/vim_mode.py`) — this is a DIFFERENT concern (caret rendering + on-character position model + `%` index), not a duplicate; cross-referenced there.
+
+**Root cause:**
+- **The editor never renders a block caret and never adopts vim's on-character cursor model.** `CodeEditor` is a `QPlainTextEdit` (`ui/code_editor.py:553-555`, mixing in `VimModeMixin`). Entering Command mode (`VimModeMixin.enter_command_mode`, `ui/vim_mode.py:516-529`) sets `_vim_command_mode = True`, resets the grammar, and announces the mode — but does **nothing** to the caret: no `setCursorWidth`, no overwrite mode, no custom paint, no ExtraSelection. There is no `paintEvent` override anywhere in `CodeEditor` (only the gutter paints, in `editor_gutter.py`), and grep across `code_editor.py`/`editor_shared.py`/`vim_mode.py` finds no `setCursorWidth`/`OverwriteMode`/`cursorWidth`. So Command mode shows Qt's default 1px I-beam that sits *between* characters, exactly like Edit mode.
+- **Consequence for the caret model:** every Command-mode motion positions the caret as a between-chars offset. `l`/`h` (`_vim_motion_position`, `ui/vim_mode.py:761-766`) clamp to `[line_start, line_end]` where `line_end = line_start + block.length() - 1` (offset just before the newline) — so the caret can sit at the last-char offset, but it is still a between-chars position, one greater than the char it is visually "on" in vim terms.
+- **Consequence for `%`:** `_vim_bracket_match` (`ui/vim_mode.py:915-959`) scans forward from `position` and reads `text[index]` starting AT `position` — i.e. it matches the char to the RIGHT of the thin caret. When the user has visually placed the block-style caret ON a bracket, in the thin-caret world the caret is frequently one offset to its right (`text[position-1]` is the bracket, `text[position]` is the next char), so `%` skips the intended bracket and either matches the next one or refuses. The existing test `test_percent_matches_brackets_at_the_character_level` (`tests/ui/test_vim_mode.py:648-653`) only passes because it hard-sets `place(editor, 1)` so that `text[1] == "("` — it encodes the between-chars convention, not vim's.
+- **Consequence for `y%` dropping a bracket:** `_vim_motion_span` (`ui/vim_mode.py:1003-1012`) builds `start,end = min(position,target), max(position,target)` and, because `%` is in `INCLUSIVE_MOTIONS` (`vim/grammar.py:82`), adds `+1` to `end` when `target > position`. The yanked range is `[position, target+1)`. When the caret sits one offset PAST the opening bracket (the common vim on-bracket case, position = bracket_index+1), `start` excludes the opening bracket, so `y%` yanks `text[bracket+1 .. match]` — the opening bracket is dropped. Symmetrically, matching a closing bracket scanned backward gives an off-by-one at the other end. The off-by-one is a direct artifact of `position` being a between-chars offset rather than the index of the character the caret is "on."
+
+**Proposed fix (four distinct pieces — do NOT conflate them):**
+
+1. **Adopt an on-character cursor model for Command mode (the load-bearing piece; `%`/`y%` correctness depends on it, not on the paint).** The clean, self-consistent design is: while Command mode holds, the caret's *anchor offset* is the index of the character it sits ON (vim clamps normal-mode cursor to `[line_start, line_end-1]`, i.e. never past the last real char and never on the newline). Then:
+   - `_vim_bracket_match` reads `text[position]` and it is genuinely the char under the caret — no change to its body needed once `position` is the on-char index, but audit the forward-skip loop (`:934-935`) so it still finds a bracket when the caret is exactly on one.
+   - `_vim_motion_span` for inclusive motions is already `[start, end+1)` and becomes correct once `position` is the on-char index — `y%` then spans `[bracket_index, match_index+1)`, both brackets included.
+   - The clamp in the `l`/`$` motions (`ui/vim_mode.py:764-766, 775-776`) must clamp to `line_end - 1` (last real char), not `line_end`, when in Command mode — mirroring vim's rule that the normal-mode caret cannot rest on the newline. This is the single behavioral change that makes "the caret is on a character" true everywhere.
+   - **Hardest part, call it out for the implementer:** Command mode and Edit mode must not share one clamp. Edit mode's between-chars caret (and `i`/`a` insert-entry, `_vim_insert_entry` at `:1102-1110`, which already does `+1` for append) is correct as-is and MUST NOT change. The on-character clamp applies only while `in_command_mode` is true, and the transition `enter_command_mode`/`_exit_command_mode` must reposition the caret if it was sitting on the newline offset (entering) — decide and document whether entering Command mode pulls a caret at `line_end` back to `line_end-1` (vim does). Every motion resolver that returns `line_end` (`$`, `l`) needs the Command-mode variant.
+
+2. **Render the caret as a block while in Command mode.** `QPlainTextEdit` has no overwrite-mode block cursor, so the two viable mechanisms are: (a) `self.setCursorWidth(n)` on mode enter where `n` = the width of one character (measured via `self.fontMetrics().horizontalAdvance(" ")` or the char under the caret), reset to `1` on exit — simplest, but a fixed width looks wrong on proportional glyphs; or (b) a `QTextEdit.ExtraSelection` covering the single character under the caret (anchor at `position`, keep-anchor to `position+1`) with a filled background, added/removed on every Command-mode caret move — precise and the same idiom `xml_editor.py:847-853` already funnels through one `setExtraSelections` call. Recommend **(b)** because it composes with the existing current-line/matching-tag selections and gives the color for free (piece 3). Whichever is chosen, it must be applied on `enter_command_mode`, cleared on `_exit_command_mode`, and refreshed whenever the Command-mode caret moves (hook the same place `_vim_run`/`_vim_feed` land, or a `cursorPositionChanged` slot gated on `in_command_mode`).
+
+3. **Color the block caret as the in-editor mode cue.** If piece 2 uses an ExtraSelection, set its `format.setBackground(<command-mode color>)` (and a contrasting `foreground` so the glyph stays readable). The color must come from the theme so it works light/dark: `ui/theme.py` today exposes only `light_palette()`/`dark_palette()` (no per-color accessor), so add a small helper there (e.g. `command_caret_colors(light: bool) -> tuple[QColor, QColor]`) rather than hard-coding a literal in `vim_mode.py` — keep `vim_mode.py` free of raw `QColor(...)`. This is an ADDITIONAL cue alongside `mode_indicator.py`'s `EDITING_COMMAND` text segment (`ui/mode_indicator.py:135`), not a replacement — do not remove or alter the indicator.
+
+4. **Fix `_vim_bracket_match`'s forward-skip once the on-char model is in** so that a caret sitting exactly on a bracket matches THAT bracket (currently the `while index < line_end and text[index] not in openers+closers` at `:934-935` is fine, but re-verify against the new clamp so it does not skip a bracket the caret is already on).
+
+**Gotchas:**
+- Piece 1 is the only one that fixes `%`/`y%`; pieces 2-3 are purely visual and could ship independently, but the report ties them together and the block caret is what makes the on-char model legible to the user, so ship together.
+- Do NOT change Edit-mode caret behavior or `_vim_insert_entry`'s append `+1`.
+- The ExtraSelection block must be cleared on `_exit_command_mode`, on `setReadOnly(True)` (`:580-594`), on focus-out (`:557-569`), and on `setPlainText` (`:596-602`) — every existing Command-mode exit path — or a stale colored block is left painted on a now-Edit-mode buffer.
+- Caret painting/coloring is hard to unit-test (needs a shown widget and pixel inspection); test the POSITION MODEL and the `%`/`y%` RANGE logic directly, treat the visual color as manual-verify.
+- **No app-level keyboard-ledger impact.** This is editor-internal Command-mode caret rendering and position math, answered inside `handle_command_mode_key`/`_vim_*`; no `QAction`/`QShortcut`/`RESERVED_SEQUENCES` change and no `docs/KEYBINDINGS.md` row.
+
+**Test impact:** `tests/ui/test_vim_mode.py` owns this area. The existing `test_percent_matches_brackets_at_the_character_level` (`:648-653`) encodes the between-chars convention (`place(editor, 1)`) and will need REVISING to the on-char model — after the fix, placing the caret ON the `(` (its own index) must match, and the case where the caret sits where a user visually reads "on the bracket" must jump. Add: (a) `%` jumps when the caret is on the opening bracket and when on the closing bracket (both directions); (b) `y%` yanks INCLUDING both brackets from either endpoint (the reported drop); (c) `d%`/`c%` span both brackets; (d) the Command-mode caret cannot rest on the newline offset (`l`/`$` clamp to last real char) while Edit mode still can; (e) entering Command mode with the caret at end-of-line pulls it back one (if that is the chosen rule). `tests/vim/test_words.py`/`test_grammar.py` are unaffected (no grammar/word-class change). No new test file.
+
+**Spec impact:** Touches `CONSOLIDATED_SPEC.md` §8 / FQ-032 (the vim Edit-mode/Command-mode block; `%` is described there as "a character-level bracket scan, the same family as `code_editor.enclosing_bracket_span`", `vim_mode.py:143-144`). Introducing an on-character Command-mode cursor model, a block caret, and a colored mode cue are new design that the shipped FQ-032 did not specify (it shipped a thin caret and the between-chars `%` convention). **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here. If the owner considers the on-character clamp a behavior change with a right/wrong answer (it reverses the shipped `%` convention encoded in a test), that is a candidate for an `owner-decision`, but the vim-authenticity intent in the report is clear enough to implement against.
+
+**Resolution (`e60e0d0`; colours relocated in `de75617`)** — verified in the tree 2026-08-12. The caret is a `paintEvent` pass over the viewport (`pgtp_editor/ui/vim_mode.py:816`), width taken from the **actual glyph advance** (`metrics.horizontalAdvance`, `:854`) — deliberately **not** `setCursorWidth` (wrong on non-space glyphs) and **not** an `ExtraSelection` (XmlEditor funnels all extra selections through one `setExtraSelections`, so a second writer would fight it). Command mode only, never read-only. The caret is clamped on a character **except after `c`**, which lands in Edit mode where the caret belongs at the deletion point; motions still resolve past the last character so `d$`/`D`/`x` still take it.
+
+**Two corrections to the body above, recorded so neither is repeated:**
+1. The "Gotcha" claiming caret painting/colour is *"hard to unit-test … treat the visual color as manual-verify"* is **wrong**. `viewport().grab().toImage()` asserts the rendered pixel fine offscreen, in both themes (`tests/ui/test_vim_mode.py:1272`). This is the same offscreen folklore that was wrong about `QShortcut` — do not repeat it in future triage.
+2. The instruction to put the colours in `theme.py` was **not** done in the same commit; it landed as the follow-up `de75617`. `theme.command_caret_colors(light)` (`pgtp_editor/ui/theme.py:115`, with `_COMMAND_CARET_LIGHT`/`_COMMAND_CARET_DARK` at `:111-112`) is now the single home, and a test asserts `vim_mode.py` declares **no** `#rrggbb` literal at all.
+
+The spec flag above still stands for `spec-maintainer`.
+
+---
+
+## BUG-260812001455: In Edit Snippets, the Add button (and Delete, and Restore Built-ins) does nothing — `clicked`'s `bool checked` is passed as the handler's first positional argument, raising inside the slot
+**Status:** RESOLVED (`6a807b1`)
+**Reported:** 2026-08-12
+
+**Resolution note (corrects this entry — measured, not argued):** The root cause is confirmed exactly as diagnosed for **Add**: `QAbstractButton.clicked` emits `clicked(bool checked=False)`, PySide6 binds it to the slot's first positional parameter, `add_snippet(prefix=…)` had one spare, so a click ran `add_snippet(False)` → `False.strip()` → `AttributeError`, swallowed by Qt under a live loop. Fixed with argument-dropping lambdas; every mutation seam keeps its signature.
+
+**But this entry's claim that Delete and Restore were also dead is WRONG.** The implementer reverted the fix and drove real clicks: `remove_selected` and `restore_missing_defaults` take no parameters beyond `self`, and **PySide6 truncates the emitted argument list to the slot's arity**, so both worked pre-fix. There is no `TypeError` — that part of the diagnosis was inferred, not measured, and it does not match the owner's verbatim report (Add only) or the single captured traceback. Future triage: do not predict PySide6 signal/slot arity failures; drive the widget.
+
+All three lambdas were kept anyway, with a comment stating that Delete and Restore survive **by accident of their current signatures** — one added optional parameter would make either the next dead button.
+
+**Durable lesson recorded here because it is the reason a green suite sat over a dead button:** every existing add/delete/restore test called the mutation seam **directly**, asserting handler bodies and the persist-on-OK contract — both correct, both blind. Nothing went through `clicked`, so the connection layer, the only layer a user touches, was untested. Click-driven cases now cover it.
+
+`Restore Built-ins` was additionally checked for destructiveness and is **not** destructive — it only appends what is missing and leaves edited built-ins alone, now pinned by a test that says so.
+**Report (verbatim):** "in edit snippets Add button does nothing"
+
+**Confirmed in the wild / traceback:** The owner hit this live and confirms it is this bug (not a new one). It manifests as a **non-fatal console traceback** — Qt swallows the exception from the slot so the app keeps running ("doesn't stop the party"), but it prints to the console, and it is exactly why Add-snippet does nothing. The call chain is `add_snippet` (line 247) → `_unique_prefix` (line 312). Verbatim:
+
+```
+AttributeError: 'bool' object has no attribute 'strip'
+Traceback (most recent call last):
+  File "/home/zrb/Projects/pgtp_editor/pgtp_editor/ui/edit_snippets_dialog.py", line 247, in add_snippet
+    prefix = self._unique_prefix(prefix)
+  File "/home/zrb/Projects/pgtp_editor/pgtp_editor/ui/edit_snippets_dialog.py", line 312, in _unique_prefix
+    if wanted.strip().lower() not in taken:
+       ^^^^^^^^^^^^
+```
+
+This validates the diagnosed root cause exactly: `QPushButton.clicked` emits `bool checked`, which binds to `add_snippet`'s first positional param `prefix = False`, so `_unique_prefix(False)` runs `False.strip()` at `edit_snippets_dialog.py:312`. The proposed fix below (argument-dropping lambdas at `edit_snippets_dialog.py:183-185`) is unchanged — the traceback simply confirms it.
+
+**Root cause:** `pgtp_editor/ui/edit_snippets_dialog.py`, `EditSnippetsDialog.__init__`, lines 183-185. The three mutating buttons are wired directly to methods that take positional parameters other than a leading `bool`:
+
+```python
+self.add_button.clicked.connect(self.add_snippet)          # add_snippet(prefix, title, template)
+self.delete_button.clicked.connect(self.remove_selected)   # remove_selected(self)
+self.restore_button.clicked.connect(self.restore_missing_defaults)  # restore_missing_defaults(self)
+```
+
+`QAbstractButton.clicked` emits `clicked(bool checked=False)`. Qt passes that `checked` value (always `False` for a non-checkable button) as the first positional argument of the connected slot. So a click calls `add_snippet(False)`: `False` binds to `prefix`, then `add_snippet` line 247 does `prefix = self._unique_prefix(prefix)`, and `_unique_prefix` line 312 does `wanted.strip().lower()` on a `bool` → **`AttributeError: 'bool' object has no attribute 'strip'`** (reproduced: clicking Add adds no row and raises this from the slot). Under a live event loop Qt swallows the slot exception (prints the traceback to stderr, keeps running), so the user sees the button silently do nothing. `remove_selected` and `restore_missing_defaults` take no parameters beyond `self`, so the injected `False` is an unexpected positional argument → `TypeError` — same dead-button symptom (verified: Delete and Restore also fail to act on `.click()`). Root cause is **(a) from the triage list — the connection is wrong**, not a no-op handler and not a stale view: the handler bodies are correct and are exercised green by the existing tests, which call the methods *directly*. The Export/Import buttons (lines 186-187) escape the bug only because they connect to `signal.emit`, which silently ignores the extra positional `checked` arg. The read-only guard (`_apply_read_only`, line 428) disables these buttons, so this is a live-store, editable-dialog bug only.
+
+**Proposed fix:** In `EditSnippetsDialog.__init__` (`edit_snippets_dialog.py:183-185`), stop passing `clicked`'s `checked` into the handlers. Use lambdas that drop the argument and call the methods with their intended defaults:
+
+```python
+self.add_button.clicked.connect(lambda: self.add_snippet())
+self.delete_button.clicked.connect(lambda: self.remove_selected())
+self.restore_button.clicked.connect(lambda: self.restore_missing_defaults())
+```
+
+(Leave lines 186-187 export/import as-is — `*.emit` is unaffected.) This is the smallest correct change and keeps every method's programmatic seam intact (tests still call `add_snippet()`/`remove_selected()`/`restore_missing_defaults()` directly). Two equally acceptable alternatives if the implementer prefers not to use lambdas: (i) give each handler a leading `*_ ` / `checked=False` sink parameter — but that pollutes the public seam signatures the tests and docstrings describe, so the lambda is cleaner; (ii) a tiny private `_on_add`/`_on_delete`/`_on_restore` trampoline each `def _on_add(self, _checked=False): self.add_snippet()`. Gotchas: **do not** simply add `checked` as `add_snippet`'s first param — `add_snippet(prefix=…, title=…, template=…)` is called positionally elsewhere in tests and its defaults matter (`_NEW_PREFIX`/`_NEW_TITLE`), so shifting the parameter list breaks the seam. After the fix, Add appends a `newsnippet`/`(describe this snippet)` row via `_unique_prefix` (unique default name already handled, line 310-317) and selects it (line 251); persistence is correct as-is — the dialog never writes the store, the controller persists on OK via `SnippetController._on_accepted → save` (`snippet_controller.py:203-235`), so persist-on-add vs persist-on-close is already the intended persist-on-OK and needs no change.
+
+**Test impact:** `tests/ui/test_edit_snippets_dialog.py` owns this dialog. It is green today because every add/delete/restore test invokes the methods **directly** (`widget.add_snippet()`, `widget.remove_selected()`, `widget.restore_missing_defaults()` — lines 105, 113-114, 121, 128, 138, 145), never through the button, so the mis-wiring is invisible to the whole suite. Add click-driven cases that exercise the real `clicked` path: (a) `widget.add_button.click()` appends a row and leaves `validation_error() is None` (the reported symptom); (b) `widget.delete_button.click()` after selecting a row removes it; (c) `widget.restore_button.click()` on a set missing built-ins restores them. These would each fail before the fix (the Add case raising `AttributeError`, the others `TypeError`) and pass after. The existing `test_export_and_import_buttons_emit_rather_than_act` (line 210) already click-drives export/import and stays green. No new test file; no change to `tests/ui/test_snippet_controller.py` or `tests/sql/test_snippet_store.py`.
+
+**Spec impact:** None on intended behavior. `CONSOLIDATED_SPEC.md` §18.9 (FQ-030, "SHIPPED IN FULL") describes the editor with Add/Delete/Restore/Export/Import as working; this is a wiring defect against that spec, not a divergence the spec chose. No `owner-decision` and no `docs/KEYBINDINGS.md` impact — these are `QPushButton.clicked` connections, not keyboard chords.
+
+---
+
+## BUG-260812001640: Entering Maintenance mode via New Session leaves Project-mode DDL Explorer ("browser") tabs open — only the menu bar is filtered, tabs are never pruned to the XSD-only surface
+**Status:** RESOLVED (`1ff2b11`) — see **Resolution** at the end of this entry.
+**Reported:** 2026-08-12
+**Report (verbatim):** "When I start a new session in Maintenance mode with Project mode previously on, it should close all editor tabs and all browser tabs that isn't xsd related"
+
+**Root cause:** There is no tab-pruning step tied to entering Maintenance mode. Two facts combine into the reported gap:
+
+1. `MainWindow.set_workflow_mode` (`pgtp_editor/ui/main_window.py:6353-6373`) is the ONLY production path that enters a workflow mode (called from `launcher_dialog.show_launcher`, `pgtp_editor/ui/launcher_dialog.py:459-460`). All it does on a mode change is `_refresh_workflow_mode_affordances()` (menu-bar visibility only, `main_window.py:6375-6433`) and `_refresh_mode_indicator()`. It touches **no tabs**. So Maintenance mode is purely an *intent-based menu-bar filter* today — CONSOLIDATED_SPEC §7 / §26 / "Maintenance mode" (`docs/superpowers/CONSOLIDATED_SPEC.md:3038-3106`) states its scope as **"the window menu bar only"** in as many words. The center-stage tabs are deliberately out of that scope.
+
+2. `MainWindow.new_session` (`main_window.py:3317-3367`) — the gesture that re-shows the launcher so a new column can be picked — already closes the *dynamic* editor tabs (DDL-object panels + PHP file tabs, via the stage's own `tabCloseRequested` route, `:3350-3357`) and closes the document (`self._doc_ui.close()`, `:3360`). But it does **not** hide the two DDL Explorer tabs (`center_stage.py`: `ddl_tab_index` / `sandbox_ddl_tab_index`, created at `:324-341`), which are the "browser tabs" the report means — titled "DDL Explorer (Quality)" / "DDL Explorer (Sandbox)" (`DDL_EXPLORER_TAB_TITLES`, `center_stage.py:145-146`). Those are FIXED tabs toggled by their own Database-menu entries and by `hide_ddl_explorer(role)` (`center_stage.py:540-551`); nothing in `new_session` or `set_workflow_mode` calls that. And critically, `new_session` runs its closing steps **regardless of which mode is picked next** — it prunes the same set whether you re-enter as Standalone, Project, or Maintenance — so there is no Maintenance-specific "get everything non-XSD out of the way" behavior at all.
+
+Net: coming from Project mode with a DDL Explorer revealed and picking the Maintenance column, the menu bar filters down to File/Schema/Settings/Help, but the DDL Explorer tab a Project session opened stays visible in the center stage — a Project-mode surface persisting into a mode whose entire point (spec `:3055-3057`) is administrative work on the app's OWN schema (Edit XSD / Import XSD).
+
+**Terminology mapping (verified against `center_stage.py`), since the fix hinges on it:**
+- **XSD-related tab (KEEP):** the Edit XSD tab (`xsd_tab_index`, `center_stage.py:304`). This is the surface Maintenance mode exists for.
+- **"browser tabs" (CLOSE):** the two DDL Explorer tabs (`ddl_tab_index`, `sandbox_ddl_tab_index`) — read-only schema/object browsers. These are the only tabs the app calls a "browser".
+- **"editor tabs" (CLOSE):** Raw XML (`raw_xml_tab_index`), Diff/Merge, Caption Management, plus every dynamic tab — DDL-object editors, PHP file tabs, draft fragments, the Sandbox/Quality SQL consoles. The `new_session` path already closes the dynamic ones and the document; the fixed structural tabs (Raw XML, Diff/Merge, Caption) are hidden as a side effect of `_doc_ui.close()` clearing the document and returning to the empty Raw XML working tab.
+- **Manual tab:** a Help surface (F1), not Project-scoped; leave it to its own toggle (out of scope, matches how the menu filter never hides Help).
+
+**Proposed fix:** Add a Maintenance-entry tab-pruning step, hosted so it runs exactly on the transition INTO Maintenance mode, reusing the existing hide APIs — invent no new close mechanism and no new prompt.
+
+Recommended placement: extend `set_workflow_mode` (`main_window.py:6353`) so that when the NEW mode is Maintenance it calls a small private helper, e.g. `self._prune_non_xsd_surfaces_for_maintenance()`, AFTER `_refresh_workflow_mode_affordances()`. Put it in `set_workflow_mode` rather than in `new_session` because (a) picking the Maintenance column is the single definition of "entering Maintenance mode" (spec `:3061`), and (b) `set_workflow_mode` already knows the target mode, whereas `new_session` runs before the launcher pick and does not. Guard it to fire only on the *target* being Maintenance; the report scopes it to "Project mode previously on", but the coherent rule is **whenever Maintenance is entered** — from Standalone the non-XSD set is normally already empty, so the guard-on-source adds nothing but a branch. Flag the from-Standalone-vs-from-any distinction as a minor open point (see Spec impact) but implement the simpler "on entering Maintenance" rule.
+
+The helper should:
+1. Hide both DDL Explorer tabs: `for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX): stage.hide_ddl_explorer(role)` — but only if currently visible, to avoid emitting a spurious `ddl_explorer_visibility_changed(role, False)` (check `stage.isTabVisible(stage.ddl_explorer_tab_index(role))` first; `hide_ddl_explorer` unconditionally emits). This is the "browser tabs" half and is the primary, clearly-correct part of the fix.
+2. Close the dynamic editor tabs the same way `new_session` does — through the stage's own `tabCloseRequested` route so the per-kind unsaved-changes prompt is reused (see below). Factor the existing `new_session` loop over `[*stage.ddl_object_panels(), *stage.php_file_tabs().values()]` (`main_window.py:3351`) into a shared helper both call, rather than duplicating it.
+
+**Unsaved-changes hazard — reuse the ONE canonical route, do not add a dialog.** Dynamic DDL-object and PHP tabs may be dirty. `new_session` already handles this correctly by emitting `stage.tabCloseRequested.emit(index)` per widget and checking `stage.indexOf(widget) != -1` afterwards to detect a user cancel (`main_window.py:3352-3357`) — that route lands in `CenterStage._on_tab_close_requested` (`center_stage.py:417-478`), which for object/PHP tabs re-emits `ddl_object_close_requested` / `php_file_close_requested` into MainWindow's per-kind dirty check. The Maintenance-prune helper MUST reuse this exact route, and MUST propagate a cancel: if any dynamic tab close is cancelled, the mode transition should be treated the same way `new_session` treats it (abort). **Gotcha:** the Quality SQL Console can VETO its own close for an uncommitted transaction (`center_stage.py:446-456`, `widget.request_close()` / `DEC-260811023646`) — the loop already tolerates this because a vetoed tab remains present and the `indexOf != -1` check catches it. Do not close XSD, Manual, or the two structural tabs (Raw XML/Diff/Merge/Caption) via this loop.
+
+**Active-tab hazard:** `hide_ddl_explorer` already returns to Raw XML when the hidden tab was current (`center_stage.py:549-550`), and the dynamic-tab close route does likewise, so a to-be-closed active tab is handled by the reused APIs — no extra handling needed.
+
+**Order-of-operations gotcha:** if the prune runs inside `set_workflow_mode`, and a dynamic-tab close is cancelled, the mode has already been assigned to `self._workflow_mode` (`:6368`) and the menu bar refreshed. Two acceptable shapes: (i) run the dynamic-tab prune BEFORE assigning the mode and abort the whole `set_workflow_mode` on cancel (cleaner, but changes `set_workflow_mode`'s currently-unconditional contract — it never returned a value); or (ii) accept that on cancel the mode still switches but some tabs remain (weaker). Prefer (i) but note it may warrant an `owner-decision` if the implementer is unsure whether entering Maintenance should be cancellable — see Spec impact. The DDL-Explorer hide half (step 1) has no prompt and is always safe to run.
+
+**Alternative placement considered and rejected:** doing the prune in `new_session` after the launcher returns — rejected because `new_session` calls `show_launcher()` last and does not learn the picked mode, and because the launcher is dismissable (BUG-059), so the mode may not change at all.
+
+**Test impact:** `tests/ui/test_launcher_dialog.py` owns `set_workflow_mode` / `new_session` / `_refresh_workflow_mode_affordances` (its module docstring names all three, `:6`) — extend it. New cases: (a) with a DDL Explorer tab revealed (`stage.show/reveal` for a role), entering Maintenance via `set_workflow_mode(MODE_MAINTENANCE)` hides both DDL Explorer tabs while the Edit XSD tab's visibility is untouched; (b) entering Maintenance closes an open DDL-object tab and a PHP file tab (reusing the dirty-prompt route — monkeypatch the per-kind confirm to accept), and leaves Raw XML/Manual alone; (c) a cancelled dirty-tab close aborts the transition (if shape (i) is taken) or is documented (shape (ii)); (d) entering Standalone/Project does NOT hide the DDL Explorer tabs (the prune is Maintenance-only). `tests/ui/test_center_stage.py` covers `hide_ddl_explorer` and the tab inventory — no change needed there unless the shared close-loop is factored into a new `CenterStage` method, in which case add a direct test for it. `tests/ui/test_main_window.py:753` already flips to project mode and is a template for the mode-transition fixture. Never let the reused close route reach an un-patched modal — monkeypatch the per-kind unsaved-changes confirm.
+
+**Spec impact:** Diverges from `CONSOLIDATED_SPEC.md`'s Maintenance-mode section (`:3038-3106`), which states the mode's scope as **"the window menu bar only"** and lists only menu-bar membership. Pruning center-stage tabs is a NEW, tab-scoped behavior the spec explicitly does not currently grant the mode. This needs a spec statement — flag for `spec-maintainer` after the fix lands (do not edit the spec here): add that entering Maintenance mode reduces the center stage to the XSD-only surface (keep Edit XSD, close editor + DDL Explorer browser tabs, reusing the existing per-kind unsaved-changes route), and reconcile it with the "menu bar only" scope sentence. **Two points may warrant an `owner-decision` if the implementer cannot resolve them from the spec:** (1) whether entering Maintenance should be *cancellable* by a dirty-tab prompt (affects whether `set_workflow_mode` gains a return value / abort path); (2) whether the prune fires on *every* entry into Maintenance or only when coming *from* Project (the report says "with Project mode previously on"; the coherent reading is every entry, since from Standalone the set is already empty). Neither is a keyboard chord — no `docs/KEYBINDINGS.md` impact.
+
+**Resolution (`1ff2b11`)** — verified in the tree 2026-08-12. **Fixed at the cause, not the symptom:** entering a workflow mode had no center-stage step *at all*, because Maintenance was a menu-bar filter only. The prune is hosted on `MainWindow.set_workflow_mode` (`pgtp_editor/ui/main_window.py:6576`, calling `_prune_non_xsd_surfaces_for_maintenance` at `:6609`, defined `:6611`) — where the mode is actually picked — **not** on `new_session`, which runs before the pick and would prune the same set whichever column follows. That placement covers every entry path rather than only the reported one, which also settles open question (2) above: the prune fires on every entry into Maintenance, not only when coming from Project. The dynamic-tab close loop was factored out of `new_session` so both callers share one definition of "dynamic", and hiding is guarded on `isTabVisible` so no spurious visibility signal fires. Leaving the mode restores nothing — closed is closed (`:6581`).
+
+**One judgement call to record, answering open question (1) above:** a per-tab save-prompt **Cancel keeps that tab and the mode still switches**. By then the mode is assigned and the menu bar refreshed, so the prompt means *"keep this document"*, not *"undo the mode I picked"*; making the transition cancellable would change `set_workflow_mode`'s unconditional contract and would have to abort the launcher's trigger too. No `owner-decision` was filed — the alternative was strictly worse.
+
+**The spec flag above is CLEARED** — the Maintenance-mode centre-stage pruning was folded into `CONSOLIDATED_SPEC.md` in `a804a2d`; §7 now states that the mode's *"menu bar only"* scope **also prunes the center stage**, so the stale scope sentence is gone. Do not re-dispatch `spec-maintainer` for it.
+
+---
+
+## BUG-260812002307: `python -m pgtp_editor` fails to launch (no `__main__.py`); the actual XSD-not-loaded symptom is a stale user-owned `curated.xsd` in app-data that the bootstrap never overwrites and that `load_curated` may reject silently
+**Status:** RESOLVED (`1ff2b11` part A; `483a9ad` parts B + C, `[project.gui-scripts]` and the README command) — every part has shipped. The entry title's "no `__main__.py`" and "silently" are both historical. See **Resolution** at the end of this entry, which corrects one substantive error in the proposal above.
+**Reported:** 2026-08-12
+**Report (verbatim):** "it appears that xsd is not loaded when running the app from command line python -m pgtp_editor. Don't know if this is a packaging issue or something went wrong with my curated xsd"
+
+**Root cause (two distinct facts; both confirmed by running code, not inferred):**
+
+1. **`python -m pgtp_editor` cannot start the app at all — there is no `pgtp_editor/__main__.py`.** Running it verbatim gives `No module named pgtp_editor.__main__; 'pgtp_editor' is a package and cannot be directly executed` (reproduced with `venv/bin/python -m pgtp_editor`). The real entry point is `pgtp_editor/main.py::main` (`main.py:187`, `if __name__ == "__main__"` guard at `:261`), and `README.md:73` documents the launch command as **`python -m pgtp_editor.main`** — note the `.main`. There is NO `[project.scripts]` / `[project.gui-scripts]` console-script entry in `pyproject.toml` either (only `[project]` and `[project.optional-dependencies]` sections exist), so there is no `pgtp-editor` command wrapper. So the literal command in the report does not run the app; whatever the user observed running was almost certainly launched as `python -m pgtp_editor.main` (or `python pgtp_editor/main.py`), and the "xsd is not loaded" symptom comes from fact 2, not from the launch method.
+
+2. **The resolver is NOT the fault, and the bundled file is NOT malformed — both were verified.** The bundled-resource loader `bundled_curated_xsd_text()` (`schema_learning/storage.py:51-59`) uses `importlib.resources.files("pgtp_editor") / "resources" / "curated.xsd"` — a package-anchored lookup with no `__file__`/CWD/relative-path assumption, so it is launch-method-independent. Running it directly: `bundled resolved: True, len: 110487`, and feeding that text through the app's own parser `load_curated` (`schema_learning/xsd_load.py`, streaming expat) returns a `CuratedSchema` with **no error**. The on-disk `pgtp_editor/resources/curated.xsd` exists, is 110487 bytes, and parses. So neither "packaging issue" nor "malformed bundled curated xsd" is the cause on a source run.
+
+   The real mechanism is the split between the **bundled** curated.xsd (the package resource) and the **user's** curated.xsd (in the OS app-data dir, `curated_xsd_path()` → `QStandardPaths.AppDataLocation`, `storage.py:31-42`). At startup `MainWindow` calls `self._xsd_ui.ensure_bootstrap()` then `self._xsd_ui.load_curated()` (`main_window.py:1600-1601`). `ensure_bootstrap` (`ui/xsd_controller.py:237-262`) **returns immediately if the user's app-data `curated.xsd` already exists** (`:245-246`) — "never overwrites an existing file (curated.xsd is hand-owned, spec §11)". `load_curated` (`ui/xsd_controller.py:217-235`) then reads **the user's app-data file, not the bundled resource** (`path = curated_xsd_path(...)`, `:221`). Therefore if the user's app-data `curated.xsd` is (a) hand-edited into an XML/dialect-invalid state, or (b) empty/truncated, the schema feed goes dead even though the pristine bundled copy sits unused in the package. This matches the user's own suspicion ("something went wrong with my curated xsd") — but it is *their app-data copy*, which the app will never re-seed while it exists.
+
+3. **The failure is nearly silent, and that is a secondary defect.** `load_curated`'s two failure exits are asymmetric:
+   - **Missing user file** (`path.exists()` is False, `:222-223`) → `return False` with **no audit line, no dialog, nothing** (docstring even says "Missing file → False, silent"). The user is told nothing.
+   - **Parse failure** (`:224-230`) → one line into the **audit panel** only: `"[Schema] Curated XSD has XML errors: {exc} — keeping last good schema"`. On a fresh start there is no "last good schema", so completion/hover silently run against `None`, and the message lands in a panel the user may not have open. No modal, no status-bar cue.
+   So a user with a broken app-data curated.xsd gets exactly the reported experience: app runs, XSD features behave as if no schema is present, and nothing says why. This silent-swallow is a defect to fix regardless of the primary cause.
+
+**Proposed fix (three parts; parts A and C are independently shippable):**
+
+- **A. Add `pgtp_editor/__main__.py`** so `python -m pgtp_editor` works and matches user expectation (it is the obvious command, and the README's `.main` form is easy to miss). The file is a two-liner that defers to the existing entry:
+  ```python
+  from pgtp_editor.main import main
+  if __name__ == "__main__":
+      raise SystemExit(main())
+  ```
+  Do NOT move or rename `main.py::main`; just delegate. Gotcha: `main()` currently returns via its own `sys.exit`/return path — confirm it returns an int/None and wrap with `SystemExit(main())` so the exit code propagates. Consider also adding a `[project.gui-scripts]` `pgtp-editor = "pgtp_editor.main:main"` in `pyproject.toml` for an installed console command, but that is optional and secondary; keep the version-literal rules in mind (do not add a version string). Update `README.md:73` in the same change so the documented command and the working command agree (README is owned by `spec-maintainer` — flag rather than edit if strict).
+
+- **B. Surface the load failure instead of swallowing it** (`ui/xsd_controller.py:217-235`). On BOTH the missing-file branch and the parse-failure branch, in addition to the audit line, raise a visible cue: at minimum add an audit line to the missing-file branch (currently silent), and escalate the parse-failure case to a non-modal status-bar message or a one-time `QMessageBox.warning` naming the offending app-data path (`curated_xsd_path(...)`) so the user can find and fix or delete it. Reuse the existing audit/status affordances the shell already exposes (`self._shell.audit.addItem`, and whatever status-bar/toast the window uses elsewhere) — do not invent a new notification channel. Naming the resolved path is the key detail: the whole confusion in this report is that the user does not know *which* curated.xsd is in play (bundled vs app-data).
+
+- **C. Give the user a way to re-seed a broken app-data curated.xsd from the bundled copy.** Today `ensure_bootstrap` refuses to overwrite an existing file, so a user who corrupted their app-data curated.xsd has no in-app recovery. Add a Schema-menu action (e.g. "Restore bundled curated schema…") that overwrites `curated_xsd_path(...)` with `bundled_curated_xsd_text()` after a confirm, then calls `load_curated()`. The controller already imports `bundled_curated_xsd_text` and `CURATED_BUNDLED_VERSION` (`ui/xsd_controller.py:77-79`); the Import XSD path (`:601`, `:609`) is the pattern to mirror for the write+reload. **Gotcha — keyboard:** if this action gets a shortcut, it is a menu command form, so under DEC-012 it has exactly one keyboard host (the `QAction`) and the chord MUST be checked against `docs/KEYBINDINGS.md` first; propose no chord rather than a "probably free" one. A menu entry with no shortcut needs no ledger change.
+
+Minimum viable fix for the reported symptom is **B** (tell the user their app-data curated.xsd failed to load and where it is) plus **A** (make the command they typed actually work). **C** is the recovery affordance that closes the loop.
+
+**Cross-reference:** This is NOT a duplicate of **BUG-057** ("Curated XSD should be included in releases"), which concerned the curated resource missing from PACKAGED/FROZEN builds and found no confirmed gap. Here the run is from source, the bundled resource resolves and parses cleanly, and the fault is the *user's app-data copy* plus the missing `__main__.py` and the silent load path. Keep both entries.
+
+**Test impact:** `tests/schema_learning/test_storage.py` (bundled-resource resolution) and the xsd-controller tests under `tests/ui/` (grep for `test_xsd_controller`/`ensure_bootstrap`/`load_curated`) own this area — extend, do not duplicate. New cases the fix needs: (1) **a resolver-finds-curated test** — `bundled_curated_xsd_text()` returns non-None and its length is the on-disk size, guarding against the resource dropping out of the package (the check the resolver "should run" that would have caught a packaging regression); (2) **a curated-xsd-parses test** — `load_curated(bundled_curated_xsd_text())` succeeds, guarding the bundled file against becoming malformed; (3) for **B**, a `load_curated` call with a missing app-data file and with a deliberately-broken app-data file each produces the visible cue (assert the audit item / patched message box), covering the previously-silent branch; (4) for **A**, a smoke test that `pgtp_editor.__main__` imports and exposes `main` (do not actually spin the event loop — assert the delegation, monkeypatch `main`); (5) for **C**, the restore action overwrites the app-data path with the bundled text and reloads. Offscreen note: these are model/controller-level and run headless; never let the **B**/**C** message box reach an un-patched modal — monkeypatch `QMessageBox.*`.
+
+**Spec impact:** Touches `CONSOLIDATED_SPEC.md` §11 (curated schema / XSD — bootstrap, the "hand-owned, never overwritten" rule, and the bundled-vs-app-data split). Part C (an in-app overwrite/restore from bundled) is a deliberate exception to §11's "never overwrites an existing curated.xsd" and part B changes the mode's observability — both are new design that §11 does not currently state. **Flag for `spec-maintainer` after the fix lands** — do not edit the spec here. The README command correction (`python -m pgtp_editor.main` → also `python -m pgtp_editor`) is README-owned by `spec-maintainer` as well. No `owner-decision` is required to start: A and B have obviously-right shapes; only the exact wording/placement of the C restore action and any shortcut for it may warrant a ruling, and the shortcut specifically must clear `docs/KEYBINDINGS.md` first.
+
+**Resolution — verified in the tree 2026-08-12. Two commits, and this entry contained one real error worth recording.**
+
+**Part A (`1ff2b11`):** `pgtp_editor/__main__.py` exists and is **pure delegation** — `from pgtp_editor.main import main`, no argument parsing, no Qt setup of its own; `main` reads `sys.argv[1:]` itself when given none (`__main__.py:21`). Guarded by a source test asserting the module contains no `argparse`, `PySide6`, `QApplication` or `debuglog`, so the entry points cannot drift into two different startups. `python -m pgtp_editor` verified live.
+
+**Part B (`483a9ad`):** both failure exits in `XsdController.load_curated` now **name the resolved `curated_xsd_path(...)`** — which was the whole point, since the user did not know *which* `curated.xsd` was in play. **The escalation rule taken is "is there any schema at all?", not "did a load fail":**
+- **missing file** → audits, naming the path and pointing at the new restore command (bootstrap has already reported whatever stopped it, so a modal would double-report on first run);
+- **parse failure with a last good schema live** → audits, with the path appended (that branch fires on every save of half-typed XSD; a box there is nagging);
+- **parse failure with NO schema live** — the reported case, where completion and hover run against `None` — → audits **and** raises a `QMessageBox.warning` naming the file, the parser error, and both ways back.
+
+Latched by `_reported_broken_curated` (`xsd_controller.py:149`), cleared on the next successful load and on a restore, so repeated project opens warn once.
+
+**THE ERROR IN THIS ENTRY, recorded because acting on it would have produced a fix that changed nothing.** Part B above offers *"a non-modal status-bar message **or** a one-time `QMessageBox.warning`"* as equivalent escalations. **They are not.** Since **FQ-028** the status bar is `StaticStatusBar`, whose `showMessage` **never paints** — it journals into the Activity Log — and `[Schema]` rows without the `VERIFY` marker route, via `AuditRouter`, to that same Activity Log. So "escalate to the status bar" would have moved the message from one journal to the *identical* journal, leaving the bug exactly as reported while looking fixed. The modal was taken only for the case that earns it; the reasoning is recorded in `_warn_no_curated_schema`'s docstring (`xsd_controller.py:297`). **Lesson for future triage: name the concrete channel and check it still paints — "status bar" has not meant a visible surface in this app since FQ-028.**
+
+**Part C (`483a9ad`):** `Schema ▸ Restore Bundled Curated Schema…` — last in the Schema menu, **no shortcut**, with the DEC-012 reasoning commented at the action (`xsd_controller.py:219-226`) and in its test. It confirms with a prompt naming the path and stating edits will be **DESTROYED**, copies the old file to `.bak` mirroring the Import path, writes `bundled_curated_xsd_text()`, calls `load_curated()`, refreshes the Edit-XSD tab when it holds the curated schema, and audits the restore with the path and `CURATED_BUNDLED_VERSION`. A build with no bundled resource gets a `critical` box and leaves the file alone. **`ensure_bootstrap`'s never-overwrite rule is untouched** — its docstring records this as the single sanctioned, user-initiated exception to §11. `main_window.py` needed **no** change: the Schema menu is built entirely inside `XsdController.build_menu`.
+
+**Extras (`483a9ad`):** `[project.gui-scripts]` added to `pyproject.toml`, asserted to resolve to the same `main` object as `__main__.py` **by identity, not by string**, so three entry points cannot drift; no version literal was touched. The README command is now `python -m pgtp_editor` — and this entry's own later correction was right: the previous `python -m pgtp_editor.main` form was **valid but non-canonical**, not broken.
+
+**Tests added:** the resolver returns the whole on-disk file (length + equality); the bundled text parses through the app's own loader; both cue branches assert content **including the path**; and the restore is driven **through its `QAction`** in five cases. Full suite at the time: **7840 passed, 51 skipped**.
+
+**Spec flag — still open for `spec-maintainer`.** §11 does not yet state either new fact: the restore command as the one user-initiated exception to "curated.xsd is hand-owned, never overwritten", or the observability rule ("is there any schema at all?") that decides audit vs. modal. Part A raised no §11 question.
+
+---
+
+## BUG-260812002838: Tab-focused buttons show no highlight — the app's qdarkstyle QSS styles `QPushButton:hover` but has NO `QPushButton:focus` rule, and its `outline: none` suppresses Qt's native focus ring, so keyboard focus is invisible
+**Status:** RESOLVED (`7703eba`)
+**Reported:** 2026-08-12
+
+**Resolution note (corrects this entry twice):** Fixed in `pgtp_editor/ui/theme.py` with a `QPushButton:focus, QToolButton:focus` rule appended to the cached per-theme stylesheet, ringed in **`COLOR_TEXT_1`** — not the colour this entry recommended. `find_replace_bar.py` needed no change (its buttons are painted entirely by the app-wide sheet); it gained an end-to-end Tab test only.
+
+1. **The recommended colour fails contrast in both themes.** `COLOR_ACCENT_3` — qdarkstyle's own `QLineEdit:focus` colour, which this entry reasoned toward by analogy — measures **1.56:1** against a resting dark button and **1.06:1** against a light one. Shipping it would have left the same invisible-focus bug *with a rule in place*, which is worse than none. The shipped `COLOR_TEXT_1` measures 5.98:1 / 9.07:1 resting and 4.40:1 / 7.97:1 on hover, and a test asserts that the rejected accent really does fail. Lesson: a focus colour is a **measured contrast ratio against the actual resting background**, never "the colour the sheet already uses somewhere else".
+
+2. **"Not pixel-testable headless — recommend a manual verification step" is false.** It is pixel-testable: nine pixel assertions run green offscreen; the only requirement is a `show()`n top level. This is the same offscreen folklore that was wrong about `QShortcut`. It matters because this entry's fallback test plan was **stylesheet-string membership** — the exact false-green class that let `BUG-260811021804` ship. Assert rendered pixels.
+**Report (verbatim):** "when selecting buttons using tab, not mouse (eg press tab from Find input field jumps to first button then the next etc) the button is not highlighted like on mouse over"
+
+**Root cause:** The app's entire button styling comes from the vendored **qdarkstyle** stylesheet, applied app-globally in `pgtp_editor/ui/theme.py::apply_theme` (`theme.py:142`, `app.setStyleSheet(_qdarkstyle_stylesheet(light))`) — there is NO in-repo `.qss` file and no `:hover`/`:focus` rule authored anywhere in `pgtp_editor/` (confirmed: `grep -r ":hover" pgtp_editor/` is empty). Inspecting the generated QSS (`qdarkstyle.load_stylesheet(qt_api="pyside6", palette=…)`) for BOTH themes confirms the exact gap the report describes:
+  - The base `QPushButton { … outline: none; border: none; }` rule **explicitly suppresses Qt's native focus rectangle**.
+  - qdarkstyle defines `QPushButton:hover` (background `#54687A` dark / `#B4B8BC` light), `:pressed`, `:checked`, `:disabled`, `:selected` — but **`"QPushButton:focus" in qss` is `False` for both the dark and the light variant.**
+  - So a Tab-focused button paints identically to an unfocused one: no hover background (mouse isn't over it), no native focus ring (killed by `outline: none`), and no `:focus` rule to supply either. A keyboard user cannot see which button Enter/Space will fire.
+  - qdarkstyle DOES style `:focus` for text inputs — `QLineEdit:focus { border: 1px solid #1A72BB; }` (that hex is `DarkPalette.COLOR_ACCENT_3`) and `QTextEdit:focus` — which is why the Find *input* field looks focused but the buttons it Tabs into do not. This is a QPushButton-specific omission, not a global focus-styling absence.
+
+  This is a general, app-wide styling gap surfaced through the Find/Replace bar (`pgtp_editor/ui/find_replace_bar.py`), not a bug in that bar; the bar just happens to be the place the user Tabs from an input into a row of buttons.
+
+**Proposed fix:** Append an app-authored `QPushButton:focus` (and `QPushButton:focus:hover`) rule to the qdarkstyle QSS in `pgtp_editor/ui/theme.py`, rather than editing the vendored package. Shape:
+  - In `_qdarkstyle_stylesheet(light)` (`theme.py:106-125`), after building `base = qdarkstyle.load_stylesheet(...)`, concatenate a small app-owned tail QSS and cache the combined string (keep the existing per-theme `_qss_cache[light]` behavior — cache the *combined* text so `apply_theme` and the cache-identity tests are unaffected). Alternatively append inside `apply_theme` before `setStyleSheet`, but doing it in `_qdarkstyle_stylesheet` keeps the cache and the "one string per theme" invariant intact.
+  - The appended rule, per theme, must give the focused button a visible focus indicator that is at least as strong as hover. Recommended: reuse qdarkstyle's own focus accent so it matches the input `:focus` border already in the sheet —
+    - dark: `QPushButton:focus { border: 1px solid #1A72BB; } QPushButton:focus:hover { border: 1px solid #1A72BB; background-color: #54687A; }`
+    - light: same selectors with the light accent `LightPalette.COLOR_ACCENT_3` and light hover bg `#B4B8BC`.
+  - **Source the colors from qdarkstyle's palette classes, not literals**, so light/dark both work and stay in sync with the input focus color: import `DarkPalette`/`LightPalette` (already imported in `_qdarkstyle_stylesheet`), and build the rule with `pal.COLOR_ACCENT_3` for the border and the appropriate hover background (qdarkstyle exposes the hover color too — prefer pulling it from the palette rather than re-hardcoding `#54687A`/`#B4B8BC`). Do NOT hardcode a single color that only reads in one theme (the BUG-004 / FQ-005 lesson: both themes are real and symmetric).
+  - **Gotchas:**
+    - The base rule's `border: none` means adding a `border` on `:focus` will slightly change the button's box; use a 1px border matching qdarkstyle's own input-focus border (which it already does for QLineEdit without layout jump) — acceptable and consistent. If any layout jitter appears, use `outline` isn't an option here because qdarkstyle set `outline: none`; a same-color `border` is the qdarkstyle-idiomatic focus cue.
+    - Compose so `:focus:hover` keeps the hover background AND shows the focus border (a focused button the mouse is also over must not lose either cue); QSS specificity gives `:focus:hover` (two pseudo-states) precedence over `:hover` alone, so include it explicitly.
+    - Must NOT regress `:pressed`/`:checked`/`:default` — those are more-specific or equally-specific states; only add `:focus` and `:focus:hover`, do not touch the existing selectors.
+    - Scope is app-wide (all `QPushButton`) by design — the fix belongs in the shared stylesheet, not in `find_replace_bar.py`. The same missing-`:focus` pattern may also affect `QToolButton`, tab bars, and list items; **note but do not fix those here** — scope this entry to `QPushButton` per the report, and file a follow-up if the owner wants broader keyboard-focus visibility.
+    - No keyboard shortcut is added or moved — this is pure QSS styling, so `docs/KEYBINDINGS.md` is not involved.
+
+**Test impact:** `tests/ui/test_theme.py` already owns the qdarkstyle-QSS assertions (it checks membership of markers like `"QMenu::indicator"` and the per-palette accent hexes in `app.styleSheet()`) — **extend it, do not duplicate.** New cases: (1) assert `"QPushButton:focus"` is present in the applied stylesheet for BOTH themes (`apply_theme(app, False)` and `apply_theme(app, True)`), guarding the regression directly at the string level; (2) assert the focus rule carries the theme's accent color (`DarkPalette.COLOR_ACCENT_3` appears in the dark focus rule, `LightPalette.COLOR_ACCENT_3` in the light one) so a future edit can't silently drop the color-sourcing; (3) keep the existing cache-identity tests green — verify the combined string is still cached one-per-theme (`_qss_cache` still has exactly `{True, False}`). The visual highlight itself is not pixel-testable headless — recommend a manual verification step (Tab from the Find field through the buttons; each focused button must show a visible border/highlight in both light and dark themes). Offscreen note: these are stylesheet-string assertions and run fine headless; no modal Qt calls involved.
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` has no theming/accessibility section covering focus styling (grep for `focus`/`accessib`/`:hover` found nothing), and §11-style theming rationale lives in the BUG-004/BUG-010/FQ-005 history in `theme.py`. Adding a keyboard-focus-visibility rule to the app QSS is a small new design fact (keyboard focus must be visible on buttons, symmetric across themes) — **flag for `spec-maintainer` after the fix lands** to record it alongside the existing theming design; do not edit the spec here. No `owner-decision` required: the fix has an obviously-right shape (match qdarkstyle's own input-focus accent).
+
+---
+
+## BUG-260812004649: `QTabBar::tab` has no `:focus` rule either — Tab-traversing INTO a tab bar changes nothing on screen, so a keyboard user cannot tell that the arrow keys now switch tabs
+**Status:** RESOLVED (`7798acd`) — see **Resolution** at the end of this entry, which corrects two claims in the body below.
+**Reported:** 2026-08-12
+**Report (verbatim):** "`QTabBar::tab` has the same missing-`:focus` defect and was deliberately left out of `7703eba`'s fix. qdarkstyle gives `QTabBar::tab` a `:hover` and a `:selected` rule but no `:focus`, so a tab that has keyboard focus but is **not** the selected tab is visually indistinguishable from any other unselected tab. A user tabbing through the tab bar cannot see where they are."
+
+**The report's framing is wrong, but the bug underneath it is real. Measured, not argued.** There is no such thing as a focused-but-unselected tab in Qt. `QTabBar` takes focus as a **whole widget**; Qt sets `State_HasFocus` on the style option of the **current** tab only. Rendered proof (offscreen, `QTabWidget` with 3 tabs, current = 1, bar focused, `QTabBar::tab:top:selected:focus` painted red and `QTabBar::tab:top:!selected:focus` painted green):
+
+```
+tab0 sel=False red=0   green=0
+tab1 sel=True  red=617 green=0
+tab2 sel=False red=0   green=0
+```
+
+The `:focus` pseudo-state never reaches an unselected tab, so the fix the report asks for is unimplementable *and unnecessary*. **Do not chase it.** Selection follows focus in `QTabBar` — Left/Right arrows change `currentIndex` directly — so "where you are" is always the selected tab.
+
+**Root cause (the real defect):** with the tab bar focused and unfocused, the painted tab bar is **byte-identical**. qdarkstyle ships `QTabBar::tab:<edge>`, `:<edge>:selected`, `:<edge>:!selected`, `:<edge>:!selected:hover` and the `:disabled` variants for all four edges, and **no `:focus` selector of any kind** (`"QTabBar::tab:focus" in qss` is `False` for both `DarkPalette` and `LightPalette`). So Tab-traversing into a tab bar gives the user **zero** feedback: nothing says the arrow keys are now live on tabs, and nothing says a subsequent Tab will leave. This is the same class of defect as BUG-260812002838 (buttons) — an invisible focused state — arrived at from a wrong premise. Same file, same mechanism, same fix shape.
+
+**Reachability — this is NOT theoretical. Verified against a real `MainWindow` (offscreen, shown):** `QTabBar`'s default focus policy is `Qt::TabFocus` (`focusPolicy() == 1`) on all three of the app's bars, and `QTabWidget` sets the bar as its `focusProxy`. Walking `focusNextPrevChild(True)` from a live window lands on a `QTabBar` **three times per traversal cycle**:
+
+```
+['XmlEditor', 'QLineEdit', 'QPushButton', 'QPushButton', 'QLineEdit', 'QPushButton', 'QPushButton',
+ 'QTabBar/qt_tabwidget_tabbar', 'ProjectTreePanel', 'QTabBar/qt_tabwidget_tabbar',
+ 'QListWidget', 'QTabBar/qt_tabwidget_tabbar', 'XmlEditor', ...]
+```
+
+The gesture is the plain `Tab` key — the same one in the original button report. No special gesture, no dock undocking, nothing exotic. Close as theoretical is **not** the right outcome.
+
+**Which tab bars this reaches (all verified on a live `MainWindow`):**
+- `CenterStage` document tabs — `center_stage.py:150` (`class CenterStage(QTabWidget)`). Shape `RoundedNorth`.
+- The left dock — `main_window.py:785` `self.left_tabs = QTabWidget()` (Project / Contents / Database-XML Coherence). Shape `RoundedNorth`.
+- The bottom dock — `main_window.py:921` `self.bottom_tabs = QTabWidget()` (Activity Log / Results). Shape `RoundedNorth`.
+- `project_settings_dialog.py:352` `tabs = QTabWidget(self)` — a dialog, same defect.
+- Qt's own tabified-`QDockWidget` bar. The app calls `tabifyDockWidget` **nowhere**, but a user can tabify docks by dragging, and Qt gives those bars a **South** shape — which is why the fix should cover `:bottom` even though nothing ships it today. qdarkstyle already scopes a parallel `QDockWidget QTabBar::tab…` selector list for exactly this; mirror it.
+
+No `setTabPosition` call exists anywhere in `pgtp_editor/`, so `:left`/`:right` are unreachable today. Cover them anyway — four rules cost nothing and a future vertical tab bar would silently lose the cue.
+
+**The exclusion ground was right, and there is a second one the report did not mention.**
+1. **Geometry does move**, as claimed. Measured on `tabRect()` with qdarkstyle applied, appending `QTabBar::tab:focus { border: 2px solid … }`: tabs go `[(0,0,37,25),(37,0,37,25),(74,0,37,25)]` → `[(0,0,37,26),(37,0,41,26),(78,0,37,26)]` — the focused tab grows 4px wide and every tab grows 1px tall, **and the following tabs shift right**. Adding `padding: 0px` (the compensation that worked for buttons) overshoots the other way: `37 → 33`. The button trick does not transfer, because tab padding is per-edge and asymmetric (`:top` is `padding 4/4/2/2`, `:left` is `2/2/4/4`).
+2. **Undocumented, and worse: a naive `QTabBar::tab:focus` rule is silently DEAD under qdarkstyle.** The same loud red rule that painted 1342 px on a bare `QTabBar` painted **0 px** once qdarkstyle's sheet was applied — qdarkstyle's `QTabBar::tab:top:selected` / `:top:!selected` are more specific and win. Any fix MUST match qdarkstyle's specificity (edge **and** selected-state qualified), or it will pass a stylesheet-string test and paint nothing. This is precisely the false-green trap.
+
+**Proposed fix — recolour the border qdarkstyle ALREADY paints; add no box.** This avoids the per-edge geometry compensation entirely rather than trying to get it right.
+
+For every edge, qdarkstyle's `:selected` rule already draws a 3px accent edge on the pane-facing side:
+
+| edge | selected rule draws | dark | light |
+|---|---|---|---|
+| `:top` | `border-bottom: 3px solid` | `#259AE9` | `#37AEFE` |
+| `:bottom` | `border-top: 3px solid` | `#259AE9` | `#37AEFE` |
+| `:left` | `border-right: 3px solid` | `#259AE9` | `#37AEFE` |
+| `:right` | `border-left: 3px solid` | `#259AE9` | `#37AEFE` |
+
+The focus rule changes **only that border's colour** — same side, same 3px width. Extend `_focus_visible_qss(pal)` in `pgtp_editor/ui/theme.py:110-159` (the function `7703eba` added; it is already appended into the cached per-theme string by `_qdarkstyle_stylesheet`, `theme.py:162-185`, so the "one QSS string per theme" invariant and the cache-identity tests hold unchanged). Generate, per edge:
+
+```
+QTabBar::tab:top:selected:focus, QDockWidget QTabBar::tab:top:selected:focus {
+  border-bottom: 3px solid {pal.COLOR_TEXT_1};
+}
+```
+…and `bottom`→`border-top`, `left`→`border-right`, `right`→`border-left`. Note `:selected:focus` is deliberate: `:focus` alone cannot reach an unselected tab (proved above) and would also lose the specificity contest against `:top:selected`.
+
+**Verified end-to-end before writing this entry** (offscreen, qdarkstyle dark + the four rules above):
+
+```
+rects unfocused == rects focused:  True   [(0,0,37,25),(37,0,37,25),(74,0,37,25)]
+selected tab bottom-edge TEXT_1 px:  unfocused 0   focused 28
+unselected tab0 bottom-edge TEXT_1 px, bar focused: 0
+selected tab bottom-edge ACCENT px:  unfocused 28  focused 0     <- presence anchor
+```
+
+Zero geometry change, cue appears exactly on focus, only on the selected tab.
+
+**Colour: `COLOR_TEXT_1`, the precedent `7703eba` set — measured against the UNSELECTED and SELECTED tab backgrounds in both themes.**
+
+| | dark | light |
+|---|---|---|
+| `COLOR_TEXT_1` vs **selected** tab bg (`#54687A` / `#B4B8BC`) | **4.40:1** | **7.97:1** |
+| `COLOR_TEXT_1` vs unselected/neighbour tab bg (`#455364` / `#C0C4C8`) | **5.98:1** | **9.07:1** |
+| `COLOR_TEXT_1` vs bar/pane bg (`#19232D` / `#FAFAFA`) | 12.13:1 | 15.25:1 |
+| `COLOR_ACCENT_3` vs selected tab bg — **rejected** | 1.15:1 | 1.08:1 |
+| qdarkstyle's own selection accent vs selected tab bg (for reference) | 1.89:1 | 1.22:1 |
+
+`COLOR_ACCENT_3` fails here for the same reason it failed on buttons — do not reach for it again. Take the value from `pal.COLOR_TEXT_1` inside `_focus_visible_qss`, which already receives the palette; **build no second colour table.**
+
+**Gotchas:**
+- **Specificity.** Must be `:<edge>:selected:focus`. A bare `QTabBar::tab:focus` renders nothing under qdarkstyle (measured: 0 px) while a string test passes.
+- **Mirror the `QDockWidget QTabBar::tab…` selector arm** for each rule, as qdarkstyle does throughout; otherwise a tabified dock keeps the defect.
+- **Do not add `border` shorthand, `padding`, `margin`, or `outline`** — any of them moves the box. Set exactly one `border-<side>` property.
+- The selection accent is *replaced* while focused, not overlaid. Selected-ness is still carried by background (`#54687A` vs `#455364`) and `margin-top`, so nothing is lost — but call it out in the docstring so a later reader does not "restore" the accent.
+- The rule must be appended **after** qdarkstyle's text (it already is — `_qdarkstyle_stylesheet` concatenates) to win at equal specificity against `:<edge>:selected`.
+- `setTabsClosable(True)` (`center_stage.py:362`) puts a ✕ on tabs, but those are Qt's private `QAbstractButton` close buttons with `focusPolicy() == 0` (NoFocus, verified) — **not** `QPushButton`/`QToolButton`, so `7703eba`'s button rule neither covers nor needs to cover them. No interaction.
+- No `:hover` interaction to worry about: qdarkstyle's hover rule is `:!selected:hover`, and this rule is `:selected:focus` — disjoint by construction.
+
+**Test impact:** `tests/ui/test_theme.py` owns this — **extend the BUG-260812002838 block at `tests/ui/test_theme.py:293-483`, do not duplicate it.** Reuse `_focus_ring_colour(light)` (`:314`, reads `COLOR_TEXT_1` from the same palette the implementation reads — not a second literal) and `_contrast` (`:323`). Add a `focus_tabs` fixture modelled on `focus_row` (`:339`): a shown `QTabWidget` with ≥3 tabs under a real theme — **`show()` is mandatory**, an unshown grab is not evidence and the QSS is only resolved on polish.
+
+New cases, all sampling **rendered pixels on the tab's pane-facing edge** — never a whole-image colour count and never a stylesheet-string membership check:
+1. `bar.setFocus()` → the selected tab's bottom-edge pixel is `_focus_ring_colour(light)`; both themes.
+2. **Absence with a presence anchor in the same sampler:** unfocused, that same pixel is qdarkstyle's selection accent (proving the sampler can see that edge at all), and is *not* the ring colour.
+3. Focused bar, an **unselected** tab's bottom edge is not the ring colour — pins the measured fact that `:focus` never reaches an unselected tab.
+4. `test_focus_does_not_move_the_tab`: `[bar.tabRect(i) for i in range(n)]` is **identical** focused and unfocused. This is the assertion the exclusion ground was about; it is the one that must not be dropped.
+5. Contrast: assert `_contrast(ring, selected_tab_bg) >= 3.0` in both themes, and assert `COLOR_ACCENT_3` **fails** it — same shape as `test_the_ring_clears_3_to_1_against_the_button_in_both_themes` (`:436`), which pins the rejected colour so nobody re-proposes it.
+6. Theme-flip survival, mirroring `test_the_ring_survives_a_theme_flip` (`:416`).
+
+**Sampling trap, stated because it already bit once:** the ring colour and the tab **label** colour are both `COLOR_TEXT_1`, so a whole-image count of that colour is not a clean signal (in the probe it happened to move 27 → 132, which is exactly the kind of number that reads as a pass for the wrong reason). Sample the specific edge pixel of a specific tab, at `tabRect(i).bottom() - 1`, inset a few px from the left/right so the 4px corner radius is not in the sample. `tests/ui/test_theme.py:293-301` already records this lesson for buttons — extend that comment rather than rediscovering it.
+
+**Spec impact:** `CONSOLIDATED_SPEC.md` still has **no** theming/accessibility section covering focus visibility (grep for `focus ring` / `keyboard focus` / `COLOR_TEXT_1` / `:focus` returns nothing), so BUG-260812002838's flag for `spec-maintainer` is still outstanding — this entry rides the same flag rather than raising a second one. The fact to record, once, covering both: *keyboard focus must be visible on every focusable chrome surface, in both themes, with the indicator colour taken from the qdarkstyle palette (`COLOR_TEXT_1`) and measured for contrast against the actual resting background, and the indicator must never change the widget's geometry.* Do not edit the spec here. No `owner-decision` needed — the shape is measured, not chosen. **No `docs/KEYBINDINGS.md` impact:** this is pure QSS; no chord is added, moved, or removed, and the arrow-key/Tab behaviour on `QTabBar` is Qt's own, untouched.
+
+**Resolution (`7798acd`)** — verified in the tree 2026-08-12. Implemented as proposed: recolour the 3px border qdarkstyle already draws on each edge's pane-facing side, via four `:<edge>:selected:focus` rules (`pgtp_editor/ui/theme.py:155-156`, with the reasoning at `:170-200`). `tabRect` is identical focused vs unfocused in both themes — no geometry change. Indicator colour is `COLOR_TEXT_1`, with `COLOR_ACCENT_3` asserted to *fail* contrast so the choice is measured rather than asserted. It is `:selected:focus`, **not** `:focus`, and that is measured too: `:selected:focus` vs `:!selected:focus` gives 617px and 0px (`theme.py:173`); it is disjoint from the existing `:!selected:hover` rule.
+
+**Two corrections to the body above, both of which would otherwise have shipped a false green:**
+1. **The "unfocused" baseline is *focused unless you clear it*.** Showing a `QTabWidget` whose only focusable child is its bar hands the bar focus immediately, which produced an identical 23/23 pixel count that reads as "the rule always applies". The fixture now calls `clearFocus()` and asserts the cleared state — `tests/ui/test_theme.py:559` records why that is not tidiness, `:578` is the call.
+2. **`tabRect().bottom() - 1` is not a safe sample row across a theme flip.** `QTabBar` recomputes tab layout one pass behind its widget geometry (light 27px vs dark 25px) and the two never re-converge, so forcing a relayout only alternates which one is stale; the sampler clamps to the render instead. This is a **pre-existing Qt quirk, not introduced by this fix** — do not re-file it as a regression.
+
+Also: the body's 28-ring-px figure was measured on 37px tabs; the shipped fixture's 40px tabs give 23. The shared spec flag above (with BUG-260812002838) still stands for `spec-maintainer`.
+
+---
+
+## BUG-260812023420: left dock's "ensure the pane is open" step is duplicated per reveal site, not owned by one primitive
+**Status:** RESOLVED (03473a7)
+**Reported:** 2026-08-12
+**Report (verbatim):** "there's an apparent hierarchical dependency in browser pane: if project is not checked in view, the app can't open a ddl explorer. if first project is checked, it can be opened (silently doesn't show). It appears that xml structure is the owner of the pane, and tabs go in it under it. xml structure should be one of the sons of browser pane, not the initiator, and any sons should first check if it's opened, and if not, open it."
+
+**Could not reproduce the literal symptom on the TARGET DDL Explorer path — read this first.** The report's mental model ("XML structure owns the pane") does not match the code, and the exact failure it describes does not fire for the Quality/Target Explorer in the offscreen harness. The left dock is `main_window.py:814` `self.tree_dock = QDockWidget("Project Tree")`, built **eagerly** at construction with `self.left_tabs = QTabWidget()` inside it (`:816`, `setWidget` at `:941`, `addDockWidget` at `:942`). The "Project" tab (the XML/project tree) is just tab index 0 (`:817`); it does **not** own or gate the dock. Opening the Quality Explorer goes `_on_ddl_explorer_toggled` (`:4436`) → `_open_ddl_explorer` (`:4501`) → `center_stage.show_ddl_explorer` (`center_stage.py:534`) → emits `ddl_explorer_visibility_changed` → `_on_ddl_explorer_visibility_changed` (`main_window.py:4612`), which at `:4623` does `self.tree_dock.setVisible(True)` and at `:4624` `setCurrentWidget(...)`. I drove this with the Project-Tree toggle OFF (dock hidden) and with the dock closed via its title-bar ✕ (both offscreen, window `show()`n): in both cases the dock re-appears, the "DDL Objects (Quality)" tab is selected, and `_tree_action` re-checks. So the wired path is correct today. Two plausible reasons the user still saw the bug, neither disprovable from here: (a) their build predates the `:4623` fix, or (b) they hit the **sandbox** role or a path that reveals a left tab through the bare seam below without re-showing the dock. Whoever resolves this should first confirm against a fresh build which symptom still reproduces and on which role.
+
+**Root cause (the real, structural defect the report correctly names).** There is no single "ensure the browser pane is open, then reveal this child" primitive. The un-hide-the-dock step — `self.tree_dock.setVisible(True)` / `self._show_left_dock()` — is **copy-pasted at every reveal site independently**:
+- DDL Explorer: `main_window.py:4623` (inside `_on_ddl_explorer_visibility_changed`)
+- Findings: `main_window.py:2333` (`_reveal_findings_tab` calls `_show_left_dock()` at `:2314`)
+- Manual/Contents: `main_window.py:7972` (`_show_manual`)
+- Coherence: `coherence_controller.py:209` calls the injected `_show_left_dock` before `:210` `reveal_left_panel`
+
+Meanwhile the **central seam** `_reveal_left_panel` (`main_window.py:2295`, exported as `UiShell.reveal_left_panel`, wired at `:1355`) does **only** `setTabVisible(index, True)` + `setCurrentWidget(panel)` and **never re-shows the dock**. So any reveal that routes through the seam without a separate `show_left_dock` call lands a visible-but-orphaned tab in a hidden dock — exactly the "silently doesn't show" symptom. Coherence only escapes this because its controller happens to call `_show_left_dock()` first (`coherence_controller.py:209`); nothing enforces that pairing, and a future child-reveal that forgets it reproduces the bug. This is the ownership inversion the report describes: the dock is not gated by the "Project"/XML tab, but the "ensure open" responsibility is scattered onto each child instead of owned by the container's reveal primitive.
+
+**Proposed fix — centralize "ensure the pane is open" into the one reveal primitive, then delete the duplicates.**
+1. In `_reveal_left_panel` (`main_window.py:2295`) call `self._show_left_dock()` (`:2314`) **before** `setTabVisible`/`setCurrentWidget`, so every reveal that goes through the seam auto-opens the dock. This is the "any son first checks if the pane is open, and if not opens it" behaviour the report asks for, in exactly one place.
+2. Route the DDL reveal through the same guarantee: `_on_ddl_explorer_visibility_changed` (`:4612`) currently open-codes `setTabVisible` + `tree_dock.setVisible(True)` + `setCurrentWidget`. Have its `visible` branch call `self._reveal_left_panel(self._ddl_browser_panels[role])` (which now shows the dock), and keep the `not visible` branch as a plain `setTabVisible(..., False)`. Preserve the menu-action re-check at `:4625-4627`.
+3. Leave the Findings (`_reveal_findings_tab`, `:2329`) and Manual (`_show_manual`, `:7972`) sites working; they may keep their explicit `_show_left_dock()`/`setVisible(True)` calls (harmless once the seam also does it) or be simplified to route through `_reveal_left_panel`. Do NOT remove `_show_left_dock` itself — `coherence_controller.py` holds it as an injected callable (`:139`) and the bottom-dock analogue `_show_audit_dock` stays as-is.
+
+**Gotchas.**
+- **Bidirectional toggle sync (BUG-007) must stay intact.** `tree_dock.visibilityChanged → _tree_action.setChecked` (`:3571`) means auto-opening the dock from a child gesture will re-check the "Project Tree" View entry. That is the *correct* behaviour (the pane really is open now), but confirm no reveal path calls `setVisible(True)` in a loop that re-enters a toggle handler. The existing comment at `:3560-3566` argues Qt coalesces these — do not add a recursion guard, match that reasoning.
+- **Do not make the dock gated by any single tab.** The fix is the opposite: the dock is the independent container (spec §7 line 1868 already states this), tabs are peers. Keep the "Project" tab as index 0 but never tie dock lifecycle to it.
+- **`_reveal_left_panel` returns early when `indexOf(panel) < 0` (`:2298`).** Put the `_show_left_dock()` call *after* that guard? No — if the panel is not a left tab there is nothing to reveal, so calling `_show_left_dock` would pop an empty dock. Keep `_show_left_dock()` **after** the `index < 0` guard, before `setTabVisible`.
+- **Do NOT invent a new dialog or a new dock.** The dock already exists; this is purely about who calls `setVisible(True)`.
+
+**Test impact:** `tests/ui/test_ddl_explorer_wiring.py` owns the DDL reveal path — extend, do not duplicate. It already has `test_toggle_on_populates_editor_and_browser_and_reveals_both_tabs` (`:120`) and the lockstep/close tests (`:318`, `:330`). Add a case: **hide the dock first** (`window._tree_action.setChecked(False)`, or `window.tree_dock.setVisible(False)`), then `window._ddl_explorer_action.setChecked(True)`, and assert `window.tree_dock.isVisible()` is True, the DDL browser tab is current, and `_tree_action` re-checked — the assertion the current suite is missing, which is why the regression could ship. Mirror it for Coherence in `tests/ui/test_coherence_wiring.py` and for Findings in `tests/ui/test_findings_surfaces.py` (reveal-while-dock-hidden → dock re-shows). If `_reveal_left_panel` gains the `_show_left_dock` call, add a direct unit test in `tests/ui/test_main_window.py` (or `test_mainwindow_surface.py`) that hides the dock, calls `_reveal_left_panel(some_left_panel)`, and asserts the dock is visible. **Offscreen note:** the window must be `show()`n for dock-visibility assertions to be meaningful (per CLAUDE.md's keyboard/focus note; the same applies to `QDockWidget.isVisible`).
+
+**Spec impact:** none as a design change — `CONSOLIDATED_SPEC.md` line 1868 already states the left dock is an independent `QTabWidget` container hosting Project/Contents/Coherence/DDL/Findings as peers, and line 7171 already describes the DDL reveal as keeping "the tree dock visible and current when shown." The fix brings the *implementation* in line with the spec's already-correct ownership model; it does not change the model. Flag for `spec-maintainer` only if resolution chooses to record the "one reveal primitive owns ensure-open" invariant (i.e. `reveal_left_panel` always un-hides the dock) as a §7 shell rule — worth a one-line note so a future reveal site does not re-scatter the step. No `docs/KEYBINDINGS.md` impact: no chord is added, moved, or removed.
+
+**Resolution (03473a7).** `_reveal_left_panel` (`main_window.py:2294`) now calls `self._show_left_dock()` and owns the whole gesture — dock un-hidden, tab visible, tab current. The un-hide sits **after** the `index < 0` guard, per the gotcha above, so a widget that is not a left-dock tab still no-ops instead of popping an empty dock. The four duplicated un-hide calls were **removed** rather than left as harmless redundancy (proposal step 3 said they could stay; the fix went further on the reasoning that a step which is only *sometimes* needed is what rots):
+- `_on_ddl_explorer_visibility_changed` (`:4633`) — the `visible` branch is one `_reveal_left_panel(self._ddl_browser_panels[role])` call, the hidden branch a plain `setTabVisible(..., False)`; the menu-action re-check is preserved as required.
+- `_reveal_findings_tab` (`:2349`) — reduced to one `_reveal_left_panel(self.findings_panel)` call.
+- Manual/Contents — **a behaviour fix, not a relocation.** The un-hide moved off `_show_manual` and onto `_on_manual_visibility_changed`'s open branch (`:7998`), because previously only `_show_manual` un-hid the dock, so `center_stage.show_manual()` entered from anywhere else — a chapter click via `_on_manual_chapter_selected`, for one — left Contents in a possibly-hidden dock.
+- `coherence_controller.py::_reveal_panel` (`:206`) — its `_show_left_dock()` call is gone; that was the only use, so the `show_left_dock` constructor kwarg, the attribute and the injection in `main_window.py` were removed with it. `_show_left_dock` itself survives as `MainWindow`'s own method (`main_window.py:2333`), which is what the proposal's "do NOT remove it" caveat was protecting.
+
+**The two seams now state opposite contracts, and the "reveal without showing the dock" case was checked rather than assumed.** It exists and already had the right primitive: `CoherenceController.refresh_if_open` gates on `_panel_visible()` and only populates — it never reveals. So `reveal_left_panel` = *open the pane and show this*; `set_left_panel_visible` (`main_window.py:2322`) = *make available, do not touch the user's layout*, and a test pins that it leaves a hidden dock hidden and the current tab unchanged. The bottom dock already drew this distinction (`_reveal_results_tab` vs `_reveal_results_dock_tab`); the left dock now matches it.
+
+**On the "could not reproduce" note at the top of this entry: the judgement held.** The reporter's *"XML structure owns the pane"* model does not match the code — the dock is built eagerly and is not gated by the Project tab — but the symptom was real on the Findings, Coherence and Manual-from-elsewhere paths. The DDL path happened to be the one already patched, which is why it did not reproduce there. The fix removes the class of failure rather than the instance.
+
+**Cross-reference, deliberately NOT folded into this fix.** With no sandbox configured, `_refresh_ddl_explorer_affordances` (`main_window.py:4654`) sets the `DDL Explorer (Sandbox)` entry to `setVisible(False)` — absent with **no stated reason**. That is §18.7's deliberate carve-out from FQ-023's *"state the reason instead of vanishing"* (the genuinely-inapplicable case), so it is recorded design, not a defect, and was left alone. It is noted here because it is an independent reason a user might report *"the app can't open a ddl explorer"* if they meant the sandbox role — anyone triaging a repeat of this report should rule it out first.
+
+**Tests:** 7 added, each failing against the pre-fix code for its own site, and all asserting observable state (`isVisible()`, `isTabVisible()`, `currentWidget()`) rather than that a method was called — `test_reveal_left_panel_alone_opens_a_hidden_dock`, `test_reveal_left_panel_ignores_a_widget_that_is_not_a_left_tab`, `test_set_left_panel_visible_does_not_steal_the_users_layout`, `test_findings_reveal_opens_a_hidden_dock`, `test_manual_contents_reveal_opens_a_hidden_dock` (`tests/ui/test_main_window.py`), `test_toggle_on_opens_the_pane_even_when_the_user_hid_it` (`tests/ui/test_ddl_explorer_wiring.py`), `test_coherence_run_opens_the_pane_even_when_the_user_hid_it` (`tests/ui/test_coherence_wiring.py`). The first of those is the invariant the fix establishes: the seam **alone** opens a hidden dock. Full suite at the time: 7847 passed, 51 skipped.
+
+**Spec follow-up is already dispatched** — `spec-maintainer` is recording the §7 line that `reveal_left_panel` always un-hides the dock, so the step is not re-scattered by a future reveal site. Not outstanding.
+
+**One stale comment left behind (cosmetic, not filed separately).** `coherence_controller.py:81`, in the module docstring's list of injected callables, still names `show_left_dock` alongside `show_audit_dock`/`panel_visible` and still says "Revealing the coherence tab must also un-hide the left dock" — the kwarg it documents no longer exists on `__init__`. The inline comment at `:207-210` is correct and supersedes it. Worth deleting that bullet the next time the file is touched.
+
+---
+
+## BUG-260812063745: theme-blind named CSS colours in the status labels — and the AST colour guard only sees `#rrggbb`, so a hex literal was "fixed" by renaming it `darkorange`
+**Status:** RESOLVED (f05cc8b)
+**Reported:** 2026-08-12
+**Report (verbatim):** "Theme-blind status colours in `project_settings_dialog.py`, and a hole in the guard that was supposed to prevent them. `pgtp_editor/ui/project_settings_dialog.py` colours its inline status labels with named CSS colours through widget stylesheets — currently `setStyleSheet(\"color: green;\")` (~:570) and `setStyleSheet(\"color: darkorange;\")` (~:580), alongside pre-existing `color: red` usage in this file and `new_project_dialog.py`. They are theme-blind: FQ-260812021715 (commit `c0ab500`) moved every colour in the app into `resources/themes/*.json` so colours invert with the theme; these do not. Contrast almost certainly fails in one theme each. The guard has a hole, and that is the more important half: `tests/ui/test_theme_model.py::test_NO_module_outside_the_theme_source_declares_a_colour` AST-scans for `#rrggbb` literals and does not catch named CSS colours. A literal `#b8860b` in this same file did fail that test during this batch and was changed to `darkorange` — which made the test pass while leaving the defect in place."
+
+**Root cause — two defects, and the second is the cause of the first.**
+
+**(a) The colours themselves are theme-blind, and each fails contrast in one theme.** Measured (WCAG relative luminance, sRGB), against the two backgrounds these labels can actually sit on — the qdarkstyle chrome the spec names as the reference (§7: *"contrast must be checked against the live QDarkStyle chrome, not the bare palette"*), and the theme file's own `palette.Window`:
+
+| colour | site | dark `#19232D` | dark Window `#2B2B2B` | light `#FAFAFA` | light Window `#F0F0F0` |
+|---|---|---|---|---|---|
+| CSS `green` = `#008000` | `project_settings_dialog.py:570`, `:675`, `:609`; `new_project_dialog.py:554`, `:625`; `connection_setup_dialog.py:126` | **3.10** ✗ | **2.76** ✗ | 4.92 ✓ | 4.51 ✓ |
+| CSS `darkorange` = `#FF8C00` | `project_settings_dialog.py:580` | 6.82 ✓ | 6.07 ✓ | **2.23** ✗ | **2.05** ✗ |
+| CSS `red` = `#FF0000` | 15 sites, six files (below) | **3.98** ✗ | **3.54** ✗ | **3.83** ✗ | **3.51** ✗ |
+
+So: `green` is unreadable in the dark theme, `darkorange` is unreadable in the light theme, and **`red` fails 4.5:1 in BOTH** — the pre-existing `color: red` usages are therefore in the *same* defect class, not acceptable-and-grandfathered. They are worse: `green`/`darkorange` are wrong in one theme each, plain `red` is wrong everywhere. (These are the same magnitudes that made BUG-260812002838's proposed focus colour a defect at 1.56:1 / 1.06:1, and the same argument `sql_results_panel.py:110-123` already records for why `#d02020` (2.96 dark) and `#d08a1a` (2.74 light) were replaced by a per-theme pair.)
+
+**(b) The guard cannot see any of it, which is why the wrong "fix" was available.** `tests/ui/test_theme_model.py:679` `colour_literals_in(path)` walks `ast.Constant` string nodes and applies `_HEX_RE = re.compile(r"#[0-9a-fA-F]{6}\b")` (`:658`). That expression matches **only** six-digit hex. It does not match:
+- **named CSS colours** — `green`, `red`, `darkorange`, `white`;
+- **three-digit hex** — `#b33` at `main_window.py:1146` is invisible to the guard *today* (`\b` after `{6}` does not help: the pattern requires six digits to begin with);
+- the **indirect** form, where the name is a bare string assigned to a variable and interpolated later: `connection_setup_dialog.py:126` and `project_settings_dialog.py:609` both do `color = "green" if ok else "red"` then `setStyleSheet(f"color: {color};")`. Even a declaration-scoped guard misses these, because the string constant `"green"` is not adjacent to a `color:`.
+
+That is the mechanism the report names precisely: a `#b8860b` literal in `project_settings_dialog.py` tripped the guard, and the cheapest way to make the guard green was to spell the same colour as a name. The comment left behind at `:576-579` states the reasoning out loud — *"A CSS colour NAME, like the `red`/`green` the two Test rows above already use -- a hex literal here would be a second colour table outside `resources/themes/*.json`, which a test forbids"* — i.e. the author correctly identified the rule and then satisfied its letter while breaking its purpose. **The guard's regex, not the colour, is the root cause.** Anything else fixed here can be re-broken the same way tomorrow.
+
+**Full inventory of paintable named/short-hex colours in `pgtp_editor/`** (produced by an AST scan restricted to CSS declarations inside non-docstring string constants; zero false positives on the current tree):
+
+| file:line | declaration |
+|---|---|
+| `ui/project_settings_dialog.py` `:570` | `color: green` |
+| `ui/project_settings_dialog.py` `:580` | `color: darkorange` |
+| `ui/project_settings_dialog.py` `:616`, `:636`, `:649`, `:655`, `:670` | `color: red` |
+| `ui/project_settings_dialog.py` `:675` | `color: green` |
+| `ui/project_settings_dialog.py` `:609` → `:611` | `"green"`/`"red"` via variable (**indirect**) |
+| `ui/new_project_dialog.py` `:554` | `color: green` / `color: red` (ternary over two whole declarations) |
+| `ui/new_project_dialog.py` `:324`, `:561`, `:590`, `:604`, `:610`, `:622` | `color: red` |
+| `ui/new_project_dialog.py` `:625` | `color: green` |
+| `ui/connection_setup_dialog.py` `:133` | `color: red` |
+| `ui/connection_setup_dialog.py` `:126` → `:128` | `"green"`/`"red"` via variable (**indirect**) |
+| `ui/alter_column_dialogs.py` `:217` | `color: red` |
+| `ui/new_routine_dialog.py` `:130` | `color: red` |
+| `ui/new_trigger_dialog.py` `:183` | `color: red` |
+| `ui/main_window.py` `:1146` | `color: white; background: #b33` — the DEBUG chip |
+
+Verified as **not** offenders and to be left alone: `ui/mode_indicator.py:195` (`color: %s` — a printf placeholder, the value comes from `mode_colors`), `ui/theme_model.py:203` (the string `"expected a colour or a {color: ...} map"` — an error message, not a stylesheet), `ui/project_status_panel.py:408` (`rgba(...)` built from a `QColor` read from the theme), `ui/connectivity.py:134` (`f"color: {colour}"` from `shared_accent`), `ui/sql_results_panel.py:645` and `ui/sql_console_panel.py:1071` and `ui/ddl_buffer_panel.py:1139` (all resolve per-theme at paint time). `ui/caption_management_panel.py:772` (`#d05050`) is a real offender but is **already** in `COLOUR_LITERAL_EXEMPTIONS` with a stated follow-up reason; it stays exempt here.
+
+**Proposed fix — three parts, in this order. Part 1 is the one that matters.**
+
+**Part 1 — close the hole in the guard (`tests/ui/test_theme_model.py`).** Extend `colour_literals_in` (`:679`) so it reports *any* paintable colour, not just six-digit hex. Concretely:
+- Keep `_HEX_RE`, but widen it to `#[0-9a-fA-F]{3,8}\b` so `#b33` and `#rrggbbaa` stop slipping through.
+- Add a second detector that is **declaration-scoped**, because a bare word-list scan over every string constant produces immediate false positives (`tan`, `plum`, `linen`, `gold`, `snow` and friends occur in ordinary prose, and `"expected a colour or a {color: ...} map"` at `theme_model.py:203` would trip a naive one). Scan each non-docstring string constant for CSS declarations — regex on the order of `(?:^|[;{])\s*(?:[-a-z]*color|background|border)\s*:\s*([^;{}]*)` — and flag a declaration only when a token of its value is a **CSS colour name** or a hex. This was prototyped read-only against the current tree during triage and flags exactly the fourteen rows in the inventory table above and nothing else; `%s`, `{placeholder}` and `...` values all fall through cleanly, so `mode_indicator.py` and `theme_model.py` stay green untouched.
+- The CSS name list must live in the **test**, not in `pgtp_editor/` — it is a list of forbidden tokens, not a colour table, and putting it in the package would itself be the second table.
+- **Do not try to catch the indirect form with the guard.** `color = "green" if ok else "red"` is not statically distinguishable from any other string pair without dataflow. The answer is to delete the indirect form in Part 2, not to make the guard cleverer. Say so in the test's docstring, because the next person will otherwise re-open this.
+- `main_window.py:1146`'s DEBUG chip will newly fail. It is a **known, spec-acknowledged** offender: `CONSOLIDATED_SPEC.md` §7 already says *"Copying `_debug_label`'s hardcoded static red is explicitly forbidden: it does not re-theme."* Either fold it into the theme as a `modes`-style pair, or add `"ui/main_window.py"` to `COLOUR_LITERAL_EXEMPTIONS` with that spec sentence as the stated reason. **Folding it in is preferred** — an exemption on `main_window.py` exempts the largest file in the project from the whole rule, which is a much bigger hole than the one being closed. Note `test_every_exemption_is_REAL` (`:727`) will then require the exemption to keep having a literal, so a later fold silently makes the list stale unless it is removed too.
+
+**Part 2 — source the status colours from the theme.** There is already a working precedent to extend, and **no new module and no second colour table are needed**:
+- `ui/sql_results_panel.py:134` `status_colour(kind, light) -> str | None` is the existing pure "status kind → per-theme colour" function. It resolves `STATUS_ERROR` to `mode_colors(light)[MODE_MAINTENANCE][1]` (the app's one red — dark `#F2B8AE` **9.28:1**, light `#8B1E1E` **8.74:1**) and `STATUS_WARNING` to `theme_for(light).accent("status_warning")` (dark `#e0a83a` **7.45:1**, light `#8a5a00` **5.68:1**). Both pairs already clear 4.5:1 in both themes — measured again during this triage, numbers above.
+- **What is missing is an OK/success kind.** Add `STATUS_OK` alongside the other two. The natural source, with no new colour invented, is `mode_colors(light)[MODE_PROJECT][1]` — dark `#B6E3C0` **11.17:1** on `#19232D`, light `#1B5E20` **7.54:1** on `#FAFAFA` — which is already the app's green and already per-theme. If the implementer prefers an explicit `status_ok` accent instead, it must be added to **both** `resources/themes/*.json` **and** `theme_model.ACCENT_KEYS` (`:141`), because `ThemeError` fires on any theme file missing a declared key — that is the loud-failure design, not a bug.
+- **`shared_accent()` is the wrong reader here and must not be used.** It exists for theme-*blind* consumers and **raises** unless every bundled theme agrees on the value (`theme_model.py:558`). A status colour that is readable in both themes must differ per theme, so `shared_accent("status_ok")` would raise the moment the values are correct. Read `theme_for(light).accent(...)` / `mode_colors(light)` instead.
+- `status_colour` currently lives in `ui/sql_results_panel.py`. Four dialogs importing a status colour from a results panel is a bad arrow; **move it (with `STATUS_ERROR`/`STATUS_WARNING`/`STATUS_OK` and `_warning_colour`) to a neutral home** — `ui/theme_model.py` is Qt-free and cannot host `mode_colors`, so `ui/mode_indicator.py` or a small `ui/status_colours.py` is the right place — and re-export from `sql_results_panel` so its existing callers and tests do not move. Do **not** copy it.
+- At each of the fourteen sites, replace the literal declaration with `f"color: {status_colour(kind, self._palette_is_light())};"`, and **delete the indirect `color = "green" if ok else "red"` form** at `connection_setup_dialog.py:126` and `project_settings_dialog.py:609` in favour of passing a *kind* (`STATUS_OK` / `STATUS_ERROR`). `_bin_dir_status_label`'s amber becomes `STATUS_WARNING`, which is exactly what its `:576-579` comment was reaching for — **delete that comment**, it documents the workaround.
+- **Remember the kind, never a resolved colour, and repaint on theme change.** This is the gotcha that has already produced a bug (`sql_results_panel.py:625-628` cites BUG-260811021804 step 4): a stored `QColor`/string re-applied after a theme flip paints the *previous* theme's value. Copy the shipped pattern verbatim — `_palette_is_light()` (`sql_results_panel.py:633`), `_apply_status_colour()` (`:636`, idempotent, recomputed from the live palette every time), and `changeEvent` handling **both** `ApplicationPaletteChange` **and** `PaletteChange` (`:648-666`, with the "can fire during construction" guard). These are dialogs, so a flip while one is open is rarer than for a panel — implement it anyway; the Themes pane (FQ-260812021716) makes it reachable.
+- **The colour must be a widget-level `setStyleSheet`, not a palette assignment.** The app-wide qdarkstyle QSS overrides `QPalette` for these widgets — the spec records this twice (§7's theme rule, §18.7's measured *"zero red pixels while the palette faithfully reported `#d02020`"*). The current code already uses `setStyleSheet`; keep it.
+
+**Part 3 — nothing new.** No new colour table, no new module owning colours, no per-dialog constants.
+
+**Test impact.**
+- **`tests/ui/test_theme_model.py`** — owns Part 1. Extend `colour_literals_in`, `_HEX_RE` and the exemption list **in place**; `test_NO_module_outside_the_theme_source_declares_a_colour` (`:695`), `test_the_theme_MODULES_themselves_hold_no_colour_either` (`:720`) and `test_every_exemption_is_REAL` (`:727`) all consume the same helper and need no rewriting. Add a **unit test of the detector itself** (feed it a synthetic source with `color: green`, `background: #b33`, `color: %s`, `color: {x}` and the `{color: ...}` prose string, and assert exactly the first two are flagged) — otherwise the guard's own widening is unverified, and a guard that quietly matches nothing is precisely the failure mode being fixed.
+- **13 existing assertions pin the literal colour NAME and will go red — this is the intended tripwire, not collateral.** `tests/ui/test_project_settings_dialog.py:259, 275, 290, 340, 358, 377, 393, 411, 426, 625` and `tests/ui/test_new_project_dialog.py:539, 552` all assert `"green" in …styleSheet()` / `"red" in …styleSheet()`. Rewrite them to assert against `status_colour(STATUS_OK/STATUS_ERROR, light)` rather than a new literal — a test that hardcodes the theme's hex is the second colour table again. Also `tests/ui/test_constraint_dialogs.py:446` asserts `"color: red" not in …` (an absence check on `alter_column_dialogs.py`); it must be re-expressed against the kind or it will silently pass forever once the literal is gone.
+- **Rendered-pixel assertion with a presence anchor is REQUIRED** (report's own requirement, and the house rule at `tests/ui/test_theme_model.py:16`). Extend `tests/ui/test_theme.py` — it already has the machinery and the idiom: `_contrast` (`:323`) and anchored samplers at `:399`, `:615`, `:628`, `:734` (`assert <colour> in resting  # the anchor`). Add, for each of the three kinds × both themes: apply the real theme, `show()` the dialog (**mandatory** — QSS is only resolved on polish and an unshown grab is not evidence), `grab()` the status label, assert the theme's expected colour **is present** in the pixels (the anchor, proving the sampler sees the label at all), and assert the *other* theme's value is **absent**. An absence-only assertion passes forever — that has bitten this project twice this week.
+- **Contrast must be asserted numerically too**, in both themes, against the qdarkstyle chrome — reuse `_contrast` and the `≥ 4.5` threshold already used for the focus-ring work; do not re-derive a luminance helper.
+- **New file needed?** No. Everything extends `tests/ui/test_theme_model.py`, `tests/ui/test_theme.py`, `tests/ui/test_project_settings_dialog.py`, `tests/ui/test_new_project_dialog.py`, `tests/ui/test_connection_setup_dialog.py` and `tests/ui/test_constraint_dialogs.py`.
+
+**Secondary finding, NOT part of this fix, recorded so it is not lost.** `connectivity.py`'s dots read through `shared_accent` and are therefore theme-blind by construction: `connectivity_offline` `#D02020` measures **2.96:1** on the dark chrome and `connectivity_reachable` `#2E9E4F` measures **3.29:1** on the light chrome. As non-text indicators the applicable threshold is 3:1, so offline-on-dark is marginally under and reachable-on-light marginally over. `shared_accent`'s own docstring (`theme_model.py:558`) anticipates exactly this — *"the day a theme gives the offline dot its own red, the theme-blind reader fails loudly"*. Whether to make the dots per-theme is a judgement call with a pixel-changing consequence, so it belongs in its own entry rather than being folded in here.
+
+**No `docs/KEYBINDINGS.md` impact:** this is pure colour and test-guard work; no chord is added, moved or removed.
+
+**Spec impact — yes, flag for `spec-maintainer` after the fix lands; do not edit the spec from the fix pass.** `CONSOLIDATED_SPEC.md` §7's theme block states the guard's scope as *"an **AST guard** bans a `#rrggbb` anywhere in the package"* (echoed at `:44` — *"failing on a `#rrggbb` in any module"* — and at `:1753`). That sentence is what this fix widens: after Part 1 the rule is *"any paintable colour — hex of any length, or a CSS colour name in a style declaration — anywhere in the package"*, and the residual carve-out (a colour name reaching a declaration through a variable is not statically detectable, so the indirect form is deleted rather than guarded) is worth one sentence so nobody re-files it. The §7 line about `_debug_label`'s hardcoded red (`:2508`) also needs updating to reflect whichever way Part 1 resolves the DEBUG chip. The current behaviour was **not** an intentional decision — `COLOUR_LITERAL_EXEMPTIONS`' own comment calls its entries *"theme-BLIND panel colours not yet folded in … a mechanical follow-up"*, and the named-colour sites were never considered at all. No `owner-decision` is needed: every choice here is measured rather than chosen, except the DEBUG-chip fold-vs-exempt call, which the fix should decide in favour of folding for the reason stated in Part 1.
+
+**Resolution (f05cc8b, 2026-08-12) — verified against the tree.**
+
+*Part 1, the guard, shipped as the deliverable.* `tests/ui/test_theme_model.py` now runs two detectors over every non-docstring string constant via `colours_in_text` (`:732`): `_HEX_RE` widened to `#[0-9a-fA-F]{3,8}\b` (`:666`), covering `#rgb`/`#rgba`/`#rrggbb`/`#rrggbbaa` — every notation Qt's QSS parser accepts, and the one `#b33` was hiding behind — plus a declaration-scoped regex whose bare words are checked against the 147-name CSS list. The name list lives in the **test**, as a forbidden-token list rather than a colour table, exactly as required. A new `test_the_colour_DETECTOR_itself_sees_what_it_claims_to` (`:777`) pins both halves *and* the false-negative surface: `%s`, `{colour}`, `rgba(...)` and prose like *"a tan plum on white linen, snow and gold"* all fall through. The guard flags nothing on the current tree beyond the eight pre-existing exemptions.
+
+*The indirect carve-out was taken, not guarded.* `colour = "green" if ok else "red"` is not statically detectable without dataflow; **both sites were deleted** (they pass a kind now), and the detector's docstring states the guard must not be made cleverer — so the next reader does not re-open it. `assert colours_in_text("green") == []` pins the carve-out as intended behaviour.
+
+*Part 2 landed as a new `pgtp_editor/ui/status_colours.py`* holding `STATUS_OK`/`STATUS_WARNING`/`STATUS_ERROR` (`:68-70`), `status_colour(kind, light)` (`:80`) and a `StatusLabel` (`:97`) that writes the remember-the-kind-and-repaint-on-flip pattern once instead of copying it into six dialogs. `sql_results_panel.py:89-93` re-exports the names, so its existing callers and tests did not move. **No `status_ok` accent was added** — ok resolves through `mode_colors(light)[MODE_PROJECT][1]`, because minting a second green beside the one the app already owns is the second colour table this guard exists to prevent. `shared_accent()` was left untouched, as this entry required.
+
+*The DEBUG chip was folded in, not exempted* — the preferred resolution of Part 1's fold-vs-exempt call. New `debug_chip_background`/`debug_chip_foreground` accents in both theme files (`dark.json:49-50`, `light.json:49-50`; dark 4.98:1 text / 3.20:1 fill, light 7.33 / 7.02), read by `main_window.py::_apply_debug_chip_colours` (`:6639`). `main_window.py` therefore never entered `COLOUR_LITERAL_EXEMPTIONS`, which would have exempted the largest module in the project.
+
+*This entry's measurements reproduced exactly, with one correction:* the DEBUG chip is at `main_window.py:1174`, not `:1146` — the line numbers here predate the `FQ-260812021716` merge. The 14-declaration inventory table was **complete**; an independent re-scan found no fifteenth.
+
+**Two defects found only by running, which this entry could not have anticipated — recorded because both are traps for the next person:**
+
+1. **A widget that styles itself from its own `changeEvent` recurses.** `setStyleSheet` re-polishes, which posts the palette-change event straight back — `RecursionError` on the first dialog constructed. `sql_results_panel`'s shipped pattern is safe *only* because it colours a **child** label from the **panel's** handler; this entry's instruction to copy it verbatim is what produced the bug. An equality check alone is **insufficient**: for a hidden label the nested palette read alternates, so the computed sheet differs at every level and never compares equal. Fixed with a re-entrancy flag plus a no-op short-circuit.
+2. **That guard then swallowed the correct value on dark→light**, where the *nested* event is the first one carrying the new palette. Fixed with a queued re-apply — which **must** pass a context object: the context-less `QTimer.singleShot` keeps a bound method alive past the widget's C++ deletion and fired into dead objects, costing **272 suite failures** before it was caught.
+
+*Test rewrites:* the 13 literal-colour assertions predicted above were rewritten against the kind, each stating its supersession in its docstring. One of them — `test_constraint_dialogs.py`'s `"color: red" not in …` absence check — was pinned to the very literal this fix **deletes**, i.e. it was one commit from passing vacuously forever; it now carries a presence anchor. Full suite: **8068 passed, 51 skipped**.
+
+**The secondary finding above SURVIVES this fix and is not covered by it.** `connectivity.py:77-86` still reads `shared_accent("connectivity_offline")`/`("connectivity_reachable")`, and both themes still declare the identical `#D02020`/`#2E9E4F` pair (`dark.json:53-54`, `light.json:53-54`) — so offline-on-dark remains **2.96:1** and reachable-on-light **3.29:1** against the 3:1 non-text threshold. **Judgement: it does now warrant its own entry, and more than it did before.** The widened guard cannot catch it *by construction* — the dots are built from theme accents, not literals, so there is no string for any detector to see, and `shared_accent`'s loud-failure design is the only thing standing between the current state and a silent theme-blind dot. Nothing in this commit moves it, and nothing in the suite will surface it. It needs a fresh `bug-triager` pass with its own id, since the pixel-changing decision (make the dots per-theme, or accept 2.96:1 as within measurement noise of 3:1) is a judgement call rather than a measured one.
+
+---
+
+## BUG-260812071208: opening a DDL Explorer while its menu toggle is unchecked introspects TWICE
+**Status:** RESOLVED (179d5e0)
+**Reported:** 2026-08-12
+**Report (verbatim):** "Opening the DDL Explorer while its Database-menu toggle is unchecked performs the introspection fetch TWICE. `_open_ddl_explorer()` reveals the tab → `_on_ddl_explorer_visibility_changed` fires → it calls `action.setChecked(True)` to keep the menu in sync (that sync is BUG-007's fix, deliberate) → `setChecked` emits `toggled` → which is connected to `_open_ddl_explorer()` → which runs again. The consequence is not cosmetic: it is a double introspection fetch — two full round trips to the database per open — and now also two `[DDL]` rows in Messages, which is how it surfaced. Found by the agent wiring the `[DDL]` mode notice (commit 07b83e9); it predates that work."
+
+**Root cause:** The re-entrant edge is real and confirmed by measurement (a throwaway harness under `QT_QPA_PLATFORM=offscreen`, counting calls to a stubbed `_fetch_ddl_schema`), but the triggering condition is narrower than the report states, and the report's own naming of the gestures is half wrong. The cycle is:
+
+- `pgtp_editor/ui/main_window.py:4797` — `_open_ddl_explorer.on_result` calls `self.center_stage.show_ddl_explorer(role)`.
+- `pgtp_editor/ui/center_stage.py:538` — `show_ddl_explorer` emits `ddl_explorer_visibility_changed(role, True)` **unconditionally**.
+- `pgtp_editor/ui/main_window.py:4853-4855` — `_on_ddl_explorer_visibility_changed` ends with `action.setChecked(visible)` (BUG-007's bidirectional lockstep, deliberate, spec §18.1 "Bidirectional lockstep").
+- `pgtp_editor/ui/main_window.py:4265` / `:4279` — each role's action has `toggled` connected to `_on_ddl_explorer_toggled(checked, role)` (`:4639`), which on `True` calls `_open_ddl_explorer(role)` a second time.
+
+**The gate on the whole cycle is "was the action already checked when `_open_ddl_explorer` ran".** `QAction::activate(Trigger)` sets `checked` **before** emitting `toggled`, so by the time the handler runs, `isChecked()` is already `True` and the later `setChecked(True)` is a no-op that emits nothing. Measured results, both roles:
+
+| gesture | fetches |
+|---|---|
+| Database ▸ DDL Explorer (Quality) click / `action.setChecked(True)` from unchecked | **1** — no loop |
+| Database ▸ DDL Explorer (Sandbox) click | **1** — no loop |
+| Database ▸ Reload DDL **while the Quality Explorer is closed** (action unchecked; the entry is enabled in that state) | **2**, and two `[DDL]` rows |
+| Reload (menu, panel context item, or `Ctrl+Shift+R`) while the Explorer is **open** | **1** |
+| a bare `window._open_ddl_explorer(role)` from the unchecked state — both `DDL_EXPLORER_TARGET` and `DDL_EXPLORER_SANDBOX` | **2** |
+
+So: **`Database ▸ Reload DDL` with the Explorer closed is the one plain menu gesture that doubles**, and the menu toggle itself does **not**. The panel-hosted reload gestures (`EditorPanel.reload_requested`, `BrowserPanel.reload_requested`, both landing in `reload_ddl_explorer`, `main_window.py:4665`) cannot double in practice, because reaching them requires that role's tab to be visible, which implies its action is checked.
+
+**There is a second, genuinely user-facing instance of the same edge — a race, and it is probably what the reporter met through the toggle:** toggle the Explorer ON and then OFF again while the fetch is still in flight. The stale `on_result` still calls `show_ddl_explorer`, which re-reveals the tab the user just closed, re-checks the action from unchecked, and fires a second fetch. Verified with a deferred `_run_async`: after the first result lands, two tasks have been queued and the tab is visible again despite the user's close. Worth naming in the fix's tests, since it is the only way an ordinary user reaches this without touching Reload.
+
+**Termination:** exactly two fetches, never more — the second `on_result`'s `show_ddl_explorer` re-emits, but the action is checked by then, so `setChecked` is silent.
+
+**What actually re-runs (the cost).** `_fetch_ddl_schema` → `db/introspect.py:906 fetch_routines_and_triggers` → `run_queries` (`introspect.py:669`), which opens a **fresh psycopg connection** (connect + auth + TLS, `connect_timeout=10`) and runs **seven** statements in it: `ROUTINE_TRIGGER_SQL` (2) + `SCHEMA_SQL` (3: relations, columns, constraints) + `INDEX_SQL` (1) + `VIEWDEF_SQL` (1). Nothing about it is cached. On a large schema this is seconds, not milliseconds, and it is doubled. The whole of `on_result` re-runs with it: `build_ddl_text` (span rebuild), `EditorPanel.set_ddl_text`, `compute_drift_markers` (target role only — it re-reads `ddl/*.sql` off disk), `BrowserPanel.set_schema`, `SchemaIndex(schema)` plus the push into every open DDL object tab, and `_report_ddl_mode` → the second `[DDL]` row (confirmed: `['[DDL] mode msg', '[DDL] mode msg']`).
+
+**What does NOT double:** the FQ-260812022749 DDL-mode probe. `on_result` writes `_ddl_mode_verdict_key` (`main_window.py:4760`) *before* `show_ddl_explorer`, so the re-entrant open computes `probe_mode == False` (`:4746`) and does no `sandbox_probe` connection and no `pg_dump --version` spawn. One more conditional double worth a line: for the target role the second open re-evaluates `_ddl_explorer_params` → `_target_params_for_fetch` (`:5047`), whose BUG-034 one-time password prompt fires again whenever the params still arrive password-less (i.e. trust auth, or a target whose password was never stored) — a second modal on one gesture.
+
+**Both roles are affected identically.** The path is role-parameterized (§18.7) and so is the bug; the sandbox action carries the same `toggled` connect at `:4279`.
+
+**Proposed fix:** Add a per-role **re-entrancy guard around the lockstep sync**, in `pgtp_editor/ui/main_window.py`:
+
+1. Beside `self._ddl_explorer_actions` (`:1262` for the reset, `:4284` for the real map) add a companion set, e.g. `self._ddl_explorer_syncing: set[str] = set()`, documented as "roles whose menu action is currently being re-synced *by* the lockstep handler".
+2. In `_on_ddl_explorer_visibility_changed` (`:4836`), wrap only the final `action.setChecked(visible)` (`:4855`):
+   ```python
+   self._ddl_explorer_syncing.add(role)
+   try:
+       action.setChecked(visible)
+   finally:
+       self._ddl_explorer_syncing.discard(role)
+   ```
+3. In `_on_ddl_explorer_toggled` (`:4639`), return immediately when `role in self._ddl_explorer_syncing` — with a comment saying this `toggled` is the handler's own menu-state echo, not a user gesture, and that the sync itself (BUG-007) is deliberately kept.
+
+Gotchas, all of them easy to get wrong:
+
+- **Do not remove or weaken the `setChecked` in `_on_ddl_explorer_visibility_changed`.** It is BUG-007's fix and spec §18.1's "Bidirectional lockstep"; removing it regresses "closing via the tab ✕ unchecks the menu entry".
+- **Do not use `QSignalBlocker`/`action.blockSignals(True)` for this.** It blocks *all* of the action's signals, including `changed()`, and the Main Toolbar adds the **same** `QAction` object (`ui/toolbar_controller.py:340`), so a pinned "DDL Explorer (Quality)" toolbar button would keep a stale checked look until something else re-emitted `changed()`. The flag suppresses exactly one edge; the blocker suppresses more than intended.
+- **Do not wrap the other `setChecked(False)` sites.** `_open_ddl_explorer`'s no-params branch (`:4720`) and its `on_error` (`:4832`) *want* their `toggled(False)` to reach `_on_ddl_explorer_toggled` and hide the tab; that spring-back is the documented never-raises posture.
+- A viable alternative is making `_on_ddl_explorer_toggled` idempotent (`if checked and self.center_stage.isTabVisible(self.center_stage.ddl_explorer_tab_index(role)): return`). It fixes the same cases and is one line, but it also silently swallows a legitimate "re-open" gesture in any future desynced state, and it states the wrong invariant — the flag says *why* the event is being ignored. **Prefer the flag.**
+- The fix de-duplicates the **open**, not the `[DDL]` row. The row on every open is an owner ruling (*"this way the choice is clear"*, `_report_ddl_mode` docstring `:4598`); after this fix one open still emits exactly one row, and `tests/ui/test_ddl_mode_wiring.py::test_the_ddl_row_is_reported_on_every_ddl_open` (two opens → two rows) must stay green untouched.
+- **Out of scope but adjacent, do not silently "fix" it here:** a stale `on_result` re-revealing a tab the user closed mid-flight is a second defect of the same race (the guard stops the extra *fetch*, not the resurrection). If the fix pass wants to address it, the shape is an in-flight generation counter per role checked at the top of `on_result` — but that is a behaviour change ("a close during load wins"), so file it separately rather than folding it in.
+
+**Test impact:**
+- **`tests/ui/test_ddl_mode_wiring.py`** is the file that already knows about this bug and works around it: its `_open` helper (`:55-67`) carries a docstring explaining that a bare `_open_ddl_explorer()` "fetches (and would report) TWICE" and therefore drives the action instead. Once the guard lands, **that workaround comment must be corrected or removed** — leaving it in place preserves a false fact about the code. Its assertions themselves need no change.
+- **`tests/ui/test_ddl_explorer_wiring.py`** owns the open/lockstep wiring (incl. `test_show_ddl_explorer_directly_checks_menu_and_reveals_left_tab`, `:359`) and is the right home for the new regression cases. **`tests/ui/test_ddl_explorer_sandbox.py`** owns the §18.7 second instance; put the sandbox-role case there rather than duplicating the target-role file.
+- New cases needed, all counting calls to a stubbed `_fetch_ddl_schema` with `window._run_async = sync_run` (`tests/ui/_sandbox_stubs.py`):
+  1. `Database ▸ Reload DDL` (`window._reload_ddl_action.trigger()`) with the Explorer **closed** → exactly **one** fetch and exactly **one** `[DDL]` row. This is the direct regression and it fails on today's code (2 / 2).
+  2. The same for `window._open_ddl_explorer(role)` called directly from the unchecked state, for **both** roles → one fetch each.
+  3. The mid-flight race: a deferred `_run_async` that stores `(fn, on_result)`, toggle on, toggle off, then land the first result → exactly one fetch queued in total (assert on the number of deferred tasks, not just the fetch counter).
+  4. Unchanged-behaviour guards, so the guard cannot over-fire: a plain menu-toggle open still fetches once; reload **while open** still fetches once (it must remain a real re-introspection, BUG-062); closing via the tab ✕ still unchecks the menu entry (BUG-007).
+- **Contrary to the report's caveat, a test that calls `_open_ddl_explorer()` directly DOES reproduce this** — that is precisely the unchecked-action state. What does *not* reproduce is driving the menu toggle (`action.trigger()` / `action.setChecked(True)`), because Qt checks the action before emitting `toggled`. Write the cases accordingly; asserting via the toggle would produce a test that is green both before and after the fix.
+- **Name the fixture you will meet:** `tests/ui/conftest.py:35`'s autouse `_offline_ddl_mode_probe` substitutes `sandbox_probe` and the DDL-mode prober with the real rule minus its I/O, because ~40 tests reach `_open_ddl_explorer` while stubbing only `_fetch_ddl_schema`; without it the suite would dial every fake host at a 10 s connect timeout and shell out to `pg_dump --version`. It is why a new test here needs no probe stubbing of its own, and instance-level replacements (`window.probe_quality_capabilities = …`) still win over it.
+- No `docs/KEYBINDINGS.md` impact: no chord is added, moved or removed. `Ctrl+Shift+R` keeps its single panel host (BUG-062/DEC-012) and `Database ▸ Reload DDL` keeps carrying no shortcut.
+
+**Spec impact:** none required, but worth one clarifying sentence — flag for `spec-maintainer` after the fix lands, do not edit the spec from the fix pass. `CONSOLIDATED_SPEC.md` §18.1 ("Database menu & main-window wiring", ~line 7381) specifies the bidirectional lockstep and §18.7 (~line 13409) specifies that the lockstep is role-parameterized; **neither says anything about the toggle-side re-entry**, so the double fetch is an omission rather than an intentional decision. Once fixed, §18.1's lockstep bullet should gain a clause to the effect that the menu-state re-sync must not itself be readable as a user toggle. Nothing here reverses a recorded decision, so no `owner-decision` is needed.
+
+**Resolution (179d5e0) — verified against the tree, 2026-08-12**
+
+*Shipped exactly as proposed, option 1 (the flag), with nothing amended.* `main_window.py:1265` declares `self._ddl_explorer_syncing: set[str] = set()`; `_on_ddl_explorer_visibility_changed` (`:4891-4895`) wraps **only** the final `action.setChecked(visible)` in add/try/finally/discard; `_on_ddl_explorer_toggled` (`:4667`) returns early on `role in self._ddl_explorer_syncing`, with the reason in its docstring (`:4651-4666`). The source change is entirely in `179d5e0` (the flag is absent from its parent `cdcba11`).
+
+*The three "do not get this wrong" gotchas all held.* Not `QSignalBlocker` — the stale-pinned-toolbar-button argument is quoted in the code comment at `:4886-4890`. BUG-007's lockstep `setChecked` is untouched. The `setChecked(False)` spring-back sites were not wrapped. The alternative idempotency check was not taken.
+
+*The `[DDL]` row was deliberately NOT de-duplicated*, as the entry required: one open still emits exactly one row, and `test_the_ddl_row_is_reported_on_every_ddl_open` stayed green **unmodified**. The defect was the double *open*, not the double row.
+
+*Proved by reverting the fix in place, not by reasoning* — 5 failures pre-fix, 0 post. All four doubling gestures are pinned: `Reload DDL` with the Explorer closed (1 fetch **and** 1 `[DDL]` row, two separate cases), a bare `_open_ddl_explorer` from the unchecked state for `DDL_EXPLORER_TARGET` and (in its own §18.7 file) for `DDL_EXPLORER_SANDBOX`, and toggle-off during an in-flight fetch, where exactly one task is ever queued. The three unchanged-behaviour guards are green **both before and after**, deliberately: menu-toggle open is 1 fetch, reload-while-open is still a real re-fetch (BUG-062), tab-✕ still unchecks the entry (BUG-007) leaving `_ddl_explorer_syncing` empty.
+
+*The entry's warning about test shape is the load-bearing part and is recorded in the tests themselves* (`test_ddl_explorer_wiring.py:644-647`): a test driving the menu toggle proves nothing, because `QAction::activate` sets `checked` **before** emitting `toggled`, so it is green before and after. The original report blamed the signal route; the reproduction condition is the **unchecked action**.
+
+*Also corrected in passing:* `tests/ui/test_ddl_mode_wiring.py`'s `_open` helper docstring asserted the double fetch as a fact about the code, so it would have read as intended behaviour to the next reader; it now states the supersession instead.
+
+Full suite at the time: **8169 passed, 51 skipped**.
+
+**One book-keeping discrepancy, non-blocking.** The commit that carries the *source* fix is `179d5e0`, and its tests for the sandbox role (`test_ddl_explorer_sandbox.py:530`), the corrected `_open` docstring and the `_mainwindow_surface` attribute row are in it — but the **target-role** regression file (`tests/ui/test_ddl_explorer_wiring.py:637-754`: the four gesture cases and the three guards) landed one commit later, in `0025113`. Both are on the branch and the tree is green, so nothing is missing; recorded only so a future `git show 179d5e0` that finds no target-role tests is not read as a gap.
+
+**The BUG-034 secondary finding is CLOSED by this fix, not surviving.** The doubled password modal was a strict consequence of the doubled open: `_open_ddl_explorer` calls `_ddl_explorer_params` → `_target_params_for_fetch` (`main_window.py:5087`) exactly **once** per invocation, and the prompt repeated only because the whole opener ran twice from the unchecked state. With the re-entrancy flag there is one open, hence one prompt. The other two callers of that selector are separate lanes with their own single gesture each — `CoherenceController`'s injected `target_params` (`:1579`) and `_target_params_for_apply` (`:7486`) — and neither re-enters the DDL open path. **Judgement: it does not warrant its own id.** What remains is documented design, not a defect: a *cancelled* prompt persists nothing (`:5109-5110`), so a later gesture asks again, which is the stated BUG-034 behaviour ("cancelling leaves the password blank and returns the params anyway").
+
+*Still open and deliberately not folded in:* the stale `on_result` **re-revealing** a tab the user closed mid-flight. The flag stops the extra *fetch*, not the resurrection — `test_a_close_during_an_in_flight_fetch_does_not_queue_a_second_one` says so in its own docstring. It needs an in-flight generation counter per role and is a behaviour change ("a close during load wins"), so it wants a fresh `bug-triager` pass with its own id.
+
+*Spec:* §18.1's lockstep clause still says nothing about the menu-state re-sync not being readable as a user toggle. That one clarifying sentence remains for `spec-maintainer`; it is not a divergence, only an omission.
+
+---
+## BUG-260812103144: the status-bar connectivity dots fail contrast — and the surface they are measured against is not the window chrome
+
+**Status:** RESOLVED (cdcba11)
+**Reported:** 2026-08-12
+**Report (verbatim):** "The status-bar connectivity dots fail contrast against the chrome in one theme each. Measured: 2.96:1 for the offline dot on dark, 3.29:1 for the reachable dot on light, against the 3:1 non-text/graphical-object threshold. So one is below the line and the other is barely above it. Carried as a secondary finding inside BUG-260812063745 and explicitly recorded as surviving that fix; it warrants its own id."
+
+**Root cause**
+
+`pgtp_editor/ui/connectivity.py:72-88` (`_RENDERING`) resolves all four dot colours through `theme_model.shared_accent(…)`, and `pgtp_editor/ui/theme_model.py:564` returns a value **only while every bundled theme agrees on it**. `dark.json:51-54` and `light.json:51-54` therefore declare the identical quadruple — `connectivity_unknown #9E9E9E`, `connectivity_not_set_up #FFFFFF`, `connectivity_offline #D02020`, `connectivity_reachable #2E9E4F` — and `ConnectivityIndicator._render` (`connectivity.py:131-135`) paints one of them with a widget-level `QLabel { color: …; padding: 1px 6px; }`.
+
+**This is not a colour literal escaping the AST guard. It is a *correct* use of the theme machinery producing an incorrect result.** There is no `#rrggbb` in `pgtp_editor/` for `tests/ui/test_theme_model.py`'s package-wide literal walk to see — the values are theme-sourced by construction. And `shared_accent`'s raise-rather-than-pick design, which is exactly what makes it safe, is also what makes it the wrong home for a colour that must differ per theme: giving the dots per-theme values means moving them **out** of `shared_accent`. The machinery has no opinion about contrast, so nothing in the suite will ever surface 2.96:1. The guard getting better (BUG-260812063745) is precisely what makes this one undetectable.
+
+**Re-measured, and the reported numbers were against the wrong surface — this is the load-bearing correction.** The dots are `QLabel`s added with `statusBar().addPermanentWidget(...)` (`main_window.py:1164-1169`). qdarkstyle's sheet sets `QStatusBar QLabel { background: transparent; }` and `QStatusBar { background: <COLOR_BACKGROUND_4>; }`, so the pixels behind a dot are **`#455364` on dark and `#C0C4C8` on light** — the mid-tone status-bar grey, not `#19232D`/`#FAFAFA`. Confirmed by rendered pixels (offscreen, window `show()`n, sampling the window grab over the dot's rect): dark reported 1059 px of `#455364`, light 1059 px of `#c0c4c8`, both with `#d02020` glyph pixels on top. §7's theme block already demands exactly this — *"contrast must be checked against the live QDarkStyle chrome, not the bare palette"* — and §18.7's BUG-260811021804 note already records the same mistake once (*"was measuring against a colour that is not on screen"*).
+
+Against the real background, **every one of the four states fails in at least one theme, and the failures are far worse than reported**:
+
+| state | value | on dark status bar `#455364` | on light status bar `#C0C4C8` | (for reference: window chrome `#19232D` / `#FAFAFA`) |
+|---|---|---|---|---|
+| `connectivity_offline` | `#D02020` | **1.46:1** ✗ | **3.06:1** ✗ (text) | 2.96 / 5.15 |
+| `connectivity_reachable` | `#2E9E4F` | **2.29:1** ✗ | **1.96:1** ✗ | 4.64 / 3.29 |
+| `connectivity_unknown` | `#9E9E9E` | **2.93:1** ✗ | **1.53:1** ✗ | 5.94 / 2.57 |
+| `connectivity_not_set_up` | `#FFFFFF` | 7.85:1 ✓ | **1.75:1** ✗ | 15.91 / 1.04 |
+
+So the reporter's two numbers understate it: the worst case is the **offline dot at 1.46:1 on dark**, and *"reachable"* green is under 2.3:1 in **both** themes. The reachable dot — the one a user reads most — is the least legible thing in the status bar.
+
+**The applicable threshold is 4.5:1, not 3:1, because the coloured thing is TEXT.** `_render` does `setText(f"{self._label} {glyph}")` and colours the **whole label**, so the word *"Quality"* / *"Sandbox"* is painted in the state colour too — verified by splitting the label's own grab in half: the left half (the word) rendered 89 red pixels, the right half (the dot) 110. A user in dark theme with an offline target is reading the word *"Quality"* at 1.46:1. Even if one argues 3:1 for the glyph alone, three of the four states fail that too.
+
+**Colour is the ONLY at-a-glance channel for three of the four states, which is a second, independent defect.** `DOT = "●"` is used for `NOT_SET_UP`, `OFFLINE` **and** `CONNECTION_OK`/`CONNECTED`; only `UNKNOWN` gets `DOT_UNKNOWN = "○"` (`connectivity.py:51-52`). So *"no connection configured"*, *"offline"* and *"reachable"* are distinguished by hue alone — and the pair that matters is **red vs green**, the single most common colour-vision confusion. The tooltip disambiguates, but only on hover, which defeats the entire point of an at-a-glance indicator. `tests/ui/test_status_bar_static.py:202` (`test_the_three_states_are_told_apart_by_colour`) actively pins the colour-only design, so this is a design assumption to change, not an oversight to patch around.
+
+**One latent bug found alongside, and the per-theme fix has to solve it anyway:** `_RENDERING` is a module-level dict, so the four accents are resolved **once at import** — nothing re-reads them, and `ConnectivityIndicator` has no `changeEvent`. Selecting a different theme at runtime (the Themes pane, FQ-260812021716) leaves the dots painting the values that happened to be loaded at import. Harmless today only because every theme agrees.
+
+**Proposed fix**
+
+1. **Move the four colours out of `shared_accent` and into per-theme reads.** In `connectivity.py`, replace the module-level `_RENDERING` dict with a function that resolves colour at call time via `theme_model.theme_for(light).accent("connectivity_…")`. `dot_rendering(state)` becomes **`dot_rendering(state, light: bool)`** — keep it pure and Qt-free at module scope so the contrast test can pin every value without a widget. Keep the glyph/tooltip table module-level; only the colour becomes per-theme. The four accent **keys stay** (`theme_model.py:151-154` pins the required accent key set, and user theme files already carry them) — only the bundled **values** diverge.
+2. **Give both bundled theme files per-theme values, measured against `COLOR_BACKGROUND_4`, not against `COLOR_BACKGROUND_1`.** Recommended, all measured on the real surface; the two reds and the dark green are values the theme files **already** contain (`modes.maintenance[1]`, `modes.project[1]`), so no new hue vocabulary is invented:
+
+   | accent | dark value (on `#455364`) | light value (on `#C0C4C8`) |
+   |---|---|---|
+   | `connectivity_offline` | `#F2B8AE` → **4.58:1** | `#8B1E1E` → **5.20:1** |
+   | `connectivity_reachable` | `#B6E3C0` → **5.51:1** | `#14521A` → **5.32:1** |
+   | `connectivity_not_set_up` | `#FFFFFF` → 7.85:1 (unchanged) | `#19232D` → **9.07:1** |
+   | `connectivity_unknown` | `#D2D5D8` → **5.33:1** | `#293544` → **7.10:1** |
+
+   Two notes on the choices. **The light green is the one genuinely new value:** the theme's existing light project green `#1B5E20` scores **4.49:1** here — one hundredth under the floor — so `#14521A` is proposed instead; if the owner prefers strict vocabulary reuse, `#1B5E20` clears 3:1 comfortably and misses 4.5:1 by rounding. **And `unknown` must NOT be a faint grey.** The obvious instinct is to make *"not checked yet"* dim; a deliberately low-contrast colour is precisely the failure being fixed, so the "provisional" cue moves entirely to the **hollow glyph**, and the colour is a legible neutral. `#9E9E9E` cannot stay in either theme (2.93 / 1.53).
+3. **Add a second channel so the states are not told apart by hue alone.** Give each state its own glyph in `connectivity.py`'s table — e.g. `●` reachable, `✕` (or `▲`) offline, `◻` not configured, `○` not checked — and update `test_the_three_states_are_told_apart_by_colour` to assert *both* channels differ. Keep the tooltips as they are. If the owner wants a different glyph set that is a tuning call, not a redesign; what must not survive is red-`●`-vs-green-`●`.
+4. **Re-apply on a theme flip, using the pattern that already exists — do not re-derive it.** `pgtp_editor/ui/status_colours.py::StatusLabel` exists because this exact thing was got wrong twice. **Reuse it**: make `ConnectivityIndicator` subclass `StatusLabel`, extracting an overridable hook in `StatusLabel` (e.g. `_colour_for(light) -> str | None`, whose base implementation returns `status_colour(self._status_kind, light)`) so the dots override the colour derivation while inheriting the machinery. Do **not** hand-roll a `changeEvent`. The three things that machinery already gets right, each of which cost real failures:
+   - a widget must not restyle itself from its own `changeEvent` — `setStyleSheet` re-polishes and posts the event straight back (`RecursionError` on construction); the `_applying` flag is what bounds it, and the equality short-circuit alone is **not** sufficient for a hidden label;
+   - the queued re-apply is needed because on dark→light the *nested* event is the first one carrying the new palette;
+   - `QTimer.singleShot(0, self, self._apply…)` — the **context object is mandatory**; the context-less form fired into deleted C++ objects and cost 272 suite failures.
+   - **Gotcha specific to the dots:** `StatusLabel` writes `QLabel { color: … }` only, while `_render` currently also declares `padding: 1px 6px`. Preserve the padding — either let the hook contribute extra declarations, or set it once via `setContentsMargins(6, 1, 6, 1)` instead of through the sheet. Losing it silently changes the status bar's spacing.
+5. **Restate `shared_accent`, which loses its only production caller.** After step 1 it has **zero** callers in `pgtp_editor/` (`grep` confirms: `connectivity.py` is the only one; `status_colours.py` mentions it only to forbid it). Recommendation: **keep the function** — eight lines, and "raise rather than pick" is the right home for the next theme-blind consumer — but **rewrite its docstring**, which currently cites `connectivity.py`'s dots as its live example and explains that making them theme-aware *"would change pixels, which this consolidation was explicitly not allowed to do."* Leaving that text in place is exactly the rot that killed `RESERVED_SEQUENCES` (a docstring describing a state of the world that has moved). Deleting the function instead is defensible; if it is deleted, `status_colours.py`'s docstring paragraph naming it must go too.
+
+**Design alternative considered and not recommended:** routing the dots through `status_colours.status_colour()` (offline → `STATUS_ERROR`, reachable → `STATUS_OK`) reuses working per-theme values for free, but there is no kind for `NOT_SET_UP` or `UNKNOWN`, and it would hard-wire the dots to the *dialog* status vocabulary and lose per-dot tunability in the theme files. Its values were nonetheless measured on the status-bar grey and are where the dark recommendations above come from.
+
+**Honest scope limit:** the status bar's background is a theme file's own `COLOR_BACKGROUND_4`, so a **user** theme can move it and no assertion can guarantee 4.5:1 for arbitrary user themes. The contrast test covers the **bundled** themes; say so in the test docstring rather than implying a universal guarantee.
+
+**Test impact**
+
+Existing coverage in this area, to extend rather than duplicate:
+- `tests/ui/test_status_bar_static.py` — the dots' home (`:179-366`). `test_an_unknown_state_still_states_something` (`:190`) and `test_the_three_states_are_told_apart_by_colour` (`:202`) both call `dot_rendering(state)` with one argument and **will break on the signature change**; the second one must become a colour-**and**-glyph assertion (step 3).
+- `tests/ui/test_theme_model.py` — `:337` and `:358` pin the bundled themes' exact `connectivity_offline` / `connectivity_reachable` values (`#D02020` / `#2E9E4F`) in a key/value snapshot and **must be updated**. More importantly, `test_shared_accent_RAISES_when_the_themes_disagree` (`:204`) uses `connectivity_offline` as its *theme-blind* example and asserts `shared_accent("connectivity_offline") == …` — after the fix that first assertion **raises**, so the test must be re-pointed at a synthetically built pair of themes rather than at any real key.
+- `tests/ui/test_status_colours.py`, `tests/ui/test_sql_results_panel.py` — the precedent for both the contrast helper and the pixel sampler; reuse `contrast_ratio` / `pixel_counts` from there instead of writing a third copy.
+
+New cases the fix needs:
+- **Pure contrast, both themes, all four states** (the primary regression net): for `light in (True, False)` and every state, `contrast_ratio(dot_rendering(state, light)[0], STATUS_BAR_CHROME[light]) >= 4.5`. **`STATUS_BAR_CHROME` must be `#455364` / `#C0C4C8`, taken from the theme's `COLOR_BACKGROUND_4`, NOT `test_sql_results_panel.CHROME` (`#19232d` / `#fafafa`)** — importing that existing constant is the single most likely way to ship this fix still broken, since it is the very surface confusion that produced the mis-measurement in the report.
+- **Rendered-pixel proof with a presence anchor.** Build a real `QMainWindow`, apply each theme, `addPermanentWidget` the indicator, **`show()` the window** and `processEvents()`, then assert the new colour is present *and* the old one absent. Two measured traps: (a) `indicator.grab()` renders the transparent background as `#000000`, so to see the status-bar grey you must grab the **window** and sample the dot's mapped rect; (b) `QImage.pixelColor().name()` is **lower-case** while theme JSON stores upper-case — compare via the existing `rendered()` helper. An absence-only assertion with no presence anchor passes forever; that has bitten twice this week.
+- **Theme round-trip**: `apply_theme(dark) → light → dark` with the dot in a fixed state repaints the correct per-theme value each time (this is what step 4 buys, and the only thing that catches the import-time freeze).
+- **Both channels differ**: for every pair of states, `(colour, glyph)` differs in the glyph as well as the colour.
+
+No `docs/KEYBINDINGS.md` impact: no chord is added, moved or removed.
+
+**Spec impact:** **yes — the current behaviour is intentional recorded design in two places, so flag for `spec-maintainer` after the fix lands (do not edit the spec from the fix pass).**
+1. `CONSOLIDATED_SPEC.md` §7's connectivity block (~line 2543) states the rendering table verbatim — *"white = not set up · red = offline · green = reachable · hollow grey = not checked"* — which the new values and glyphs supersede.
+2. §7's theme block (~line 2909) says the dots *"are theme-blind today"* and that making them theme-aware *"would change pixels, which this consolidation was explicitly not allowed to do"*, and §7's summary line 50 advertises `shared_accent`'s raise as *"turning theme-blind `connectivity.py` from invisible into a failing test."* **That was a deliberate, correctly-reasoned constraint of the FQ-260812021715 consolidation pass, not an accident** — the pass was forbidden from changing pixels, so it parked the dots behind a loud guard instead. This fix is the pixel change that pass deferred; it needs a Supersession Ledger row saying so, and the surviving example of a theme-blind consumer becomes **none**.
+3. Worth folding in as a rule while there: **contrast for a status-bar widget is measured against `COLOR_BACKGROUND_4`, not `COLOR_BACKGROUND_1`.** §7 already says *"against the live QDarkStyle chrome"*, and this bug plus BUG-260811021804 are two instances of that sentence being read as *"the window background"*. Naming the specific token per surface is what stops a third.
+
+No `owner-decision` is required to proceed: the threshold, the surface and the failing values are measured facts. The only tunable choices are the exact hex values in the table above and the glyph set — both are pixel-visible, so mention them in the fix report for the owner to adjust, and do not let them block the fix.
+
+**Resolution (cdcba11, 2026-08-12)**
+
+Shipped as proposed, measured against `COLOR_BACKGROUND_4` at the 4.5:1 **text** threshold. Verified in the tree: `pgtp_editor/resources/themes/{dark,light}.json:51-54` now carry per-theme values, `connectivity.py:117` is `dot_rendering(state, light)`, and `connectivity.py:148` is `class ConnectivityIndicator(StatusLabel)`.
+
+| state | dark | light | (was) |
+|---|---|---|---|
+| offline `#F2B8AE` / `#8B1E1E` | **4.58** | **5.20** | 1.46 / 3.06 |
+| reachable `#B6E3C0` / `#14521A` | **5.51** | **5.32** | 2.29 / 1.96 |
+| not_set_up `#FFFFFF` / `#19232D` | **7.85** | **9.07** | 7.85 / 1.75 |
+| unknown `#D2D5D8` / `#293544` | **5.33** | **7.10** | 2.93 / 1.53 |
+
+One new hue was needed: light green `#14521A`, because the theme's existing `#1B5E20` scores **4.49** here — one hundredth short, as the entry anticipated.
+
+Second channel: one glyph per state — `●` reachable, `▲` offline, `□` not configured, `○` not checked (`connectivity.py:78-81`), all from Geometric Shapes, chosen because DejaVu Sans and Segoe UI both cover them; a tofu box would be worse than the colour-only design it replaces. The entry's tentative `✕`/`◻` were the tuning call it said they were. `test_the_three_states_are_told_apart_by_colour` is **superseded in place** with its reason (`tests/ui/test_status_bar_static.py:222`) and now asserts colour, glyph **and** tooltip all differ across all four states.
+
+The import-time freeze is fixed by step 4 as written — inheriting `StatusLabel` rather than copying its pattern — so the repaint-on-flip logic exists once. `_RENDERING` now holds accent **keys**, and `dot_rendering` stays pure and Qt-free.
+
+**Trap to record — step 4 of this entry was wrong as written.** `StatusLabel._palette_is_light()` reads `self.palette()`, which is worthless for a status-bar dot, for two compounding reasons that were **measured, not reasoned**:
+- qdarkstyle's `QStatusBar QLabel { background: transparent }` makes the label's `Base`, `Window` **and** `Button` roles resolve to `#000000` under **both** themes;
+- the widget-level `QLabel { color: … }` this class writes lands in the label's own `Text`/`WindowText` roles, so reading them back returns **the colour just painted** — a circular read.
+
+The first implementation therefore painted dark's salmon onto the light status bar and never repainted on a flip: **the same freeze, relocated.** It now overrides `_palette_is_light()` (`connectivity.py:183`) to read `QApplication.palette()` — still a paint-time read of the live palette, so BUG-260811021804's rule holds. Anyone reusing `StatusLabel` on a transparent-background surface must override this hook.
+
+Also recorded:
+- `shared_accent()` is **kept** (`theme_model.py:564`) but has lost its only production caller; docstring rewritten, plus a new **AST-based** test asserting zero production callers — AST rather than text search, so `status_colours.py`'s docstring naming it *in order to forbid it* is not a false positive.
+- `tests/ui/test_theme_model.py`'s `PRE_REFACTOR` snapshot — which states it "must be corrected by fixing the theme file, never by editing the expectation" — had to lose its two connectivity rows. That is the one place this fix edited an expectation that forbids being edited; it was recorded in the table's own comment (`:385-386`) rather than silently deleted.
+- The new contrast test derives `STATUS_BAR_CHROME` from the theme file and carries an explicit note that `test_sql_results_panel.CHROME` is deliberately **not** imported (`test_status_bar_static.py:234, :272`) — the trap this entry named, which would have let a 1.46:1 dot pass.
+
+Full suite at the time: **8168 passed, 51 skipped**, plus one unrelated failure in `tests/ui/test_mainwindow_surface.py` belonging to a concurrent agent's `main_window.py` work.
+
+**Spec impact still OPEN for `spec-maintainer`:** all three items above stand, and item 2's "surviving example of a theme-blind consumer becomes **none**" is now literally true.
+
+---
+## BUG-260812110307: a DDL Explorer closed during an in-flight fetch is RESURRECTED by the stale result
+**Status:** OPEN
+**Reported:** 2026-08-12
+**Report (verbatim):** "Closing a DDL Explorer during an in-flight introspection fetch does not stick — the stale result re-reveals the tab the user just closed. `BUG-260812071208`'s re-entrancy flag (commit `179d5e0`) stopped the extra *fetch* on that path. It does **not** stop the **resurrection**: a fetch already in flight still completes, and its `on_result` reveals the panel regardless of the user having closed it meanwhile. The test added for that bug says so in its own docstring. The fix is a **behaviour change**, not a guard. It needs a per-role in-flight generation counter, and it settles a question nobody has ruled on — *'a close during load wins'*."
+
+**Root cause:** `pgtp_editor/ui/main_window.py::_open_ddl_explorer` (`:4754` at triage time — the file is being edited concurrently by the full-mode DDL work, so trust the names over the numbers) starts an async fetch through `self._run_async` and its `on_result` closure **has no notion of whether the surface it is about to paint is still wanted**. `run_async` (`ui/async_task.py`) has no cancellation at all: a task is retained in `_INFLIGHT` until it delivers, and delivery is unconditional. The single offending line is
+
+```python
+self.center_stage.show_ddl_explorer(role)      # main_window.py:4889
+```
+
+`CenterStage.show_ddl_explorer` (`center_stage.py:534`) does `setTabVisible(index, True)` + `setCurrentIndex(index)` + `ddl_explorer_visibility_changed.emit(role, True)`, and that emit drives `_on_ddl_explorer_visibility_changed` (`:4928`), which re-reveals the left "DDL Objects" tree tab via `_reveal_left_panel` and re-checks the Database-menu action. So one stale result restores **all three** surfaces of a closed Explorer: the center buffer tab, the left tree tab, and the menu checkmark (and, through `toolbar_controller`, a pinned toolbar button).
+
+BUG-260812071208 (`_ddl_explorer_syncing`, `:4667`/`:4891`) suppressed only the *`toggled` echo* of that re-check, i.e. the second **fetch**. It deliberately left the reveal alone; `tests/ui/test_ddl_explorer_wiring.py::test_a_close_during_an_in_flight_fetch_does_not_queue_a_second_one` says so verbatim: *"The stale `on_result` still re-reveals the tab (that resurrection is a separate defect, out of scope here)"*. This entry is that defect.
+
+**Reproducing gestures — both roles, all of them real:**
+
+| role | gesture |
+|---|---|
+| Quality | `Database ▸ DDL Explorer (Quality)` ON, then the tab's ✕ (`center_stage.py:427` → `hide_ddl_explorer`) before the fetch lands |
+| Quality | same, closing via the menu toggle OFF (`_on_ddl_explorer_toggled(False)` → `hide_ddl_explorer`) |
+| Quality | `Database ▸ Reload DDL` **while closed** (enabled in that state), then close before the result lands |
+| Quality | `Ctrl+Shift+R` / the panel's context `Reload` while open, then ✕ before it lands (`reload_ddl_explorer`, `:4695`) |
+| Sandbox | the same four via `DDL Explorer (Sandbox)` — the whole path is role-parameterized (§18.7), so the bug is too |
+| either | **enter Maintenance mode** while a fetch is out: `_prune_non_xsd_surfaces_for_maintenance` (`:6967`) closes both Explorers, and the stale result re-opens one *inside a mode whose whole point is the XSD-only surface* (BUG-260812001640). This is the worst instance — a mode invariant broken, not a nuisance. |
+| Sandbox | close/switch project while its fetch is out: `_refresh_ddl_explorer_affordances` (`:4960`) hides the sandbox tab **only when it is already visible**, so a fetch launched from the unchecked state is not covered at all and the stale result reveals the *previous* project's sandbox schema. |
+
+**What else the stale `on_result` does besides revealing** — this is the design content, and the answer is deliberately not "nothing". Reading `on_result` top to bottom (`:4845`–`:4913`):
+
+1. `self._quality_capabilities`, `self._ddl_mode_verdict`, `self._ddl_mode_verdict_key` ← the FQ-260812022749 probe cache. **KEEP.** It is keyed on `_ddl_mode_cache_key(params)` — the connection identity plus the binaries folder — so it cannot be made wrong by a tab being closed, and discarding it means the next open re-spawns `pg_dump --version` and re-opens a probe connection for an answer already in hand.
+2. `self._report_ddl_mode(...)` → a `[DDL]` row, **target role only**. **DROP** (see the `[DDL]` question below).
+3. `build_ddl_buffer(...)` + `_report_ddl_degrade(...)` → in FULL mode a second `[DDL]` row naming a `pg_dump` refusal. **DROP the row, keep the buffer.** Note that under the in-progress full-mode work the *worker itself* has already spawned `pg_dump --schema-only` by this point; nothing here can un-spend that, which is one more reason not to also drop the text it produced.
+4. `ddl_explorer_panel(role).set_ddl_text(...)` and `_ddl_browser_panels[role].set_schema(...)` → populating two **hidden** widgets. **KEEP.** It is in-memory, invisible, and keeping it is what prevents the panel from holding a schema older than `_ddl_schema_index` (item 6). The only real cost is `compute_drift_markers` (target role, `:4879`), which re-reads `ddl/*.sql` off disk on the GUI thread for a panel nobody is looking at — acceptable, and the same read every fetch already does. *If the implementer prefers, skipping only the drift-marker computation on a stale landing is a legitimate narrowing; do not skip the two `set_*` calls, because a half-populated pair is worse than either.*
+5. `show_ddl_explorer(role)` → **DROP.** The bug.
+6. `self._ddl_schema_index = SchemaIndex(schema)`, `self._ddl_schema = schema`, and the push into every open DDL object tab (`ddl_object_panels()`), target role only. **KEEP, emphatically.** §18.5 object-editor tabs are *independent surfaces* with their own lifetime; a user who closed the browser still has editable object tabs open, and their `Ctrl+Space` completions (§18.6) and FQ-002's trigger-function candidate list should describe the freshest introspection, not a stale one. This is also the answer to the "must not silently discard work the user still wants" constraint.
+7. The status-bar summary `"{label}: N routine(s), M trigger(s)."` → **REPLACE** with an honest line, e.g. `f"{label}: closed while loading — the fetch was discarded."`. Reporting a count for a closed panel implies it is open, and the "loading routines & triggers…" line must not be left standing forever either.
+8. `_log.info("db: ddl explorer load finished …")` → keep, with a `stale=` marker. This is the only diagnostic anyone will have.
+
+So the split is: **window-level, connection-scoped facts are kept; every user-visible act (reveal, menu re-check, `[DDL]` rows, the count line) is dropped.** Nothing is thrown away, so reopening costs exactly the round trip it costs today — the fix neither adds nor removes one, and the "which trade do you propose" question has no trade to make. Do **not** take the alternative branch (drop the schema, re-fetch on reopen): it is strictly worse and it would silently repoint open object tabs' completions at nothing.
+
+**`on_error` needs NO guard, deliberately.** It only writes a status line and does `action.setChecked(False)` (a no-op when already unchecked) — it never reveals. A failed fetch is worth reporting even for a closed panel. Say this in a comment so the next reader does not "complete" the fix by silencing it.
+
+**Is the `[DDL]` row emitted for a resurrected open? YES, today.** `_report_ddl_mode` runs at `:4851`, *before* `show_ddl_explorer` at `:4889`, so a user who closed the Explorer gets the mode notice (and now possibly a degrade notice) for a panel they closed — which the owner's *"on every DDL open, this way the choice is clear"* ruling did not intend. Suppressing it narrows "every open" to "every open that reveals a panel". That preserves BUG-260812071208's invariant exactly (**one open, one fetch, one row** — a discarded fetch was not an open), and the sentence still appears on the next real open, read from the cache kept in item 1, with no probe. This is a reading of the ruling rather than a reversal of it, and it is the reading this entry recommends; if the implementer is uneasy, file it via `owner-decision` and ship the reveal fix meanwhile — the two are independent lines.
+
+**Mechanism: a per-role epoch, NOT a visibility test.** Recommended, with the reason the cheap option fails:
+
+- **A visibility test at result time (`center_stage.isTabVisible(...)`) is not merely fragile — it breaks every ordinary open.** On a *normal* open the tab is still hidden when `on_result` runs, because `show_ddl_explorer` *is* what makes it visible. A visibility gate would therefore suppress the reveal it exists to perform. Beyond that, visibility conflates reasons the report already warns about: the Maintenance prune and the sandbox-unavailable hide are not "the user closed it".
+- **The epoch:** add `self._ddl_fetch_epoch: dict[str, int]` beside `self._ddl_explorer_syncing` (`:1265`, and the reset near `:1262`), documented as *"how many times `role`'s Explorer has been asked to load or to close; a result whose captured epoch no longer matches is stale and paints nothing visible."* Capture `epoch = self._ddl_fetch_epoch[role] = self._ddl_fetch_epoch.get(role, 0) + 1` on the GUI thread in `_open_ddl_explorer`, *after* the params guard and before `_run_async`; in `on_result`, first line `stale = self._ddl_fetch_epoch.get(role) != epoch`.
+- **Bump on close too, in exactly two places:** the `else` branch of `_on_ddl_explorer_visibility_changed` (`visible=False`, which is the funnel every close gesture already goes through — tab ✕, menu toggle off, the Maintenance prune, and the visible-sandbox hide), and **additionally** in `_refresh_ddl_explorer_affordances` for the sandbox role whenever `available` is False, *unconditionally*, because its existing `isTabVisible` guard means an invisible-but-loading Explorer never reaches the funnel. Missing that second site is the easy mistake and it is the project-switch row of the table above.
+- **Free bonus, worth a test:** because every open bumps, two rapid reloads can no longer paint out of order — today the second result can land first and the first one overwrites it. The epoch makes last-requested win.
+
+**Constraints this fix must not break** (assert them, they are already tested): one open → one fetch → one `[DDL]` row (BUG-260812071208); BUG-007's bidirectional lockstep stays (`setChecked` is not removed, only not reached by a stale result); `_ddl_explorer_syncing` must still end empty.
+
+**The same shape elsewhere — one confirmed sibling, two false alarms, one adjacent:**
+
+- **CONFIRMED, same defect, different lane:** `pgtp_editor/ui/coherence_controller.py::run_check.on_result` (`:280`–`:294`) does `self._populate(...)` → **`self._reveal_panel()`** → `setChecked(True)` under a `QSignalBlocker`. Close the Database/XML Coherence panel while its fetch is out and the stale result reveals it again and re-checks the menu entry — identical mechanism, identical user story. The lane already knows how to ask the question (`refresh_if_open` gates on `self._panel_visible()`), it just does not ask it here. It is single-instance, so a plain `self._check_epoch: int` suffices. **Recommend fixing it in the same pass** — the entry is written so it can be, and if it is split out, split it deliberately rather than by forgetting.
+- **NOT the same shape:** `ddl_project_controller.refresh_capability_status` / `refresh_target_connection_status` `on_result`s only write state and emit a signal; nothing is revealed, so nothing is resurrected. They do carry a *different*, unfiled hazard — a probe launched for project A landing after project B is bound overwrites `_capability_status` — which is state staleness, not resurrection. Do not fold it in here; it deserves its own report if the owner wants it.
+- **NOT the same shape:** the lint lane. `php_file_tab.request_lint` → `_report_lint` → `lint_reported` only appends `[Lint]` audit rows; no tab is revealed. It has a separate, **unverified** question — whether closing a PHP tab deletes the C++ object while a worker is still out, which would make the emit raise rather than resurrect. I did not verify the tab's destruction path, so this is flagged, not asserted.
+- **The house precedent for "the result's target may be gone"** is `sandbox_controller`'s drop-if-the-window-is-gone behaviour, covered by `tests/ui/test_sandbox_controller.py::test_a_result_landing_after_the_window_is_gone_is_dropped_not_raised` — whose docstring already states the general fact that *nothing in the app cancels an in-flight operation*. Cite it in the new code comment; this fix is the same principle applied to a surface rather than a window.
+
+**Proposed fix (files and functions, in order):**
+
+1. `pgtp_editor/ui/main_window.py` — add `self._ddl_fetch_epoch: dict[str, int]` (beside `_ddl_explorer_syncing`, and in the same reset site).
+2. `_open_ddl_explorer` — capture the epoch before `_run_async`; in `on_result` compute `stale` first, then: keep items 1/3-buffer/4/6 above, and guard items 2, 3-degrade-row, 5 and 7 behind `if not stale:`. Structure it as **one** `if stale:` early section that does the keeps and returns, or a single `if not stale:` block around the visible acts — not a scatter of four conditions.
+3. `_on_ddl_explorer_visibility_changed` — bump the epoch in the `visible=False` branch.
+4. `_refresh_ddl_explorer_affordances` — bump the sandbox role's epoch unconditionally when `available` is False, before/independently of the `isTabVisible` hide.
+5. `pgtp_editor/ui/coherence_controller.py` — the single-instance twin, if taken in the same pass.
+6. Comments must state *why* the keeps are keeps (they are connection-scoped facts and independent surfaces) and that `on_error` is intentionally unguarded — otherwise the next reader "simplifies" this into a blanket early return and silently breaks §18.6 completions in open object tabs.
+
+**Test impact:**
+
+- `tests/ui/test_ddl_explorer_wiring.py` — the existing `test_a_close_during_an_in_flight_fetch_does_not_queue_a_second_one` (with its deferred-`_run_async` `queued` harness) is the exact fixture the new cases want; **its docstring's "that resurrection is a separate defect, out of scope here" clause must be corrected in the same commit**, not left asserting a false fact. New cases, all on **observable state**: after the stale result lands, `center_stage.isTabVisible(ddl_tab_index) is False`, `_ddl_explorer_action.isChecked() is False`, the left tree tab is still invisible, `_ddl_explorer_syncing == set()`; and the keep half — `window._ddl_schema_index is not None` / `window._ddl_schema` is the fetched schema, and an already-open DDL object panel received it. Plus the unchanged-behaviour guard: a *normal* open still reveals (this is the test that catches the visibility-gate mistake).
+- `tests/ui/test_ddl_explorer_sandbox.py` — the role-parameterized twin lives here (`test_a_direct_sandbox_open_from_the_unchecked_state_introspects_once`); add the sandbox close-mid-flight case and the **project-switch/sandbox-unavailable mid-flight** case, which is the one that fails if site 4 is skipped.
+- `tests/ui/test_ddl_mode_wiring.py` — the `[DDL]`-row counting lane (`_ddl_rows`, `_open`): add "a discarded fetch emits no mode row" **and** "the next real open still emits exactly one, from cache, with no probe" — the second half is what proves the `[DDL]` narrowing did not become a swallowed notice.
+- `tests/ui/test_mainwindow_surface.py:153` already asserts `_ddl_explorer_syncing`'s existence and shape; give `_ddl_fetch_epoch` the sibling assertion there.
+- Maintenance-mode interaction: whichever file owns `_prune_non_xsd_surfaces_for_maintenance` (BUG-260812001640's tests) gains "a fetch in flight when Maintenance is entered cannot re-open an Explorer".
+- `tests/ui/test_coherence_wiring.py` — if the coherence half rides along.
+- **No process, no connection.** `tests/ui/conftest.py::_offline_ddl_mode_probe` is autouse and already substitutes both `db/pg_dump_mode.py` seams; a test about FULL mode must inject dump text by monkeypatching `pgtp_editor.ui.main_window.fetch_schema_dump` (module-level import, `main_window.py:80`) rather than letting anything spawn. Drive the fetch through the deferred-`_run_async` list harness, never a real threadpool — and note the suite's leak fixture (`conftest.py:173`) fails a test that ends with a task genuinely in flight, so the harness must let the result land.
+
+**Spec impact:** §18.1's *"Async fetch"* bullet describes `on_result` as unconditionally `show_ddl_explorer()`, and nothing in §18.1 or §18.7 says anything about a close arriving during a load — so this is a **gap, not a divergence**: the buggy behaviour was never a decision. Once the fix lands, `spec-maintainer` owes §18.1 two sentences, and they should be folded together:
+
+1. **New:** a close during an in-flight load **wins** — the stale result keeps the connection-scoped facts (the DDL-mode verdict cache) and the schema-derived state that other surfaces consume (§18.6's completion index and the open object tabs), and performs no visible act: no reveal, no menu re-check, no `[DDL]` row. Including the narrowing of the owner's every-open `[DDL]` ruling to *every open that reveals*.
+2. **Already owed, left over by BUG-260812071208 and not yet written:** the bidirectional lockstep's `setChecked` re-sync is **not readable as a user toggle** (`_ddl_explorer_syncing`) — an omission, not a divergence. Mentioned here so the two get reconciled in one pass.
+
+---
+
+## BUG-260813023714: a Sandbox DDL open can emit a degrade row with no mode row before it
+**Status:** OPEN
+**Reported:** 2026-08-13
+**Report (verbatim):** "The `[DDL]` mode row is role-gated; the `[DDL]` degrade row is not. In `MainWindow._open_ddl_explorer.on_result` the mode row is emitted only `if role == DDL_EXPLORER_TARGET`, while `_report_ddl_degrade` is called for either role. So opening the Sandbox Explorer can emit *'full mode was chosen and could not be delivered'* with no preceding mode row saying full mode was chosen at all — a message with no context, in a tab the user may not have been watching. Introduced in e6ab9e1."
+
+**Root cause:** `pgtp_editor/ui/main_window.py`, `_open_ddl_explorer.on_result`, lines ~4934–4944 (post-BUG-260812110307 tree; the file is mid-merge, so treat the line numbers as approximate and locate by the `if role == DDL_EXPLORER_TARGET: self._report_ddl_mode(...)` guard):
+
+```python
+if role == DDL_EXPLORER_TARGET:
+    self._report_ddl_mode(self._ddl_mode_verdict)
+buffer = build_ddl_buffer(schema, mode=..., dump_text=dump_text)
+if dump_error:
+    self._report_ddl_degrade(dump_error)
+elif buffer.degrade_reason:
+    self._report_ddl_degrade(buffer.degrade_reason)
+```
+
+The mode row is guarded by role; the two degrade calls are not. Both `_report_ddl_mode` (`:4624`) and `_report_ddl_degrade` (`:4645`) are unconditional appenders to `audit_panel` — neither knows the role — so the role decision lives entirely at these call sites.
+
+**Three facts established by reading the tree, because the fix hinges on them:**
+
+1. **The sandbox degrade row is REAL information about the sandbox buffer, not a stray quality message — verified, not taken on report.** In `work()` (`:4819`–`:4856`): `probe_mode` is `role == DDL_EXPLORER_TARGET and …`, so a sandbox open never probes and takes `verdict = cached_verdict` — the **quality** server's verdict (deliberate; the docstring at `:4839` cites the owner's same-major principle). But the dump itself is `fetch_schema_dump(params, verdict.pg_dump_path)` where `params = self._ddl_explorer_params(role)` — **this role's own connection**. So on a sandbox open the buffer really is a `pg_dump` of the *sandbox* database, `build_ddl_buffer` really does render it in full or degrade it, and `degrade_reason` really does describe the sandbox buffer the user is about to read. **Silencing the sandbox degrade row therefore makes the sandbox Explorer fall back to reconstructed, not-safe-to-clone-from DDL with no notice at all** — the silent-wrong-result class this project treats as its worst. That rules out "gate the degrade to the quality role too" as the fix.
+2. **The stale-result suppression already covers the degrade rows — no gap, nothing to add.** BUG-260812110307's epoch guard is in the working tree and its `if stale: … return` (`:4910`–`:4933`) sits **above** both the mode row and the `build_ddl_buffer`/degrade block. A superseded sandbox fetch emits neither row. Whatever this fix does, it must stay **below** that early return, i.e. inside the "this open revealed a panel" region; do not hoist reporting above it to "make both roles symmetric".
+3. **A related, order-dependent silence, in the same call sites.** `_ddl_mode_verdict` starts `None` (`:784`) and is only ever written on a **target** open (`:4881`). Open the Sandbox Explorer in a session where the Quality Explorer has never been opened and `verdict is None` → `build_ddl_buffer(mode=RESTRICTED)`, no dump, no degrade, no row of any kind — the sandbox buffer's *mode* silently depends on whether the user happened to open the quality Explorer first. Not the reported defect, but the same absence of role-scoped reporting, and it should be answered by the same fix (a sandbox open with no verdict yet still deserves a row saying which renderer produced the text and why).
+
+**Proposed fix:**
+
+Both rows, for both roles, with the **sandbox** rows naming their surface — the reported defect's second option, chosen for the reason in fact 1: nothing may be silent, and the earlier implementer's real concern (attributing a quality-server fact to the sandbox database) is answered by saying which surface the row is about rather than by suppressing it.
+
+Concretely, in `pgtp_editor/ui/main_window.py`:
+
+1. Give `_report_ddl_mode` and `_report_ddl_degrade` a `role` parameter (default `DDL_EXPLORER_TARGET`) and drop the `if role == DDL_EXPLORER_TARGET:` guard at the mode-row call site, so `on_result` reads: mode row, then degrade row, unconditionally, for both roles, still below the `if stale:` return.
+2. **Keep the quality rows byte-identical.** The manual quotes them verbatim (`pgtp_editor/resources/manual.md`, *Full DDL and restricted DDL*: `[DDL] Full DDL via pg_dump 17.2 (server 16.4).`, all four restricted sentences, and the `RESTRICTED_CLONE_WARNING` tail). For `DDL_EXPLORER_TARGET` the emitted string must not change at all — only the sandbox role gains a role qualifier. That keeps the manual's quotes true and confines the manual delta to one new paragraph.
+3. **Do not repeat the version-bearing sentence on a sandbox open.** `verdict.message` names the **quality** server's version (`db/pg_dump_mode.py:222`), so replaying it under a *Sandbox* heading would assert the sandbox server's version and be wrong — the very attribution problem the original role gate was avoiding. Emit instead a short role-scoped context row that names the renderer and where the decision came from, e.g. `[DDL] Sandbox Explorer — full DDL (mode decided on the quality connection).` / `… — restricted DDL (mode decided on the quality connection).`, and for fact 3's case `… — restricted DDL (the quality connection's mode has not been decided yet).` The degrade row then follows it unchanged, prefixed the same way: `[DDL] Sandbox Explorer — <degrade_reason>`. The quality-vs-sandbox major divergence sentence (`_server_version_divergence`) must stay on the **quality** row only; do not duplicate it per role.
+4. The sentences belong with the others in `pgtp_editor/db/pg_dump_mode.py` (Qt-free, owns *the rule and the words*), not inline in `main_window.py`. `DDL_PREFIX` stays the single one in `ui/audit_router.py`.
+5. **Gotchas.** (a) Stay below the `if stale:` return — the reveal-only narrowing is already spec'd (§18.1) and applies to both roles. (b) Do not move reporting into `_report_ddl_mode`/`_report_ddl_degrade` as a role lookup on the window — pass the role, the reporters hold no state. (c) The owner's *"the mode is reported on every DDL open"* ruling is **widened**, not narrowed, by this fix (it now also covers the sandbox open); say so in the comment beside the call sites, in the same voice the existing reveal-only narrowing comment uses.
+6. **If the implementer disagrees with the exact sandbox wording, that is the only part worth an owner ruling** — file it via `owner-decision` and ship the rest. The non-negotiable invariant, which needs no ruling: *a degrade row is never emitted without a preceding context row for the same role.*
+
+**Test impact:**
+
+- `tests/ui/test_ddl_mode_wiring.py` is the home lane — it already owns `_ddl_rows(window)` (filters `results_panel.row_texts()` by `DDL_PREFIX`), the `_open(window)` gesture helper, and the degrade cases `test_a_REFUSED_dump_degrades_with_a_NAMED_row_and_still_opens` / `test_the_degrade_row_sits_BESIDE_the_mode_row_not_instead_of_it`. Extend it; its `window` fixture is quality-only, so the sandbox cases need the sandbox-open plumbing from `tests/ui/test_ddl_explorer_sandbox.py` (which drives `window._open_ddl_explorer(DDL_EXPLORER_SANDBOX)` and already has the params/settings setup).
+- New cases, all asserting **the actual rows on the Messages tab** via `_ddl_rows`, never that a method was called: (1) a sandbox open whose dump is refused emits **two** rows in order — a sandbox context row then the sandbox degrade row — and never a degrade row alone; (2) a quality open's rows are **unchanged, string-for-string**, including the divergence row (this is the regression guard for the manual's verbatim quotes); (3) a sandbox open with `_ddl_mode_verdict is None` (quality never opened) still emits exactly one context row and no degrade; (4) the existing stale/epoch case extended to the sandbox role — a superseded sandbox fetch emits **no** rows at all.
+- `tests/ui/conftest.py::_offline_ddl_mode_probe` is autouse; a FULL-mode sandbox test must monkeypatch `pgtp_editor.ui.main_window.fetch_schema_dump` rather than let anything spawn.
+
+**Spec impact:** diverges from `docs/superpowers/CONSOLIDATED_SPEC.md` §18.1 — *"The `[DDL]` notice — probed ONCE per quality connection, reported on EVERY DDL open"* (~§ line 8215) and *"The degrade is a SECOND `[DDL]` row beside the mode row — never a replacement"* (~line 8367). Neither states that the mode row is role-gated while the degrade row is not, so the shipped asymmetry is an **unrecorded** behaviour rather than a decision; §18.7 (role-parameterized Explorers) says nothing about reporting either. After the fix lands, `spec-maintainer` owes those two subsections one statement: **both rows are emitted for both roles, on every open that reveals; the sandbox rows name their surface and do not repeat the quality server's version numbers, because the verdict is the quality connection's while the dump is the role's own.** **Manual impact, flag for `manual-maintainer` in the same pass:** `pgtp_editor/resources/manual.md`, *Full DDL and restricted DDL*, currently says the app tells you the mode *"every time you open the Quality explorer"* and quotes the rows verbatim — it needs the sandbox paragraph and the corrected scope sentence.
+
+---
+
+## BUG-260813025052: Maintenance mode is a one-way door — the launcher greys out Standalone and Project, so the only exit is restarting the app
+**Status:** OPEN
+**Reported:** 2026-08-13
+**Report (verbatim):** "there is no way out of Maintenance mode without restarting the app."
+
+**Root cause:** A four-link chain, every link re-verified in this checkout (PySide6 probes run under `QT_QPA_PLATFORM=offscreen` against `venv/bin/python`).
+
+1. **Qt couples visibility to enabledness — this is Qt's behaviour, not an app choice.** Probed directly: a fresh `QAction` reports `visible=True enabled=True`; after `setVisible(False)` it reports `visible=False enabled=False`; after `setVisible(True)` it is enabled again. `setVisible` writes the enabled flag. Any fix that assumes the two properties are independent is wrong from the start. (The suite already knows this: `tests/ui/test_launcher_dialog.py::test_maintenance_mode_suppresses_a_hidden_FILE_entrys_shortcut` (`:632`) and `::test_the_mode_never_touches_enabled_state` (`:729`) both state it in prose — the latter exists *because* `isEnabled()` cannot distinguish hidden-from-disabled.)
+2. **The mode filter hides almost every `File` action, so it disables them as a side effect.** `pgtp_editor/ui/main_window.py::MainWindow._refresh_workflow_mode_affordances`, the File loop at `:7184-7190`, sets `action.setVisible(not maintenance or normalize_label(action.text()) in _MAINTENANCE_FILE_ITEMS)`, and `_MAINTENANCE_FILE_ITEMS = ("New Session", "Exit")` (`:350`). So in Maintenance mode `file.open`, `file.open-php-file`, `file.new-project` and `file.open-project` are hidden and therefore **disabled**.
+3. **The launcher greys a button straight off that flag.** `pgtp_editor/ui/launcher_dialog.py::LauncherDialog._build_group`, `:315` — `button.setEnabled(action.isEnabled())` — under the comment at `:311-314` reasoning that the enabled state may be read *once* because "the launcher is short-lived and modal, so nothing can change the answer while it is up". That reasoning is true and beside the point: the answer is already wrong when it is read.
+4. **Those four ids are exactly the Standalone and Project columns.** `LAUNCHER_GROUPS` (`launcher_dialog.py:159-167`): Standalone is `("file.open", "file.open-php-file")`, Project is `("file.new-project", "file.open-project")`.
+
+**Reproduced end-to-end, not inferred.** Driving a real `MainWindow` through `show_launcher(window, settings, exec_dialog=…)` after `set_workflow_mode(MODE_MAINTENANCE)` and reading each button:
+
+```
+file.open                  enabled=False
+file.open-php-file         enabled=False
+file.new-project           enabled=False
+file.open-project          enabled=False
+schema.edit-xsd            enabled=True
+schema.import-xsd          enabled=True
+settings.software-settings enabled=True
+```
+
+Every button of the two escape columns is dead; only Maintenance is selectable. Since the launcher opened from `File ▸ New Session` is dismissable (BUG-059: a mode already stands), the user's only choices are "re-pick Maintenance" or "close and stay in Maintenance".
+
+**There is genuinely no other exit — established, not assumed.**
+- `set_workflow_mode` has exactly one production caller: `launcher_dialog.show_launcher:472-473`. Every other hit in the tree is a test. Its own docstring (`main_window.py:7059-7078`) says so and names `File ▸ New Session` as the way out.
+- `_workflow_mode` is written in exactly two places: `__init__` (`:718`, `None`) and `set_workflow_mode` (`:7079`). No project-open path, no document-open path, no startup path re-enters Standalone or Project.
+- **Not even a pinned toolbar button escapes.** Probed: with `file.open` pinned, entering Maintenance leaves its toolbar action `visible=False enabled=False`. The toolbar is not a back door.
+- No keyboard escape either: `File` shed `Ctrl+O`/`Ctrl+W` on 2026-08-09, and a *user-assigned* chord on a hidden File action does not fire — that is precisely what `test_maintenance_mode_suppresses_a_hidden_FILE_entrys_shortcut` pins.
+
+So the severity stands at its maximum: **restarting the application is the only exit.**
+
+**Is capability-greying even the right rule for a mode column?** No — and this is the conceptual root, worth stating in the fix rather than patching around. The launcher hosts two different kinds of thing under one visual idiom:
+- a **command**, where greying is right (`Generation ▸ Save reJSON…` starts disabled because there is no gap JSON yet; a button that looks clickable and silently does nothing is worse than a grey one — the comment's original, correct motivation); and
+- a **destination**: a column *is* a workflow mode (`GROUP_MODES`, `launcher_dialog.py:175-180`), and its button is how the session enters that mode.
+A destination must not be gated on whether its command is runnable *in the mode being left*. Worse, the gate is circular here: the only reason those four actions are unavailable is the very mode the user is trying to leave. The two cases should **not** share one rule.
+
+**Proposed fix:** the third option — give the launcher its own availability predicate, rather than borrowing the action's flag (option A) or lifting the mode filter while the launcher is up (option B). Rejections first, because both alternatives look reasonable:
+
+- **Option B (lift the filter while the launcher is up) is wrong.** BUG-059 made the mode *stand* while the launcher is up on purpose — that is what makes this launcher dismissable at all, and `show_launcher:453-454` derives `dismissable` from `window.workflow_mode`. It would also flash the full menu bar behind the modal (the exact thing the "set the mode BEFORE the action runs" comment at `:467-470` was written to avoid), and it needs a restore-on-cancel path that is one early return away from stranding the user in an untrimmed Maintenance session.
+- **Option A (read a pre-filter enabled state) requires shadow state that does not exist.** Because `setVisible` clobbers the enabled flag (link 1), the pre-hide value is gone; recovering it means recording it at hide time, i.e. new state anyway — and state expressed as an enabled-flag snapshot invites a `setEnabled` inside the filter, which `test_the_mode_never_touches_enabled_state` bans by grepping the method's source (and rightly: the app has two postures, present and absent, never a third).
+
+**The fix, concretely:**
+
+1. **`pgtp_editor/ui/main_window.py`, `_refresh_workflow_mode_affordances`:** have the loop *record* the actions it hides — e.g. `self._mode_filtered_actions = {id(a): a for a in …}` or a `set` of the hidden `QAction`s — alongside the existing `setVisible` calls. **Record only; never `setEnabled`**, so the source-grep assertion stays green and the "no third posture" rule is untouched. Expose it as a small read-only accessor (`mode_filtered_actions()` / `is_mode_filtered(action)`) next to `workflow_mode` and `in_maintenance_mode`. Include the additive `_MAINTENANCE_ONLY_MENU_TITLES` case for symmetry only if it costs nothing — no launcher id currently depends on it (`settings.software-settings`'s *menu* is hidden outside Maintenance, but the child action stays visible, which is the known gap pinned by `test_a_hidden_WHOLE_MENUS_shortcuts_still_fire_KNOWN_GAP`).
+2. **`pgtp_editor/ui/launcher_dialog.py`, `show_launcher`:** read that set off the window (`getattr`-guarded — the window is a test double at most call sites in `tests/ui/test_launcher_dialog.py`) and pass it into `LauncherDialog` as a keyword-only `mode_filtered=` (frozenset of actions, or a predicate), defaulting to empty so every existing construction of the dialog behaves exactly as today.
+3. **`LauncherDialog._build_group`, `:315`:** `button.setEnabled(action.isEnabled() or is_mode_filtered(action))`. One line, and it keeps the capability rule alive for the case it was written for.
+4. **Rewrite the comment at `:311-314` whichever way the fix goes** — its reasoning ("read once, nothing can change the answer") is what makes the current code look correct, and it is the reason nobody looked. The replacement must say the two things this bug taught: a launcher button may be a **command** (grey when unavailable) or a **destination** (a mode column, which the mode being left must never be able to grey out), and `QAction.setVisible(False)` disables the action, so `isEnabled()` alone cannot tell "unavailable" from "hidden by the current mode".
+5. **No second fix is needed at the trigger site — verified.** `show_launcher:471-475` calls `set_workflow_mode(mode)` *before* `action.trigger()`, and entering Standalone/Project re-runs the File loop, which un-hides and therefore re-enables all four actions. Probed: after `set_workflow_mode(MODE_MAINTENANCE)` then `set_workflow_mode(MODE_STANDALONE)`, all four report `visible=True enabled=True`, so the trigger lands on an enabled action. Do not reorder those two statements.
+6. **Do NOT un-hide the File actions in Maintenance mode.** The trimming is FQ-027's design and DEC-006's ruling — the app is *configured* in Maintenance mode and a trimmed menu bar is the point. The fix belongs entirely in how the launcher decides a button's enabled state.
+7. **Cheaper variant, recorded and NOT recommended:** `button.setEnabled(action.isEnabled() or not action.isVisible())` inside `_build_group`, with no `main_window.py` change. It happens to be correct for today's seven launcher ids, but it silently un-greys any future launcher command hidden for a *capability* reason, and it states no reason. Prefer the recorded set, which says why the button is live.
+8. **No keyboard shortcut is added, moved or removed by this fix**, so `docs/KEYBINDINGS.md` needs no row and no gate question arises. Note only that the mode's interaction with chords is already settled and must not be disturbed: a hidden File action's user-assigned chord stays dead (by Qt's enabled rule), and that is pinned by an existing test.
+
+**Two defects-in-prose to correct in the same pass (each is a comment that asserts this bug is absent):**
+
+- **`pgtp_editor/ui/main_window.py:3610-3613`, in `new_session`'s docstring:** *"the launcher's entries come from `_walk_menu_actions`, which never tests `isVisible()` — so every column is offered even while Maintenance mode has the menu bar trimmed."* True of the *walk* (the entries are all present — `entry_ids()` returns all seven), false of the *buttons* (four of them are grey). A comment asserting the bug is absent is why nobody looked. Restate it as: every column is **offered**, and — after this fix — every mode column is also **selectable**.
+- **`pgtp_editor/ui/main_window.py:~7160-7165`, the same method's docstring, FQ-027 Q2 bullet:** *"A pinned button whose menu action is hidden keeps working; that is the accepted trade…"* — **measured false**. A pinned `file.open` toolbar action reports `visible=False enabled=False` in Maintenance mode; the button neither shows nor works. The accepted trade is real (the toolbar is not filtered *by this code*), but the stated consequence is backwards and should say the button goes **absent/inert**, which is what FQ-027's own queue text actually predicted ("toolbar buttons backed by a now-hidden menu action may go empty/inert, which is accepted", `docs/FEATURE_QUEUE.md:3608-3610`). This is prose only — do not change toolbar behaviour here.
+- **`FQ-027`'s queue entry makes the same claim as the first one** — *"New Session (above) is what returns from Maintenance to the launcher, where the mode can be re-chosen or not"* (`docs/FEATURE_QUEUE.md:3614-3615`). The owner is correcting that entry; reconcile the two together so the queue text and the docstring stop asserting a capability the code does not have.
+
+**Test impact:** `tests/ui/test_launcher_dialog.py` is the home lane and already owns everything needed — the `MainWindow` + `set_workflow_mode(MODE_MAINTENANCE)` fixtures (`:559`ff), the `_ini_settings(tmp_path)` helper, the `button_for(command_id)` / `entry_ids()` test seams, and `test_a_disabled_menu_action_gives_a_disabled_button` (`:185`) which is the capability case that must stay green. Extend it; do not start a new file.
+
+New cases, **all asserting observable button state driven through `show_launcher`** with the `exec_dialog=` seam (a test that reads `QAction.isEnabled()` would pass while the buttons stay grey — that is exactly how this shipped):
+1. In `MODE_MAINTENANCE`, every button in the Standalone and Project columns is **enabled** (the regression guard; it fails on today's code with all four `False`).
+2. In `MODE_MAINTENANCE`, the Maintenance column's three buttons are enabled too (unchanged).
+3. In `MODE_STANDALONE` and in `MODE_PROJECT`, all seven buttons are enabled — the un-filtered baseline, so the fix cannot be a blanket "always enable" that hides a real regression elsewhere.
+4. **The capability rule survives the fix**: an action disabled for a genuine capability reason (the `Save reJSON` shape, via an ad-hoc `groups=`/`resolve_entries=`) still yields a grey button in every mode.
+5. **End-to-end escape**: from `MODE_MAINTENANCE`, choosing the Standalone column leaves `window.workflow_mode == MODE_STANDALONE` and the File actions visible+enabled again — i.e. the door opens. Pair it with a stub for whatever `file.open` triggers (`QFileDialog` must be monkeypatched — never let the suite reach an un-patched modal), or exercise it via `dialog.choose("file.open")` with an injected entry.
+6. If `_mode_filtered_actions` is added, one case in the `main_window` mode lane asserting it is **populated on entering Maintenance and empty on leaving**, and that `test_the_mode_never_touches_enabled_state`'s source-grep for `setEnabled` still holds.
+
+**Spec impact:** the *behaviour* diverges from `CONSOLIDATED_SPEC.md` §7 rather than the spec being wrong — §7's New Session block states plainly that the gesture is *"simultaneously a general 'start over' gesture and **the escape hatch from Maintenance mode**, which is why the mode may never filter it out"* (~line 3082), and §7's Maintenance-mode section states the mode is left by re-entering the launcher. The escape hatch is filtered out *in effect* — the action survives, its destinations do not. So: **no spec rewrite is required for the fix itself**; flag for `spec-maintainer` after it lands that §7 should state the newly explicit rule — *a launcher column is a destination, not a command, and the mode being left may never disable the columns that leave it* — since that rule is what keeps the anti-trap guarantee true. Also worth flagging in the same pass: §7's step 3 for New Session still says *"Restore the full menu bar first, then show the launcher"* / *"clearing the session-only Maintenance mode is part of step 3"*, which BUG-059 reversed (the mode now stands while the launcher is up); that stale sentence is adjacent to this bug and reads as if it would have prevented it. **Manual impact:** `pgtp_editor/resources/manual.md`'s Maintenance-mode chapter should be checked by `manual-maintainer` for any sentence promising that New Session lets you pick another mode — it is true only after this fix.
+
+---
+## BUG-260813025053: the Sandbox DDL Explorer never probes its own mode, so which renderer built its buffer depends silently on whether you opened the Quality Explorer first
+**Status:** OPEN
+**Reported:** 2026-08-13
+**Report (verbatim):** "the Sandbox DDL Explorer never reports its mode and never gets full DDL. In `MainWindow._open_ddl_explorer`: `probe_mode = role == DDL_EXPLORER_TARGET and …` (~:4805) — the sandbox never probes. `if role == DDL_EXPLORER_TARGET: self._report_ddl_mode(...)` (~:4932) — no `[DDL]` row for a sandbox open. `mode=verdict.mode if verdict is not None else DdlMode.RESTRICTED` (~:4935) — for the sandbox role `verdict` is always `None`, so the buffer is **always** restricted."
+
+**Root cause:** `pgtp_editor/ui/main_window.py`, `MainWindow._open_ddl_explorer` (`:4762`) — three sites, all confirmed in this checkout (line numbers approximate; the file is mid-merge, locate by the quoted expressions):
+
+1. `:4810` — `probe_mode = role == DDL_EXPLORER_TARGET and self._ddl_mode_verdict_key != (self._ddl_mode_cache_key(params))`. A sandbox open **never** probes: no `pg_dump --version`, no capability read against the sandbox server.
+2. `:4934-4935` — `if role == DDL_EXPLORER_TARGET: self._report_ddl_mode(self._ddl_mode_verdict)`. No `[DDL]` row on a sandbox open.
+3. `:4938` — `mode=verdict.mode if verdict is not None else DdlMode.RESTRICTED`, where `verdict = probed[1] if probed is not None else cached_verdict` (`:4845`) and `cached_verdict = self._ddl_mode_verdict` (`:4817`).
+
+**⚠ ONE CLAIM IN THE REPORT IS WRONG, AND THE CORRECTION IS THE WHOLE POINT OF THIS ENTRY.** `verdict` is **not** always `None` for the sandbox role. `_ddl_mode_verdict` is initialised `None` at `:784` and written **only** at `:4881`, on a target open. So:
+
+- **Quality Explorer opened first in this session → the sandbox gets FULL mode.** The cached quality verdict is truthy, `verdict.full` is true, and `fetch_schema_dump(params, verdict.pg_dump_path)` runs against `params` — *the sandbox's own connection* (`_ddl_explorer_params(role)`), so the buffer really is a `pg_dump` of the sandbox database. That is the deliberate design recorded in the comment at `:4839-4844` (the verdict is the quality server's; the dump is the role's own).
+- **Sandbox Explorer opened first → RESTRICTED, silently.** No verdict exists, no probe is allowed to create one, `build_ddl_buffer` falls to `DdlMode.RESTRICTED`, and (site 2) not one `[DDL]` row explains it.
+
+**So the user-visible consequence is not "always restricted" — it is worse, because it is non-deterministic from the user's side:** on a machine with a correctly-versioned `pg_dump`, the Sandbox Explorer shows either the real `pg_dump` text or the lossy synthesized text **depending on the order the user happened to click two menu entries**, with no notice either way. Two users on identical machines see different DDL for the same database; the same user sees different DDL in two sessions. Reconstructed DDL is the text §18.1 marks *not safe to clone from*, so this is the silent-wrong-result class.
+
+**A second, unreported defect found at the same three lines — state it in the fix, do not lose it.** `cached_verdict` is read at `:4817` **without any key check**. The `_ddl_mode_verdict_key` guard exists only inside `probe_mode`, which the sandbox role short-circuits before the key is compared. Consequence: a verdict probed against project A's quality server (including its `pg_dump_path`, which `_ddl_mode_cache_key` includes `postgres_bin_dir` precisely to scope) is used to decide **project B's sandbox** buffer after a project switch — nothing clears `_ddl_mode_verdict` on project change (grep: written at `:4881` only). Best case the stale `pg_dump` refuses the newer server and it degrades with a row; worst case it silently succeeds against a server it should not have been chosen for.
+
+**Relationship to `BUG-260813023714` — ONE FIX, TWO ENTRIES, AND AN ORDER.** They land in the same twenty lines and both must be implemented in a single edit, but they are not duplicates and neither should be closed by the other:
+
+- `…3714` owns **which rows appear and what they say** — the un-role-gated degrade row that can print with no context row before it, and the exact wording of a sandbox-scoped row.
+- **This entry owns which mode the buffer is built in** — sites 1 and 3, i.e. whether the sandbox is even *allowed* to have a verdict of its own.
+
+**Implement this entry FIRST.** `…3714`'s "fact 3" case (*a sandbox open with `_ddl_mode_verdict is None` emits no row of any kind*) is a **symptom of site 1** and largely **disappears** once the sandbox probes for itself: after this fix a sandbox open has its own verdict, so `…3714`'s third new test case must be rewritten as *"a sandbox open whose own probe returns a restricted verdict"* rather than *"a sandbox open with no verdict"*. Whoever implements second must re-read the other entry rather than applying it verbatim.
+
+**Proposed fix** — `pgtp_editor/ui/main_window.py` only. The owner ruling that governs this is already written and already specific (`FQ-260812022749`, quoted verbatim there): *"one probe per connected server, one verdict, not one per Explorer … If the sandbox is reached without a quality connection, probe on that connect instead."* That is exactly what site 1 fails to do, so no new design is required.
+
+1. **Make the verdict cache per-connection instead of a single slot.** Replace the `_ddl_mode_verdict` / `_ddl_mode_verdict_key` pair (`:784`, `:790`) with one dict, `_ddl_mode_verdicts: dict[key, DdlModeVerdict]`, keyed by the **existing** `_ddl_mode_cache_key(params)` (`:4592` — host/port/db/user + `postgres_bin_dir`, already the right key and already documented as such). This is what makes the ruling's *one verdict per connected server* literally true, and it closes the stale-cross-project read above for free.
+2. **Site 1 becomes role-independent:** `probe_mode = self._ddl_mode_cache_key(params) not in self._ddl_mode_verdicts`, and `cached_verdict = self._ddl_mode_verdicts.get(self._ddl_mode_cache_key(params))`. Quality and sandbox on the same server therefore still probe **once** between them, which is the ruling's whole point; two different servers probe once each.
+3. **`_quality_capabilities` stays QUALITY-ONLY.** At `:4881`, keep `self._quality_capabilities = probed[0]` under `if role == DDL_EXPLORER_TARGET:` while the *verdict* goes into the dict for either role. `_server_version_divergence` (`:4661`) compares the quality verdict's `server_version` against `sandbox_controller.capabilities` — letting a sandbox probe overwrite the quality half would make that comparison compare the sandbox to itself and never report a divergence again. **This is the easiest thing in the change to get wrong.**
+4. **Site 3 needs no edit** once site 1 is fixed: with a per-connection verdict in hand, `verdict.mode` is the sandbox's own answer. Leave the `else DdlMode.RESTRICTED` fallback — it is the correct answer for a probe that genuinely failed (`:4825` swallows probe exceptions by design: *a notice never fails an open*).
+5. **Site 2 belongs to `BUG-260813023714`** — do not invent a second wording here. After this fix the sandbox row can honestly name the **sandbox** server's version, since the verdict is now the sandbox's own, which simplifies that entry's point 3 (its worry about attributing quality version numbers to the sandbox goes away for the probed case).
+6. **Do not hoist any of this above the `if stale:` early return** (`:4910`) — BUG-260812110307's epoch guard, and the reveal-only narrowing, stand for both roles. The probe result **is** kept when stale (`:4875`, connection-scoped facts); the dict write inherits that correctly.
+
+**Cost, stated rather than assumed.** A sandbox open on a server never probed before now costs one extra connection plus one `pg_dump --version` subprocess, off the GUI thread, once per `(connection, bin_dir)` — and one `pg_dump --schema-only` per Explorer build where it previously ran none in the sandbox-first case. That is the price of the sandbox getting *the same treatment as quality*, which is the standing owner rule. Note `_probe_ddl_mode` (`:4607`) calls `self.probe_quality_capabilities`, which is `db/sandbox.py::probe` injected at `:801` — it is generic (it does **not** apply the ownership gate; that lives in `open_sandbox`), so pointing it at the sandbox database is safe and needs no new seam. The parameter is misnamed for its new use; rename the attribute only if it can be done without touching the injection site the tests patch.
+
+**Test impact:**
+
+- `tests/ui/test_ddl_explorer_sandbox.py` — the role-parameterized lane, and the home for the order-independence cases. `tests/ui/test_ddl_mode_wiring.py` — the `[DDL]`-row/probe-counting lane (`_ddl_rows`, `_open`), home for the probe-count cases.
+- New cases, all asserting **observable state**, never that a method was called: (1) **sandbox-first** — open the Sandbox Explorer with no prior quality open and assert the sandbox panel's rendered buffer contains the injected dump text (full mode), i.e. it no longer depends on click order; (2) **order independence** — sandbox-first and quality-then-sandbox produce the **same** sandbox buffer text; (3) **one probe per server** — quality then sandbox against the *same* connection params probes once (assert via the injected prober's recorded call arguments list, which is state, not a mock assertion); (4) **two servers, two probes** — a sandbox on different params gets its own verdict; (5) **no cross-project reuse** — a verdict cached under one `_ddl_mode_cache_key` is not consulted for params with a different `postgres_bin_dir`; (6) `_server_version_divergence` still reports a divergence after a sandbox open (the regression guard for gotcha 3).
+- **No process, no socket.** `tests/ui/conftest.py::_offline_ddl_mode_probe` is autouse and already substitutes both `db/pg_dump_mode.py` seams; a full-mode test injects dump text by monkeypatching `pgtp_editor.ui.main_window.fetch_schema_dump` (module import, `main_window.py:80`). Drive the fetch through the deferred-`_run_async` list harness and let the result land — `tests/ui/conftest.py:173`'s leak fixture fails a test that ends with a task in flight.
+- Any test asserting on `window._ddl_mode_verdict` / `_ddl_mode_verdict_key` directly must be re-pointed at the new dict; grep both names across `tests/` before starting.
+
+**Spec impact:** **not a divergence from a decision — an unimplemented ruling.** `docs/superpowers/CONSOLIDATED_SPEC.md` §18.1's `[DDL]` notice block describes the probe as *"ONCE per quality connection"*, which is exactly the shipped (buggy) shape, while `FQ-260812022749`'s owner ruling — *one version rule for both roles; the sandbox Explorer gets full mode too; one probe per connected server, one verdict, not one per Explorer* — was never folded into §18.1/§18.7. So the spec is stale in the same direction as the code. After the fix, `spec-maintainer` owes §18.1 and §18.7 the restated rule (**per connected server, not per role**) plus a Supersession Ledger row overriding *"once per quality connection"*, and should fold it in the same pass as `BUG-260813023714`'s reporting statement. **Manual impact:** `pgtp_editor/resources/manual.md`, *Full DDL and restricted DDL*, says the mode is told to you *"every time you open the Quality explorer"* — needs the sandbox half; flag for `manual-maintainer` after the fix.
+
+---
+
+## BUG-260813025054: sandbox provisioning still uses the lossy renderer, so the sandbox is structurally unlike quality — `FQ-260812022749` Part 4 never shipped but the entry is marked PROCESSED
+**Status:** OPEN
+**Reported:** 2026-08-13
+**Report (verbatim):** "sandbox provisioning never got the dual-mode rule. `db/sandbox.py::provision_sandbox` (~:1392-1437): the `SCHEMA_ONLY` branch calls `build_baseline_sql(schema)` **unconditionally**. There is no `pg_dump --schema-only` → `pg_restore` provisioning path anywhere; `fetch_schema_dump` has exactly **one** caller, the DDL buffer. `SandboxSession.reset()` (~:1328) is the same."
+
+**Root cause — every code fact confirmed:**
+
+- `pgtp_editor/db/sandbox.py::provision_sandbox`, `:1431-1438`: `if mode is SandboxMode.WITH_DATA: clone_data(...)` `else: statements = build_baseline_sql(schema); session.executor.execute(...)`. No verdict is consulted, no binary is resolved, no alternative renderer exists.
+- `pgtp_editor/db/sandbox.py::SandboxSession.reset`, `:1320-1330`: the identical two-branch shape, so a reset re-provisions with the same lossy renderer.
+- `fetch_schema_dump` (`pgtp_editor/db/pg_dump_ddl.py:112`) has **exactly one** caller in the whole package: `ui/main_window.py:4857`, the DDL buffer. Confirmed by grep across `pgtp_editor/`.
+- `build_baseline_sql`'s own docstring (`:650-653`) states the omissions verbatim: *"primary keys, foreign keys, `DEFAULT` (which also sidesteps `nextval('seq')` needing sequences), indexes, extensions, sequences, and all data."*
+
+**User-visible consequence, which is sharper than "less faithful".** The sandbox exists to answer *"will this work against the real thing?"*, and §18.5 D4 ships a **Sandbox SQL Console** that executes arbitrary SQL there. Against a `build_baseline_sql` sandbox:
+
+- an `INSERT` that omits a `serial`/`uuid` column fails with *null value violates not-null constraint* — the column has no `DEFAULT` and the sequence does not exist — while the same statement succeeds on quality: a **false alarm** that sends the developer to fix a non-bug;
+- an `INSERT` violating a foreign key or a unique constraint **succeeds** in the sandbox and fails on quality: a **false all-clear**, which is the failure mode the sandbox was built to prevent;
+- `ON CONFLICT (col)` and anything depending on an index or an extension cannot be exercised at all.
+
+None of this is announced anywhere: the sandbox reports success, and the divergence is invisible until the same SQL reaches quality.
+
+**On `FQ-260812022749`'s title — the claim was genuine, and the entry is over-flipped.** Asked, and answered by reading `docs/FEATURE_QUEUE.md`: the promise is **not** title-only. The body carries a whole section, *"**Part 4 — the sandbox renderer, bundled by owner ruling ('keep it in the pg_dump feature')**"*, which specifies precisely this work — *"When `full_ddl_available`, provision via `pg_dump --schema-only` → `pg_restore`, reusing `clone_data`'s exact shape … Keep `build_baseline_sql` as the **degrade path** — the same dual-mode rule as the buffer, so there is one rule in this feature, not two"* — plus an earlier note that `build_baseline_sql` is *"THE REAL WIN, and nobody named it"*. The entry's `Status` line names only `db/pg_dump_mode.py` + `db/pg_dump_ddl.py` + `db/ddl_buffer.py`, and no sandbox provisioning code exists. **So the defect is a status defect as well as a code defect: a multi-part feature was flipped to PROCESSED with one named part unbuilt.** Correcting `docs/FEATURE_QUEUE.md` is the main session's call (this agent writes only this file); the accurate statement is *PROCESSED except Part 4, tracked as BUG-260813025054*.
+
+**Proposed fix — dual-mode provisioning, mirroring the buffer's rule, NOT a hard switch.**
+
+**Recommendation, with its cost stated rather than assumed: keep both renderers.** Making `pg_dump`/`pg_restore` unconditionally required for provisioning would convert a shipped, working, in-process capability into an unavailable one on every machine without client tools — and `docs/superpowers/CONSOLIDATED_SPEC.md` §18.5 D2's *"zero bundled bytes"* invariant plus D2a's explicit carve-out (*a narrowly-scoped exception that "applies ONLY to the with-data clone path"*) mean the binaries are **never bundled**, so a packaged Windows install may well not have them. §18's whole architecture is graceful degradation (`ProjectTier.QUALITY` vs `DEVELOPMENT`). Full fidelity does **not** automatically win here; a sandbox you cannot create is worse than a lossy one you are *told* is lossy. The dual-mode shape gives the fidelity where the tools exist and keeps the floor where they do not — and it is exactly what Part 4 specified.
+
+Concretely, in `pgtp_editor/db/sandbox.py`:
+
+1. **Add the full-fidelity provisioning path beside `clone_data`, not inside it.** `clone_data` (`:463`) is already `pg_dump --format=custom` on the **target** piped into `pg_restore --no-owner --no-privileges` on the **sandbox**, with `require_data_clone_tools(which=…, bin_dir=…)` up front, `_pg_env`'s PGPASSWORD-never-argv discipline, `MissingCloneToolError` / `CloneDataError` named failures, and injectable `which`/`run`. Add `clone_schema_only(target_params, sandbox_params, …)` as its sibling — the same body with `--schema-only` added to the `pg_dump` argv — or a keyword on `clone_data`; either is fine, but **reuse the seams, do not re-derive the subprocess plumbing**. Note `fetch_schema_dump` is the wrong tool here: it dumps *its own* `params` as plain text for display, whereas provisioning needs target→sandbox transfer, which is `clone_data`'s shape.
+2. **Branch in `provision_sandbox` (`:1435`) and in `reset()` (`:1327`) identically.** Under `SCHEMA_ONLY`, attempt `clone_schema_only` when the tools resolve; fall back to `build_baseline_sql` otherwise. **Both call sites, or a reset silently downgrades a full-provisioned sandbox to the lossy shape** — which would be a new, worse bug than this one.
+3. **Record which renderer actually provisioned it on the `SandboxSession`** (a new field beside `mode`; `SandboxMode` itself must **not** grow a third member — it means *schema-only vs with-data*, a user choice persisted in `ProjectSettings`, and this is a capability outcome). `reset()` honours the recorded renderer and, if the binary has since vanished, degrades **with a named row** rather than silently.
+4. **⚠ THE GOTCHA THAT WILL BITE: `check_function_bodies`.** `build_baseline_sql` emits `SET check_function_bodies = off` before routines *on purpose* — its docstring: *"so one bad pre-existing routine cannot block provisioning of the rest."* A `pg_restore` session has body checking **on**, so a target carrying one broken PL/pgSQL routine would make the whole provisioning fail where it previously succeeded — a regression against a deliberate decision, in a tool whose entire purpose is working on routines that may be broken. Pass `PGOPTIONS=-c check_function_bodies=off` through `_pg_env` for the restore (or an equivalent), and **test it explicitly**. The trigger-after-routine ordering constraint is `pg_restore`'s own problem and is handled by its dependency graph.
+5. **Never a silent fallback.** `clone_data`'s docstring sets the precedent — *"never silently falls back to schema-only"*. Whichever renderer runs, the UI must say so: emit a `[Sandbox]` row naming the renderer, and when the lossy one runs, naming what it omits. The provisioning call sites are `ui/sandbox_controller.py` (`:821` comment already describes the two paths) and `ui/project_settings_dialog.py::provision_sandbox` (`:779`) / `reset_sandbox` (`:835`); `db/sandbox.py` stays Qt-free and returns the fact rather than printing it.
+6. **Out of scope, deliberately:** the `WITH_DATA` branch is already `pg_dump`-based and correct; do not touch it.
+
+**Test impact:**
+
+- `tests/db/test_sandbox.py` — the home lane; it already exercises `provision_sandbox`/`reset` with an injected executor and `clone_data` with injected `which`/`run`, which is precisely the pattern the new cases need. `tests/ui/test_new_project_sandbox_provisioning.py` — the UI path and the `[Sandbox]` row.
+- New cases, all asserting **observable state**: (1) tools present → the statements handed to the injected executor **do not** contain `build_baseline_sql`'s output, and the argv handed to the injected `ProcessRunner` contains `--schema-only` and the target's `--dbname`; (2) tools absent → the executor receives exactly the baseline statements (the floor still works) and the outcome reports the degrade; (3) `reset()` on a full-provisioned session re-runs the **same** renderer; (4) the restore environment carries `check_function_bodies=off` (assert the `env` mapping passed to the injected runner); (5) the bookkeeping `_CREATE_BOOKKEEPING_SQL` still runs afterwards in both branches; (6) `WITH_DATA` is unchanged.
+- **No process, no socket** — use the existing `which` / `run` / `executor` / `runner` injection points throughout; `clone_data`'s current tests already prove a real binary and a real server are never needed, and that property must hold.
+
+**Spec impact:** **no divergence today — the spec matches the shipped (lossy) code**, which is why nothing caught this. `docs/superpowers/CONSOLIDATED_SPEC.md` §18.5 D2 still specifies `build_baseline_sql` as *the* schema-only provisioning contract (`~:12584`, `~:12676`, `~:12695`), and §28's 2026-08-05 ledger row pins D2a's exception as applying *only* to the with-data clone path. `FQ-260812022749`'s Part 4 was never folded in. So after the fix, `spec-maintainer` owes: §18.5 D2 restated as **dual-mode provisioning** (full via `pg_dump --schema-only`/`pg_restore`, `build_baseline_sql` as the named degrade path, the renderer recorded on the session and honoured by `reset()`), §18.5 D2a's carve-out **widened a second time** with a new ledger row, and a cross-reference to §18.1's dual-mode buffer so there is visibly **one** rule. **Manual impact:** the sandbox chapter of `pgtp_editor/resources/manual.md` should tell the user which renderer provisioned their sandbox and what the lossy one omits — flag for `manual-maintainer` once the fix lands.
+
+---
+
+## BUG-260813025055: two of the three Compare/Merge entry points were deleted in a menu redesign but their wiring was left behind, so `compare_page_with` / `compare_detail_with` are unreachable
+**Status:** OPEN
+**Reported:** 2026-08-13
+**Report (verbatim):** "two of FQ-021's three Compare/Merge entry points are dead. `main_window.py:~831-836` injects `on_compare_page` / `on_compare_detail` into `ProjectTreePanel`. `project_tree.py:~49-50` stores them as `self._on_compare_page` / `self._on_compare_detail`. **Nothing in `project_tree.py` ever calls either**, and `build_page_menu` / `build_detail_menu` build no Compare action. Effect: `DiffMergeController.compare_page_with` and `compare_detail_with` are unreachable. Only `Deployment ▸ Compare/Merge pgtp` is live."
+
+**Root cause — confirmed exactly as reported, and dated.** `pgtp_editor/ui/main_window.py:838-843` passes both lambdas; `pgtp_editor/ui/project_tree.py:49-50` stores them; grep across `pgtp_editor/` finds **no** call site for `self._on_compare_page` or `self._on_compare_detail`. `build_page_menu` (`:166`) offers Jump / Select / Add Event Handler ▸ / See-in-caption; `build_detail_menu` (`:220`) offers Jump / Select / See-in-caption. Neither builds a Compare action. `DiffMergeController.compare_page_with` (`:180`) and `compare_detail_with` (`:222`) are therefore reachable only from tests.
+
+**Were they ever built? YES — built, then deleted as collateral.** Established from git, not inferred:
+
+- `d78063f` (2026-07-12, *"feat(ui): wire Compare This Page With... to a real handler"*) **added** the constructor parameters **and** the two menu actions, wired to the handlers.
+- `924ea32` (2026-07-15, *"feat(tree): double-click jump + redesigned Page/Detail/Column context menus"*) **removed** both `menu.addAction("Compare This …With...")` calls and the helper `_build_source_path` while rewriting the menus — but left the constructor parameters, the two stored attributes and `main_window.py`'s injection in place. Its commit message says nothing about dropping Compare.
+
+So this is **pre-existing since 2026-07-15**, three weeks before FQ-021, and FQ-021a/FQ-021's mode conversion neither caused nor noticed it.
+
+**Why no test caught it, which is the reusable lesson.** `tests/ui/test_diff_merge_entry_points.py:171-176` carries a NOTE recording the removal as a **fact** (*"the tree Page/Detail context menus no longer offer 'Compare This Page/Detail With...'"*) and then drives `window._diff_ui.compare_page_with(...)` **directly**. Six tests across that file plus `tests/ui/test_ddl_project_wiring.py:1885,1906` and `tests/ui/test_diff_merge_mode.py:256-257` call the controller methods straight. The suite is green over a feature no user can reach — the exact shape of "assert the gesture, not the method".
+
+**User-visible consequence:** to compare a single Page or a single Detail against another project you must instead run `Deployment ▸ Compare/Merge pgtp`, which compares the **whole `.pgtp`** and requires the user to find their one page among every difference in the project. The node-scoped comparison — the one that starts from the thing you right-clicked — does not exist in the running app, and nothing says so.
+
+**Two documents assert otherwise, so one of them is wrong whichever way this is fixed:** `docs/superpowers/CONSOLIDATED_SPEC.md` §12 (`~:6754-6757`) — *"**Three entry points** all converge on `show_differences` … Project-tree Page ▸ 'Compare This Page With…'; Project-tree Detail ▸ 'Compare This Detail With…' (uses `resolve_path`)"* — and again at `~:6763` (*"All three entry points call `enter_diff_merge_mode()`"*) and `~:6788`; plus `pgtp_editor/ui/diff_merge_controller.py:21-23`'s module docstring.
+
+**Proposed fix — restore the two actions.** Recommended over deleting the wiring: the capability is fully built, tested and mode-aware (both controller methods already end in `stage.enter_diff_merge_mode()`, `:220` and `:256`, so FQ-021's mode is inherited free), the spec is the authority and states three, and the removal was an unannounced side effect of an unrelated redesign rather than a decision anyone recorded. **If the implementer would rather ratify the deletion, that IS an owner decision** (it removes a specified capability) — file it via `owner-decision` and do not decide it in passing. Either way **something must change**: the dead injection, the spec's "three", and the controller docstring cannot all stay as they are.
+
+In `pgtp_editor/ui/project_tree.py`:
+
+1. **`build_page_menu`** (`:166`): after the existing entries, `menu.addSeparator()` then `compare_action = menu.addAction("Compare This Page With…")`, connected exactly as `d78063f` had it — `lambda checked=False, i=item: self._on_compare_page(i.data(0, MODEL_NODE_ROLE))`. Note the redesigned menus resolve `node` once at the top (`:167`); follow the local style, but **keep the `checked=False` first parameter** — `triggered` passes a bool.
+2. **`build_detail_menu`** (`:220`): same shape, label `"Compare This Detail With…"`, calling `self._on_compare_detail(node, self._build_source_path(item))`.
+3. **Restore `_build_source_path`** — it was deleted by `924ea32` and no equivalent exists today. Take it verbatim from `git show 924ea32^:pgtp_editor/ui/project_tree.py` (`:138-153`): walk item→root, appending `node.file_name` for a `page` and `f"{node.table_name}/{node.attrib.get('caption')}"` otherwise, then reverse. **Verified still correct against the consumer:** `pgtp_editor/diff/resolve.py::resolve_path` (`:36-74`) expects `path[0]` = a top-level Page's `file_name` and `path[1:]` = `"tableName/caption"` segments matched on `d.table_name` and `d.attrib.get("caption")`. Do not re-derive the format.
+4. **Append, do not reorder.** `tests/ui/test_project_tree.py` asserts the redesigned menus' contents; adding at the end behind a separator keeps existing index-based assertions valid, and the separator marks Compare as the cross-project action it is.
+5. **Label punctuation:** use the single-character ellipsis `…`, matching the spec's text and the neighbouring `"Edit code…"` (`:214`). The 2026-07 originals used three dots; the redesigned file does not.
+6. **`main_window.py` needs NO change** — its two lambdas (`:838-843`) already point at the controller and the comment explaining the indirection is still accurate.
+7. **Keyboard: propose no chord, and this is deliberate.** These are node-scoped context-menu commands with no menu-bar twin; nothing in `docs/KEYBINDINGS.md` is added, moved or removed by this fix. Under DEC-012 a command form may have **exactly one** keyboard host, so if anyone later wants a chord it must go on the `QAction` and be registered in the ledger — but no chord is needed to reach these, and adding one would need its own gate ruling.
+8. **`build_multi_select_menu`'s `"Compare Selected"` stub (`:256`) is a different, unbuilt feature** — leave it a stub; do not fold it in.
+
+**Test impact:**
+
+- `tests/ui/test_diff_merge_entry_points.py` is the home lane. **Its NOTE at `:171-176` must be rewritten, not just contradicted** — leaving a comment that says the menus no longer offer Compare beside a test that triggers it from the menu is how this bug survived the first time.
+- New cases asserting **observable state via the real gesture**: (1) `build_page_menu(item)` contains an action whose text is `"Compare This Page With…"`, and **triggering it** (with `QFileDialog.getOpenFileName` patched to return the target path) leaves `center_stage.currentIndex()` on the Diff/Merge tab with the expected leaf count — i.e. drive the menu action, not `compare_page_with`; (2) the same for a Detail node, on a **nested** detail so `_build_source_path` is exercised past one level; (3) the source path a nested Detail produces round-trips through `diff/resolve.py::resolve_path` back to the same node — a pure-logic test, no Qt needed, and the guard against the segment format drifting; (4) FQ-021 mode: after triggering the menu action the Raw XML editor is read-only and the mode indicator reports Compare/Merge (reuse `tests/ui/test_diff_merge_mode.py`'s existing assertions, which currently call the controller directly at `:256-257` — re-point at least one of them at the menu).
+- Keep the existing direct-controller tests; they cover the controller's own branches (target parse failure, page-not-found, `resolve_path` errors) and re-driving all of them through a menu would only slow them down. The point is that **at least one** test per entry point starts at the gesture.
+- **No process, no socket** — this lane is pure Qt plus file I/O into `tmp_path`; patch `pgtp_editor.ui.modals.QFileDialog.getOpenFileName` as the existing tests do, and never let a modal execute.
+
+**Spec impact:** **the code diverges from `docs/superpowers/CONSOLIDATED_SPEC.md` §12** (`~:6754-6757`, `~:6763`, `~:6788`), which states three entry points and names these two explicitly. If the fix restores them, the spec is already correct and needs **no** change — but `spec-maintainer` should be told the claim was **false for four weeks** and asked whether §12 should name a test-visible invariant (*every entry point is reachable from its gesture*), since that is what would have caught it. `pgtp_editor/ui/diff_merge_controller.py:21-23`'s docstring becomes true again with no edit. **Manual impact:** `pgtp_editor/resources/manual.md` (`~:4637`) currently documents only `Deployment ▸ Compare/Merge pgtp` — accurate today, **wrong once this lands**; flag for `manual-maintainer` to add the two right-click entry points. If instead the deletion is ratified by owner decision, §12's "three" and the controller docstring must both be corrected and the dead injection removed from `main_window.py:838-843` and `project_tree.py:33-34,49-50`.
 
 ---

@@ -5,6 +5,8 @@ positional still exists and still reaches `run_mcp_server` as the headless
 server's default project, but **the GUI no longer opens it**. And the FQ-010
 startup launcher seam in `main()`.
 """
+import importlib
+
 import pytest
 
 import pgtp_editor.main as main_mod
@@ -262,3 +264,71 @@ def test_mcp_early_return_precedes_every_qt_import_in_main_source():
     mcp_return = source.index("return run_mcp_server(args.file)")
     assert source.index("from PySide6") > mcp_return
     assert source.index("from pgtp_editor.ui import launcher_dialog") > mcp_return
+
+
+# --- `python -m pgtp_editor` (BUG-260812002307) ------------------------------
+
+
+def test_module_entry_point_delegates_to_main():
+    """`python -m pgtp_editor` used to fail outright ("cannot be directly
+    executed"): the package had no `__main__`. It has one now, and it is a pure
+    delegation — the SAME `main` the documented `python -m pgtp_editor.main`
+    form and any console script run, so the two can never diverge."""
+    import pgtp_editor.__main__ as module_entry
+
+    assert module_entry.main is main_mod.main
+
+
+def test_module_entry_point_is_resolvable_by_runpy(monkeypatch):
+    """Resolves as an executable module without launching a GUI: `main` is
+    stubbed, so `runpy` proves only that `-m pgtp_editor` finds and runs a
+    `__main__` whose exit code comes from `main`."""
+    import runpy
+    import sys
+
+    monkeypatch.setattr(main_mod, "main", lambda *a, **k: 7)
+    sys.modules.pop("pgtp_editor.__main__", None)
+
+    with pytest.raises(SystemExit) as excinfo:
+        runpy.run_module("pgtp_editor", run_name="__main__")
+
+    assert excinfo.value.code == 7
+    sys.modules.pop("pgtp_editor.__main__", None)
+
+
+def test_module_entry_point_adds_no_startup_logic():
+    """It must stay a delegation: no argument parsing, no logging setup, no Qt
+    of its own, or `-m pgtp_editor` and `pgtp_editor.main` drift apart."""
+    import inspect
+
+    import pgtp_editor.__main__ as module_entry
+
+    source = inspect.getsource(module_entry)
+    for forbidden in ("parse_args", "argparse", "PySide6", "QApplication", "debuglog"):
+        assert forbidden not in source
+
+
+def test_gui_scripts_console_entry_points_at_the_same_main():
+    """The installed `pgtp-editor` command (BUG-260812002307's optional extra).
+    `gui-scripts`, not `scripts`, so the Windows launcher is `pythonw` and a Qt
+    app started from a shortcut drags no console window along. It names the one
+    entry point, like `__main__.py` does — three launch forms, one `main`.
+
+    Asserted as a THIRD delegation rather than a string: an entry point that
+    points somewhere else is the drift this guards."""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert pyproject["project"]["gui-scripts"] == {
+        "pgtp-editor": "pgtp_editor.main:main"
+    }
+    module_path, _, attribute = (
+        pyproject["project"]["gui-scripts"]["pgtp-editor"].partition(":")
+    )
+    module = importlib.import_module(module_path)
+    assert getattr(module, attribute) is main_mod.main

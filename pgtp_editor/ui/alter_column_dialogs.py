@@ -94,6 +94,7 @@ from pgtp_editor.db.ddl_skeleton import (
     set_column_not_null_skeleton,
 )
 from pgtp_editor.db.sandbox import UnsafeIdentifierError
+from pgtp_editor.ui.status_colours import STATUS_ERROR, StatusLabel
 
 #: The table names to offer, or a callable producing them. The caller derives
 #: them from the already-loaded `introspect.DatabaseSchema`; this dialog never
@@ -213,8 +214,11 @@ class _AlterColumnDialogBase(QDialog):
 
         self._column_combo = QComboBox()
 
-        self._error_label = QLabel("")
-        self._error_label.setStyleSheet("color: red;")
+        # A `StatusLabel` in the error KIND, painted per theme: plain
+        # `color: red` measured 3.98:1 on the dark chrome and 3.83:1 on the
+        # light one -- below 4.5:1 in BOTH (BUG-260812063745).
+        self._error_label = StatusLabel("")
+        self._error_label.set_status_kind(STATUS_ERROR)
         self._error_label.setWordWrap(True)
 
         self._buttons = QDialogButtonBox(

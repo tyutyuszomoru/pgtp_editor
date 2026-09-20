@@ -526,7 +526,7 @@ def _project_window(
     save_settings(project_dir, settings)
     window = _window(qtbot, tmp_path)
     window._run_async = _sync_run
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: SandboxCapabilities(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: SandboxCapabilities(
         is_superuser=True
     )
     controller = window.sandbox_controller
@@ -1500,7 +1500,7 @@ def test_declining_the_offer_attempts_no_connection(qtbot, tmp_path, monkeypatch
         qtbot, tmp_path, monkeypatch, reachable=False
     )
     probes = []
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: probes.append(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: probes.append(
         params
     )
     _answer_refusal(monkeypatch, modals.QMessageBox.StandardButton.Cancel)

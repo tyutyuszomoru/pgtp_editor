@@ -76,7 +76,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from math import ceil
 
-from PySide6.QtCore import QByteArray, QPoint, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, QPoint, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
@@ -131,6 +131,11 @@ NODE_BOTTOM_PAD = 8
 
 #: Fixed caption block height (name line + wrapped state line).
 CAPTION_HEIGHT = 42
+
+#: How faded the state caption is against the node's own text colour. Measured
+#: to clear 4.5:1 against both chrome backgrounds after blending (≈5.5:1 dark,
+#: ≈5.1:1 light), so "dimmer than the title" never becomes "unreadable".
+DIM_ALPHA = 165
 
 #: Minimum vertical gap between the two branch nodes when the splitting
 #: connector is shorter than they are tall.
@@ -371,7 +376,7 @@ class _DiagramNode(QFrame):
         state_font = QFont(self.state_label.font())
         state_font.setPointSizeF(max(7.0, state_font.pointSizeF() - 1.0))
         self.state_label.setFont(state_font)
-        self._dim(self.state_label)
+        self._apply_dim()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, NODE_TOP_PAD, 4, NODE_BOTTOM_PAD)
@@ -381,14 +386,41 @@ class _DiagramNode(QFrame):
         layout.addWidget(self.title_label)
         layout.addWidget(self.state_label, 1)
 
-    def _dim(self, label: QLabel) -> None:
-        """Fade a label using the palette's own text colour, so it reads in both
-        themes without a hard-coded grey."""
-        palette = label.palette()
-        color = palette.color(self.foregroundRole())
-        color.setAlpha(165)
-        palette.setColor(label.foregroundRole(), color)
-        label.setPalette(palette)
+    def _apply_dim(self) -> None:
+        """Fade the state caption using the node's own text colour, so it reads
+        in both themes without a hard-coded grey.
+
+        A **widget stylesheet**, not a palette override (BUG-260811021804): the
+        app-wide qdarkstyle sheet declares `color` on a universal `QWidget`
+        rule, and QSS beats QPalette for every property it declares — so the
+        `setPalette` this did until now produced a *pixel-identical* label and
+        the captions were never dimmed at all. QSS `color` accepts `rgba(...)`,
+        so the alpha fade survives the change of mechanism.
+
+        The base colour is read from **`self`** (the node), which carries no
+        widget stylesheet of its own and therefore still reports the effective
+        theme colour, rather than from the label, whose palette our own sheet
+        would clobber — re-reading the label would compound the fade on every
+        call. Idempotent and last-write-wins, which `changeEvent` requires.
+        """
+        color = self.palette().color(self.foregroundRole())
+        self.state_label.setStyleSheet(
+            f"QLabel {{ color: rgba({color.red()}, {color.green()}, "
+            f"{color.blue()}, {DIM_ALPHA}); }}"
+        )
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Re-fade the caption when the theme flips. Both event types are kept
+        because only `PaletteChange` was measured to reach a nested child under
+        `theme.py::apply_theme`."""
+        super().changeEvent(event)
+        if event.type() in (
+            QEvent.Type.ApplicationPaletteChange,
+            QEvent.Type.PaletteChange,
+        ):
+            # Can fire during construction, before the caption exists.
+            if hasattr(self, "state_label"):
+                self._apply_dim()
 
     def set_pixmap(self, pixmap: QPixmap, box: QSize) -> None:
         self.icon_label.setFixedSize(box)
@@ -678,8 +710,10 @@ class ProjectStatusPanel(QWidget):
     def set_dark(self, dark: bool) -> None:
         """Re-render in the given theme (True = the ``_drk`` assets).
 
-        Takes the same boolean the **Light Theme** menu toggle already tracks
-        (inverted): ``panel.set_dark(not light)``. It re-resolves the current
+        Takes the same boolean `UiShell.is_light_theme` reports, inverted:
+        ``panel.set_dark(not light)``. That used to be a **Light Theme** menu
+        toggle's checked state; since `FQ-260812021715` it is the APPLIED
+        `Theme.light`, which is what lets a third theme answer it at all. It re-resolves the current
         diagram's asset filenames rather than re-deriving state, so a theme
         switch cannot silently change what the diagram claims — and it adds no
         second theme-detection mechanism.
@@ -707,7 +741,11 @@ class ProjectStatusPanel(QWidget):
         self._rebuild()
 
     def set_light_theme(self, light: bool) -> None:
-        """Convenience mirror of `MainWindow._light_theme_action.isChecked()`."""
+        """Convenience mirror of `UiShell.is_light_theme` — which now reads the
+        APPLIED `Theme.light`, not a checkable action. `View ▸ Light Theme` and
+        `MainWindow._light_theme_action` were deleted with `FQ-260812021715`;
+        this takes a bool rather than a theme name because it only ever needed
+        to know which way to shade, and a third theme still answers that."""
         self.set_dark(not light)
 
     def set_connection_summaries(

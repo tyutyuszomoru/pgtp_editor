@@ -184,6 +184,31 @@ def test_round_trip_preserves_optional_and_defaulted_column_fields():
     assert loaded.tables["pr.order_v"].view_definition == "SELECT id FROM pr.orders;"
 
 
+def test_round_trip_preserves_identity_and_generated_columns():
+    """`ColumnInfo.identity`/`generated` (2026-08-11, `DEC-260811022536`) --
+    a snapshot that dropped them would load a schema asserting that no column is
+    an identity or generated column, which is the degraded state
+    `SNAPSHOT_VERSION` 4 exists to refuse."""
+    schema = _full_schema()
+    columns = list(schema.tables["pr.orders"].columns)
+    columns.append(
+        dataclasses.replace(columns[0], name="ident", identity="d", default=None)
+    )
+    columns.append(
+        dataclasses.replace(columns[0], name="total", generated="s", default="(a * 2)")
+    )
+    schema.tables["pr.orders"] = dataclasses.replace(
+        schema.tables["pr.orders"], columns=columns
+    )
+    loaded = load_schema(dump_schema(schema))
+    by_name = {c.name: c for c in loaded.tables["pr.orders"].columns}
+    assert by_name["ident"].identity == "d"
+    assert by_name["ident"].generated is None
+    assert by_name["total"].generated == "s"
+    assert by_name["total"].default == "(a * 2)"
+    assert by_name["id"].identity is None
+
+
 def test_round_trip_preserves_a_table_comment_and_its_absence():
     # `TableInfo.comment` (2026-08-09) -- with the field set on one table and
     # left at its default on the other, so both halves of the optional field

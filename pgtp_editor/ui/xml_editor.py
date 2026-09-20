@@ -45,7 +45,7 @@ from PySide6.QtGui import (
     QTextCursor,
     QTextFormat,
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QShortcut
 from PySide6.QtWidgets import (
     QMenu,
     QPlainTextEdit,
@@ -70,7 +70,23 @@ from pgtp_editor.ui.editor_gutter import (  # noqa: F401  (re-exported names)
     _FOLD_GLYPH_WIDTH,
     GutterBookmarkFoldMixin,
 )
+from pgtp_editor.ui.code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
+    REDO,
+    UNDO,
+    apply_editor_operation,
+    apply_shrink_structural_selection,
+    classify_editor_chord,
+    is_mutating_editor_operation,
+    is_paste_chord,
+)
+from pgtp_editor.ui.editor_shared import SharedEditorMixin
 from pgtp_editor.ui.event_body import event_body_line_ranges
+from pgtp_editor.ui.format_settings import current_xml_config
+from pgtp_editor.ui.theme import apply_syntax_role
+from pgtp_editor.ui.theme_model import theme_for
+from pgtp_editor.ui.vim_mode import VimModeMixin
+from pgtp_editor.xmlfmt import format_xml_selection
 
 STATE_NORMAL = 0  # in text content, outside any tag
 STATE_IN_UNCLOSED_STRING = 1  # inside a double-quoted attribute value
@@ -301,21 +317,43 @@ def _attribute_pair_at(text: str, open_start: int, open_end: int, pos: int):
     return None
 
 class XmlSyntaxHighlighter(QSyntaxHighlighter):
+    #: The theme file's syntax-role name behind each format attribute. Three of
+    #: the theme's 8 roles; the other five are the code highlighter's
+    #: (`code_editor._CodeHighlighter`), which reads its own map the same way.
+    _ROLE_FORMATS = {
+        "xml_tag": "_tag_format",
+        "xml_attr_name": "_attr_name_format",
+        "xml_string": "_string_format",
+    }
+
     def __init__(self, document):
         super().__init__(document)
 
         self._tag_format = QTextCharFormat()
-        self._tag_format.setForeground(QColor("#569cd6"))
-
         self._attr_name_format = QTextCharFormat()
-        self._attr_name_format.setForeground(QColor("#9cdcfe"))
-
         self._string_format = QTextCharFormat()
-        self._string_format.setForeground(QColor("#ce9178"))
+        # Defaults to the DARK theme's roles, matching the editor's own
+        # decoration defaults below; `apply_theme_colors` swaps the whole set.
+        self.apply_syntax_theme(False)
+
+    def apply_syntax_theme(self, light: bool) -> None:
+        """Recolor the three syntax formats (tag, attribute-name, string) from
+        the theme file. The caller rehighlights afterwards.
+
+        Colours AND the bold/italic/underline flags come from the theme's
+        `syntax` roles (FQ-260812021715), so a theme that italicises XML strings
+        works with no code change here."""
+        theme = theme_for(light)
+        for role_name, attribute in self._ROLE_FORMATS.items():
+            apply_syntax_role(getattr(self, attribute), theme.role(role_name))
 
     def set_colors(self, tag: str, attr_name: str, string: str) -> None:
-        """Recolor the three syntax formats (tag, attribute-name, string) for a
-        light or dark theme. The caller rehighlights afterwards."""
+        """Recolor the three syntax formats explicitly.
+
+        Kept as the module's long-standing seam (tests and any caller that wants
+        a one-off colouring drive it), but the app itself now goes through
+        `apply_syntax_theme`, so no colour literal has to be spelled at a call
+        site."""
         self._tag_format.setForeground(QColor(tag))
         self._attr_name_format.setForeground(QColor(attr_name))
         self._string_format.setForeground(QColor(string))
@@ -410,7 +448,23 @@ def _closing_tag_start(text: str, span: xml_structure.TagSpan) -> int | None:
     return xml_structure.closing_tag_start(text, span)
 
 
-class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdit):
+class XmlEditor(
+    CompletionPopupHostMixin,
+    GutterBookmarkFoldMixin,
+    SharedEditorMixin,
+    VimModeMixin,
+    QPlainTextEdit,
+):
+    """The Raw XML / Edit XSD editor.
+
+    Carries the same family-agnostic layers `CodeEditor` does, all declared
+    **before** `QPlainTextEdit`: the shared gutter/bookmark/fold base,
+    `SharedEditorMixin` (the ONE hint/refusal path and the ONE line-wrap toggle,
+    both lifted for FQ-032 -- this class had no `report_refusal` at all and
+    `CodeEditor` had no wrap toggle) and `VimModeMixin` (FQ-032's Edit-mode /
+    Command-mode layer).
+    """
+
     line_clicked = Signal(int)  # 1-based line of a left-mouse click in the text
     # Emitted when a text-modifying key is pressed while the editor is
     # read-only (Caption Mode). The base already blocks the edit; this signal
@@ -445,6 +499,18 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
     # opening tag but not on a specific attribute. MainWindow opens the Edit
     # XSD tab and navigates to the matching definition line.
     goto_xsd_requested = Signal(str, str)
+    # Emitted when Format Selection (§18.4 part C) REFUSES: carries the list of
+    # fatal `sql.Issue`s, which MainWindow renders in the Activity Log under the
+    # **`[XML]`** prefix (§7 -- non-clickable, no line role, `[SQL]`'s treatment
+    # exactly). A new prefix rather than a reuse because an `[SQL]` row saying
+    # "this XML selection is mis-nested" would be a lie to the user.
+    #
+    # A read-only buffer produces NO row here: the gesture emits the existing
+    # `read_only_edit_attempted` instead, because the app already has one answer
+    # to "you cannot change this buffer" and FQ-021 already lists the reasons on
+    # screen. A selection-less Ctrl+Alt+F is a silent no-op, matching both SQL
+    # hosts.
+    format_refused = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -482,10 +548,8 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         # next block number it resumes from. Timer created on first use.
         self._theme_sweep_timer: QTimer | None = None
         self._theme_sweep_block = 0
-        self._current_line_color = QColor("#2d2d30")
-        self._error_line_color = QColor("#5a1d1d")
-        self._navigation_highlight_color = QColor("#264f78")
-        self._matching_tag_color = QColor("#3a5f3a")
+        # The DARK set, read from the theme file; apply_theme_colors swaps it.
+        self._apply_decoration_theme_colors(False)
         self._current_line_selections: list[QTextEdit.ExtraSelection] = []
         self._matching_tag_selections: list[QTextEdit.ExtraSelection] = []
         # Distinct styling for event-handler code bodies (the text between
@@ -495,7 +559,6 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         # every text change (see _refresh_code_region_selections); rendered
         # underneath every other extra-selection layer. Read-only-safe:
         # extra selections are purely visual and apply in Caption Mode too.
-        self._code_region_color = QColor("#232a2f")
         self._code_region_font = self._make_monospace_font()
         self._code_region_selections: list[QTextEdit.ExtraSelection] = []
         # One-shot "overriding" indicator used by navigate_to_line,
@@ -559,6 +622,26 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         # The shared Ctrl+Space completion popup (attribute names, then
         # chained values) and its wiring state -- see CompletionPopupHostMixin.
         self._init_completion_popup()
+        # FQ-032's editing-mode layer. Every editor starts in **Edit mode**,
+        # always -- no setting, no persistence, no restore.
+        self._init_vim_mode()
+        # Format Selection (§18.4 part C): Ctrl+Alt+F, enabled only with a
+        # selection. ONE gesture, TWO engines, dispatched by HOST SURFACE and
+        # never by sniffing the text -- this class is an XML surface, so it wires
+        # `xmlfmt` and the SQL engine is never reachable from here (a text-
+        # sniffing dispatcher would eventually guess wrong on a selection that
+        # looks like both, e.g. `<x>select 1</x>`).
+        #
+        # A panel-local `QShortcut` with `WidgetWithChildrenShortcut`, disabled
+        # without a selection: the shape both SQL hosts already ship
+        # (`ddl_object_editor.py`, `sql_console_panel.py`). It is the gesture's
+        # ONLY keyboard host -- there is deliberately NO `keyPressEvent` branch
+        # for Ctrl+Alt+F (DEC-004/BUG-046: double-hosting makes Qt fire neither).
+        self._format_shortcut = QShortcut(QKeySequence("Ctrl+Alt+F"), self)
+        self._format_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._format_shortcut.activated.connect(self.format_selection)
+        self._format_shortcut.setEnabled(False)
+        self.selectionChanged.connect(self._update_format_shortcut_enabled)
         self._rescan_structure()
         self._refresh_code_region_selections()
         self._highlight_current_line()
@@ -629,32 +712,44 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         textChanged fires) even though no character of text changed."""
         return self._applying_theme
 
+    #: The theme file's `decorations` key behind each colour attribute. One
+    #: mapping, walked by `_apply_decoration_theme_colors`, so adding a
+    #: decoration means adding a row here and a key to every theme file (which a
+    #: missing-key `ThemeError` enforces) rather than editing two branches that
+    #: can silently disagree -- the shape the old if/else pair had.
+    _DECORATION_ATTRS = {
+        "current_line": "_current_line_color",
+        "error_line": "_error_line_color",
+        "navigation_highlight": "_navigation_highlight_color",
+        "matching_tag": "_matching_tag_color",
+        "code_region": "_code_region_color",
+    }
+
+    def _apply_decoration_theme_colors(self, light: bool) -> None:
+        """Load the editor's five decoration colours from the theme file.
+
+        Idempotent and last-write-wins by construction: it assigns every
+        attribute from the theme every time, which is what a theme flip needs --
+        `PaletteChange` fires four times per flip and the first two report the
+        OLD lightness, so a partial or accumulating update would settle on the
+        wrong set."""
+        theme = theme_for(light)
+        for key, attribute in self._DECORATION_ATTRS.items():
+            setattr(self, attribute, QColor(theme.decoration(key)))
+
     def apply_theme_colors(self, light: bool) -> None:
-        """Swap the editor's color attributes and the syntax highlighter's
-        format colors between a LIGHT set (readable dark-on-white) and the DARK
-        set (the original values), then rehighlight and repaint so the change
-        shows immediately -- gutter, current-line band, matching-tag spans and
-        code-region backgrounds all recolor at once. Wired to run automatically
-        on ApplicationPaletteChange via changeEvent."""
+        """Reload the editor's color attributes and the syntax highlighter's
+        format colors from the LIGHT or DARK theme file, then rehighlight and
+        repaint so the change shows immediately -- gutter, current-line band,
+        matching-tag spans and code-region backgrounds all recolor at once.
+        Wired to run automatically on ApplicationPaletteChange via changeEvent.
+
+        Every value comes from `resources/themes/*.json` (FQ-260812021715);
+        this method holds no colour and the two hardcoded LIGHT/DARK branches it
+        used to carry are gone, so the two sets can no longer drift apart."""
         self._apply_gutter_theme_colors(light)
-        if light:
-            self._current_line_color = QColor("#eef1f7")
-            self._error_line_color = QColor("#f7d4d4")
-            self._navigation_highlight_color = QColor("#cfe0ff")
-            self._matching_tag_color = QColor("#d3ecd3")
-            self._code_region_color = QColor("#eef2f5")
-            self._highlighter.set_colors(
-                tag="#0000ff", attr_name="#e50000", string="#a31515"
-            )
-        else:
-            self._current_line_color = QColor("#2d2d30")
-            self._error_line_color = QColor("#5a1d1d")
-            self._navigation_highlight_color = QColor("#264f78")
-            self._matching_tag_color = QColor("#3a5f3a")
-            self._code_region_color = QColor("#232a2f")
-            self._highlighter.set_colors(
-                tag="#569cd6", attr_name="#9cdcfe", string="#ce9178"
-            )
+        self._apply_decoration_theme_colors(light)
+        self._highlighter.apply_syntax_theme(light)
         # Rebuild the extra-selection layers so their stored per-selection
         # colors pick up the new values (they cache the color at build time).
         self._refresh_code_region_selections()
@@ -947,6 +1042,24 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
 
+    def supports_structural_expansion(self) -> bool:
+        """`Select ▸ Expand Selection` is always available on an XML document.
+
+        The predicate exists because `CodeEditor`'s answer is a **per-instance**
+        fact (only `language == "sql"` has a plpgsql ladder), which the old
+        `hasattr(editor, "select_parent_block")` gate could not express -- so both
+        families answer one question instead (§8, FQ-034). Here it is
+        unconditional: every `XmlEditor` instance holds XML.
+
+        Note the asymmetry this class deliberately keeps: there is **no**
+        `shrink_structural_selection` here. XML's grow is stateless and
+        re-derived from `selectionStart()` each press, so shrink would need an
+        expansion stack on this class too -- a second host for that state, for a
+        family whose users did not ask for it. `Shrink Selection` is therefore
+        hidden on XML tabs, and `Ctrl+Shift+Z` stays claimed-and-inert there.
+        """
+        return True
+
     def select_parent_block(self) -> None:
         """Ctrl+Shift+A: select the block exactly one nesting level up from
         the current position. Stateless -- always re-derived from the current
@@ -1115,15 +1228,25 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         cursor.insertText(text)  # QTextCursor.insertText replaces the selection
         self.setTextCursor(cursor)
 
-    def set_line_wrap_enabled(self, enabled: bool) -> None:
-        self.setLineWrapMode(
-            QPlainTextEdit.LineWrapMode.WidgetWidth
-            if enabled
-            else QPlainTextEdit.LineWrapMode.NoWrap
-        )
+    # `set_line_wrap_enabled` / `is_line_wrap_enabled` moved to
+    # `SharedEditorMixin` (`ui/editor_shared.py`), unchanged. FQ-032's
+    # `:set wrap` / `:set nowrap` is family-agnostic and `CodeEditor` had no
+    # toggle at all, and a family-agnostic layer may not be given a private copy
+    # of something one family already implements. The context menu's checkable
+    # `Wrap Lines` entry still drives exactly this method.
 
-    def is_line_wrap_enabled(self) -> bool:
-        return self.lineWrapMode() == QPlainTextEdit.LineWrapMode.WidgetWidth
+    def vim_undo(self) -> None:
+        """`u` in Command mode routes to THIS surface's undo answer -- the
+        window's document-level snapshot history, which is what `Ctrl+Z` does
+        here. Never `QPlainTextEdit.undo()`: that is `F14`'s recorded defect
+        (undo that bypasses the app's routing), and reproducing it on a reachable
+        key would be worse."""
+        self.undo_requested.emit()
+
+    def vim_redo(self) -> None:
+        """`Ctrl+R` in Command mode -- Command-mode ONLY
+        (`DEC-260810193638`); `Ctrl+Y` remains the app's redo everywhere."""
+        self.redo_requested.emit()
 
     @staticmethod
     def _is_text_modifying_key(event: QKeyEvent) -> bool:
@@ -1139,8 +1262,22 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         other Ctrl+letter command) while flashing the "this editor is read-only"
         hint. Paste is checked first and keeps its hint: Ctrl+V really is an edit
         attempt.
+
+        The paste test goes through `is_paste_chord`, which reads the app's own
+        `EDITOR_PASTE_CHORDS`, and NOT through
+        `event.matches(QKeySequence.StandardKey.Paste)`: that call answers Qt's
+        per-scheme table, so the hint used to fire for `Ctrl+Shift+Ins` and `F18`
+        on Linux and for neither on Windows (DEC-015 -- a chord means the same
+        thing on both systems or the app does not claim it).
         """
-        if event.matches(QKeySequence.StandardKey.Paste):
+        if is_paste_chord(event):
+            return True
+        # The three line-editing gestures the app took ownership of on
+        # 2026-08-10 (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`) are Ctrl chords, so the
+        # command-not-typing test below would call them "not an edit" -- and
+        # `Ctrl+U` deletes a whole line, which is the most edit-like keystroke on
+        # this list. They get the hint for exactly the reason `Ctrl+V` does.
+        if is_mutating_editor_operation(classify_editor_chord(event)):
             return True
         if event.key() in (
             Qt.Key.Key_Backspace,
@@ -1162,25 +1299,72 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
             self.read_only_edit_attempted.emit()
             return
 
-        # Route Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z to the document-level snapshot
-        # undo/redo (MainWindow) rather than QPlainTextEdit's native char-level
-        # undo, which would otherwise win while the editor has focus (C1).
-        # Consume the key here so the coexisting window QShortcut does not also
-        # fire (no double-undo).
-        mods = event.modifiers()
-        ctrl = Qt.KeyboardModifier.ControlModifier
-        shift = Qt.KeyboardModifier.ShiftModifier
-        if mods == ctrl and event.key() == Qt.Key.Key_Z:
+        # Route Ctrl+Z / Ctrl+Y to the document-level snapshot undo/redo
+        # (MainWindow) rather than QPlainTextEdit's native char-level undo,
+        # which would otherwise win while the editor has focus (C1). Consume the
+        # key here so the coexisting window QShortcut does not also fire (no
+        # double-undo).
+        #
+        # The chord set and the classification come from the ONE matcher every
+        # editing surface calls (DEC-014's fixed set, `code_editor`); this
+        # surface must not spell the chords out for itself.
+        operation = classify_editor_chord(event)
+        if operation == UNDO:
             self.undo_requested.emit()
             event.accept()
             return
-        if (mods == ctrl and event.key() == Qt.Key.Key_Y) or (
-            mods == (ctrl | shift) and event.key() == Qt.Key.Key_Z
-        ):
+        if operation == REDO:
             self.redo_requested.emit()
             event.accept()
             return
+        if is_mutating_editor_operation(operation):
+            # Paste (`Ctrl+Shift+Insert`) and the three line-editing gestures
+            # (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`), which Qt answers on the Linux/KDE
+            # scheme only and the app therefore implements on both (owner,
+            # 2026-08-10). A read-only Caption Mode buffer never reaches here:
+            # `_is_text_modifying_key` counts these as edit attempts, so the
+            # read-only branch above already emitted the hint and returned.
+            apply_editor_operation(self, operation)
+            event.accept()
+            return
+        if operation == CLAIMED_NOT_UNDO_REDO:
+            # `Ctrl+Shift+Z` = Shrink Selection (FQ-034), delegated to the one
+            # implementation every surface calls. **On this family it is inert,
+            # and that is a scope decision with a reason rather than an
+            # omission** (§8): XML's grow (`select_parent_block`) is stateless
+            # and re-derivable, so giving XML shrink would mean giving
+            # `XmlEditor` the expansion stack as well -- a second host for that
+            # state, for a family whose users did not ask for it. This editor
+            # therefore has no `shrink_structural_selection` at all, the shared
+            # helper finds none, and the chord is consumed exactly as before.
+            #
+            # Consuming it is the load-bearing half either way: DEC-015 freed
+            # the chord from redo, but Qt binds it as native Redo under
+            # `KB_Win | KB_X11`, so dropping the interception would leave Qt
+            # redoing anyway.
+            apply_shrink_structural_selection(self)
+            event.accept()
+            return
+        if operation is not None:
+            # `Alt+Backspace` / `Alt+Shift+Backspace` -- suppressed app-wide, so
+            # the keyboard is identical on both systems (Qt binds them `KB_Win`
+            # only). Consumed rather than passed on: the interception IS the
+            # behaviour.
+            event.accept()
+            return
 
+        # FQ-032's editing-mode layer, HERE: after the read-only branch (row 5 of
+        # the `Esc` precedence order -- vim is inactive entirely on a read-only
+        # buffer) and after the `classify_editor_chord` block, so `Ctrl+Z`,
+        # `Ctrl+Y` and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` keep this surface's answers.
+        # Those three are declined for a Command-mode editor inside
+        # `apply_editor_operation`, in ONE place, never here.
+        if self.handle_command_mode_key(event):
+            event.accept()
+            return
+
+        mods = event.modifiers()
+        ctrl = Qt.KeyboardModifier.ControlModifier
         if mods == ctrl and event.key() == Qt.Key.Key_Space:
             self._show_attribute_completions()
             event.accept()
@@ -1302,7 +1486,84 @@ class XmlEditor(CompletionPopupHostMixin, GutterBookmarkFoldMixin, QPlainTextEdi
         wrap_action.setChecked(self.is_line_wrap_enabled())
         wrap_action.toggled.connect(self.set_line_wrap_enabled)
         menu.addAction(wrap_action)
+        # "Format Selection" (§18.4 part C) -- the gesture's COMMAND form, which
+        # this menu makes free (the SQL console has no context menu at all, which
+        # is why the chord is its only form there). It carries NO shortcut of its
+        # own: the panel-local QShortcut is the single keyboard host.
+        format_action = QAction("Format Selection", menu)
+        format_action.setEnabled(cursor.hasSelection() and not self.isReadOnly())
+        format_action.triggered.connect(self.format_selection)
+        menu.addAction(format_action)
         return menu
+
+    # --- Format Selection (§18.4 part C: the XML indentation engine) --------
+
+    def _update_format_shortcut_enabled(self) -> None:
+        self._format_shortcut.setEnabled(self.textCursor().hasSelection())
+
+    def format_selection(self) -> bool:
+        """Reindent the selected XML by element-nesting depth, in place.
+
+        Indentation only -- `xmlfmt` never touches element text, never breaks an
+        opening tag, and never enters a comment/CDATA/PI/DOCTYPE (§18.4 C's three
+        rules, each derived from §2's `.pgtp` layout guarantees). Returns True
+        when the buffer was rewritten.
+
+        THE DOCUMENT, NOT JUST THE SELECTION, is handed to the engine: the whole
+        reason a user reformats a fragment is that its indentation is wrong, so
+        the base depth must come from the selection's POSITION in the document
+        rather than from its own first line -- the one place the XML engine
+        deliberately diverges from the SQL engine's behaviour.
+
+        Three outcomes besides success, and none of them is a new channel:
+        * read-only buffer -> the existing `read_only_edit_attempted` signal (no
+          `[XML]` row: FQ-021 already lists the reasons on screen);
+        * no selection -> silent no-op, as on both SQL hosts;
+        * refusal -> the selection is left byte-for-byte unchanged, the offending
+          span is underlined, and `format_refused` carries the issues to the
+          `[XML]` Audit prefix.
+        """
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            return False
+        if self.isReadOnly():
+            self.read_only_edit_attempted.emit()
+            return False
+        start, end = cursor.selectionStart(), cursor.selectionEnd()
+        result = format_xml_selection(
+            self.toPlainText(), start, end, config=current_xml_config()
+        )
+        if result.ok:
+            if result.text != self.toPlainText()[start:end]:
+                span = self._make_span_cursor(start, end)
+                span.beginEditBlock()  # one undo step for the whole reformat
+                span.insertText(result.text)
+                span.endEditBlock()
+            return True
+        self._underline_format_refusal(result.issues)
+        self.format_refused.emit(list(result.issues))
+        return False
+
+    def _underline_format_refusal(self, issues) -> None:
+        """Wave-underline the FIRST refused span (document offsets).
+
+        One span, not all of them, because `_set_oneshot_selection` is this
+        editor's single "overriding indicator" slot and the XML engine's refusals
+        are singular by construction anyway -- an unterminated construct is
+        reported alone, a split boundary names one construct, and the mis-nesting
+        walk stops at the first offender. Transient like every other one-shot:
+        cleared on the next cursor move.
+        """
+        if not issues:
+            return
+        issue = issues[0]
+        selection = QTextEdit.ExtraSelection()
+        fmt = QTextCharFormat()
+        fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+        fmt.setUnderlineColor(QColor("red"))
+        selection.cursor = self._make_span_cursor(issue.start, issue.end)
+        selection.format = fmt
+        self._set_oneshot_selection(selection)
 
     def _emit_find_selected_text(self) -> None:
         # QTextCursor.selectedText() uses U+2029 (paragraph separator) to join

@@ -118,6 +118,13 @@ class ProjectSettings:
     #: at New Project time, recorded here so `reset()` re-runs the SAME mode
     #: rather than re-deriving/guessing it from the database's contents.
     sandbox_mode: SandboxMode = SandboxMode.SCHEMA_ONLY
+    #: FQ-260812025353 -- the folder holding this project's `pg_dump`/
+    #: `pg_restore`, invoked by FULL PATH from there. **Empty means PATH**,
+    #: which is today's behaviour bit-for-bit. Per-project (not app-wide) on
+    #: purpose: the correct binaries are the ones whose major matches THIS
+    #: project's server, and this store is gitignored, so a machine-specific
+    #: absolute path never travels via git.
+    postgres_bin_dir: str = ""
     git: GitConfig = field(default_factory=GitConfig)
     deployed: dict[str, DeployedObject] = field(default_factory=dict)
 
@@ -169,6 +176,7 @@ def _settings_to_dict(settings: ProjectSettings) -> dict:
         "target": _connection_to_dict(settings.target),
         "sandbox": _connection_to_dict(settings.sandbox),
         "sandbox_mode": settings.sandbox_mode.value,
+        "postgres_bin_dir": settings.postgres_bin_dir,
         "git": {
             "server": settings.git.server,
             "user": settings.git.user,
@@ -208,6 +216,9 @@ def _settings_from_dict(raw: dict) -> ProjectSettings:
         target=ConnectionParams(**{**_connection_defaults(), **(raw.get("target") or {})}),
         sandbox=ConnectionParams(**{**_connection_defaults(), **(raw.get("sandbox") or {})}),
         sandbox_mode=_parse_sandbox_mode(raw.get("sandbox_mode")),
+        # `.get` with a "" default, like every other key here: a settings.json
+        # written before this field existed loads unchanged, meaning PATH.
+        postgres_bin_dir=raw.get("postgres_bin_dir") or "",
         git=GitConfig(**{**_git_defaults(), **(raw.get("git") or {})}),
         deployed={
             relpath: DeployedObject(

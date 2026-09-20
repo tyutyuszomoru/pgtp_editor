@@ -103,9 +103,9 @@ def test_assign_shortcut_steals_and_never_leaves_a_duplicate():
 
 
 def test_assign_shortcut_to_an_unheld_key_steals_nothing():
-    result, stolen = assign_shortcut({"file.open": "Ctrl+O"}, "file.open", "Ctrl+U")
+    result, stolen = assign_shortcut({"file.open": "Ctrl+O"}, "file.open", "Ctrl+M")
     assert stolen == []
-    assert result == {"file.open": "Ctrl+U"}
+    assert result == {"file.open": "Ctrl+M"}
 
 
 def test_assign_shortcut_can_unbind():
@@ -141,6 +141,20 @@ def test_reserved_sequences_encode_what_section_27_pins():
     assert all(reason.strip() for reason in RESERVED_SEQUENCES.values())
 
 
+def test_the_format_selection_reason_names_all_five_of_its_hosts():
+    """The reason string is what the Customize Shortcuts dialog SHOWS the user
+    when it refuses the key, so an incomplete host list is a wrong answer to a
+    direct question. FQ-033 added three `XmlEditor` hosts (Raw XML, Edit XSD and
+    the draft fragment tab) and this string went on naming only the two SQL
+    panels, while `docs/KEYBINDINGS.md` and `ui/format_settings.py` both said
+    five."""
+    reason = reserved_reason("Ctrl+Alt+F")
+    assert reason is not None
+    assert "five" in reason.lower()
+    for host in ("Sandbox SQL Console", "DDL object", "Raw XML", "XSD", "fragment"):
+        assert host in reason, host
+
+
 def test_reserved_bindings_mirror_the_reserved_table():
     assert [entry.sequence for entry in RESERVED_BINDINGS] == list(
         RESERVED_SEQUENCES
@@ -148,9 +162,18 @@ def test_reserved_bindings_mirror_the_reserved_table():
 
 
 def test_reserved_lookup_is_spelling_insensitive():
+    """`Ctrl+M` is this suite's standing example of a FREE chord.
+
+    It used to be `Ctrl+U`, at sixteen sites across this file and
+    `test_customize_shortcuts_dialog.py`. The owner's 2026-08-10 ruling made
+    `Ctrl+U` the app's `delete-line` gesture and therefore reserved, so the
+    example MOVED to a chord that is still free — the assertions were not
+    weakened, which is the only wrong way to answer this kind of failure. If a
+    future ruling claims `Ctrl+M`, move the example again.
+    """
     assert reserved_reason("ctrl+f") is not None
     assert reserved_reason("esc") is not None
-    assert reserved_reason("Ctrl+U") is None
+    assert reserved_reason("Ctrl+M") is None
     assert reserved_reason("") is None
 
 
@@ -168,13 +191,13 @@ def test_a_reserved_command_may_not_be_rebound():
     assert "help.manual" in RESERVED_COMMAND_IDS
     assert not is_rebindable("help.manual")
     assert is_rebindable("file.open")
-    assert refusal_for("help.manual", "Ctrl+U") is not None
+    assert refusal_for("help.manual", "Ctrl+M") is not None
     with pytest.raises(ValueError):
-        assign_shortcut({"help.manual": "F1"}, "help.manual", "Ctrl+U")
+        assign_shortcut({"help.manual": "F1"}, "help.manual", "Ctrl+M")
 
 
 def test_a_free_key_is_not_refused():
-    assert refusal_for("file.open", "Ctrl+U") is None
+    assert refusal_for("file.open", "Ctrl+M") is None
     assert refusal_for("file.open", "") is None
 
 
@@ -188,8 +211,8 @@ def test_default_bindings_normalize():
 
 
 def test_resolve_bindings_applies_overrides_over_defaults():
-    bindings = resolve_bindings(COMMANDS, {"file.close": "Ctrl+U"})
-    assert bindings["file.close"] == "Ctrl+U"
+    bindings = resolve_bindings(COMMANDS, {"file.close": "Ctrl+M"})
+    assert bindings["file.close"] == "Ctrl+M"
     assert bindings["file.open"] == "Ctrl+O"
     assert bindings["tools.next-difference"] == ""
 
@@ -208,9 +231,9 @@ def test_resolve_bindings_ignores_unknown_and_refused_overrides():
     bindings = resolve_bindings(
         COMMANDS,
         {
-            "no.such.command": "Ctrl+U",
+            "no.such.command": "Ctrl+M",
             "file.close": "Ctrl+F",  # reserved sequence
-            "help.manual": "Ctrl+U",  # reserved command
+            "help.manual": "Ctrl+M",  # reserved command
         },
     )
     assert bindings["file.close"] == "Ctrl+W"
@@ -253,12 +276,12 @@ def test_settings_key_is_a_sibling_of_the_toolbar_keys():
 
 def test_parse_shortcut_overrides_tolerates_what_qsettings_returns():
     assert parse_shortcut_overrides(None) == {}
-    assert parse_shortcut_overrides("file.open=ctrl+u") == {"file.open": "Ctrl+U"}
-    assert parse_shortcut_overrides(["garbage", "file.open=Ctrl+U"]) == {
-        "file.open": "Ctrl+U"
+    assert parse_shortcut_overrides("file.open=ctrl+m") == {"file.open": "Ctrl+M"}
+    assert parse_shortcut_overrides(["garbage", "file.open=Ctrl+M"]) == {
+        "file.open": "Ctrl+M"
     }
-    assert parse_shortcut_overrides({"file.open": "ctrl+u"}) == {
-        "file.open": "Ctrl+U"
+    assert parse_shortcut_overrides({"file.open": "ctrl+m"}) == {
+        "file.open": "Ctrl+M"
     }
     # The empty value survives -- "the user cleared this" is not "no override".
     assert parse_shortcut_overrides(["file.open="]) == {"file.open": ""}
@@ -268,7 +291,7 @@ def test_resolve_shortcut_overrides_prunes_and_maps_ids():
     known = ["file.open", "navigation.next-bookmark", "parsing.validate-project"]
     resolved = resolve_shortcut_overrides(
         {
-            "open": "Ctrl+U",  # legacy id (pre-BUG-027)
+            "open": "Ctrl+M",  # legacy id (pre-BUG-027)
             "bookmarks.next-bookmark": "F4",  # renamed by FQ-021
             "validate": "F9",  # legacy -> renamed, both tables
             "gone.command": "F8",  # no longer exists
@@ -276,7 +299,7 @@ def test_resolve_shortcut_overrides_prunes_and_maps_ids():
         },
         known,
     )
-    assert resolved["file.open"] == "Ctrl+U"
+    assert resolved["file.open"] == "Ctrl+M"
     assert resolved["navigation.next-bookmark"] == "F4"
     assert resolved["parsing.validate-project"] == "F9"
     assert "gone.command" not in resolved
@@ -288,14 +311,165 @@ def test_resolve_shortcut_overrides_drops_a_hand_written_reserved_key():
     assert resolve_shortcut_overrides({"file.open": "Ctrl+F"}, ["file.open"]) == {}
 
 
-# -- BUG-050: the second redo chord ------------------------------------------
+# -- DEC-014 / DEC-015: the chords every editing surface answers -------------
+
+
+def test_the_editor_chord_table_maps_to_operations_not_to_booleans():
+    """DEC-014: the shared thing must CLASSIFY. A membership test would let a
+    caller re-derive the operation itself, which is how a redo becomes an undo
+    while the chord still looks claimed. `Ctrl+Z` and `Ctrl+Y` are different
+    operations, and after DEC-015 redo has exactly one spelling."""
+    from pgtp_editor.ui.shortcut_registry import (
+        CLAIMED_NOT_UNDO_REDO,
+        EDITOR_CHORDS,
+        REDO,
+        SUPPRESSED,
+        UNDO,
+    )
+
+    assert EDITOR_CHORDS["Ctrl+Z"] == UNDO
+    assert EDITOR_CHORDS["Ctrl+Y"] == REDO
+    # Redo has ONE chord (DEC-015: "Redo is always, on all systems Ctrl+Y").
+    assert [
+        chord for chord, op in EDITOR_CHORDS.items() if op == REDO
+    ] == ["Ctrl+Y"]
+    assert EDITOR_CHORDS["Ctrl+Shift+Z"] == CLAIMED_NOT_UNDO_REDO
+    assert EDITOR_CHORDS["Alt+Backspace"] == SUPPRESSED
+    assert EDITOR_CHORDS["Alt+Shift+Backspace"] == SUPPRESSED
+
+
+def test_the_x11_only_chords_the_owner_ruled_on_are_bound_on_both_platforms():
+    """The owner's 2026-08-10 rulings, as data.
+
+    Qt binds all four of these on the Linux/KDE scheme and none of them on the
+    Windows scheme. Suppressing them would have removed working, reachable
+    gestures on the platform this project is developed on, so the app **binds
+    them on both** instead — which is also why the table is no longer called
+    `EDITOR_UNDO_REDO_CHORDS`: one table and one matcher, so a surface has one
+    call to make and cannot answer three chords and forget the fourth.
+    """
+    from pgtp_editor.ui.shortcut_registry import (
+        DELETE_CHARACTER,
+        DELETE_LINE,
+        DELETE_TO_END_OF_LINE,
+        EDITOR_CHORDS,
+        MUTATING_EDITOR_OPERATIONS,
+        PASTE,
+    )
+
+    assert EDITOR_CHORDS["Ctrl+Shift+Insert"] == PASTE
+    assert EDITOR_CHORDS["Ctrl+D"] == DELETE_CHARACTER
+    assert EDITOR_CHORDS["Ctrl+K"] == DELETE_TO_END_OF_LINE
+    assert EDITOR_CHORDS["Ctrl+U"] == DELETE_LINE
+    # Four operations, four chords: never one merged "the editing chords"
+    # statement (DEC-014), and each is a distinct operation name.
+    assert len({PASTE, DELETE_CHARACTER, DELETE_TO_END_OF_LINE, DELETE_LINE}) == 4
+    assert MUTATING_EDITOR_OPERATIONS == {
+        PASTE,
+        DELETE_CHARACTER,
+        DELETE_TO_END_OF_LINE,
+        DELETE_LINE,
+    }
+
+
+def test_the_physically_absent_keys_carve_out_leaves_the_f_keys_alone():
+    """The owner's stated exception to the uniformity rule: *it does not reach
+    keys no keyboard in use actually has.*
+
+    So `F14` (Qt's KDE-scheme Undo) and `F16`/`F18`/`F20` (the Sun/HP
+    Copy/Paste/Cut keys) get **no** editor-chord row and **no** reservation. This
+    test exists so the next sweep does not "fix" that: `F14`'s undo-routing
+    bypass is knowingly accepted as unreachable, and adding a suppression row for
+    it would state that the rule reaches absent keys, which the owner ruled it
+    does not. The trigger for revisiting is hardware, not tidiness — a keyboard
+    with an `F13`…`F20` block coming into use.
+    """
+    from pgtp_editor.ui.shortcut_registry import EDITOR_CHORDS, EDITOR_PASTE_CHORDS
+
+    for chord in ("F14", "F16", "F18", "F20"):
+        assert chord not in EDITOR_CHORDS
+        assert chord not in RESERVED_SEQUENCES
+        assert chord not in EDITOR_PASTE_CHORDS
+
+
+def test_ctrl_w_and_ctrl_o_stay_assignable_on_purpose():
+    """**An unreserved-on-purpose chord is defended by a test exactly as a
+    reserved one is** — the durable rule the owner's 2026-08-10 ruling on
+    BUG-260810143058 produced, and the assertion whose *absence* let a deliberate
+    decision be filed as an oversight.
+
+    `Ctrl+W` and `Ctrl+O` are **not** in `Ctrl+S`'s state and must not be
+    reserved. `Ctrl+S`/`Ctrl+Shift+S` are reserved because FQ-020 removed the
+    *capability*: there is no save gesture anywhere, so no command may ever sit
+    there. `Ctrl+W` lost its `File ▸ Close` binding on 2026-08-09 for a narrower
+    reason — this app closes six different things, so no single "close" is the
+    obvious *default* — which is an argument against a default, not against a
+    user who knows which close they mean. `manual.md` tells the user outright that
+    both are free to assign, and reserving either would contradict a documented
+    invitation and spend two of the few genuinely free conventional chords the
+    customize dialog can offer. `Ctrl+O` is the same case, stated as its twin.
+    """
+    for chord in ("Ctrl+W", "Ctrl+O"):
+        assert chord not in RESERVED_SEQUENCES
+        assert reserved_reason(chord) is None
+        # And the dialog really will take them, which is the point of the ruling.
+        assert refusal_for("file.close", chord) is None
+
+
+def test_every_chord_the_surfaces_intercept_is_a_reserved_sequence():
+    """DEC-014's invariant ties the two artifacts that already exist: *for every
+    chord `RESERVED_SEQUENCES` reserves because an editor answers it, every
+    editing surface states its answer.* A chord intercepted by the editors but
+    missing here would be offered in Customize Shortcuts… as a target that is
+    silently swallowed by whichever editor has focus (BUG-050's defect)."""
+    from pgtp_editor.ui.shortcut_registry import EDITOR_CHORDS
+
+    for sequence in EDITOR_CHORDS:
+        assert sequence in RESERVED_SEQUENCES
+        assert normalize_sequence(sequence) == sequence
+
+
+def test_the_windows_only_native_undo_pair_is_reserved_and_stated_as_dead():
+    """The call DEC-014 left open, decided: `Alt+Backspace` / `Alt+Shift+Backspace`
+    are Qt's `KB_Win`-ONLY native undo/redo, so under the owner's rule (*a chord
+    means the same thing on both systems or is not bound at all*) they cannot be
+    left to Qt. They are SUPPRESSED on both platforms — hence reserved, since a
+    menu command moved onto one would be swallowed by every editor."""
+    for sequence in ("Alt+Backspace", "Alt+Shift+Backspace"):
+        assert sequence in RESERVED_SEQUENCES
+        reason = RESERVED_SEQUENCES[sequence]
+        assert "Windows" in reason
+        assert "dead" in reason
+        # And it is refused as a rebinding target, never stolen.
+        assert refusal_for("file.open", sequence)
+
+
+def test_the_undo_and_redo_reasons_point_at_their_rebindable_menu_twin():
+    """BUG-064: `Undo` named two different commands. The reserved rows are the
+    only place the dialog can explain the difference — rebinding
+    `History ▸ Undo Project Edit` cannot move `Ctrl+Z`, and a user who reads
+    "Undo" twice with no explanation has been told nothing."""
+    for sequence, twin in (
+        ("Ctrl+Z", "Undo Project Edit"),
+        ("Ctrl+Y", "Redo Project Edit"),
+    ):
+        reason = RESERVED_SEQUENCES[sequence]
+        assert twin in reason
+        assert "rebindable" in reason
+    # Two rows, two reasons: DEC-014 forbids collapsing the two operations into
+    # one statement.
+    assert RESERVED_SEQUENCES["Ctrl+Z"] != RESERVED_SEQUENCES["Ctrl+Y"]
+    # And Ctrl+Y's row records why it is bound by this app at all: Qt binds it on
+    # the Windows scheme only.
+    assert "platform" in RESERVED_SEQUENCES["Ctrl+Y"]
 
 
 def test_ctrl_shift_z_is_reserved_beside_the_history_pair():
-    """`XmlEditor.keyPressEvent` answers Ctrl+Shift+Z as a second redo and
-    CONSUMES it, so a menu command retargeted here would fire only while no XML
-    editor has focus — a focus-dependent silence, which is worse than a clean
-    loss and exactly what this table exists to prevent."""
+    """The chord is still reserved after DEC-015 freed it from redo, and for a
+    sharper reason: Qt binds it as native `StandardKey.Redo` under
+    `KB_Win | KB_X11`, so every editing surface intercepts it to keep Qt's redo
+    from firing. A menu command retargeted here would fire only while no editor
+    has focus — a focus-dependent silence, worse than a clean loss."""
     assert "Ctrl+Shift+Z" in RESERVED_SEQUENCES
     assert RESERVED_SEQUENCES["Ctrl+Shift+Z"].strip()
     # Grouped with the pair it belongs to, which the dict's order is meant to
@@ -318,3 +492,102 @@ def test_the_format_selection_reason_names_its_shortcut_hosts():
     reason = RESERVED_SEQUENCES["Ctrl+Alt+F"]
     assert "context-menu" in reason
     assert "SQL Console" in reason
+
+
+def test_the_clipboard_reasons_name_both_hosts_and_leave_ctrl_x_alone():
+    """BUG-260810143057, the same defect as `Ctrl+Alt+F`'s above. Both reasons
+    said only *"a Qt built-in inside every editor widget"* while the caption grid
+    binds real slots to both chords, and the reason string is what the user is
+    shown when Customize Shortcuts… refuses the key."""
+    copy = RESERVED_SEQUENCES["Ctrl+C"]
+    paste = RESERVED_SEQUENCES["Ctrl+V"]
+    for reason in (copy, paste):
+        assert "editor widget" in reason  # Qt's built-in, still named
+        assert "Caption Management grid" in reason  # and the real host
+        assert "(§26/§27)" in reason  # the citation shape every row carries
+    # Two operations, two reasons (DEC-014): never one merged clipboard sentence.
+    assert copy != paste
+    # `Ctrl+X` is deliberately NOT changed for symmetry: nothing in the app hosts
+    # a Cut shortcut, so "a Qt built-in" is the whole truth there and naming a
+    # host would make the user-facing text a different kind of wrong.
+    cut = RESERVED_SEQUENCES["Ctrl+X"]
+    assert cut == "Cut — a Qt built-in inside every editor widget (§26/§27)"
+    assert "grid" not in cut
+
+
+def test_the_older_clipboard_spellings_are_reserved():
+    """BUG-260810140553 Part 1. `Ctrl+Insert`, `Shift+Insert` and `Shift+Delete`
+    are Qt's older chords for Copy/Paste/Cut and are native on **both** keyboard
+    schemes, so they are not a platform split and needed no bind-or-suppress
+    ruling — but they were free targets in Customize Shortcuts…, and a menu
+    command assigned to `Shift+Insert` would have killed paste-by-`Shift+Insert`
+    in every editor on every platform."""
+    for sequence in ("Ctrl+Insert", "Shift+Insert", "Shift+Delete"):
+        assert sequence in RESERVED_SEQUENCES
+        # The ledger's canonical spelling, which `docs/KEYBINDINGS.md` and its
+        # test compare against verbatim.
+        assert normalize_sequence(sequence) == sequence
+        reason = RESERVED_SEQUENCES[sequence]
+        assert "both keyboard schemes" in reason
+        assert "(§26/§27)" in reason
+    # Read back through the spelling-insensitive lookup, as the dialog does with
+    # whatever the user pressed.
+    assert reserved_reason("Shift+Ins") is not None
+    assert reserved_reason("ctrl+ins") is not None
+    assert reserved_reason("shift+del") is not None
+
+
+def test_shift_insert_is_refused_as_a_target_not_stolen():
+    refusal = refusal_for("file.open", "Shift+Insert")
+    assert refusal and "Shift+Insert" in refusal
+    with pytest.raises(ValueError):
+        assign_shortcut({"file.open": "Ctrl+O"}, "file.open", "shift+ins")
+
+
+def test_the_app_owns_its_paste_chords_instead_of_inheriting_qts_table():
+    """DEC-015, applied to the read-only surfaces' edit-attempt hint.
+    `XmlEditor` used to ask `event.matches(StandardKey.Paste)`, which is Qt's
+    per-scheme table: the hint fired for `Ctrl+Shift+Insert`/`F18` on Linux and
+    for neither on Windows. `EDITOR_PASTE_CHORDS` is the app's own answer."""
+    from pgtp_editor.ui.shortcut_registry import EDITOR_PASTE_CHORDS
+
+    assert EDITOR_PASTE_CHORDS == (
+        "Ctrl+V",
+        "Ctrl+Shift+Insert",
+        "Shift+Insert",
+        "Paste",
+    )
+    for chord in EDITOR_PASTE_CHORDS:
+        assert normalize_sequence(chord) == chord
+    # `Ctrl+Shift+Insert` is IN the set since the owner ruled the app binds it as
+    # paste on both platforms — it is one of the app's own paste chords now, so a
+    # read-only surface owes it the same hint as `Ctrl+V`. `F18` is still out: the
+    # physically-absent-keys carve-out leaves it to Qt.
+    assert "F18" not in EDITOR_PASTE_CHORDS
+    # Every modifier chord in the set is reserved, so no command can be
+    # retargeted onto a chord an editor answers. `Paste` is a media key, not a
+    # chord Customize Shortcuts can hand out, so it needs no row.
+    assert reserved_reason("Ctrl+V") is not None
+    assert reserved_reason("Ctrl+Shift+Insert") is not None
+    assert reserved_reason("Shift+Insert") is not None
+
+
+def test_ctrl_w_and_ctrl_o_are_unreserved_on_purpose():
+    """BUG-260810143058, and the reason is recorded here because an
+    unreserved-on-purpose chord needs an assertion exactly as much as a reserved
+    one — a sweep already re-filed this once.
+
+    `Ctrl+S`/`Ctrl+Shift+S` are reserved for a CAPABILITY reason: FQ-020 removed
+    the save gesture altogether, so no command may ever sit there. `Ctrl+W` (and
+    its twin `Ctrl+O`) lost its default on 2026-08-09 for a narrower reason — no
+    single "close" is the obvious default in an app that closes projects, `.pgtp`
+    documents, PHP tabs, DDL object tabs, the XSD tab and console tabs — which is
+    an argument against a default, not against a user who knows which close they
+    mean. `manual.md` invites the user to assign both.
+    """
+    assert "Ctrl+W" not in RESERVED_SEQUENCES
+    assert "Ctrl+O" not in RESERVED_SEQUENCES
+    assert reserved_reason("Ctrl+W") is None
+    assert reserved_reason("Ctrl+O") is None
+    # The distinction, stated: the capability ban IS reserved.
+    assert "Ctrl+S" in RESERVED_SEQUENCES

@@ -189,6 +189,127 @@ def test_ctrl_z_undoes_this_tabs_own_stack(qtbot):
     assert tab.text() == "x"
 
 
+def test_ctrl_y_is_stated_here_rather_than_left_to_qts_platform_table(qtbot):
+    """BUG-056/DEC-015: `Ctrl+Y` is a Qt `StandardKey.Redo` binding on the
+    **Windows** keyboard scheme only, so a surface that leans on Qt's native
+    handler redoes on Windows and is a dead key on Linux -- measured in the
+    Sandbox SQL Console. This tab states the answer itself, so it is the same on
+    both systems. Asserted through the FILTER, never through a native redo: the
+    offscreen platform runs the Windows scheme, so the native path would be green
+    for the wrong reason."""
+    tab = PhpFileTab(None, "x")
+    qtbot.addWidget(tab)
+    tab.editor.insertPlainText("yz")
+    assert (
+        tab.eventFilter(
+            tab.editor,
+            QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier
+            ),
+        )
+        is True
+    )
+    assert tab.text() == "x"
+
+    event = QKeyEvent(
+        QEvent.Type.KeyPress, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier
+    )
+
+    assert tab.eventFilter(tab.editor, event) is True
+    assert tab.text() == "yzx"
+
+
+def test_ctrl_shift_z_is_claimed_here_and_is_not_a_redo(qtbot):
+    """DEC-015 freed `Ctrl+Shift+Z` from redo, and this tab must still CLAIM it:
+    Qt binds the chord as native Redo under `KB_Win | KB_X11`, so a tab that
+    stopped claiming it would keep redoing on both platforms and silently defeat
+    the reassignment. Both halves are asserted -- the override is accepted, and
+    the key press runs nothing."""
+    tab = PhpFileTab(None, "x")
+    qtbot.addWidget(tab)
+    tab.editor.insertPlainText("yz")
+    tab.editor.undo()
+    assert tab.text() == "x"
+    mods = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+
+    override = QKeyEvent(QEvent.Type.ShortcutOverride, Qt.Key.Key_Z, mods)
+    assert tab.eventFilter(tab.editor, override) is True
+    assert override.isAccepted() is True
+
+    assert (
+        tab.eventFilter(tab.editor, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Z, mods))
+        is True
+    )
+    assert tab.text() == "x"  # NOT redone
+
+
+def test_the_windows_only_alt_backspace_pair_is_suppressed(qtbot):
+    """Owner rule: a chord means the same thing on both systems or is not bound
+    at all. Qt binds `Alt+Backspace` (Undo) and `Alt+Shift+Backspace` (Redo)
+    under `KB_Win` **only**, so leaving them to Qt ships two different keyboards.
+    They are suppressed: consumed here, running nothing, on every platform."""
+    tab = PhpFileTab(None, "x")
+    qtbot.addWidget(tab)
+    tab.editor.insertPlainText("yz")
+    alt = Qt.KeyboardModifier.AltModifier
+    alt_shift = Qt.KeyboardModifier.AltModifier | Qt.KeyboardModifier.ShiftModifier
+
+    for mods in (alt, alt_shift):
+        event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Backspace, mods)
+        assert tab.eventFilter(tab.editor, event) is True
+        assert tab.text() == "yzx"  # neither undone nor redone
+
+
+def test_the_x11_only_editing_chords_are_answered_by_this_tab(qtbot):
+    """The owner's 2026-08-10 ruling: `Ctrl+Shift+Insert` (paste) and
+    `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are implemented by the app on BOTH platforms, at
+    all six editing surfaces. Qt binds them on the Linux/KDE scheme only, and the
+    offscreen platform runs the **Windows** scheme — so asserting the filter's
+    answer is the only way to test them at all, and a native-answer assertion
+    would be green for the wrong reason on the one platform the suite can see.
+
+    This tab's buffer is editable, so the answer is the edit itself."""
+    ctrl = Qt.KeyboardModifier.ControlModifier
+
+    def press(tab, key, mods=ctrl):
+        override = QKeyEvent(QEvent.Type.ShortcutOverride, key, mods)
+        assert tab.eventFilter(tab.editor, override) is True
+        assert override.isAccepted() is True
+        event = QKeyEvent(QEvent.Type.KeyPress, key, mods)
+        assert tab.eventFilter(tab.editor, event) is True
+
+    def tab_at(text, position):
+        tab = PhpFileTab(None, text)
+        qtbot.addWidget(tab)
+        cursor = tab.editor.textCursor()
+        cursor.setPosition(position)
+        tab.editor.setTextCursor(cursor)
+        return tab
+
+    deleted_char = tab_at("one\ntwo", 0)
+    press(deleted_char, Qt.Key.Key_D)
+    assert deleted_char.text() == "ne\ntwo"
+
+    to_eol = tab_at("one\ntwo", 1)
+    press(to_eol, Qt.Key.Key_K)
+    assert to_eol.text() == "o\ntwo"
+
+    whole_line = tab_at("one\ntwo", 1)
+    press(whole_line, Qt.Key.Key_U)
+    assert whole_line.text() == "two"
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText("!")
+    pasted = tab_at("one\ntwo", 0)
+    press(
+        pasted,
+        Qt.Key.Key_Insert,
+        Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+    )
+    assert pasted.text() == "!one\ntwo"
+
+
 def test_navigate_to_line_delegates_to_the_code_editor(qtbot):
     tab = PhpFileTab(None, "a\nb\nc\n")
     qtbot.addWidget(tab)
@@ -363,7 +484,12 @@ def test_save_defaults_to_the_opened_path_via_the_stage(qtbot, tmp_path):
 # The service is injected and `_run_async` is replaced with a synchronous
 # stand-in (the project's convention), so no test here spawns `php`, threads,
 # or waits on anything.
-from pgtp_editor.lint.findings import LINT_PREFIX, LintOutcome, LintStatus  # noqa: E402
+from pgtp_editor.lint.findings import (  # noqa: E402
+    EXTERNAL_TOOLS_SETTINGS_PATH,
+    LINT_PREFIX,
+    LintOutcome,
+    LintStatus,
+)
 from pgtp_editor.lint.runner import LintProcessResult  # noqa: E402
 from pgtp_editor.lint.service import LintService  # noqa: E402
 
@@ -416,7 +542,8 @@ def test_request_lint_with_no_service_still_reports_a_lint_line(qtbot):
     lines = _lint_texts(tab)
     assert lines
     assert lines[0].text.startswith(LINT_PREFIX)
-    assert "Locate PHP Linter" in lines[0].text
+    # The remedy moved with the setting (FQ-260812025705).
+    assert EXTERNAL_TOOLS_SETTINGS_PATH in lines[0].text
 
 
 def test_clean_lint_reports_ok(qtbot, tmp_path):

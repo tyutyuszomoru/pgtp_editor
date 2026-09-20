@@ -5,15 +5,23 @@ The editable counterpart of §18.1's read-only EditorPanel: same CodeEditor in
 "sql" mode plus its own FindReplaceBar, project-decoupled, no database access,
 no sandbox button row (carve-out 2).
 """
+import ast
+import re
 from pathlib import Path
 
+import pytest
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent, QKeySequence, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from pgtp_editor.ui.code_editor import CodeEditor, _SQL_KEYWORDS
-from pgtp_editor.ui.ddl_object_editor import DdlObjectEditorPanel, DdlObjectRef
+import pgtp_editor.ui.ddl_object_editor as _ddl_object_editor_module
+from pgtp_editor.ui.ddl_object_editor import (
+    DdlObjectEditorPanel,
+    DdlObjectRef,
+    _drop_statement,
+)
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar
 
 _SRC = (
@@ -61,6 +69,42 @@ def test_qualified_is_the_full_identity():
     assert _PLAIN.qualified == "pr.recalc()"
     assert _OVERLOAD.qualified == "pr.fmt(integer)"
     assert _TRIGGER.qualified == "pr.orders.trg_audit"
+
+
+# --- A view's identity (`FQ-260812025836`) ----------------------------------
+_VIEW = DdlObjectRef(kind="view", schema="pr", name="orders_v")
+
+_VIEW_SRC = "CREATE OR REPLACE VIEW pr.orders_v AS\nSELECT id FROM pr.orders;\n"
+
+
+def test_a_view_is_never_rendered_with_empty_parens():
+    """The defect this feature would have shipped: `qualified` was
+    `f"{schema}.{name}{signature}"` for everything non-trigger, and `signature`
+    spells `()` on empty `arg_types` -- so a view would have been named
+    `pr.orders_v()`, an object that exists under no such name."""
+    assert _VIEW.qualified == "pr.orders_v"
+    assert _VIEW.short_title == "orders_v"
+    assert "(" not in _VIEW.qualified
+    assert "(" not in _VIEW.short_title
+
+
+def test_a_view_is_not_a_routine_and_not_checkout_eligible():
+    assert _VIEW.is_routine is False
+    assert _VIEW.is_trigger is False
+    # §18.2's `ddl/*.sql` scheme would collide `pr.orders_v` the view with
+    # `pr.orders_v()` the function, and its header recovery reads
+    # FUNCTION/PROCEDURE only -- so a view is edit-and-apply only for v1.
+    assert _VIEW.is_checkout_eligible is False
+    assert _PLAIN.is_checkout_eligible is True
+    assert _TRIGGER.is_checkout_eligible is True
+    assert _PLAIN.is_routine is True
+
+
+def test_the_drop_statement_for_a_view_names_a_real_object():
+    """`_drop_statement` builds real SQL out of `qualified`, which is why the
+    `()` defect was not cosmetic: it would have handed the user
+    `DROP VIEW pr.orders_v();`."""
+    assert _drop_statement(_VIEW) == "DROP VIEW pr.orders_v;"
 
 
 def test_key_distinguishes_two_overloads_and_is_usable_as_a_dict_key():
@@ -123,19 +167,39 @@ def test_find_replace_bar_is_per_instance_and_wired_to_its_own_editor(qtbot):
     assert a.find_replace_bar.parent() is a
 
 
-def test_find_all_is_inert_and_never_reports_a_false_zero_matches(qtbot):
-    """Carve-out 3 (§18.5): Find All is present (the shared FindReplaceBar)
-    but produces no results at all here -- the panel wires no on_find_all
-    callback, so the bar's constructor default (`lambda term: None`) is what
-    runs. Calling it must not raise and must not flip find-all-running state
-    (which only a real results-reporting host would do), so nothing reports
-    a false "0 matches" as though the buffer had been searched."""
+def test_find_all_publishes_its_request_instead_of_being_inert(qtbot):
+    """§18.5 carve-out 3 is RETIRED (BUG-060). Find All used to produce no
+    results at all here: the panel wired no `on_find_all` callback, so the bar's
+    constructor default (`lambda term: None`) ran and the button did nothing.
+
+    The panel still wires nothing -- it has no audit surface and no business
+    knowing about one, which is why the fix is not a callback threaded down here
+    -- but an unwired bar now PUBLISHES the request, and the find lane answers
+    it (see `tests/ui/test_find_all_surfaces.py` for the results themselves).
+
+    The observer is registered and removed locally so the assertion does not
+    depend on which windows another test left alive."""
+    from pgtp_editor.ui.find_replace_bar import (
+        FIND_ALL_REQUESTED,
+        add_find_all_observer,
+        remove_find_all_observer,
+    )
+
     panel = _panel(qtbot, text="needle needle needle")
+    assert panel.find_replace_bar._on_find_all is None  # still no per-panel wiring
     panel.find_replace_bar._find_field.setText("needle")
+    published = []
 
-    panel.find_replace_bar.find_all()  # must not raise
+    def observer(bar, term, reason):
+        published.append((bar, term, reason))
 
-    assert panel.find_replace_bar._find_all_running is False
+    add_find_all_observer(observer)
+    try:
+        panel.find_replace_bar.find_all()
+    finally:
+        remove_find_all_observer(observer)
+
+    assert published == [(panel.find_replace_bar, "needle", FIND_ALL_REQUESTED)]
 
 
 def test_replace_current_selection_actually_replaces_here(qtbot):
@@ -523,9 +587,12 @@ def test_event_filter_ctrl_z_key_press_calls_the_panels_own_undo(qtbot):
 
 
 def test_event_filter_claims_ctrl_shift_z_shortcut_override(qtbot):
-    """BUG-053: Ctrl+Shift+Z is the second redo chord (BUG-050) and is
-    reserved app-wide, so this editable tab must claim it exactly as it
-    claims Ctrl+Y -- not leave it to the window."""
+    """DEC-015: Ctrl+Shift+Z is no longer redo, but it is still RESERVED and
+    still claimed here -- and now for a sharper reason. Qt's compiled binding
+    table carries the chord as native `StandardKey.Redo` under `KB_Win | KB_X11`
+    (BUG-056 measured both schemes), so a surface that stops claiming it does
+    not stop redoing: Qt answers instead. The claim is what makes *"redo is
+    always Ctrl+Y"* true."""
     panel = _panel(qtbot, text="alpha\n")
     modifiers = (
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
@@ -538,10 +605,14 @@ def test_event_filter_claims_ctrl_shift_z_shortcut_override(qtbot):
     assert event.isAccepted() is True
 
 
-def test_event_filter_ctrl_shift_z_key_press_redoes(qtbot):
-    """BUG-053: the sibling `DdlEditorPanel` REFUSES this chord because its
-    buffer is read-only; this panel is editable, so the chord must reach
-    `editor.redo()`. Copying the sibling's refusal would break redo here."""
+def test_event_filter_ctrl_shift_z_key_press_is_claimed_and_does_not_redo(qtbot):
+    """DEC-015: `Ctrl+Y` is redo, everywhere, and Ctrl+Shift+Z is not.
+
+    The chord is still consumed (`handled is True`) -- that is the point, since
+    passing it on lets Qt redo -- but it runs no operation. FQ-034's
+    shrink-selection is what will answer it. Undo through Ctrl+Z still works,
+    which is what tells the two chords apart: DEC-014 forbids collapsing them
+    into one predicate for exactly this reason."""
     panel = _panel(qtbot, text="alpha\n")
     panel.editor.setFocus()
     _move_cursor_to_end(panel)
@@ -561,18 +632,74 @@ def test_event_filter_ctrl_shift_z_key_press_redoes(qtbot):
     handled = panel.eventFilter(panel.editor, _key_press(Qt.Key.Key_Z, modifiers))
 
     assert handled is True
+    assert panel.text() == "alpha\n"
+    # And the operation the chord lost is still reachable by the one chord that
+    # owns it.
+    assert (
+        panel.eventFilter(
+            panel.editor,
+            _key_press(Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier),
+        )
+        is True
+    )
     assert panel.text() == "alpha\nbeta"
 
 
-def test_ctrl_shift_z_redoes_through_a_real_key_press(qtbot):
-    """The end-to-end half: a real key press through a shown top level.
+def test_event_filter_answers_the_x11_only_editing_chords(qtbot):
+    """The owner's 2026-08-10 ruling at this surface: `Ctrl+Shift+Insert` (paste)
+    and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are implemented by the app on both platforms.
+    This tab is editable, so they edit — where the sibling `DdlEditorPanel`, whose
+    buffer is synthesized and read-only, states a refusal instead. Asserted
+    through the filter: the offscreen platform runs Qt's Windows scheme, which
+    binds none of these chords."""
+    ctrl = Qt.KeyboardModifier.ControlModifier
+    ctrl_shift = ctrl | Qt.KeyboardModifier.ShiftModifier
 
-    Note this one passes with OR without the fix -- `QPlainTextEdit` binds
-    `QKeySequence.StandardKey.Redo` (Ctrl+Shift+Z on this platform) natively,
-    exactly as it does Ctrl+Z/Ctrl+Y, which is why the file's other undo/redo
-    tests drive `panel.eventFilter` directly (see the note above). It is kept
-    as the user-visible assertion; the two `eventFilter` tests above are the
-    ones that fail without the fix."""
+    def panel_at(position):
+        panel = _panel(qtbot, text="alpha\nbeta\n")
+        cursor = panel.editor.textCursor()
+        cursor.setPosition(position)
+        panel.editor.setTextCursor(cursor)
+        return panel
+
+    for key, mods, position, expected in (
+        (Qt.Key.Key_D, ctrl, 0, "lpha\nbeta\n"),
+        (Qt.Key.Key_K, ctrl, 1, "a\nbeta\n"),
+        (Qt.Key.Key_U, ctrl, 1, "beta\n"),
+    ):
+        panel = panel_at(position)
+        override = _shortcut_override(key, mods)
+        assert panel.eventFilter(panel.editor, override) is True
+        assert override.isAccepted() is True
+        assert panel.eventFilter(panel.editor, _key_press(key, mods)) is True
+        assert panel.text() == expected, key
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText("-- ")
+    panel = panel_at(0)
+    assert (
+        panel.eventFilter(panel.editor, _key_press(Qt.Key.Key_Insert, ctrl_shift))
+        is True
+    )
+    assert panel.text() == "-- alpha\nbeta\n"
+
+
+def test_ctrl_shift_z_does_not_redo_through_a_real_key_press(qtbot):
+    """The end-to-end half, and the ONLY test here that can see Qt's native
+    redo -- so it is the one that proves the reassignment took.
+
+    It fails without the fix: `QPlainTextEdit` binds `Ctrl+Shift+Z` to
+    `StandardKey.Redo` natively under **both** keyboard schemes (`KB_Win |
+    KB_X11`, read out of the compiled table by BUG-056), so dropping the panel's
+    branch instead of re-routing it would leave the chord redoing anyway.
+
+    A note on what the harness can and cannot see: the offscreen platform runs
+    Qt's **Windows** keyboard scheme, whose primary `Redo` binding is `Ctrl+Y`
+    (not `Ctrl+Shift+Z`, as an earlier version of this comment claimed). Nothing
+    about the *Linux* platform table is observable from here, which is why every
+    other undo/redo case in this file asserts the filter rather than the native
+    path."""
     panel = _panel(qtbot, text="alpha\n")
     panel.show()
     qtbot.waitExposed(panel)
@@ -587,6 +714,10 @@ def test_ctrl_shift_z_redoes_through_a_real_key_press(qtbot):
         Qt.Key.Key_Z,
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
     )
+
+    assert panel.text() == "alpha\n"
+
+    QTest.keyClick(panel.editor, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
 
     assert panel.text() == "alpha\nbeta"
 
@@ -941,26 +1072,69 @@ def test_apply_to_target_invokes_the_write_seam_when_everything_passes(qtbot):
     assert seams.target_calls == [(_PLAIN, _TARGET_SRC)]
 
 
-def test_precondition_1_refuses_a_changed_signature_naming_the_mismatch(qtbot):
-    """`CREATE OR REPLACE` on a changed (schema, name, argtypes) creates a
-    SECOND function and leaves the old one live -- refused outright, with no
-    override and no consent path."""
-    seams = _Seams(live=DdlObjectRef(kind="function", schema="pr", name="recalc",
-                                     arg_types=("integer",)))
-    panel = _wired(
-        qtbot,
-        seams,
-        text="CREATE OR REPLACE FUNCTION pr.recalc(p_id bigint) RETURNS void AS $$\n"
-        "BEGIN END;\n$$ LANGUAGE plpgsql;\n",
-    )
+_RENAMED_SRC = (
+    "CREATE OR REPLACE FUNCTION pr.recalc(p_id bigint) RETURNS void AS $$\n"
+    "BEGIN END;\n$$ LANGUAGE plpgsql;\n"
+)
+_LIVE_OTHER = DdlObjectRef(
+    kind="function", schema="pr", name="recalc", arg_types=("integer",)
+)
+
+
+def test_precondition_1_never_silently_no_ops_on_a_changed_signature(qtbot):
+    """The BUG-260810193333 regression pin, in the shape the report described.
+
+    A renamed/signature-changed buffer must NEVER leave the user with a deploy
+    gesture that appeared to succeed and did nothing: either the write seam runs
+    or the user is ASKED. The bug was that this branch returned False after one
+    Audit line and no dialog, while `Check and commit to sandbox` ran the very
+    same buffer.
+
+    `confirm=[]` is the teeth: the confirm stub pops from an empty list, so
+    reaching the seam without asking raises IndexError rather than passing.
+    """
+    seams = _Seams(live=_LIVE_OTHER, confirm=[])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
+    panel.record_check_report(_green())
+
+    with pytest.raises(IndexError):
+        panel.apply_to_target()
+
+    assert seams.confirms, "the mismatch must be put to the user, not swallowed"
+    assert seams.target_calls == []
+
+
+def test_precondition_1_runs_a_renamed_buffer_once_the_mismatch_is_confirmed(qtbot):
+    """Owner ruling 2026-08-10: trust the user, run the SQL. The confirmation
+    names BOTH identities and the second-object consequence."""
+    seams = _Seams(live=_LIVE_OTHER, confirm=[True, True])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is True
+
+    assert seams.target_calls == [(_PLAIN, _RENAMED_SRC)]
+    title, text = seams.confirms[0]
+    assert "apply to quality" in title.lower()
+    assert "pr.recalc(bigint)" in text and "pr.recalc(integer)" in text
+    assert "second object" in text.lower()
+    joined = " ".join(lines)
+    assert "proceeding despite identity mismatch" in joined
+
+
+def test_precondition_1_declining_the_mismatch_aborts_and_says_so(qtbot):
+    """Cancel aborts -- but reports, so even the refusal is not silent."""
+    seams = _Seams(live=_LIVE_OTHER, confirm=[False])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
     panel.record_check_report(_green())
     lines = _audit(panel)
 
     assert panel.apply_to_target() is False
 
     assert seams.target_calls == []
-    assert seams.confirms == []  # no override is offered for this one
     joined = " ".join(lines)
+    assert "cancelled" in joined
     assert "pr.recalc(bigint)" in joined and "pr.recalc(integer)" in joined
 
 
@@ -974,6 +1148,104 @@ def test_precondition_1_refuses_a_buffer_whose_signature_cannot_be_parsed(qtbot)
 
     assert seams.target_calls == []
     assert any("could not determine the object's signature" in line for line in lines)
+
+
+# --- BUG-260811021816: no user-facing string may name an unbuilt command -----
+def test_no_string_in_the_module_names_the_unbuilt_compare_schemas_command(qtbot):
+    """`Database ▸ Compare Schemas…` has never been built (§18.3 is designed but
+    unshipped -- `db/schema_snapshot.py:81`), yet two strings here sent the user
+    to it. The regression pin scans the SOURCE with whitespace normalized,
+    because the second site was WRAPPED mid-phrase (`"Database ▸ Compare "` +
+    `"Schemas… produces…"`) and a naive grep for the phrase never saw it.
+    """
+    source = Path(_ddl_object_editor_module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    # `ast` joins implicitly concatenated fragments for us, which is exactly the
+    # wrapping that hid site 2 from grep. Docstrings are excluded ON PURPOSE:
+    # `_precondition_signature`'s docstring names the unbuilt command to tell the
+    # next reader NOT to re-add it, and that note is not user-facing.
+    docstrings = {
+        node.body[0].value
+        for node in ast.walk(tree)
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        )
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    literals = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node not in docstrings
+    ]
+    # Whitespace-normalized, so a phrase broken over source lines still reads as
+    # one phrase even inside a single literal.
+    offenders = [
+        text for text in literals if "Compare Schemas" in re.sub(r"\s+", " ", text)
+    ]
+
+    assert offenders == []
+
+
+def test_precondition_1_refusal_points_at_the_sandbox_gesture_that_exists(qtbot):
+    seams = _Seams(live=_live_same())
+    panel = _wired(qtbot, seams, text="-- just a comment, no CREATE at all\n")
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    joined = " ".join(lines)
+    assert "Check and commit to sandbox" in joined
+    assert "Compare Schemas" not in joined
+
+
+def test_precondition_1_mismatch_hands_the_user_the_drop_statement(qtbot):
+    """Site 2 is the one that matters: the user is standing in front of a
+    duplicate object and this sentence is the ONLY cleanup instruction. The app
+    has no target-drop gesture, so the confirmation must hand over the SQL."""
+    seams = _Seams(live=_LIVE_OTHER, confirm=[True, True])
+    panel = _wired(qtbot, seams, text=_RENAMED_SRC)
+    panel.record_check_report(_green())
+
+    assert panel.apply_to_target() is True
+
+    _title, text = seams.confirms[0]
+    assert "DROP FUNCTION pr.recalc(integer);" in text
+    assert "Compare Schemas" not in text
+
+
+def test_drop_statement_renders_a_routine_with_its_argument_types():
+    assert (
+        _drop_statement(
+            DdlObjectRef(kind="function", schema="pr", name="recalc",
+                         arg_types=("integer",))
+        )
+        == "DROP FUNCTION pr.recalc(integer);"
+    )
+    assert (
+        _drop_statement(
+            DdlObjectRef(kind="procedure", schema="pr", name="rebuild",
+                         arg_types=("integer", "text"))
+        )
+        == "DROP PROCEDURE pr.rebuild(integer, text);"
+    )
+
+
+def test_drop_statement_renders_a_trigger_as_name_on_table():
+    """The branch most likely to be got wrong: `qualified` renders a trigger as
+    `schema.table.name`, which is not what `DROP TRIGGER` wants."""
+    assert (
+        _drop_statement(
+            DdlObjectRef(kind="trigger", schema="pr", name="trg_audit",
+                         table="orders")
+        )
+        == "DROP TRIGGER trg_audit ON pr.orders;"
+    )
 
 
 def test_precondition_1_allows_an_object_the_target_does_not_have_yet(qtbot):
@@ -1069,6 +1341,63 @@ def test_declined_confirmation_applies_nothing_to_the_target(qtbot):
 
     assert seams.target_calls == []
     assert any("cancelled" in line for line in lines)
+
+
+# --- A view goes through the SAME apply lane (`FQ-260812025836`) ------------
+def test_a_view_applies_to_quality_through_the_unchanged_lane(qtbot):
+    """Reuse, not a parallel path: the same seams, the same preconditions, the
+    same write call -- only the ref's kind differs."""
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(qtbot, seams, ref=_VIEW, text=_VIEW_SRC)
+    panel.record_check_report(_green())
+
+    assert panel.apply_to_target() is True
+
+    assert seams.target_calls == [(_VIEW, _VIEW_SRC)]
+
+
+def test_the_view_apply_confirmation_names_the_view_without_parens(qtbot):
+    """The exact text is the assertion, because the confirmation is where the
+    `pr.orders_v()` defect would have surfaced -- a dialog asking the user to
+    authorise a write to their quality database while naming an object that
+    does not exist."""
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(qtbot, seams, ref=_VIEW, text=_VIEW_SRC)
+    panel.record_check_report(_green())
+
+    panel.apply_to_target()
+
+    _title, text = seams.confirms[-1]
+    assert text.startswith("Apply pr.orders_v to quality database prod on db01:5432?")
+    assert "pr.orders_v()" not in text
+
+
+def test_the_view_apply_result_headline_names_the_view_without_parens(qtbot):
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(qtbot, seams, ref=_VIEW, text=_VIEW_SRC)
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    panel.apply_to_target()
+
+    assert any("applied pr.orders_v to database prod on db01:5432." in line for line in lines)
+    assert not any("orders_v()" in line for line in lines)
+
+
+def test_a_view_buffer_the_parser_cannot_read_is_refused_not_applied(qtbot):
+    """The buffer contract is unchanged: an unparseable buffer is a hard
+    refusal. A matview `CREATE` is exactly that -- it never becomes an apply."""
+    seams = _Seams(live=DdlObjectRef(kind="view", schema="pr", name="orders_v"))
+    panel = _wired(
+        qtbot, seams, ref=_VIEW, text="CREATE MATERIALIZED VIEW pr.orders_v AS SELECT 1;"
+    )
+    panel.record_check_report(_green())
+    lines = _audit(panel)
+
+    assert panel.apply_to_target() is False
+
+    assert seams.target_calls == []
+    assert any("refused" in line for line in lines)
 
 
 def test_apply_to_target_refuses_an_empty_buffer(qtbot):
@@ -1506,6 +1835,50 @@ def test_parse_buffer_identity_reads_a_trigger_name_and_table():
 
 def test_parse_buffer_identity_returns_none_when_there_is_no_create():
     assert parse_buffer_identity("SELECT 1;", _PLAIN) is None
+
+
+def test_parse_buffer_identity_reads_a_view():
+    """Without this branch precondition 1 refuses every view buffer, so
+    `Apply to quality` would be dead for the one kind this feature adds."""
+    ref = parse_buffer_identity(_VIEW_SRC, _VIEW)
+    assert (ref.kind, ref.schema, ref.name, ref.arg_types) == ("view", "pr", "orders_v", ())
+    assert ref.qualified == "pr.orders_v"
+
+
+def test_parse_buffer_identity_reads_the_create_after_a_leading_drop_view():
+    """The owner's second, explicitly blessed shape for the cases
+    `OR REPLACE` cannot express: *"the ddl can start with drop view, then
+    create view. developers will know this."* No detection, no wizard -- the
+    identity is simply read off the CREATE."""
+    ref = parse_buffer_identity(
+        "DROP VIEW pr.orders_v;\nCREATE VIEW pr.orders_v AS SELECT 1 AS n;\n", _VIEW
+    )
+    assert (ref.kind, ref.name) == ("view", "orders_v")
+
+
+def test_parse_buffer_identity_refuses_a_materialized_view():
+    """`CREATE MATERIALIZED VIEW` must not be readable as a view: there is no
+    `CREATE OR REPLACE` form of it, so a buffer declaring one is unparseable
+    and precondition 1 refuses rather than treating it as a replace."""
+    assert parse_buffer_identity(
+        "CREATE MATERIALIZED VIEW pr.orders_mv AS SELECT 1;", _VIEW
+    ) is None
+
+
+def test_parse_buffer_identity_falls_back_to_the_tabs_schema_for_a_bare_view():
+    ref = parse_buffer_identity("CREATE OR REPLACE VIEW orders_v AS SELECT 1;", _VIEW)
+    assert (ref.schema, ref.name) == ("pr", "orders_v")
+
+
+def test_a_routine_header_still_wins_over_a_view_mentioned_later():
+    """The earliest header wins, so widening the parser cannot re-read an
+    existing routine buffer as something else."""
+    ref = parse_buffer_identity(
+        "CREATE FUNCTION pr.rebuild() RETURNS void AS $$\n"
+        "BEGIN\n  EXECUTE 'CREATE OR REPLACE VIEW pr.v AS SELECT 1';\nEND;\n$$;",
+        _PLAIN,
+    )
+    assert (ref.kind, ref.name) == ("function", "rebuild")
 
 
 # ===========================================================================

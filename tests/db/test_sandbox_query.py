@@ -27,12 +27,16 @@ from pgtp_editor.db.config import ConnectionParams
 from pgtp_editor.db.sandbox import SandboxMode, SandboxSession
 from pgtp_editor.db.sandbox_query import (
     DEFAULT_MAX_ROWS,
+    DEFAULT_STATEMENT_TIMEOUT_MS,
+    MIN_STATEMENT_TIMEOUT_MS,
+    TIMEOUT_SQLSTATE,
     QueryError,
     QueryOutcome,
     QueryResult,
     RawResult,
     run_sandbox_query,
     status_line,
+    timeout_error,
 )
 
 PARAMS = ConnectionParams(host="localhost", port="5432", database="pgtp_sandbox_demo")
@@ -48,10 +52,12 @@ class RecordingRunner:
     def __init__(self, result=None, error: Exception | None = None) -> None:
         self.result = result
         self.error = error
-        self.calls: list[tuple[ConnectionParams, str, int]] = []
+        self.calls: list[tuple[ConnectionParams, str, int, int]] = []
 
-    def __call__(self, params, sql, *, max_rows):
-        self.calls.append((params, sql, max_rows))
+    def __call__(
+        self, params, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS
+    ):
+        self.calls.append((params, sql, max_rows, statement_timeout_ms))
         if self.error is not None:
             raise self.error
         return self.result
@@ -90,10 +96,11 @@ def test_query_targets_the_sessions_params():
     runner = RecordingRunner(RawResult(columns=("x",), rows=[(1,)]))
     run_sandbox_query(make_session(), "SELECT 1", runner=runner)
 
-    params, sql, max_rows = runner.calls[0]
+    params, sql, max_rows, statement_timeout_ms = runner.calls[0]
     assert params is PARAMS
     assert sql == "SELECT 1"
     assert max_rows == DEFAULT_MAX_ROWS
+    assert statement_timeout_ms == DEFAULT_STATEMENT_TIMEOUT_MS
 
 
 def test_run_sandbox_query_requires_a_session_not_bare_params():
@@ -209,6 +216,160 @@ def test_default_cap_is_sane():
     assert 100 <= DEFAULT_MAX_ROWS <= 100_000
 
 
+# -- the statement timeout (§18.5 D4's PRIMARY control) --------------------
+
+
+class TimedOut(Exception):
+    """A driver exception shaped like psycopg's for a cancelled statement --
+    sqlstate `57014` plus a `diag` carrying a position, so the test can prove
+    the diagnostics survive the rewording."""
+
+    sqlstate = TIMEOUT_SQLSTATE
+
+    class diag:  # noqa: N801 -- mirrors psycopg's attribute name
+        message_detail = "the detail"
+        message_hint = "the hint"
+        statement_position = "10"
+
+
+def test_the_default_timeout_is_passed_down_when_the_caller_says_nothing():
+    """Asserted THROUGH THE SEAM, not by reading the constant: what matters is
+    that a value actually reaches the executor on every run."""
+    runner = RecordingRunner(RawResult(columns=("x",), rows=[(1,)]))
+    run_sandbox_query(make_session(), "SELECT 1", runner=runner)
+
+    assert runner.calls[0][3] == DEFAULT_STATEMENT_TIMEOUT_MS
+
+
+def test_an_explicit_timeout_is_passed_down_verbatim():
+    runner = RecordingRunner(RawResult(columns=("x",), rows=[(1,)]))
+    run_sandbox_query(
+        make_session(), "SELECT 1", statement_timeout_ms=5_000, runner=runner
+    )
+
+    assert runner.calls[0][3] == 5_000
+
+
+@pytest.mark.parametrize("value", [0, -1, 1, 999])
+def test_below_the_floor_is_refused_and_nothing_is_sent(value):
+    """The floor is enforced loudly, and **there is no value meaning
+    "unlimited"** -- 0 and -1 are refused exactly like 999, so no code path can
+    ask for an untimed statement."""
+    runner = RecordingRunner(RawResult(columns=("x",), rows=[(1,)]))
+    with pytest.raises(ValueError):
+        run_sandbox_query(
+            make_session(), "SELECT 1", statement_timeout_ms=value, runner=runner
+        )
+    assert runner.calls == []
+
+
+def test_the_floor_itself_is_accepted():
+    runner = RecordingRunner(RawResult(columns=("x",), rows=[(1,)]))
+    run_sandbox_query(
+        make_session(),
+        "SELECT 1",
+        statement_timeout_ms=MIN_STATEMENT_TIMEOUT_MS,
+        runner=runner,
+    )
+    assert runner.calls[0][3] == MIN_STATEMENT_TIMEOUT_MS
+
+
+def test_a_timeout_is_reworded_and_keeps_its_diagnostics():
+    """§18.5 D4's sentence, and only `message` replaced: an error that lost its
+    `position`/`line` would stop being clickable, and `error_text` prefixes the
+    sqlstate."""
+    runner = RecordingRunner(error=TimedOut("ERROR:  canceling statement due to statement timeout"))
+    result = run_sandbox_query(
+        make_session(),
+        "SELECT 1\nFROM slow",
+        statement_timeout_ms=30_000,
+        runner=runner,
+    )
+
+    assert result.outcome is QueryOutcome.ERROR
+    assert result.error is not None
+    assert result.error.message == (
+        "statement cancelled: exceeded the console's statement timeout of 30 s "
+        "— raise the timeout or narrow the query"
+    )
+    assert result.error.sqlstate == TIMEOUT_SQLSTATE
+    assert result.error.position == 10
+    assert result.error.line == 2
+    assert result.error.detail == "the detail"
+    assert result.error.hint == "the hint"
+
+
+def test_the_sentence_names_the_timeout_that_was_actually_in_force():
+    runner = RecordingRunner(error=TimedOut("canceling statement"))
+    result = run_sandbox_query(
+        make_session(), "SELECT 1", statement_timeout_ms=90_000, runner=runner
+    )
+    assert "90 s" in str(result.error)
+
+    runner = RecordingRunner(error=TimedOut("canceling statement"))
+    result = run_sandbox_query(
+        make_session(), "SELECT 1", statement_timeout_ms=1_500, runner=runner
+    )
+    assert "1.5 s" in str(result.error)
+
+
+def test_a_non_timeout_failure_is_left_completely_untouched():
+    class Failure(Exception):
+        sqlstate = "42601"
+
+    runner = RecordingRunner(error=Failure("ERROR:  syntax error"))
+    result = run_sandbox_query(make_session(), "SELECT oops", runner=runner)
+
+    assert result.error is not None
+    assert result.error.message == "ERROR:  syntax error"
+    assert "statement cancelled" not in str(result.error)
+
+
+def test_timeout_error_is_a_named_reusable_helper():
+    """Module level, so §18.5 D4b's `run_quality_query` produces the identical
+    sentence by calling it rather than by copying the wording."""
+    original = QueryError(
+        message="ERROR:  canceling statement due to statement timeout",
+        sqlstate=TIMEOUT_SQLSTATE,
+        detail="d",
+        hint="h",
+        position=4,
+        line=1,
+    )
+    reworded = timeout_error(original, 30_000)
+
+    assert reworded.message.startswith("statement cancelled: exceeded the console's")
+    # Everything except `message` survives, and the original is untouched.
+    assert (reworded.sqlstate, reworded.detail, reworded.hint) == ("57014", "d", "h")
+    assert (reworded.position, reworded.line) == (4, 1)
+    assert original.message.startswith("ERROR:")
+
+
+def test_the_timeout_constants_are_re_exported_not_re_declared():
+    """One number, one place: they live in `db/sandbox.py` beside the seam they
+    parameterise (declaring them here would be an import cycle), and this module
+    re-exports them so the UI and D4b read policy from one module."""
+    from pgtp_editor.db import sandbox
+
+    assert DEFAULT_STATEMENT_TIMEOUT_MS is sandbox.DEFAULT_STATEMENT_TIMEOUT_MS
+    assert MIN_STATEMENT_TIMEOUT_MS is sandbox.MIN_STATEMENT_TIMEOUT_MS
+    assert DEFAULT_STATEMENT_TIMEOUT_MS == 30_000
+    assert MIN_STATEMENT_TIMEOUT_MS == 1_000
+
+
+def test_there_is_no_unlimited_timeout_anywhere_in_this_module():
+    """A grep-style guard on the design's other half: the absence of an
+    "unlimited" setting is what makes the timeout mandatory."""
+    import inspect
+
+    import pgtp_editor.db.sandbox_query as module
+
+    source = inspect.getsource(module.run_sandbox_query)
+    assert "statement_timeout_ms" in source
+    # No None-means-forever path: the parameter is an int with a floor.
+    assert "statement_timeout_ms: int | None" not in inspect.getsource(module)
+
+
 # -- no connection ---------------------------------------------------------
 
 
@@ -235,8 +396,15 @@ def test_the_default_runner_is_the_sessions_executor_fetch():
         def __init__(self):
             self.calls = []
 
-        def fetch(self, params, sql, *, max_rows):
-            self.calls.append((params, sql, max_rows))
+        def fetch(
+            self,
+            params,
+            sql,
+            *,
+            max_rows,
+            statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS,
+        ):
+            self.calls.append((params, sql, max_rows, statement_timeout_ms))
             return RawResult(columns=("x",), rows=[(1,)])
 
         def execute(self, params, statements):  # pragma: no cover - unused here
@@ -253,7 +421,9 @@ def test_the_default_runner_is_the_sessions_executor_fetch():
     result = run_sandbox_query(session, "SELECT 1", max_rows=7)
 
     assert result.outcome is QueryOutcome.ROWS
-    assert executor.calls == [(PARAMS, "SELECT 1", 7)]
+    assert executor.calls == [
+        (PARAMS, "SELECT 1", 7, DEFAULT_STATEMENT_TIMEOUT_MS)
+    ]
 
 
 def test_raw_result_is_the_seams_own_type():

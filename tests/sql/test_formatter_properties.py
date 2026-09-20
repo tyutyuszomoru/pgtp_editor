@@ -21,7 +21,7 @@ import time
 
 import pytest
 
-from pgtp_editor.sql import FormatResult, format_selection
+from pgtp_editor.sql import FormatConfig, FormatResult, format_selection
 from pgtp_editor.sql.tokenizer import tokenize
 
 
@@ -101,6 +101,16 @@ CORPUS = [
     # -- transaction control ----------------------------------------------
     "BEGIN;\nUPDATE t SET a = 1;\nEND;",
     "begin; select 1; commit;",
+    # Every spelling of the same statement, because for a long time only the bare
+    # `BEGIN;` one worked and the rest were refused outright (BUG-260810194657).
+    "BEGIN TRANSACTION;\nUPDATE t SET a = 1;\nCOMMIT;",
+    "BEGIN WORK;\nUPDATE t SET a = 1;\nEND;",
+    "BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;\nUPDATE t SET a = 1;\nROLLBACK;",
+    "begin read only;\nselect 1;\ncommit;",
+    "BEGIN TRANSACTION;\nCREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END $$"
+    " LANGUAGE plpgsql;\nCOMMIT;",
+    # ... and the block that merely *looks* like one of those spellings.
+    "BEGIN\nwork := 1;\nEND;",
     # -- comments and opaque regions --------------------------------------
     "-- leading note\nselect a from t; -- trailing note",
     "select a /* inline */, b from t;",
@@ -172,12 +182,17 @@ def test_formatting_is_deterministic(text):
 
 
 def test_indent_unit_choice_does_not_change_the_token_stream():
+    # FQ-033: the unit is carried by `FormatConfig` now. `""` is no longer a
+    # *reachable* value (`FormatConfig.sanitized()` is the loader's gate and
+    # replaces it), but the engine is still handed it raw here, because "the unit
+    # never changes the token stream" must hold for whatever it is given.
     for unit in ("    ", "  ", "\t", ""):
+        config = FormatConfig(indent_unit=unit)
         for text in (TRIGGER_BODY, TRIGGER_FUNCTION, "begin if a then x := 1; end if; end;"):
-            result = format_selection(text, indent_unit=unit)
+            result = format_selection(text, config=config)
             assert result.ok, [issue.message for issue in result.issues]
             assert code(result.text) == code(text)
-            assert format_selection(result.text, indent_unit=unit).text == result.text
+            assert format_selection(result.text, config=config).text == result.text
 
 
 # --------------------------------------------------------------------------
@@ -196,6 +211,9 @@ ADVERSARIAL = {
     "lone_end_semicolon": "end;",
     "lone_end_if": "end if;",
     "lone_begin": "begin",
+    "lone_begin_transaction": "begin transaction",  # phrase at the very end of the input
+    "begin_half_mode_list": "begin transaction isolation",
+    "begin_mode_head_only": "begin read",
     "deep_parens": "select " + "(" * 80 + "1" + ")" * 80 + " from t",
     "deep_blocks": "begin\n" * 40 + "x := 1;\n" + "end;\n" * 40,
     "unbalanced_deep_blocks": "begin\n" * 40 + "x := 1;\n" + "end;\n" * 39,

@@ -77,22 +77,23 @@ def test_locate_generator_cancel_is_a_noop(qtbot, tmp_path):
     assert load_executable_path(base_dir=tmp_path) is None
 
 
-def test_locate_generator_menu_action_is_wired(qtbot, tmp_path):
-    from tests.ui._menu_helpers import find_action, find_top_menu
+def test_the_locate_generator_menu_action_is_GONE_from_generation(qtbot, tmp_path):
+    """FQ-260812025705 MOVED it into `Settings ▸ Software settings… ▸ External
+    tools` — removed from `Generation`, not duplicated there, the same rule the
+    four surfaces FQ-260812002827 absorbed were held to.
+
+    Its slot (`locate_generator`) survives and is driven from the pane; the pane
+    test in `test_software_settings_dialog.py` covers that direction, and the
+    method's own persistence tests above did not move.
+    """
+    from tests.ui._menu_helpers import action_labels, find_action, find_top_menu
 
     window = MainWindow(generator_config_dir=tmp_path)
     qtbot.addWidget(window)
-    exe = tmp_path / "gen.exe"
-    exe.write_text("", encoding="utf-8")
     menu = find_top_menu(window, "Generation")
 
-    with patch(
-        "pgtp_editor.ui.modals.QFileDialog.getOpenFileName",
-        return_value=(str(exe), "Executables (*.exe)"),
-    ):
-        find_action(menu, "Locate PHP Generator Executable...").trigger()
-
-    assert load_executable_path(base_dir=tmp_path) == str(exe)
+    assert find_action(menu, "Locate PHP Generator Executable...") is None
+    assert not [label for label in action_labels(menu) if "Locate" in label]
 
 
 from PySide6.QtWidgets import QMessageBox

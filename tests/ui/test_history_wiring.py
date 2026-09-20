@@ -215,7 +215,14 @@ def test_ctrl_y_in_editor_triggers_snapshot_redo(qtbot, tmp_path):
     assert _text(window) == edited
 
 
-def test_ctrl_shift_z_in_editor_triggers_snapshot_redo(qtbot, tmp_path):
+def test_ctrl_shift_z_in_editor_does_not_redo_anything(qtbot, tmp_path):
+    """DEC-015: *"Redo is always, on all systems Ctrl+Y"*, so Ctrl+Shift+Z is no
+    longer a second redo chord anywhere — and this is the case that proves it,
+    because `XmlEditor` must keep INTERCEPTING the chord to make it true. Qt
+    binds Ctrl+Shift+Z to `StandardKey.Redo` under `KB_Win | KB_X11`, so simply
+    deleting the old redo branch would have left the editor's own native redo
+    firing (a char-level one, at that). It is claimed and answers nothing until
+    FQ-034's shrink-selection lands."""
     window = _window(qtbot, tmp_path)
     path = _make_project(tmp_path)
     window.open_project_file(str(path))
@@ -228,12 +235,20 @@ def test_ctrl_shift_z_in_editor_triggers_snapshot_redo(qtbot, tmp_path):
     edited = _text(window)
     window._undo()
     assert window._history.current_index == 0
+    reverted = _text(window)
 
     QTest.keyClick(
         editor,
         Qt.Key.Key_Z,
         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
     )
+
+    assert window._history.current_index == 0
+    assert _text(window) == reverted
+
+    # The operation the chord lost is still one keystroke away, by its one
+    # spelling.
+    QTest.keyClick(editor, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
 
     assert window._history.current_index == 1
     assert _text(window) == edited
@@ -337,16 +352,42 @@ def test_discard_changes_seeds_snapshot(qtbot, tmp_path):
 
 def test_undo_redo_actions_exist_with_shortcuts(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
-    # On the Editor menu bar's History menu since FQ-016 (was Edit).
+    # On the Editor menu bar's History menu since FQ-016 (was Edit), and named
+    # for their PROJECT scope since BUG-064 -- they are not the menu twin of
+    # Ctrl+Z, they are a different command.
     history_menu = find_top_menu(window, "History")
-    undo = find_action(history_menu, "Undo")
-    redo = find_action(history_menu, "Redo")
+    undo = find_action(history_menu, "Undo Project Edit")
+    redo = find_action(history_menu, "Redo Project Edit")
     assert undo is not None
     assert redo is not None
     # Ctrl+Z / Ctrl+Y single-step shortcuts bound somewhere on the window.
     seqs = {s.key().toString() for s in window.findChildren(type(window._undo_shortcut))}
     assert QKeySequence("Ctrl+Z").toString() in seqs
     assert QKeySequence("Ctrl+Y").toString() in seqs
+
+
+def test_the_two_commands_named_undo_are_kept_apart(qtbot, tmp_path):
+    """BUG-064: the menu entries and the chord are TWO commands, and the fix was
+    to say so rather than to merge them (merging would reverse §18.5 carve-out 1
+    and re-open BUG-048).
+
+    Three assertions, one per half of the shape: the menu actions carry no chord
+    at all, their labels state the project scope, and `Ctrl+Z` still works — via
+    the tab-scoped slot, which is a different callable from the menu's."""
+    window = _window(qtbot, tmp_path)
+    history_menu = find_top_menu(window, "History")
+    undo = find_action(history_menu, "Undo Project Edit")
+    redo = find_action(history_menu, "Redo Project Edit")
+
+    assert undo.shortcut().isEmpty()
+    assert redo.shortcut().isEmpty()
+    # Neither is labelled the same as the operation the chord performs.
+    assert find_action(history_menu, "Undo") is None
+    assert find_action(history_menu, "Redo") is None
+    # The menu click is the UNSCOPED command; the keystroke path is the scoped
+    # one. Two distinct callables, deliberately.
+    assert undo is window._undo_action
+    assert window._undo != window._undo_raw_xml_history
 
 
 def _make_project_named(tmp_path, name, table):
@@ -391,11 +432,11 @@ def test_history_menu_undo_and_redo_step_distinctly(qtbot, tmp_path):
     window._capture_snapshot_now()
     history_menu = find_top_menu(window, "History")
 
-    # History ▸ Undo steps back to the opened text (distinct from Redo).
-    find_action(history_menu, "Undo").trigger()
+    # History ▸ Undo Project Edit steps back to the opened text.
+    find_action(history_menu, "Undo Project Edit").trigger()
     assert window.center_stage.xml_editor.toPlainText() != "edit one"
-    # History ▸ Redo steps forward again.
-    find_action(history_menu, "Redo").trigger()
+    # History ▸ Redo Project Edit steps forward again.
+    find_action(history_menu, "Redo Project Edit").trigger()
     assert window.center_stage.xml_editor.toPlainText() == "edit one"
     # History… exists as the combined navigator (opens non-modally).
     assert find_action(history_menu, "History…") is not None
@@ -504,10 +545,61 @@ def test_the_history_menu_also_refuses_a_locked_raw_xml_buffer(qtbot, tmp_path):
     window.center_stage.enter_diff_merge_mode()
     history_menu = find_top_menu(window, "History")
 
-    find_action(history_menu, "Undo").trigger()
+    find_action(history_menu, "Undo Project Edit").trigger()
 
     assert _text(window) == before
     assert "compare/merge mode" in window.statusBar().currentMessage()
+
+
+def test_every_keystroke_path_into_the_history_is_tab_scoped(qtbot, tmp_path):
+    """BUG-064 part (C): `Ctrl+Z` had TWO entry points with different guards.
+
+    The window `QShortcut` reached the tab-scoped slot, but the Raw XML editor's
+    `undo_requested` re-emission reached the UNSCOPED `_undo`. They were
+    equivalent only because `QStackedWidget` hides the departed page and Qt
+    clears focus from a hidden widget — an invariant nothing stated or tested,
+    and one that dies the day an `XmlEditor` is hosted in a dock beside another
+    tab. This pins it: the editor's signal lands on the scoped slot.
+    """
+    window = _armed_history_window(qtbot, tmp_path)
+    calls = []
+    window._undo_raw_xml_history = lambda: calls.append("scoped")
+
+    window.center_stage.xml_editor.undo_requested.emit()
+
+    assert calls == ["scoped"]
+
+
+def test_a_real_ctrl_z_in_the_raw_xml_editor_still_undoes(qtbot, tmp_path):
+    """The other half of part (C): re-pointing the signal must not cost the
+    keystroke its behaviour. A real key press, delivered the way BUG-048's block
+    delivers them."""
+    window = _armed_history_window(qtbot, tmp_path)
+    stage = window.center_stage
+    stage.setCurrentIndex(stage.raw_xml_tab_index)
+    stage.xml_editor.setFocus()
+    assert window._history.current_index == 1
+
+    _press_ctrl_z(window)
+
+    assert window._history.current_index == 0
+
+
+def test_the_menu_command_still_undoes_from_another_tab(qtbot, tmp_path):
+    """The unscoped meaning survives, which is the thing a careless part-(C)
+    change would silently delete: a CLICK means "undo the project", wherever the
+    user is (§18.5 carve-out 1). Only keystrokes are tab-scoped."""
+    window = _armed_history_window(qtbot, tmp_path)
+    stage = window.center_stage
+    index = stage.ddl_explorer_tab_index()
+    stage.setTabVisible(index, True)
+    stage.setCurrentIndex(index)
+    assert window._history.current_index == 1
+    history_menu = find_top_menu(window, "History")
+
+    find_action(history_menu, "Undo Project Edit").trigger()
+
+    assert window._history.current_index == 0
 
 
 def test_apply_history_text_refuses_a_read_only_buffer_on_its_own(qtbot, tmp_path):

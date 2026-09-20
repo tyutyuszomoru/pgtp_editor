@@ -180,9 +180,25 @@ class EditSnippetsDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
 
-        self.add_button.clicked.connect(self.add_snippet)
-        self.delete_button.clicked.connect(self.remove_selected)
-        self.restore_button.clicked.connect(self.restore_missing_defaults)
+        # Every one of these goes through a lambda, and none of them may be
+        # connected to the method directly. `QAbstractButton.clicked` emits
+        # `clicked(bool checked=False)`, and PySide6 hands that `checked` to the
+        # slot's FIRST positional parameter whenever the slot has one to spare.
+        # `add_snippet(prefix=…)` has one, so a click used to call
+        # `add_snippet(False)` and die in `_unique_prefix` on `False.strip()` —
+        # a traceback Qt swallows, leaving a button that visibly does nothing
+        # (BUG-260812001455). `remove_selected`/`restore_missing_defaults` take
+        # no parameters and so survive today only because PySide6 truncates the
+        # argument list to the slot's arity; that is an accident of their
+        # current signatures, not a property of the connection, and adding one
+        # optional parameter to either would silently make it the next dead
+        # button. The lambdas drop the argument for all three, so each handler
+        # runs on its own defaults and the programmatic seams keep their
+        # signatures. (Export/Import below connect to `Signal.emit`, which
+        # ignores the extra argument.)
+        self.add_button.clicked.connect(lambda: self.add_snippet())
+        self.delete_button.clicked.connect(lambda: self.remove_selected())
+        self.restore_button.clicked.connect(lambda: self.restore_missing_defaults())
         self.export_button.clicked.connect(self.export_requested.emit)
         self.import_button.clicked.connect(self.import_requested.emit)
         self.table.itemChanged.connect(self._on_item_changed)

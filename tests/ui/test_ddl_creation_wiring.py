@@ -65,6 +65,7 @@ from pgtp_editor.ui.table_dialogs import (
     DropTableDialog,
     SetCommentDialog,
 )
+from pgtp_editor.ui import toolbar_registry
 from pgtp_editor.ui.main_window import MainWindow
 from pgtp_editor.ui.new_routine_dialog import NewRoutineDialog
 from pgtp_editor.ui.new_trigger_dialog import NewTriggerDialog
@@ -232,13 +233,67 @@ def test_creating_an_object_without_a_project_writes_no_manifest(qtbot, tmp_path
 
 
 # --- menu entries ----------------------------------------------------------
-def test_database_menu_offers_new_function_procedure_and_project_status(qtbot, tmp_path):
+def test_database_menu_offers_new_function_procedure(qtbot, tmp_path):
     window = _window(qtbot, tmp_path)
 
     labels = action_labels(find_top_menu(window, "Database"))
 
     assert "New Function/Procedure…" in labels
-    assert "Project Status…" in labels
+
+
+def test_project_status_is_on_the_file_menu_not_the_database_menu(qtbot, tmp_path):
+    """BUG-058: §18.8's status screen MOVED to `File`, directly below
+    `Project Settings…` — the two concerns no longer share a menu, so this is a
+    separate case from `New Function/Procedure…` above."""
+    window = _window(qtbot, tmp_path)
+
+    assert "Project Status…" not in action_labels(find_top_menu(window, "Database"))
+    file_labels = action_labels(find_top_menu(window, "File"))
+    assert "Project Status…" in file_labels
+    assert file_labels.index("Project Status…") == (
+        file_labels.index("Project Settings…") + 1
+    )
+
+
+def test_the_file_menu_entry_opens_the_project_status_window(qtbot, tmp_path):
+    """Driven through the real `triggered` signal (the BUG-021 lesson): a direct
+    call to `_open_project_status` would pass a broken connect."""
+    window = _window(qtbot, tmp_path)
+    opened = []
+    window._open_project_status = lambda: opened.append(True)
+
+    find_action(find_top_menu(window, "File"), "Project Status…").trigger()
+
+    assert opened == [True]
+
+
+def test_project_status_is_not_gated_in_its_new_home(qtbot, tmp_path):
+    """It was a plain always-enabled Database item and stays one on File:
+    `_open_project_status` handles the projectless case itself, so the move must
+    not introduce (or lose) an enablement gate."""
+    window = _window(qtbot, tmp_path)
+    action = find_action(find_top_menu(window, "File"), "Project Status…")
+    assert window._ddl_project_folder is None
+    assert action.isEnabled() is True
+    assert action.isVisible() is True
+
+
+def test_a_toolbar_pinned_before_the_move_still_resolves(qtbot, tmp_path):
+    """BUG-058 changes the command's menu-path id, so a pinned button survives
+    only via `RENAMED_ID_ALIASES` — and the row must be in THAT table, never
+    `LEGACY_ID_ALIASES` (which is inverted into `ICON_ID_BY_COMMAND`)."""
+    assert toolbar_registry.RENAMED_ID_ALIASES["database.project-status"] == (
+        "file.project-status"
+    )
+    assert "database.project-status" not in toolbar_registry.LEGACY_ID_ALIASES
+
+    window = _window(qtbot, tmp_path)
+    known = dict(window._toolbar_ui.collect_menu_commands())
+    assert "file.project-status" in known
+    assert "database.project-status" not in known
+    assert toolbar_registry.resolve_ids(["database.project-status"], known) == [
+        "file.project-status"
+    ]
 
 
 def test_new_function_procedure_menu_entry_opens_the_dialog(qtbot, tmp_path):

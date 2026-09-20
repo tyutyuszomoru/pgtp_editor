@@ -111,12 +111,66 @@
   `docs/FEATURE_QUEUE.md` — it never edits `CONSOLIDATED_SPEC.md`,
   `pgtp_editor/`, or `tests/`, so it cannot conflict with whatever the main
   session is mid-editing.
+- **Queue ids are timestamps, not counters — and the dispatcher supplies them.**
+  `FQ-<YYMMDDHHMMSS>` and `BUG-<YYMMDDHHMMSS>`. A sequential id is a function of what
+  the agent can *see*, so two agents dispatched in parallel pick the same number — that
+  happened for real (two `BUG-063` entries, 2026-08-10) and it survives every direction of
+  merge, push and pull, because git merges two appends to different regions cleanly and
+  neither side looks wrong. `bug-triager` has `Bash` and reads the clock itself; **
+  `feature-triage` deliberately has no `Bash`, so the dispatching session must run
+  `date +%y%m%d%H%M%S` and pass the id in the prompt.** It will ask rather than invent one.
+  Never renumber an existing `FQ-001…035` / `BUG-001…064` entry — the schemes coexist, and
+  an id is a name, not a position.
 - **When the user asks to pick up the queue** (typically once the main
   implementation task has wrapped up), read `docs/FEATURE_QUEUE.md`, dispatch
   `spec-maintainer` (it harmonizes first, then folds) to fold each `QUEUED` entry into
   `CONSOLIDATED_SPEC.md`, implement it, run the feature-tester /
   manual-maintainer policies above as usual, then flip that entry's `Status`
   line to `PROCESSED (<commit or spec §>)` in place rather than deleting it.
+
+## The implementation drive (mandatory for the main session)
+
+**The main implementation session keeps implementing `docs/BUGFIX_QUEUE.md` and
+`docs/FEATURE_QUEUE.md` until an owner decision blocks it. Whatever can be implemented
+must be implemented, and as soon as possible.** Do not stop at the end of a batch to ask
+what is next, do not idle waiting for an answer, and do not treat a queue as a list to be
+picked from occasionally — it is the work.
+
+- **An owner decision is the only legitimate blocker.** Not a spec gap (dispatch
+  `spec-maintainer`), not an unclear root cause (dispatch `bug-triager`), not "this looks
+  large" (split it), and not "the tests might be affected" (run them). If you find yourself
+  waiting, name what you are waiting for; if it is not an unanswered `DEC-…`, it is not a
+  blocker.
+- **A blocking decision blocks its own part, never the whole entry.** File it via
+  `owner-decision` and **implement everything the answer does not touch**, structured so the
+  answer drops into one place. Say in the code and in the report exactly where that place is.
+  FQ-035 shipped its field, parse, reveal, population and probes with the accept-path copy
+  left out for `DEC-260810134914` — that is the shape.
+- **Never invent an answer to unblock yourself.** A guess written into shipped code is far
+  more expensive than a partial feature, because nothing marks it as a guess.
+- **Run parallel agents whenever the work allows it** — that is the default, not an
+  optimisation. Sequencing independent work is wasted wall-clock.
+- **Parallelise by file ownership, not by task.** Two agents in one file clobber each other —
+  there is no merge, only last-write-wins. Give each file exactly one owner.
+- **Use a worktree when the merge is foreseeably impactless or minor**, i.e. the pieces touch
+  different files, or the same file in clearly different regions. That is what lets two pieces
+  of work share `main_window.py` safely. When a merge would be genuinely entangled — the same
+  function, the same dict, the same table — do **not** reach for a worktree: give both pieces
+  to one agent, which is cheaper than resolving a conflict nobody can review.
+- **Merge a worktree as soon as its tests pass, then delete it.** Do not accumulate them. A
+  stale worktree drifts from `main`, its agent's baseline number stops matching, and its diff
+  gets harder to judge with every commit that lands elsewhere. Merge → full suite → push →
+  `git worktree remove` + `git branch -D`. Leaving one parked is how work goes missing.
+- **Worktree agents MUST commit.** Uncommitted worktree changes have nothing to merge and are
+  lost — a `git merge` of such a branch reports success and brings nothing. Verify by grepping
+  for a symbol the work introduced, never by trusting the merge output. This has cost real
+  work: two fixes were silently absent from a branch about to land on `main`.
+- **Run the full suite after every merge, not only in each worktree.** Integration failures
+  are invisible to both sides — a merge has broken imports that neither track could see.
+- **Flip the status as each piece merges, not in a later sweep.** BUG-062 was found
+  *half-shipped* — panels emitting a signal nothing consumed, a green suite over a dead
+  feature — only because a status sweep went looking. A fixed-but-`OPEN` entry is
+  indistinguishable from an unfixed one.
 
 ## Owner decisions (mandatory routing)
 
@@ -125,6 +179,11 @@
   Every blocking or clarifying decision goes through the `owner-decision` subagent
   (`.claude/agents/owner-decision.md`), which is the **sole writer** of
   `docs/DECISION_QUEUE.md`. No other session or agent appends, answers, or flips a status there.
+- **`DEC` ids are timestamps too, and the dispatcher supplies them** — `DEC-<YYMMDDHHMMSS>`,
+  same rule and same reason as `FQ`/`BUG`. Note that "sole writer" is not protection here:
+  it means only this agent writes the file, not that only one instance runs at a time, and
+  several have been dispatched concurrently. `owner-decision` has no `Bash`, so run
+  `date +%y%m%d%H%M%S` and pass the id; it will ask rather than invent one.
 - **To file one:** dispatch `owner-decision` with `run_in_background: true` the moment you hit a
   choice you must not make alone — a design trade-off with no obviously right answer, a ruling that
   would reverse recorded design, or a question whose wrong answer is expensive. Then **continue
@@ -138,6 +197,90 @@
   the owner's reasoning** — an answer without its why gets re-litigated.
 - An answered entry may contradict the spec, the manual, or a queue entry. `owner-decision` reports
   that; reconciling it belongs to `spec-maintainer`, `manual-maintainer`, or `bug-triager` as usual.
+
+## Keyboard shortcuts (mandatory — this is the most expensive area in the project)
+
+Keyboard work has consumed more owner attention and more tokens than any feature, almost
+entirely on re-deriving facts that should have been written down once: five owner decisions
+and a dozen bugs in a single day. Every one of them was a *"who answers this chord"* question
+that nothing in the repo could answer. These rules exist to end that.
+
+- **`docs/KEYBINDINGS.md` is the single register of every chord in the app** — the chord, the
+  command, which mechanism hosts it, which surfaces it is live on, and its gate. **It is kept
+  true by a test, not by discipline.** `shortcut_registry.RESERVED_SEQUENCES` was meant to be
+  this and rotted precisely because its docstring says *"transcribed from §27"* — a hand
+  transcription silently lost `Ctrl+Shift+Z` until BUG-050. A ledger nobody verifies is a
+  second document, not a source of truth.
+- **Before proposing or assigning any chord, read the ledger, and PUSH BACK if it is taken.**
+  Name what holds it and on which surfaces. Do not offer a "probably free" chord and do not
+  reason from a menu listing — six different mechanisms can answer a keystroke here
+  (`QAction.setShortcut`, `QShortcut`, `keyPressEvent`, `eventFilter`/`ShortcutOverride`,
+  context-menu actions, and Qt's `StandardKey` platform defaults), and a chord bound by any of
+  them is bound.
+- **Always establish the GATE before the chord, and ask the owner rather than deciding it.**
+  The gate is not a formality; it determines where the code lives and how many hosts are legal:
+  - **Does the command have a command form** — a menu-bar entry *or* a context-menu action?
+    Then it has **exactly one keyboard host** (DEC-012). Usually that host is the `QAction`,
+    because a rebindable chord must reach one — but *exactly one* is the rule, not *the
+    QAction*: DEC-012's own answered case keeps `Ctrl+Alt+F` on a widget `QShortcut` while a
+    context-menu command form exists, and BUG-062's per-role reload is hosted on the widget
+    because §18.7 gives each Explorer role its own panel, so a window-level chord would have
+    two candidate actions and no way to choose. When the host is the widget, the `QAction`
+    must carry **no** `setShortcut`, and the cost is stated: the chord no longer follows a
+    rebinding, since `_apply_shortcut_bindings` only walks menu actions.
+  - **No command form at all?** A widget host is legitimate (DEC-009's carve-out) — but only
+    then, and the reason must be a product reason, never "the tests need it".
+  - **Answered inside a widget's key handling?** It must be in `RESERVED_SEQUENCES`, and under
+    DEC-014 *every* editing surface must state its answer for that chord.
+  - **Is the chord platform-conditional?** Qt's table is not the app's answer — DEC-015: an
+    operation's chord is bound by this app on every platform, never inherited.
+- **A chord means the same thing on every system, and the ledger records ONE binding per command.**
+  No platform-conditional shortcuts. Qt's own table is not uniform — its Windows scheme binds
+  `Ctrl+Y` and `Alt+Backspace`/`Alt+Shift+Backspace` for undo/redo where X11 does not, and
+  `Ctrl+Shift+Z` is bound on both. Wherever Qt would differ, **this app binds explicitly on both
+  platforms or suppresses the chord on both** — a chord that works on Windows and is dead on Linux
+  is a bug, not a platform nicety. This is why `Ctrl+Y` had to become an explicit binding
+  (DEC-015) and why the offscreen suite cannot be trusted here: it runs Qt's **Windows** scheme,
+  so a Linux-only dead key passes every test.
+- **Never bind by feel, and never widen a carve-out by analogy.** DEC-009's exemption was read
+  wider than it was drawn twice in one day (BUG-052, BUG-063), each time by a comment citing a
+  defensible rule for the wrong gesture.
+- **The offscreen test platform runs Qt's WINDOWS keyboard scheme**, so Linux-only key
+  behaviour is invisible to the whole suite. Assert the handler, never Qt's native answer. And
+  `QShortcut` *does* fire offscreen — the requirement is that the widget's top level has been
+  `show()`n, which is what every "offscreen is unreliable" comment in this repo got wrong.
+
+## Versioning (mandatory)
+
+**To release a new version, edit `version` in `pyproject.toml` and nothing else.** Every
+other consumer derives from it: `pgtp_editor/version.py` reads it (falling back to
+`importlib.metadata`, in that order — see below), the About box reads `version.py`, and
+`docs/installer.iss` scans `pyproject.toml` at compile time and `#pragma error`s if it
+cannot find the literal. **Never write a version number anywhere else** — a second literal
+is the drift this arrangement exists to kill, and a test greps for one.
+
+- **The resolution order is `pyproject.toml` first, `importlib.metadata` second**, which
+  inverts the obvious choice on purpose. An editable install goes stale: this checkout's
+  metadata reported `0.3.0` while `pyproject.toml` said `0.4.0`, so metadata-first ships a
+  *wrong* version in the one environment where anyone can check it. A test pins the order
+  directly, and counts calls, so an implementation that resolves both and prefers metadata
+  cannot pass.
+- **`UNKNOWN_VERSION = "unknown"`** is the honest sentinel for the genuinely unanswerable
+  case. It must never be replaced by a literal default, which looks right while being wrong.
+- **The frozen (PyInstaller) path is UNVERIFIED.** `optimized_build.py` passes
+  `--copy-metadata pgtp-editor` behind an availability probe, but no build environment has
+  ever exercised it. Verify it on the first Windows build rather than assuming.
+- **Five different version numbers exist in this app and they are not the same thing**: the
+  app release (`pyproject.toml`), the MCP tool surface (`mcp/server.py::SERVER_VERSION`,
+  **intentionally decoupled by owner ruling**), the curated schema's content
+  (`CURATED_BUNDLED_VERSION` — §11: *the marker is the schema's identity, not the app's
+  release counter*), the vendor `.pgtp` format (`about.py`), and the snapshot payload format
+  (`SNAPSHOT_VERSION`). **Two** are visible together in the About box — the app release and
+  the vendor `.pgtp` format; `CURATED_BUNDLED_VERSION` is *not* rendered there and
+  `about.py` does not import it. (This line said "three" until 2026-08-12, when a manual
+  pass measured it against `about.py`. A count in prose beside a thing that changes is a
+  claim with no way to stay true — the same rot that hit the Alter Table submenu.)
+  Conflating the app release with the curated schema has already happened once — label them.
 
 ## Test environment
 

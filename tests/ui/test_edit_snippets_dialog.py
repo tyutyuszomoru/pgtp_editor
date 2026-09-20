@@ -146,6 +146,66 @@ def test_restore_says_so_when_there_is_nothing_to_restore(dialog):
     assert "already here" in widget.message()
 
 
+# -- the BUTTONS, not just the seams behind them (BUG-260812001455) ------------
+#
+# Every test above calls the mutation seam directly, so Add could be — and was —
+# wired to a slot that died the moment `clicked`'s `bool checked` landed in its
+# `prefix` parameter, with the whole suite green. Delete and Restore survived
+# the same mis-wiring only because they take no parameters for `checked` to
+# land in; a single added optional argument would have killed them too. These
+# tests drive the real `clicked` path, which is the only thing a user has, and
+# they cover all three so the next signature change cannot resurrect the bug.
+
+
+def test_the_add_button_actually_adds_a_row(dialog):
+    widget = dialog(())
+    widget.add_button.click()
+    assert widget.table.rowCount() == 1
+    assert len(widget.result_snippets()) == 1
+    assert widget.result_snippets()[0].prefix
+    assert widget.validation_error() is None
+
+
+def test_clicking_add_twice_gives_two_usable_rows(dialog):
+    """The second click must go through `_unique_prefix` for real — that is the
+    exact call the mis-wired connection died in."""
+    widget = dialog(())
+    widget.add_button.click()
+    widget.add_button.click()
+    assert widget.table.rowCount() == 2
+    assert widget.validation_error() is None
+
+
+def test_the_delete_button_actually_removes_the_selected_row(dialog):
+    widget = dialog((MINE, Snippet("other", "theirs", "x")))
+    widget.table.setCurrentCell(0, COLUMN_PREFIX)
+    widget.delete_button.click()
+    assert widget.table.rowCount() == 1
+    assert widget.result_snippets() == (Snippet("other", "theirs", "x"),)
+
+
+def test_the_restore_button_actually_restores_the_missing_built_ins(dialog):
+    widget = dialog((MINE,))
+    widget.restore_button.click()
+    assert widget.result_snippets()[0] == MINE
+    assert set(DEFAULT_SNIPPETS).issubset(set(widget.result_snippets()))
+    assert widget.table.rowCount() == 1 + len(DEFAULT_SNIPPETS)
+
+
+def test_restore_only_ever_appends_and_so_needs_no_confirmation(dialog):
+    """`Restore Built-ins` has no destructive path: it appends what is missing
+    and leaves every existing row — including a user snippet whose trigger word
+    happens to clash with none of ours — exactly where it was. That is why the
+    button asks nothing before acting."""
+    edited = Snippet(DEFAULT_SNIPPETS[0].prefix, "mine now", "MY BODY")
+    widget = dialog((MINE, edited))
+    before = widget.result_snippets()
+    widget.restore_button.click()
+    after = widget.result_snippets()
+    assert after[: len(before)] == before
+    assert len(after) >= len(before)
+
+
 # -- validation ---------------------------------------------------------------
 
 

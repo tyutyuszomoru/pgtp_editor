@@ -19,7 +19,8 @@ What it owns
 Everything about the icon bar and nothing else: the ``QToolBar`` itself, the
 ordered command-id list on it, the per-command icon assignments, the enumerated
 menu-command universe those ids resolve against, the GC pins that enumeration
-needs, and the non-modal Customize Toolbar dialog.
+needs, and the Customize Toolbar surface -- since FQ-260812002827 the *Toolbar*
+pane of `Settings > Software settings...`, built here and embedded there.
 
 Why this lane was extracted first
 ---------------------------------
@@ -56,8 +57,8 @@ A ``QObject`` following ``ui/sandbox_controller.py``: it takes a
 reference to ``MainWindow`` beyond the shell's dialog-parent ``window`` — which
 appears here exactly once, as ``CustomizeToolbarDialog``'s parent. It emits no
 signals because nothing outside the lane needs to observe it; the host drives it
-(``refresh_icons()`` after a theme flip) and the View menu triggers
-``open_customize_dialog()``.
+(``refresh_icons()`` after a theme flip) and the Software settings dialog asks it
+for ``build_customize_pane()``.
 
 Construction is two-phase on purpose: ``__init__`` is inert and :meth:`build`
 must be called **after the menu bar is finished**, because it walks it.
@@ -113,7 +114,8 @@ class ToolbarController(QObject):
         # destroys them. NEVER cleared.
         self._menu_keepalive: list[object] = []
         self._menu_keepalive_seen: set[int] = set()
-        # Held so the non-modal Customize Toolbar dialog is not GC'd while shown.
+        # The last-built Customize Toolbar surface (the settings pane owns it
+        # now, so this is a handle for the host and the tests, not a GC pin).
         self._customize_toolbar_dialog: CustomizeToolbarDialog | None = None
 
     # -- construction --------------------------------------------------------
@@ -425,16 +427,28 @@ class ToolbarController(QObject):
 
     # -- the Customize dialog ------------------------------------------------
 
-    def open_customize_dialog(self) -> None:
-        """Open the (non-modal) Customize Toolbar dialog; on OK, apply and
-        persist the chosen ordered id list."""
-        # BUG-027: offer every menu command, re-enumerated at open time so
-        # anything the menus gained since startup is included.
+    def build_customize_pane(self, parent=None) -> CustomizeToolbarDialog:
+        """Build and wire the Customize Toolbar dialog; on OK it applies and
+        persists the chosen ordered id list. **The one place it is constructed.**
+
+        Since FQ-260812002827 this surface is not a window of its own: it is the
+        Toolbar pane of `Settings ▸ Software settings…` (it was
+        `View ▸ Customize Toolbar…`, and that entry is gone, not duplicated). So
+        this RETURNS the dialog instead of showing it, and `parent` is the pane's
+        container.
+
+        The settings host rebuilds a pane whenever its dialog finishes, so this
+        is called repeatedly and must re-read state every time — which it
+        already did, and for the same reason: BUG-027 re-enumerates the menu
+        commands at open time so anything the menus gained since startup is
+        offered.
+        """
         dialog = CustomizeToolbarDialog(
             self.collect_menu_commands(),
             self._toolbar_ids,
-            # The ONE sanctioned use of shell.window: a dialog parent.
-            self._shell.window,
+            # The ONE sanctioned use of shell.window, and only as the fallback
+            # parent for a caller that has no container to give.
+            parent if parent is not None else self._shell.window,
             self._toolbar_icon_ids,
         )
         dialog.accepted.connect(
@@ -443,4 +457,4 @@ class ToolbarController(QObject):
             )
         )
         self._customize_toolbar_dialog = dialog
-        dialog.show()
+        return dialog

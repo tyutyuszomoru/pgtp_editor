@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from pgtp_editor.lint.findings import (
+    EXTERNAL_TOOLS_SETTINGS_PATH,
     LINT_AUDIT_TARGET,
     LINT_PREFIX,
     LintFinding,
@@ -202,7 +203,11 @@ def test_each_failure_mode_says_something_different():
         )[0].text
     assert len(set(texts.values())) == len(texts), texts
     assert "/usr/bin/nope" in texts[LintStatus.EXECUTABLE_MISSING]
-    assert "Locate PHP Linter" in texts[LintStatus.NOT_CONFIGURED]
+    # FQ-260812025705 moved where a linter is SET, so the remedy this row names
+    # moved with it. `EXTERNAL_TOOLS_SETTINGS_PATH` is `lint/`'s own copy of the
+    # address (`lint/` must not import `ui/`); the copy is pinned to the UI
+    # constant by `tests/ui/test_software_settings_dialog.py`.
+    assert EXTERNAL_TOOLS_SETTINGS_PATH in texts[LintStatus.NOT_CONFIGURED]
     assert "timed out" in texts[LintStatus.TIMEOUT]
     assert "OSError: denied" in texts[LintStatus.FAILED_TO_START]
 

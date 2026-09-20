@@ -66,6 +66,10 @@ EXPECTED_HOST_SURFACE = {
     "_activity_write_timer",
     "_adopt_provisioned_sandbox_settings",
     "_apply_caption_edits",
+    # The status bar's DEBUG chip reads its colours from the theme now rather
+    # than carrying `color: white; background: #b33` inline (BUG-260812063745),
+    # so it needs a repaint hook on the host that owns the status bar.
+    "_apply_debug_chip_colours",
     "_apply_ddl_object_to_sandbox",
     "_apply_ddl_object_to_target",
     "_apply_history_text",
@@ -97,12 +101,16 @@ EXPECTED_HOST_SURFACE = {
     "_check_active_ddl_object",
     "_close_action",
     "_close_caption_mode",
+    # BUG-260812001640: the ONE dynamic-tab close loop, shared by `new_session`
+    # and the Maintenance-mode prune below.
+    "_close_dynamic_editor_tabs",
     "_code_editor_dialog",
     "_coherence_tab_visible",
     "_columns_block_line",
     "_configured_sandbox_params",
     "_confirm_apply",
     "_confirm_close_ddl_object",
+    "_confirm_discard_local_change",
     "_confirm_destructive_sandbox_operation",
     "_connection_dialog",
     "_connection_summary_for",
@@ -134,17 +142,32 @@ EXPECTED_HOST_SURFACE = {
     "_alter_ddl_serial",
     "_database_host_label",
     "_db_ui",
+    "_ddl_checked_out_paths",
     "_ddl_checkout_relpath",
+    "_ddl_object_is_checked_out",
     "_ddl_browser_panels",
     "_ddl_browser_tab_indexes",
     "_ddl_explorer_action",
     "_ddl_explorer_actions",
     "_ddl_explorer_label",
+    # BUG-260812071208's re-entrancy marker: the roles whose menu action the
+    # lockstep handler is currently re-syncing. Host state because both the
+    # lockstep handler and the toggle handler are the host's.
+    "_ddl_explorer_syncing",
+    # BUG-260812110307's sibling marker: the per-role in-flight generation, so a
+    # result that a close (or a later open) superseded paints nothing visible.
+    # Host state for the same reason `_ddl_explorer_syncing` is -- the opener,
+    # the lockstep handler and the Maintenance prune are all the host's.
+    "_ddl_fetch_epoch",
+    "_bump_ddl_fetch_epoch",
     "_ddl_explorer_params",
     "_ddl_project_folder",
     "_ddl_project_settings",
     "_ddl_project_ui",
     "_ddl_sandbox_content_facts",
+    "_ddl_mode_cache_key",
+    "_ddl_mode_verdict",
+    "_ddl_mode_verdict_key",
     "_ddl_schema",
     "_ddl_schema_index",
     "_debug_label",
@@ -157,12 +180,43 @@ EXPECTED_HOST_SURFACE = {
     "_doc_ui",
     "_edit_ddl_checked_out",
     "_edit_ddl_live",
-    "_edit_snippets_action",
+    # FQ-260812002827 REMOVED `_edit_snippets_action` and
+    # `_autoformat_settings_action`: those two `Settings` entries (with the two
+    # `View` customize entries) were absorbed into ONE `Software settings…`
+    # command hosting a two-pane dialog, so there is one action where there were
+    # four. The remaining names belong to the host on purpose: `Settings` is the
+    # maintenance-only menu the mode filter toggles, so the host must hold the
+    # QMenu to show/hide it, and the action is kept (not rebuilt) so it stays
+    # enumerable for Customize Toolbar even while hidden.
+    "_software_settings_action",
+    # The ONE live settings window, and the slot that forgets it. Both are here
+    # because the dialog is NON-MODAL and therefore single-instance: something
+    # has to hold the handle that a second request raises instead of duplicating,
+    # and it must be dropped on `finished` so the next open re-reads every store.
+    "_software_settings_dialog",
+    "_forget_software_settings",
+    "open_software_settings_dialog",
+    "_settings_menu",
+    # FQ-033 part C's refusal sink. Belongs to the host because the Audit panel
+    # does: an editor must not reach it, which is exactly why the draft tabs
+    # route through CenterStage's aggregator to get here.
+    "_report_xml_format_refusal",
+    # BUG-062. Both belong to the host on purpose: the panels emit and never
+    # touch a database (§18.5 D1), so the host is the only place that can run
+    # the re-introspection, and it is the sole consumer of `reload_requested`
+    # for both roles. `reload_ddl_explorer` is public because it is also the
+    # Database-menu action's slot.
+    "_reload_ddl_action",
+    "reload_ddl_explorer",
     "_enter_caption_mode",
     "_fetch_ddl_schema",
     "_file_menu",
     "_find_next_action",
     "_file_activity_source",
+    # BUG-061: `View ▸ Findings`, held the same way its two sibling tab-focus
+    # entries (`_activity_action`, `_results_action`) are -- the left dock and
+    # its tabs are host structure, so its menu entry is a host attribute too.
+    "_findings_action",
     "_find_ui",
     "_flush_activity_writes",
     "_flush_bookmark_writes",
@@ -173,15 +227,20 @@ EXPECTED_HOST_SURFACE = {
     "_history_entries",
     "_history_jump",
     # BUG-048: the project history writes only where it may. The two
-    # `*_from_shortcut` slots scope the window Ctrl+Z/Ctrl+Y to a writable Raw
-    # XML tab; the lock helpers state the reason when it is refused.
+    # `*_raw_xml_history` slots scope EVERY keystroke path (the window
+    # Ctrl+Z/Ctrl+Y shortcuts and the Raw XML editor's re-emission) to a writable
+    # Raw XML tab; the lock helpers state the reason when it is refused. They
+    # were `*_from_shortcut` until BUG-064 gave them the second caller and a name
+    # that describes the scope rather than the host.
     "_history_write_refused",
     "_identity_in_schema",
     "_import_pgtp_connection_into_target",
     "_inspect_sandbox_provisioning",
     "_install_find_next_action",
     "_is_light_theme",
-    "_light_theme_action",
+    # FQ-260812025705 gates both Tools lint entries on a configured linter, so
+    # the host keeps a handle on the second one to register it with the lane.
+    "_lint_action",
     "_lint_on_save_action",
     "_lint_ui",
     "_live_target_identity",
@@ -199,6 +258,7 @@ EXPECTED_HOST_SURFACE = {
     "_on_ddl_add_trigger_requested",
     "_on_ddl_alter_column_requested",
     "_on_ddl_create_table_requested",
+    "_on_ddl_discard_local_requested",
     "_on_ddl_edit_requested",
     "_on_ddl_explorer_toggled",
     "_on_ddl_explorer_visibility_changed",
@@ -209,9 +269,16 @@ EXPECTED_HOST_SURFACE = {
     "_on_edit_code_requested",
     "_on_editor_block_count_changed",
     "_on_editor_bookmarks_changed",
+    # FQ-032, added on purpose. The editing-mode segment of the mode indicator
+    # follows the FOCUSED editor, so the host's ONE `_refresh_mode_indicator`
+    # gains two triggers -- an editing-mode transition on any editor (published
+    # through `vim_mode.add_editing_mode_observer`, the bookmark-observer idiom)
+    # and a focus change. Both are indicator refreshes, which is already the
+    # host's job, so there is no lane to move them onto.
+    "_on_editing_mode_changed",
     "_on_editor_line_clicked",
     "_on_editor_text_changed",
-    "_on_light_theme_toggled",
+    "_on_focus_changed_refresh_mode",
     "_on_manual_chapter_selected",
     "_on_manual_visibility_changed",
     "_on_mcp_server_toggled",
@@ -239,23 +306,45 @@ EXPECTED_HOST_SURFACE = {
     "_open_project_status",
     "_open_sandbox_session",
     "_open_sandbox_sql_console",
+    # §18.5 D4b (`FQ-260811020328`): the Quality SQL Console's lane. Deliberate
+    # host growth, reviewed here: it is the sibling of the sandbox console's
+    # names above, and the two must live at the same altitude or the pair drifts.
+    # `_quality_session` is the window's ONE held-open transaction
+    # (`DEC-260811023646`) -- a second one would be a transaction nobody can see.
+    "_open_quality_sql_console",
+    "_quality_capabilities",
+    "_quality_console_action",
+    "_quality_console_available",
+    "_quality_session",
+    "_quality_session_provider",
+    "_quality_run_sql",
+    "_close_quality_session",
+    "_confirm_close_quality_console",
+    "_record_quality_transaction",
+    "_refresh_quality_console_affordances",
+    "_remember_quality_run",
     "_owning_table_name",
     "_parsing_menu",
     "_php_tabs",
     "_place_cursor_in_opening_tag",
     "_probe_check_active_ddl_object",
+    "_probe_ddl_mode",
     "_project_status_sandbox_facts",
     "_project_status_target",
     "_project_status_window",
     "_prompt_missing_connection",
     "_prompt_target_password",
+    # BUG-260812001640: entering Maintenance reduces the center stage to its
+    # XSD-only surface. Host-owned because it is a WINDOW-level mode
+    # transition -- the same place `_refresh_workflow_mode_affordances` lives.
+    "_prune_non_xsd_surfaces_for_maintenance",
     "_properties_action",
     "_provision_new_project_sandbox",
     "_raw_xml_history_lock_reason",
     "_raw_xml_panel_action",
     "_redo",
     "_redo_action",
-    "_redo_from_shortcut",
+    "_redo_raw_xml_history",
     "_redo_shortcut",
     "_ref_for_created_object",
     "_refresh_ddl_drift_markers",
@@ -277,6 +366,14 @@ EXPECTED_HOST_SURFACE = {
     "_report_check_lines",
     "_report_ddl_checkout_drift",
     "_report_ddl_format_refusal",
+    "_report_ddl_mode",
+    # FQ-260812022749: a SECOND `[DDL]` row, beside the mode row, when full mode
+    # was chosen and could not be delivered. Deliberately a sibling of
+    # `_report_ddl_mode` rather than a branch inside it -- the mode row is an
+    # owner ruling on every open, and "full mode was chosen but you are looking
+    # at reconstructed DDL" is extra information, not a correction of it.
+    "_report_ddl_degrade",
+    "_server_version_divergence",
     # FQ-030: the editor-gesture refusal reporter, the Audit half of
     # `CodeEditor.expansion_refused` (the widget can only show a tooltip).
     "_report_editor_gesture_refusal",
@@ -316,8 +413,23 @@ EXPECTED_HOST_SURFACE = {
     "_select_enclosing_action",
     "_select_enclosing_block",
     "_select_menu",
-    "_select_parent_action",
-    "_select_parent_block",
+    # FQ-034: `Select Parent Block` became the repeatable `Expand Selection`
+    # (`_select_parent_action`/`_select_parent_block` are gone), and gained the
+    # inward twin beside it. Two actions and two slots, on the host because the
+    # `Select` menu is the host's.
+    "_expand_selection_action",
+    "_expand_structural_selection",
+    "_shrink_selection_action",
+    "_shrink_structural_selection",
+    # FQ-260812000331's two `Select` menu command forms and their per-editor
+    # refresh. On the host for the same reason every other `Select` entry is:
+    # they resolve their editor at TRIGGER time through the find lane, so the
+    # actions cannot live on any one editor.
+    "_sticky_selection_action",
+    "_line_selection_action",
+    "_toggle_sticky_selection",
+    "_toggle_line_selection",
+    "_refresh_sticky_selection_actions",
     "_session_target_passwords",
     "_set_left_panel_visible",
     "_settings",
@@ -334,7 +446,11 @@ EXPECTED_HOST_SURFACE = {
     "_apply_shortcut_bindings",
     "_restore_shortcut_overrides",
     "apply_and_save_shortcut_overrides",
-    "open_customize_shortcuts_dialog",
+    # Was `open_customize_shortcuts_dialog`. FQ-260812002827 re-hosted the
+    # dialog as the Software settings *Keyboard shortcuts* pane, so the host
+    # builds and wires it (the override map and the command walk are the host's)
+    # and the settings dialog embeds it -- hence "build", not "open".
+    "build_customize_shortcuts_pane",
     "_customize_shortcuts_dialog",
     "_show_audit_dock",
     "_show_left_dock",
@@ -346,6 +462,11 @@ EXPECTED_HOST_SURFACE = {
     "_target_apply_available",
     "_target_database_label",
     "_target_is_configured",
+    # FQ-260812021715: the theme is a named FILE now, not a checkable action.
+    # `_theme` is the applied `Theme` (what `_is_light_theme` reads),
+    # `apply_theme_named` the single selection entry point, `theme_name` the
+    # accessor the Themes pane marks its active row from.
+    "_theme",
     "_target_params_for_apply",
     "_target_params_for_fetch",
     "_toolbar_ui",
@@ -357,7 +478,7 @@ EXPECTED_HOST_SURFACE = {
     "_trigger_relation_for",
     "_undo",
     "_undo_action",
-    "_undo_from_shortcut",
+    "_undo_raw_xml_history",
     "_undo_shortcut",
     "_update_title",
     "_validate_project_action",
@@ -366,6 +487,12 @@ EXPECTED_HOST_SURFACE = {
     "_wire_php_tab_activity",
     "_wire_ddl_object_panel_reporting",
     "_workflow_mode",
+    # BUG-260813025052: the record of what the mode currently HIDES, and its two
+    # readers. It sits beside `_workflow_mode` for the same reason -- the mode
+    # and its consequences are one host concern -- and exists because Qt's
+    # `setVisible(False)` also clears the enabled flag, so the launcher cannot
+    # tell "unavailable" from "hidden by the mode" without being told.
+    "_mode_filtered_actions",
     "_xsd_ui",
     "active_target_params",
     "_active_minor_mode",
@@ -377,6 +504,14 @@ EXPECTED_HOST_SURFACE = {
     "_record_notice",
     "_refresh_connectivity_affordances",
     "_refresh_mode_indicator",
+    # FQ-032, added on purpose. `focused_editing_mode()` is the third segment's
+    # input to `_refresh_mode_indicator`; `vim_command_entries` /
+    # `vim_command_action` are the `:` palette's namespace and dispatch, and they
+    # are the HOST's because the namespace IS the menu tree -- only the window can
+    # enumerate `ToolbarController.collect_menu_commands()`, and asking the
+    # top-level window is exactly what makes the palette unavailable in the
+    # menu-less `CodeEditorDialog`.
+    "focused_editing_mode",
     "_results_action",
     "_reveal_activity_tab",
     "_reveal_findings_tab",
@@ -408,6 +543,12 @@ EXPECTED_HOST_SURFACE = {
     "coherence_tab_index",
     "contents_tab_index",
     "ddl_browser_panel",
+    # FQ-260812022749: the two `db/pg_dump_mode.py` seams (a probe that
+    # connects, a probe that spawns `pg_dump --version`) and the project's
+    # binaries folder every `bin_dir=` call site reads (FQ-260812025353).
+    "ddl_mode_prober",
+    "probe_quality_capabilities",
+    "postgres_bin_dir",
     "ddl_browser_tab_index",
     "dragEnterEvent",
     "dropEvent",
@@ -418,6 +559,8 @@ EXPECTED_HOST_SURFACE = {
     "left_tabs",
     "manual_contents",
     "in_maintenance_mode",
+    "is_mode_filtered",
+    "mode_filtered_actions",
     "new_session",
     "open_project_file",
     "project_tab_index",
@@ -431,8 +574,17 @@ EXPECTED_HOST_SURFACE = {
     "sandbox_ddl_browser_tab_index",
     "set_workflow_mode",
     "show_launcher",
+    # FQ-032's `:` palette namespace and its dispatch -- see the note beside
+    # `focused_editing_mode` above.
+    "vim_command_action",
+    "vim_command_entries",
     "workflow_mode",
     "tree_dock",
+    # FQ-260812021715: theme SELECTION is a host concern -- it is app-wide,
+    # persisted in the host's own QSettings and applied to the QApplication, and
+    # the Themes pane (a settings-dialog pane, not a lane) calls through here.
+    "apply_theme_named",
+    "theme_name",
 }
 
 

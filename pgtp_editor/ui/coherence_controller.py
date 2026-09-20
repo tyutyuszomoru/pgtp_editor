@@ -78,10 +78,20 @@ never by importing another collaborator:
   method means only the host's one wiring line changes then.
 * ``prompt_missing_connection`` — the shared "no connection configured" reroute
   (BUG-024) belongs to the DDL-explorer area and moves with it.
-* ``show_left_dock`` / ``show_audit_dock`` / ``panel_visible`` — three dock/tab
-  gestures ``UiShell`` has no field for. Revealing the coherence tab must also
-  un-hide the left dock, listing occurrences must un-hide the Audit dock, and
-  the reparse refresh is gated on the tab actually being visible.
+* ``show_audit_dock`` / ``panel_visible`` — two dock/tab gestures ``UiShell``
+  has no field for: listing occurrences must un-hide the Audit dock, and the
+  reparse refresh is gated on the tab actually being visible.
+
+  ``show_left_dock`` was a third, and is **gone** (BUG-260812023420): revealing
+  a left-dock pane now un-hides the dock inside ``reveal_left_panel`` itself,
+  so this controller no longer carries half of that gesture. Its counterpart
+  ``set_left_panel_visible`` deliberately does *not* touch the dock — and note
+  that **both production callers here pass ``False``** (``on_coherence_toggled``
+  and ``teardown_for_project_close``). The ``True`` direction has no caller
+  today; the seam is kept because without it *"make this tab available"* has no
+  expression that is not also *"take the user there"*. ``refresh_if_open`` is
+  NOT that caller — it reads ``panel_visible()`` and returns early, never
+  touching visibility at all.
 """
 from __future__ import annotations
 
@@ -116,7 +126,6 @@ class CoherenceController(QObject):
         find_all: Callable[..., None],
         prompt_missing_connection: Callable[[], None],
         target_params: Callable[..., object] | None = None,
-        show_left_dock: Callable[[], None],
         show_audit_dock: Callable[[], None],
         panel_visible: Callable[[], bool],
     ):
@@ -136,7 +145,6 @@ class CoherenceController(QObject):
         #: showed something else entirely. Injected rather than duplicated;
         #: `None` (no host wired it) keeps the old `seed_params` behavior.
         self._target_params = target_params
-        self._show_left_dock = show_left_dock
         self._show_audit_dock = show_audit_dock
         self._panel_visible = panel_visible
 
@@ -150,6 +158,14 @@ class CoherenceController(QObject):
         #: PLAIN WRITABLE ATTRIBUTES -- see the module docstring.
         self.last_schema = None
         self.last_summary = None
+
+        #: BUG-260812110307's twin in this lane. How many times the coherence
+        #: view has been asked to run OR to close; `run_check` captures the
+        #: value it bumped to and its `on_result` performs no visible act once
+        #: the two disagree, so a close during an in-flight check WINS. Single
+        #: instance, so a plain int rather than the per-role dict
+        #: `MainWindow._ddl_fetch_epoch` needs.
+        self._check_epoch = 0
 
         #: Replaceable seams -- ATTRIBUTES, not methods. See the module
         #: docstring: the suite assigns over them to keep a live DB connection
@@ -206,7 +222,10 @@ class CoherenceController(QObject):
     # -- the coherence view --------------------------------------------------
 
     def _reveal_panel(self) -> None:
-        self._show_left_dock()
+        # `reveal_left_panel` owns the whole gesture -- un-hide the dock, show
+        # the tab, make it current (BUG-260812023420). This lane used to call an
+        # injected `show_left_dock` first; that pairing was enforced by nothing,
+        # so the seam absorbed it and the injection is gone.
         self._shell.reveal_left_panel(self._panel)
 
     def _populate(self, schema, project, summary) -> None:
@@ -231,7 +250,18 @@ class CoherenceController(QObject):
         if checked:
             self.run_check()
         else:
+            self._bump_check_epoch()
             self._shell.set_left_panel_visible(self._panel, False)
+
+    def _bump_check_epoch(self) -> int:
+        """Supersede whatever coherence check is in flight, and return the new
+        epoch (BUG-260812110307).
+
+        Called from every run (last requested wins) and from every close — the
+        menu toggle off and the project-close teardown.
+        """
+        self._check_epoch += 1
+        return self._check_epoch
 
     def run_check(self) -> None:
         # Compare against a model parsed from the CURRENT buffer, not the
@@ -265,9 +295,39 @@ class CoherenceController(QObject):
         # GUI thread, so they may safely touch widgets.
         self._shell.status("Checking database…")
         _log.info("db: coherence check started %s", debuglog.redacted(params))
+        # BUG-260812110307: taken on the GUI thread, after the guards above (a
+        # refused run started no fetch and must not supersede a live one).
+        epoch = self._bump_check_epoch()
 
         def on_result(schema):
             summary = f"{params.user}@{params.host}:{params.port}/{params.database}"
+            # BUG-260812110307, the DDL Explorer's defect in this lane: closing
+            # the Database/XML Coherence tab while its fetch is out used to be
+            # undone by the stale result, which revealed the panel again and
+            # re-checked the menu entry. `refresh_if_open` already asks the right
+            # question (`_panel_visible()`); this path could not, because on a
+            # normal run the panel is still hidden here -- `_reveal_panel` below
+            # is what shows it. Hence an epoch, not a visibility test.
+            #
+            # `on_error` stays deliberately unguarded: it reveals nothing, and a
+            # failed check is worth reporting even for a closed panel.
+            #
+            # Unlike the DDL lane, this one keeps NOTHING from a superseded
+            # result -- `last_schema`/`last_summary` are written below the guard
+            # on purpose. One of the two closing gestures is
+            # `teardown_for_project_close`, which drops that cache precisely so a
+            # later reparse or rename cannot act on a closed project's state
+            # (BUG-011, §17); writing it here would hand it straight back. No
+            # other surface consumes it, so there is no §18.6-shaped reason to
+            # keep it either.
+            if self._check_epoch != epoch:
+                self._shell.status(
+                    "Database/XML Coherence: closed while checking — "
+                    "the result was discarded.",
+                    5000,
+                )
+                _log.info("db: coherence check finished stale=True")
+                return
             self.last_schema = schema
             self.last_summary = summary
             self._populate(schema, project, summary)
@@ -318,6 +378,7 @@ class CoherenceController(QObject):
         leave the still-open project's tab alone, and a revert keeps the project
         loaded so it does not tear down either.
         """
+        self._bump_check_epoch()
         self._shell.set_left_panel_visible(self._panel, False)
         self._panel.clear()
         if self._toggle_action is not None:

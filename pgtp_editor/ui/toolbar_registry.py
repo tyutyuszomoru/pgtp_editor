@@ -77,7 +77,8 @@ LEGACY_COMMANDS: list[tuple[str, str]] = [
 # toolbar button appear empty and iconless (`DEFAULT_TOOLBAR_IDS` derives from
 # this table, and `ICON_ID_BY_COMMAND` is its inverse, so a stale entry breaks
 # both the button and its vendored SVG):
-#   undo/redo:  Edit ▸ Undo/Redo   -> the Editor bar's History ▸ Undo/Redo
+#   undo/redo:  Edit ▸ Undo/Redo   -> the Editor bar's History ▸ Undo Project
+#               Edit / Redo Project Edit (renamed again by BUG-064)
 #   validate:   Tools ▸ Validate Project -> the Editor bar's Parsing ▸ Validate Project
 #
 # `save` has NO row any more (FQ-020, same treatment as `find`): `File ▸ Save`
@@ -85,8 +86,14 @@ LEGACY_COMMANDS: list[tuple[str, str]] = [
 # at -- see LEGACY_COMMANDS.
 LEGACY_ID_ALIASES: dict[str, str] = {
     "open": "file.open",
-    "undo": "history.undo",
-    "redo": "history.redo",
+    # BUG-064 renamed the two History entries to `Undo Project Edit` /
+    # `Redo Project Edit` -- they are a project-scoped command, not the menu twin
+    # of Ctrl+Z, and the label IS the id. Re-pointed here in the same commit so
+    # the two DEFAULT toolbar buttons keep their command AND their vendored SVG
+    # (this dict is what `DEFAULT_TOOLBAR_IDS` derives from and
+    # `ICON_ID_BY_COMMAND` inverts).
+    "undo": "history.undo-project-edit",
+    "redo": "history.redo-project-edit",
     "validate": "parsing.validate-project",
     "generate": "generation.generate-php",
 }
@@ -149,6 +156,14 @@ DEFAULT_TOOLBAR_IDS: list[str] = [
 # saved before it still names `file.show-launcher`.
 RENAMED_ID_ALIASES: dict[str, str] = {
     "database.ddl-explorer": "database.ddl-explorer-quality",
+    # BUG-064: `History ▸ Undo`/`Redo` -> `Undo Project Edit`/`Redo Project
+    # Edit`, so a toolbar button or an FQ-004 icon assignment saved under the
+    # menu-path id survives. These rows belong HERE and not in
+    # `LEGACY_ID_ALIASES` for the reason stated above -- that dict is inverted
+    # into `ICON_ID_BY_COMMAND`, and a menu-path id on the icon side permanently
+    # defeats the default icon through a swallowed `KeyError`.
+    "history.undo": "history.undo-project-edit",
+    "history.redo": "history.redo-project-edit",
     "bookmarks.toggle-bookmark": "navigation.toggle-bookmark",
     "bookmarks.next-bookmark": "navigation.next-bookmark",
     "bookmarks.previous-bookmark": "navigation.previous-bookmark",
@@ -184,6 +199,18 @@ RENAMED_ID_ALIASES: dict[str, str] = {
     # different surface entirely. Only the message-log tab is renamed.
     "view.results": "view.messages",
     "view.activity-log-results-panel": "view.activity-log-messages-panel",
+    # BUG-058: §18.8's `Project Status…` MOVED from the Database menu to `File`,
+    # directly under `Project Settings…`. Its label did not change, but the id is
+    # the whole menu path, so a toolbar saved before the move needs this row to
+    # keep its button. A MOVE, so it gets a row (unlike the deletions above).
+    "database.project-status": "file.project-status",
+    # FQ-034: `Select ▸ Select Parent Block` -> `Select ▸ Expand Selection`. The
+    # command survives and grows (it becomes repeatable and reaches the SQL
+    # editors), so this is a RENAME, not a deletion -- and since the label IS the
+    # id's last segment the id moves with it, taking every pinned toolbar button
+    # and every stored keyboard-shortcut override with it unless this row
+    # exists. `select.shrink-selection` is brand new and needs no row.
+    "select.select-parent-block": "select.expand-selection",
     # `database.deploy-this-edit` gets NO row: FQ-026 DELETES the picker, and a
     # deletion degrades through `resolve_ids` dropping the unresolvable id (the
     # `file.save` precedent). A row here would point a saved button at a

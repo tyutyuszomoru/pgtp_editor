@@ -85,7 +85,17 @@ from pgtp_editor.sql.caret_context import (
     resolve_caret_context,
 )
 from pgtp_editor.sql.formatter import format_selection as _format_selection_text
-from pgtp_editor.ui.code_editor import CodeEditor
+from pgtp_editor.ui.code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
+    REDO,
+    UNDO,
+    CodeEditor,
+    apply_editor_operation,
+    apply_shrink_structural_selection,
+    classify_editor_chord,
+    is_mutating_editor_operation,
+)
+from pgtp_editor.ui.format_settings import current_sql_config
 from pgtp_editor.ui.completion_popup import CompletionPopupHostMixin
 from pgtp_editor.ui.expand_select_seam import expand_select_expansion
 from pgtp_editor.ui.schema_gesture_seam import SchemaGestureHostMixin
@@ -207,6 +217,26 @@ GESTURE_UNAVAILABLE_REASONS = {
 }
 
 
+#: The kinds PostgreSQL identifies by `(schema, name, ARGUMENT TYPES)` -- the
+#: only kinds that have a signature at all. Everything keyed off "does this ref
+#: render a `(…)`" reads this rather than testing `not is_trigger`, which is how
+#: a view came to render as `pr.orders_v()` the moment views became editable
+#: (`FQ-260812025836`).
+ROUTINE_KINDS = frozenset({"function", "procedure"})
+
+#: The kinds §18.2's checkout model (`ddl/*.sql` working copies, drift markers,
+#: the deploy manifest) can hold. **Views are editable but NOT checked out**
+#: (`FQ-260812025836`, v1): `db/ddl_project.py::routine_ddl_paths` maps a
+#: sole-holder routine to `ddl/<schema>.<name>.sql`, which a same-named view
+#: would collide with (`pr.orders_v` the view and `pr.orders_v()` the function
+#: are both legal and the pattern is common), and §18.2's identity-recovery
+#: header regex matches `FUNCTION|PROCEDURE` only, so a checked-out view file's
+#: identity could not be read back. Widening the checkout model is deferred to
+#: its own decision; until then a view is **edit-and-apply only** -- its tab
+#: holds the live definition and Save resolves through Save As….
+CHECKOUT_KINDS = frozenset({"function", "procedure", "trigger"})
+
+
 @dataclass(frozen=True)
 class DdlObjectRef:
     """The stable per-object identity of an editable DDL tab (§18.5).
@@ -222,11 +252,11 @@ class DdlObjectRef:
     would turn a no-argument `recalc` into `recalc()`.
     """
 
-    kind: str  # "function" | "procedure" | "trigger"
+    kind: str  # "function" | "procedure" | "trigger" | "view"
     schema: str
     name: str
     table: str | None = None  # triggers only -- the table the trigger fires on
-    arg_types: tuple[str, ...] = ()  # routines only; always () for a trigger
+    arg_types: tuple[str, ...] = ()  # routines only; () for a trigger or a view
     # Declared last, with a default: caller-supplied overload disambiguation.
     disambiguate: bool = False
 
@@ -235,8 +265,27 @@ class DdlObjectRef:
         return self.kind == "trigger"
 
     @property
+    def is_routine(self) -> bool:
+        """A function or a procedure -- the kinds that HAVE a signature.
+
+        Every rendering below asks this rather than `not is_trigger`: a view
+        (`FQ-260812025836`) is neither, has no argument types, and must never
+        be spelled with a `(…)`.
+        """
+        return self.kind in ROUTINE_KINDS
+
+    @property
+    def is_checkout_eligible(self) -> bool:
+        """Whether §18.2's `ddl/*.sql` checkout model may hold this object --
+        see `CHECKOUT_KINDS`. False for a view, which is edit-and-apply only."""
+        return self.kind in CHECKOUT_KINDS
+
+    @property
     def signature(self) -> str:
-        """`(integer, text)` / `()` -- the routine's argument-type list."""
+        """`(integer, text)` / `()` -- the routine's argument-type list.
+
+        Meaningful for a ROUTINE only; nothing outside `is_routine` may render
+        it (an empty `arg_types` spells `()`, which is a lie about a view)."""
         return "(" + ", ".join(self.arg_types) + ")"
 
     @property
@@ -255,27 +304,45 @@ class DdlObjectRef:
         """The tab label: the object's SHORT identity (§18.5).
 
         `recalc` for a sole-holder routine, `fmt(integer)` for an overloaded
-        one, `orders.trg_audit` for a trigger.
+        one, `orders.trg_audit` for a trigger, `orders_v` for a view.
         """
         if self.is_trigger:
             return f"{self.table}.{self.name}"
-        if self.disambiguate:
+        if self.is_routine and self.disambiguate:
             return f"{self.name}{self.signature}"
         return self.name
 
     @property
     def qualified(self) -> str:
-        """The tab tooltip: the FULL source identity -- schema-qualified, with
-        the signature for a routine and the table for a trigger."""
+        """The FULL source identity -- schema-qualified, with the signature for
+        a routine and the table for a trigger.
+
+        **Not cosmetic.** It is the tab tooltip, but it is also the name every
+        apply confirmation, cancellation line and result headline uses
+        (`f"applied {ref.qualified} to …"`), and `_drop_statement` builds a real
+        `DROP` from it. So a kind that has no signature must not be given one:
+        before `FQ-260812025836` this was `f"…{self.name}{self.signature}"` for
+        everything non-trigger, which would have named a view `pr.orders_v()` --
+        an object that does not exist under that name -- in a dialog asking the
+        user to confirm a write to their quality database.
+        """
         if self.is_trigger:
             return f"{self.schema}.{self.table}.{self.name}"
-        return f"{self.schema}.{self.name}{self.signature}"
+        if self.is_routine:
+            return f"{self.schema}.{self.name}{self.signature}"
+        return f"{self.schema}.{self.name}"
 
     @property
     def default_file_name(self) -> str:
         """The Save As… prefill: the sole-holder form of §18.2's file scheme,
         so the file a v1 user saves is already shaped like the checked-out one
-        §18.2 will manage."""
+        §18.2 will manage.
+
+        A view gets the same `<schema>.<name>.sql` shape, and that is a PREFILL
+        in a Save As… dialog only -- a view is not part of the checkout model
+        (`CHECKOUT_KINDS`), so this string is never a managed path and never
+        collides with a same-named routine's working copy.
+        """
         if self.is_trigger:
             return f"{self.schema}.{self.table}.{self.name}.sql"
         return f"{self.schema}.{self.name}.sql"
@@ -300,6 +367,25 @@ _CREATE_TRIGGER_RE = re.compile(
     r"(?P<name>\"[^\"]+\"|[^\s(.\"]+)\b(?P<rest>.*?)\bON\s+"
     r"(?P<table>(?:\"[^\"]+\"|[^\s(.\"]+)(?:\s*\.\s*(?:\"[^\"]+\"|[^\s(.\"]+))?)",
     re.IGNORECASE | re.DOTALL,
+)
+#: `CREATE [OR REPLACE] [RECURSIVE] VIEW <name>` (`FQ-260812025836`).
+#:
+#: **`CREATE MATERIALIZED VIEW` cannot match this** -- `MATERIALIZED` sits
+#: between `CREATE` and `VIEW` and there is no alternative admitting it. That is
+#: deliberate and load-bearing, not incidental: a matview has no
+#: `CREATE OR REPLACE` form at all, so a buffer declaring one must fail to parse
+#: and be refused, never be read as a view.
+#:
+#: It matches a `CREATE VIEW` that follows a leading `DROP VIEW`, which is
+#: exactly the shape the owner named for the cases `OR REPLACE` cannot express
+#: (a changed column list or type): *"the ddl can start with drop view, then
+#: create view. developers will know this."* The apply lane runs whatever is in
+#: the buffer and **inspects it for no other shape** -- no detection heuristic,
+#: no wizard, no offer to drop-and-recreate.
+_CREATE_VIEW_RE = re.compile(
+    r"\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:RECURSIVE\s+)?VIEW\s+"
+    r"(?P<name>(?:\"[^\"]+\"|[^\s(.\"]+)(?:\s*\.\s*(?:\"[^\"]+\"|[^\s(.\"]+))?)",
+    re.IGNORECASE,
 )
 _ARG_MODES = {"in", "out", "inout", "variadic"}
 #: Words that legitimately OPEN a multi-word type name. Everything else in
@@ -437,6 +523,11 @@ def _argument_type(raw: str) -> str | None:
     return normalize_arg_type(" ".join(tokens)) or None
 
 
+def _first(match: Any, *others: Any) -> bool:
+    """True when `match` starts before every non-None match in `others`."""
+    return all(other is None or match.start() < other.start() for other in others)
+
+
 def parse_buffer_identity(text: str, fallback: DdlObjectRef) -> DdlObjectRef | None:
     """The identity the BUFFER declares, or None when it cannot be determined.
 
@@ -448,6 +539,18 @@ def parse_buffer_identity(text: str, fallback: DdlObjectRef) -> DdlObjectRef | N
     """
     trigger_match = _CREATE_TRIGGER_RE.search(text)
     routine_match = _CREATE_ROUTINE_RE.search(text)
+    view_match = _CREATE_VIEW_RE.search(text)
+    # EARLIEST header wins, across all three shapes -- the generalization of the
+    # trigger-before-routine test this branch already made. A view's body is a
+    # `SELECT`, so it cannot contain a competing header; the ordering matters
+    # for the reverse case (a routine whose body mentions a view).
+    if view_match is not None and _first(view_match, trigger_match, routine_match):
+        schema, name = _split_qualified_name(view_match.group("name"))
+        return DdlObjectRef(
+            kind="view",
+            schema=schema or fallback.schema,
+            name=name,
+        )
     if trigger_match is not None and (
         routine_match is None or trigger_match.start() < routine_match.start()
     ):
@@ -476,6 +579,24 @@ def parse_buffer_identity(text: str, fallback: DdlObjectRef) -> DdlObjectRef | N
         name=name,
         arg_types=arg_types,
     )
+
+
+def _drop_statement(ref: DdlObjectRef) -> str:
+    """The DROP the user must run themselves to remove the object a renamed
+    buffer left behind.
+
+    **TEXT ONLY, still -- this editor executes it nowhere.** What changed with
+    §18.5 D4b (`FQ-260811020328`) is only *where the user can run it*: the
+    **Quality SQL Console** (`Database ▸ Quality SQL Console…`) is an in-app
+    ad-hoc read/write path to the target database, so the old sentence *"there
+    is no target-database ad-hoc execution path"* is false and must not be
+    restored. Handing over the exact statement is still the useful half; whether
+    this editor should grow a real target-drop GESTURE is explicitly not decided
+    (§18.5 D4b).
+    """
+    if ref.is_trigger:
+        return f"DROP TRIGGER {ref.name} ON {ref.schema}.{ref.table};"
+    return f"DROP {ref.kind.upper()} {ref.qualified};"
 
 
 def _comparable(ref: DdlObjectRef) -> tuple:
@@ -798,10 +919,13 @@ class DdlObjectEditorPanel(
         # fails is key delivery to a widget that was never `show()`n, so the
         # test must send the key at the top level's `windowHandle()`), and the
         # `CodeEditorDialog` Ctrl+S/Ctrl+W double-hosting it cited as precedent
-        # was itself removed by BUG-046. The sibling `SqlConsolePanel` already
-        # ships this exact gesture with the QShortcut alone -- same scope, same
-        # selection gate, no `eventFilter` -- so this is the shape that already
-        # works, not a new one.
+        # was itself removed by BUG-046. The sibling `SqlConsolePanel` ships this
+        # exact gesture the same way -- one `QShortcut` as the only keyboard
+        # host, same scope, same selection gate, and **no `Ctrl+Alt+F` branch in
+        # its `eventFilter` either** -- so this is the shape that already works,
+        # not a new one. (It also ships a click-only context-menu item, as this
+        # tab does, since BUG-063; the point being made here is about the
+        # keyboard host, which is single on both surfaces.)
         #
         # A consequence worth stating: the deleted branch was unconditional, so
         # a selection-less Ctrl+Alt+F used to reach `format_selection`. It now
@@ -898,28 +1022,46 @@ class DdlObjectEditorPanel(
             QEvent.Type.KeyPress,
         ):
             key = event.key()
-            mods = event.modifiers()
-            ctrl = Qt.KeyboardModifier.ControlModifier
-            shift = Qt.KeyboardModifier.ShiftModifier
-            is_undo = key == Qt.Key.Key_Z and mods == ctrl
-            # Ctrl+Shift+Z is the second redo chord (BUG-050), reserved
-            # app-wide in `shortcut_registry.RESERVED_SEQUENCES`. The sibling
-            # `DdlEditorPanel._is_undo_redo_chord` matches the same three
-            # chords, but only the MATCHING is shared: that buffer is
-            # synthesized and read-only, so it refuses with a reason, whereas
-            # this tab is editable and must route the chord into its own redo
-            # stack exactly as Ctrl+Y does.
-            is_redo = (key == Qt.Key.Key_Y and mods == ctrl) or (
-                key == Qt.Key.Key_Z and mods == (ctrl | shift)
-            )
-            if is_undo or is_redo:
+            # DEC-014's fixed set, matched by the ONE shared matcher: only the
+            # MATCHING is shared, never the answer. The sibling
+            # `DdlEditorPanel.eventFilter` matches the same chords and answers
+            # differently -- its buffer is synthesized and read-only, so it
+            # refuses with a stated reason, whereas this tab is editable and
+            # routes undo/redo into its own native stack.
+            operation = classify_editor_chord(event)
+            if operation is not None:
                 if event.type() == QEvent.Type.ShortcutOverride:
                     # Claim the sequence so Qt never also fires the
                     # window-level Ctrl+Z/Ctrl+Y QShortcut for this key press
                     # (no double-undo, no leak into the Raw XML buffer).
                     event.accept()
-                else:
-                    self.editor.undo() if is_undo else self.editor.redo()
+                elif operation == UNDO:
+                    self.editor.undo()
+                elif operation == REDO:
+                    self.editor.redo()
+                elif is_mutating_editor_operation(operation):
+                    # Paste (`Ctrl+Shift+Insert`) and the three line-editing
+                    # gestures (`Ctrl+D`/`Ctrl+K`/`Ctrl+U`), bound by the app on
+                    # both platforms (owner, 2026-08-10) where Qt binds them on
+                    # the Linux/KDE scheme only. This tab is editable, so they
+                    # run; the sibling `DdlEditorPanel` states a refusal instead,
+                    # exactly as it does for undo.
+                    apply_editor_operation(self.editor, operation)
+                elif operation == CLAIMED_NOT_UNDO_REDO:
+                    # `Ctrl+Shift+Z` = Shrink Selection (FQ-034). The claim was
+                    # here first and is load-bearing rather than tidiness: Qt
+                    # carries the chord as native `StandardKey.Redo` under
+                    # `KB_Win | KB_X11`, so letting it fall through would redo on
+                    # both platforms and silently defeat DEC-015. This feature
+                    # gives that claim an answer instead of binding the chord --
+                    # which is why `Select ▸ Shrink Selection` carries no
+                    # `setShortcut`, and why every surface routes into the same
+                    # `apply_shrink_structural_selection`.
+                    apply_shrink_structural_selection(self.editor)
+                # else: the one answer that still runs no operation.
+                # Alt+Backspace / Alt+Shift+Backspace: Qt binds them `KB_Win`
+                # only, so suppressing them here is what keeps the keyboard
+                # identical on both systems.
                 return True
             # NOTE (BUG-054/DEC-012): there is deliberately NO Ctrl+Alt+F
             # branch here. Format Selection has a context-menu command, so it
@@ -1023,7 +1165,12 @@ class DdlObjectEditorPanel(
         # QTextCursor.selectedText() joins lines with U+2029 (paragraph
         # separator), never "\n" -- the tokenizer expects real newlines.
         selected = cursor.selectedText().replace(" ", "\n")
-        result = _format_selection_text(selected)
+        # FQ-033: the ruleset is read AT GESTURE TIME, so a change made in
+        # the Autoformatter settings pane applies to the very next
+        # Ctrl+Alt+F with no notification plumbing between the dialog and every
+        # open tab. The default config is byte-identical to the pre-FQ-033
+        # behaviour, so an untouched install formats exactly as before.
+        result = _format_selection_text(selected, config=current_sql_config())
         if result.ok:
             cursor.beginEditBlock()
             cursor.insertText(result.text)
@@ -1241,7 +1388,9 @@ class DdlObjectEditorPanel(
         """Execute this buffer against the REAL target database, behind §18.5's
         four hard preconditions, in order:
 
-        1. **Signature-change refusal** -- no override, no consent path.
+        1. **Signature-change warning**, with a confirm-gated override naming
+           both identities (owner ruling 2026-08-10 -- see
+           `_precondition_signature`; this was a hard refusal until then).
         2. **Green sandbox validation**, with a *named* override enumerating
            exactly which tiers could not be checked.
         3. **Transactional apply, no revert snapshot** -- stated in the
@@ -1308,21 +1457,58 @@ class DdlObjectEditorPanel(
         return True
 
     def _precondition_signature(self, text: str) -> bool:
-        """Precondition 1 -- refuse a changed signature, naming the mismatch.
+        """Precondition 1 -- a changed signature WARNS, naming the mismatch,
+        and runs the buffer's SQL on confirm.
 
         `CREATE OR REPLACE` on a changed `(schema, name, argtypes)` CREATES A
-        SECOND FUNCTION and leaves the old one live: the statement succeeds and
-        the confirmation was truthful, so no confirm-gate can catch it. Refused
-        outright, with no override, and the user is pointed at the reviewable
-        deployment-script path (§18.3).
+        SECOND FUNCTION and leaves the old one live: PostgreSQL identifies a
+        routine by its argument types, so a rename or an argument change does
+        not replace anything -- it adds. **That consequence is real and is
+        NOT prevented here**; it is stated in the confirmation and accepted by
+        owner ruling (2026-08-10, BUG-260810193333): *"trust the user that they
+        know what they are doing, run the sql."* After a confirmed apply of a
+        renamed buffer the target holds BOTH objects, and dropping the old one
+        is the user's job -- **this app still has no *gesture* that drops an
+        object in the target** (the Explorer's `Drop …` entries are
+        table/column/index/constraint ALTERs), so the confirmation hands the user
+        the `DROP` statement (`_drop_statement`) and names **where** to run it:
+        §18.5 D4b's `Database ▸ Quality SQL Console…`, which since
+        `FQ-260811020328` is an in-app ad-hoc read/write path to the target.
+        The older claim that *"the SQL Console is structurally sandbox-only"* is
+        true of the SANDBOX console only and must not be restored as a statement
+        about the app. Do NOT name §18.3's `Database ▸ Compare Schemas…` here: it
+        is designed but has never been built (`db/schema_snapshot.py:81`), and
+        naming it sent the user to a command that does not exist
+        (BUG-260811021816).
+
+        This reverses the original hard "no override, no consent path" rule.
+        The reason it could not stay is the asymmetry it produced: `Check and
+        commit to sandbox` has no such precondition, so it RAN the renamed
+        buffer while `Apply to quality` reported one Audit line the user never
+        saw -- a deploy gesture that looked like it succeeded and did nothing.
+        A silent wrong result is the one outcome this app does not ship, so the
+        choice was between adding the guard to the sandbox path or turning this
+        one into a consent path; the owner chose the latter.
+
+        Every OTHER branch stays a hard refusal: an unparseable buffer, a
+        failed live-identity read (FQ-009 -- an unreachable database must never
+        become a cleared precondition), and the absent-object case, which
+        clears because creating is what the user asked for.
         """
         buffer_ref = parse_buffer_identity(text, self._ref)
         if buffer_ref is None:
             self._report(
                 [
-                    "refused: could not determine the object's signature from the "
-                    "buffer, so a changed signature cannot be ruled out. Use the "
-                    "deployment-script path (Database ▸ Compare Schemas…)."
+                    "refused: could not determine the object's signature from "
+                    "the buffer, so a changed signature cannot be ruled out. "
+                    "Nothing was applied. "
+                    f"{GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]} needs a single "
+                    "CREATE [OR REPLACE] FUNCTION/PROCEDURE, CREATE TRIGGER or "
+                    "CREATE [OR REPLACE] VIEW "
+                    "header with a complete argument list; an ALTER or a bare "
+                    "statement has no signature to compare. Use Deployment ▸ "
+                    f"{GESTURE_LABELS[GESTURE_CHECK_AND_COMMIT]} to run this "
+                    "buffer where trying things is free."
                 ]
             )
             return False
@@ -1354,17 +1540,61 @@ class DdlObjectEditorPanel(
             )
             return True
         if _comparable(buffer_ref) != _comparable(live_ref):
+            mismatch = (
+                f"You checked out {live_ref.qualified}, but the buffer creates "
+                f"{buffer_ref.qualified}."
+            )
+            # The sentence names the identity of the kind actually in hand. It
+            # said "a routine" for everything until `FQ-260812025836`, which was
+            # already loose for a trigger and became wrong for a view -- neither
+            # has argument types, so a user reading it would be told their
+            # rename was safe for a reason that does not apply.
+            if live_ref.is_routine:
+                identified_by = (
+                    "PostgreSQL identifies a routine by (schema, name, argument "
+                    "types)"
+                )
+            elif live_ref.is_trigger:
+                identified_by = (
+                    "PostgreSQL identifies a trigger by (schema, table, name)"
+                )
+            else:
+                identified_by = (
+                    f"PostgreSQL identifies a {live_ref.kind} by (schema, name)"
+                )
+            consequence = (
+                f"{identified_by}, so this does NOT replace the object you "
+                "checked out: "
+                f"it CREATES A SECOND OBJECT and leaves {live_ref.qualified} "
+                "live. This editor has no gesture that drops it, so dropping "
+                "it is yours to do -- run this in the Quality SQL Console "
+                "(Database ▸ Quality SQL Console…), which reaches the target "
+                "database:\n\n"
+                f"    {_drop_statement(live_ref)}"
+            )
+            gesture = GESTURE_LABELS[GESTURE_APPLY_TO_QUALITY]
+            if not self._confirm(
+                gesture,
+                f"{mismatch}\n\n{consequence}\n\n{gesture} anyway?",
+            ):
+                self._report(
+                    [
+                        f"{gesture} of {self._ref.qualified} cancelled at the "
+                        "signature mismatch; nothing was applied. "
+                        f"Buffer declares {buffer_ref.qualified}; the database "
+                        f"has {live_ref.qualified}."
+                    ]
+                )
+                return False
             self._report(
                 [
-                    "refused: the buffer's signature differs from the live object. "
-                    f"Buffer declares {buffer_ref.qualified}; the database has "
-                    f"{live_ref.qualified}. PostgreSQL identifies a routine by "
-                    "(schema, name, argument types), so applying this would create "
-                    "a second object and leave the old one live. Use the "
-                    "deployment-script path (Database ▸ Compare Schemas…)."
+                    "proceeding despite identity mismatch: buffer declares "
+                    f"{buffer_ref.qualified}; the database has "
+                    f"{live_ref.qualified}. Both objects will exist after this "
+                    "apply."
                 ]
             )
-            return False
+            return True
         return True
 
     def _precondition_validation(self, database: str) -> bool:

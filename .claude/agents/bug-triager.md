@@ -44,9 +44,24 @@ hang forever waiting on one.
    for XSD mode switching, not a new one").
 5. **Note test impact** — which existing file(s) under `tests/` already cover this area (so
    `feature-tester` extends instead of duplicating) and what new case(s) the fix will need.
-6. **Assign the next sequential id.** Read `docs/BUGFIX_QUEUE.md` if it exists and find the highest
-   `BUG-NNN`; use `NNN+1`. If the file doesn't exist yet, create it with the header shown below and start
-   at `BUG-001`.
+6. **Assign a timestamp id — never a sequential one.** Run `date +%y%m%d%H%M%S` and use the result:
+   `BUG-<YYMMDDHHMMSS>`, e.g. `BUG-260810143025`. Take it from the clock at the moment you file; do not
+   compose it by hand and do not reuse a timestamp from the report or from another entry.
+
+   **Why, because it will be tempting to "tidy" this back to counting.** Sequential ids require reading
+   the file to find the highest, which makes the id a function of *what you can see* — and two triagers
+   dispatched in parallel cannot see each other's append. That collision happened for real (two entries
+   both numbered `BUG-063`, 2026-08-10) and it survives every direction of merge, push and pull: git
+   merges two appends to different regions cleanly and neither side looks wrong. A timestamp id is a
+   function of *when*, so it needs no knowledge of the file and cannot collide across concurrent agents,
+   branches, or machines.
+
+   If two entries would somehow share a second, add one second rather than a suffix — the id must stay
+   parseable as a timestamp.
+
+   **Never renumber an existing entry.** Ids `BUG-001` … `BUG-064` predate this rule and stay exactly as
+   they are; the spec, the manual, commit messages and the decision queue cite them. The two schemes
+   coexist permanently, and that is fine — an id is a name, not a position.
 7. **Append one entry** in the exact format below, after the last entry (create the file first if
    needed).
 8. **Report back to the caller**: the bug id, a one-line summary, and confirmation the entry was written
@@ -75,7 +90,7 @@ delete entries; they're the record of what was reported and why the fix was shap
 Each entry (append after the last `---`, then add a trailing `---`):
 
 ```markdown
-## BUG-NNN: <short title>
+## BUG-<YYMMDDHHMMSS>: <short title>
 **Status:** OPEN
 **Reported:** <YYYY-MM-DD>
 **Report (verbatim):** "<the user's original bug report text>"
@@ -105,3 +120,40 @@ Each entry (append after the last `---`, then add a trailing `---`):
   inventing a plausible-sounding root cause.
 - **Keep each entry self-contained.** The main session resolving it later will not have this
   conversation's context — only the queue entry.
+
+# Keyboard shortcuts — check the ledger and the gate before proposing a chord
+
+Keyboard work is the most expensive area in this project: five owner decisions and a dozen bugs in one
+day, nearly all of them re-deriving *"who answers this chord"* from scratch. If your proposed fix assigns,
+moves, or removes a keyboard shortcut, these are not optional.
+
+- **Read `docs/KEYBINDINGS.md` first** — the register of every chord, its command, its host mechanism, the
+  surfaces it is live on, and its gate. **Never propose a chord that is already taken.** Say what holds it
+  and where, and propose a free one or none at all. A "probably free" suggestion costs the owner a round
+  trip and sometimes a shipped conflict.
+- **Do not reason from the menus.** Six mechanisms can answer a keystroke — `QAction.setShortcut`,
+  `QShortcut`, `keyPressEvent`, `eventFilter`/`ShortcutOverride`, context-menu actions, and Qt's
+  `StandardKey` platform defaults. A chord bound by any of them is bound. Grep for all six.
+- **State the GATE in your entry, and if it is not obvious, say it needs an owner ruling rather than
+  picking one.** The gate decides how many hosts are legal:
+  - command form (menu-bar **or** context-menu entry) → **exactly one** keyboard host, the `QAction`
+    (DEC-012);
+  - no command form at all → a widget host is legitimate (DEC-009), and only then, with a **product**
+    reason — never "the tests need it";
+  - answered inside a widget's key handling → must be in `RESERVED_SEQUENCES`, and under DEC-014 every
+    editing surface states its answer for that chord;
+  - platform-conditional → the app binds it on every platform, never inherited from Qt's table (DEC-015).
+- **A chord means the same thing on every system, and the ledger records ONE binding per command.**
+  No platform-conditional shortcuts. Qt's own table is not uniform — its Windows scheme binds
+  `Ctrl+Y` and `Alt+Backspace`/`Alt+Shift+Backspace` for undo/redo where X11 does not, and
+  `Ctrl+Shift+Z` is bound on both. Wherever Qt would differ, **this app binds explicitly on both
+  platforms or suppresses the chord on both** — a chord that works on Windows and is dead on Linux
+  is a bug, not a platform nicety. This is why `Ctrl+Y` had to become an explicit binding
+  (DEC-015) and why the offscreen suite cannot be trusted here: it runs Qt's **Windows** scheme,
+  so a Linux-only dead key passes every test.
+- **Two measured facts, so you do not re-file myths.** `QShortcut` **does** activate under
+  `QT_QPA_PLATFORM=offscreen` — the requirement is that the widget's top level has been `show()`n, not the
+  key-delivery target. And the offscreen platform runs Qt's **Windows** keyboard scheme, so Linux-only key
+  behaviour is invisible to the entire suite: assert the handler, never Qt's native answer.
+- If your investigation shows the ledger itself is wrong, that is a finding worth its own entry — the
+  ledger is verified by a test, so a divergence means either the code or the test is lying.

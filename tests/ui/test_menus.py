@@ -30,8 +30,12 @@ def test_file_menu_contents(qtbot):
         # Editor bar's `Deployment` menu), `Revert` became `Discard Changes`, and
         # `Deploy .pgtp` MOVED to `Deployment` -- so §18.2's project group is
         # four entries, not five.
+        # BUG-058: `Project Status…` MOVED here from the Database menu, directly
+        # below `Project Settings…` (owner ruling). §18.2's own four project
+        # actions plus §18.8's status screen, so the group reads five.
         "Open...", "Open PHP File…", "―",
-        "New Project…", "Open Project…", "Close Project", "Project Settings…", "―",
+        "New Project…", "Open Project…", "Close Project", "Project Settings…",
+        "Project Status…", "―",
         "Discard Changes", "Close", "―", "New Session", "Exit",
     ]
 
@@ -176,9 +180,16 @@ def test_history_menu_contents_and_order(qtbot):
     menu = find_top_menu(window, "History")
     # History… FIRST: the owner's ordering, on the reasoning that "everyone uses
     # Ctrl+Z/Ctrl+Y anyway", so the entry with no shortcut leads.
-    assert action_labels(menu) == ["History…", "Undo", "Redo"]
-    assert find_action(menu, "Undo") is window._undo_action
-    assert find_action(menu, "Redo") is window._redo_action
+    # The two step commands are named for their PROJECT scope (BUG-064): they
+    # mean "undo the project, wherever you are", which is a different command
+    # from the one Ctrl+Z drives in the focused surface.
+    assert action_labels(menu) == [
+        "History…",
+        "Undo Project Edit",
+        "Redo Project Edit",
+    ]
+    assert find_action(menu, "Undo Project Edit") is window._undo_action
+    assert find_action(menu, "Redo Project Edit") is window._redo_action
     assert find_action(menu, "History…") is window._history_action
 
 
@@ -355,7 +366,7 @@ def test_select_enclosing_block_action_selects_block(qtbot):
     assert selected == expected
 
 
-def test_select_parent_block_action_selects_parent(qtbot):
+def test_expand_selection_action_selects_parent(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     editor = window.center_stage.xml_editor
@@ -365,7 +376,7 @@ def test_select_parent_block_action_selects_parent(qtbot):
     cursor.setPosition(text.index("x"))
     editor.setTextCursor(cursor)
 
-    find_action(find_top_menu(window, "Select"), "Select Parent Block").trigger()
+    find_action(find_top_menu(window, "Select"), "Expand Selection").trigger()
 
     expected = text[text.index("<Detail>"):text.index("</Detail>") + len("</Detail>")]
     selected = editor.textCursor().selectedText().replace(" ", "\n")
@@ -433,32 +444,43 @@ def test_view_menu_contents(qtbot):
         # it now holds, and the two tabs get FOCUS entries (not checkable dock
         # toggles -- a tab is either in view or not, there is no third posture).
         "Activity Log / Messages Panel", "Activity Log", "Messages",
+        # BUG-061: the LEFT dock's Findings tab, in the same run of FOCUS entries
+        # (not checkable). It had no user gesture at all before -- only the audit
+        # router could reveal it -- so with no navigable op behind it the tab
+        # appeared not to exist.
+        "Findings",
         "Raw XML Panel",
         "―",
         "Expand All", "Collapse All",
-        "―",
-        "Light Theme",
-        "―",
-        "Customize Toolbar…",
-        # FQ-012: beside its sibling -- the same command universe, customized
-        # on its other axis.
-        "Customize Shortcuts…",
+        # FQ-260812021715 REMOVED the trailing separator and `Light Theme` with
+        # it: a theme is a named file selected in the Themes pane of
+        # `Settings ▸ Software settings…`, not a binary toggle on `View`.
+        # FQ-260812002827 ENDS the menu here. `Customize Toolbar…` and
+        # `Customize Shortcuts…` were the last two entries; both were MOVED into
+        # `Settings ▸ Software settings…` and removed from `View`, so the
+        # trailing separator went with them.
     ]
 
 
-def test_customize_shortcuts_entry_opens_a_non_modal_dialog(qtbot):
-    """FQ-012's entry point. Triggering it must not reach a modal (§30): the
-    dialog is `show()`n and the window keeps running."""
+def test_the_two_customize_entries_are_GONE_from_the_view_menu(qtbot):
+    """Relocating means moving (owner-settled, FQ-260812002827): both surfaces
+    live in the Software settings dialog now, and leaving a second door here
+    would defeat the consolidation."""
     window = MainWindow()
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
-    action = find_action(view_menu, "Customize Shortcuts…")
-    assert action is not None
-    action.trigger()
-    dialog = window._customize_shortcuts_dialog
-    assert dialog is not None
+    assert find_action(view_menu, "Customize Toolbar…") is None
+    assert find_action(view_menu, "Customize Shortcuts…") is None
+
+
+def test_the_shortcuts_pane_is_offered_the_whole_command_universe(qtbot):
+    """FQ-012's contract, unchanged by the re-hosting: the pane is fed the SAME
+    menu walk Customize Toolbar uses, never a second one."""
+    window = MainWindow()
+    qtbot.addWidget(window)
+    dialog = window.build_customize_shortcuts_pane()
+    qtbot.addWidget(dialog)
     assert dialog.isModal() is False
-    # The dialog is offered the SAME command universe Customize Toolbar walks.
     assert dialog.command_ids() == [
         command_id for command_id, _label in window._toolbar_ui.all_menu_commands()
     ]
@@ -626,6 +648,11 @@ def test_schema_menu_contents(qtbot):
         "Verify XSD",
         "Export XSD",
         "Import XSD",
+        # BUG-260812002307 part C: the one sanctioned overwrite of the
+        # hand-owned curated.xsd. Deliberately carries NO shortcut (DEC-012 —
+        # a menu command form has exactly one keyboard host, and a chord would
+        # have to clear `docs/KEYBINDINGS.md` first).
+        "Restore Bundled Curated Schema…",
     ]
 
 
@@ -658,9 +685,12 @@ def test_tools_menu_contents(qtbot):
         # Caption Management tab's own permanent Find/Replace bar.
         "Manage Captions...", "―",
         # "Validate Project" MOVED to the Editor bar's Parsing menu (FQ-016) --
-        # it is the owner's "validate xml". §22's three lint entries stay here
-        # (§29 open item: whether all three follow it).
-        "Lint Current File", "Lint on Save", "Locate PHP Linter…", "―",
+        # it is the owner's "validate xml". §22's two lint OPERATIONS stay here
+        # (§29 open item: whether both follow it). `Locate PHP Linter…` does NOT:
+        # FQ-260812025705 moved it into `Settings ▸ Software settings… ▸ External
+        # tools` with the two `Generation ▸ Locate …` items, so all three
+        # app-wide binaries are set in one place.
+        "Lint Current File", "Lint on Save", "―",
         "Reparse Raw XML into Tree", "―",
         # NO Compare/Merge command survives here. FQ-020 took
         # `Compare / Merge Two Files...` (-> `Deployment ▸ Compare/Merge pgtp`)
@@ -712,11 +742,12 @@ def test_generation_menu_contents(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     menu = find_top_menu(window, "Generation")
+    # Operations only: both `Locate …` items left for `Settings ▸ Software
+    # settings… ▸ External tools` (FQ-260812025705). Their leading separators
+    # went with them -- a separator whose group is gone is a stray line.
     assert action_labels(menu) == [
-        "Locate PHP Generator Executable...", "―",
         "Generate PHP...", "―",
         "Open Output Folder", "―",
-        "Locate panGen Runtime...",
         "panGen (Generate Own PHP)",
         "rePHPgen (Analyze Gap)",
         "Save reJSON...",

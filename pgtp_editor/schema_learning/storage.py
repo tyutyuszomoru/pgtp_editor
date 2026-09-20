@@ -24,7 +24,7 @@ _LEARNED_XSD_FILENAME = "learned.xsd"
 
 # The curated schema bundled with the app (spec §11). On first run, when the
 # user's app-data curated.xsd is absent, it is seeded by copying this resource.
-CURATED_BUNDLED_VERSION = "1.2"
+CURATED_BUNDLED_VERSION = "1.3"
 _BUNDLED_CURATED_RESOURCE = "curated.xsd"
 
 

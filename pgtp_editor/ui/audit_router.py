@@ -44,7 +44,20 @@ Prefix           Destination                 Lifecycle
 ``[Project]``    Activity Log **and** the    journalled *and*
 during a close   Messages tab                rendered — see BUG-042
 ``[Sandbox]``    Messages tab (bottom)       accumulated
+``[DDL]``        Messages tab (bottom)       accumulated
 ===============  ==========================  ========================
+
+``[DDL]`` is an **eleventh** prefix (FQ-260812022749), carrying the dual-mode
+DDL verdict -- *full `pg_dump` view* vs. *restricted, catalog-reconstructed
+DDL* -- and it is emitted on EVERY DDL open, by owner ruling (*"this way the
+choice is clear"*). It goes to the Messages tab because that is the visible,
+accumulating surface where `[Check]`/`[Lint]`/`[Validate]` output already
+lands. **It must never be routed to the status bar**: `StaticStatusBar.
+showMessage` paints nothing (it journals into the Activity Log and
+`displayed_message()` is permanently `""`), so that route would repeat
+BUG-260812002307 exactly. A new prefix was needed rather than reusing one of
+the ten: `[Sandbox]` is the sandbox-operation lane, and an unprefixed row --
+which already defaults to `TO_RESULTS` -- cannot be recognised or filtered.
 
 ``[Sandbox]`` is a **tenth** prefix (`ui/main_window.py::_SANDBOX_PREFIX`, the
 sandbox-operation outcome line) that FQ-028's nine-row table does not mention,
@@ -109,8 +122,19 @@ CHECK_PREFIX = "[Check]"
 SCHEMA_PREFIX = "[Schema]"
 PHP_PREFIX = "[PHP]"
 SQL_PREFIX = "[SQL]"
+#: FQ-033's XML formatter. Its SQL twin's refusals are `[SQL]`, and the two are
+#: the same kind of event -- one gesture, two engines -- so this routes to the
+#: same place for the same reason: a refusal the user just provoked wants a
+#: durable home, and splitting the pair across surfaces would only make the
+#: history harder to read.
+XML_PREFIX = "[XML]"
 PROJECT_PREFIX = "[Project]"
 SANDBOX_PREFIX = "[Sandbox]"
+#: FQ-260812022749's dual-mode DDL verdict. The message text itself is built
+#: (Qt-free) by `db/pg_dump_mode.py::DdlModeVerdict.message`; this constant is
+#: the prefix's ONE home, so the producer composes `f"{DDL_PREFIX} {message}"`
+#: rather than re-spelling the bracket text.
+DDL_PREFIX = "[DDL]"
 
 #: The three destinations, as plain strings so a test can name one.
 #: `TO_RESULTS` names the bottom dock's tab, which is titled **Messages** since
@@ -135,8 +159,10 @@ DESTINATIONS = {
     CHECK_PREFIX: TO_RESULTS,
     PHP_PREFIX: TO_ACTIVITY,
     SQL_PREFIX: TO_ACTIVITY,
+    XML_PREFIX: TO_ACTIVITY,
     PROJECT_PREFIX: TO_ACTIVITY,
     SANDBOX_PREFIX: TO_RESULTS,
+    DDL_PREFIX: TO_RESULTS,
 }
 
 #: What marks a `[Schema]` row as a Verify XSD finding rather than learning

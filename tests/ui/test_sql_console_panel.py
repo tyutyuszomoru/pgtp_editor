@@ -23,17 +23,26 @@ The "session" is an opaque sentinel: the panel must hand it straight to
 sandbox-only boundary (a `SandboxSession`, never `ConnectionParams`).
 """
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeyEvent, QKeySequence
 from PySide6.QtWidgets import QSpinBox, QSplitter
 
-from pgtp_editor.db.sandbox_query import QueryError, QueryOutcome, QueryResult
+from pgtp_editor.db.sandbox_query import (
+    DEFAULT_STATEMENT_TIMEOUT_MS,
+    MIN_STATEMENT_TIMEOUT_MS,
+    QueryError,
+    QueryOutcome,
+    QueryResult,
+)
 from pgtp_editor.ui.code_editor import CodeEditor
 from pgtp_editor.ui.sql_console_panel import (
     DECLINED_TEXT,
     DEFAULT_ROW_LIMIT,
+    DEFAULT_TIMEOUT_MS,
     MAX_ROW_LIMIT,
+    MAX_TIMEOUT_MS,
     MIN_ROW_LIMIT,
+    MIN_TIMEOUT_MS,
     NO_SESSION_TEXT,
     NOTHING_EXECUTABLE_TEXT,
     OBJECT_CHANGE_CONSEQUENCE,
@@ -68,10 +77,12 @@ class RecordingQuery:
 
     def __init__(self, result: QueryResult | None = None) -> None:
         self.result = result if result is not None else rows_result()
-        self.calls: list[tuple[object, str, int]] = []
+        self.calls: list[tuple[object, str, int, int]] = []
 
-    def __call__(self, session, sql, *, max_rows):
-        self.calls.append((session, sql, max_rows))
+    def __call__(
+        self, session, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS
+    ):
+        self.calls.append((session, sql, max_rows, statement_timeout_ms))
         return self.result
 
 
@@ -98,10 +109,12 @@ class ScriptedQuery:
 
     def __init__(self, answers: dict[str, QueryResult] | None = None) -> None:
         self.answers = answers or {}
-        self.calls: list[tuple[object, str, int]] = []
+        self.calls: list[tuple[object, str, int, int]] = []
 
-    def __call__(self, session, sql, *, max_rows):
-        self.calls.append((session, sql, max_rows))
+    def __call__(
+        self, session, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS
+    ):
+        self.calls.append((session, sql, max_rows, statement_timeout_ms))
         if sql in self.answers:
             return self.answers[sql]
         return QueryResult(
@@ -113,7 +126,7 @@ class ScriptedQuery:
 
     @property
     def statements(self) -> list[str]:
-        return [sql for _session, sql, _rows in self.calls]
+        return [call[1] for call in self.calls]
 
 
 class RecordingConfirm:
@@ -216,7 +229,7 @@ def test_the_row_limit_in_force_is_the_one_passed_down(qtbot):
 
     console.run()
 
-    assert query.calls == [(SESSION, "SELECT 1", 25)]
+    assert query.calls == [(SESSION, "SELECT 1", 25, DEFAULT_TIMEOUT_MS)]
 
 
 # -- running ---------------------------------------------------------------
@@ -292,7 +305,7 @@ def test_a_no_rows_statement_reports_its_command_status(qtbot):
 
 
 def test_a_seam_level_exception_still_arrives_as_an_error_result(qtbot):
-    def boom(session, sql, *, max_rows):
+    def boom(session, sql, *, max_rows, statement_timeout_ms=DEFAULT_STATEMENT_TIMEOUT_MS):
         raise RuntimeError("thread pool exploded")
 
     console = SqlConsolePanel(
@@ -575,6 +588,190 @@ def test_format_selection_requires_a_selection_and_reindents_in_place(qtbot):
     assert "select 1" in console.sql_text
 
 
+# -- BUG-063: Format Selection's click-only command form --------------------
+
+
+def test_the_context_menu_has_a_format_selection_entry(qtbot):
+    """BUG-063: the console had the chord and no command. DEC-012 rests on this
+    gesture HAVING a command form — that is why it sits under the one-keyboard-
+    host rule rather than in DEC-009's menu-less family — and the console was the
+    one surface where the command did not exist.
+
+    `_build_context_menu` is driven directly and never `exec`ed (no test may
+    reach a real modal `QMenu.exec`), which is the DDL object tab's shape."""
+    console, _query = make_console(qtbot)
+
+    labels = [action.text() for action in console._build_context_menu().actions()]
+
+    assert "Format Selection" in labels
+    # Nothing else was added: the console IS the run target, so there is no
+    # `Run in Sandbox Console` bridge, and FQ-026 keeps apply gestures off this
+    # kind of menu.
+    assert "Run in Sandbox Console" not in labels
+    assert not [label for label in labels if label.startswith("Apply")]
+
+
+def test_the_context_menu_entry_follows_the_chords_selection_gate(qtbot):
+    console, _query = make_console(qtbot)
+    console.set_sql("select 1\nfrom t\n")
+
+    def format_action(menu):
+        return next(a for a in menu.actions() if a.text() == "Format Selection")
+
+    assert format_action(console._build_context_menu()).isEnabled() is False
+
+    cursor = console.editor.textCursor()
+    cursor.select(cursor.SelectionType.Document)
+    console.editor.setTextCursor(cursor)
+    action = format_action(console._build_context_menu())
+
+    assert action.isEnabled() is True
+    action.trigger()
+    assert "select 1" in console.sql_text
+
+
+def test_the_menu_entry_is_click_only_and_hosts_no_shortcut(qtbot):
+    """DEC-012 permits exactly ONE keyboard host per gesture, and the
+    `QShortcut` in `__init__` is it. A `setShortcut` on this action would
+    re-create the double-hosting the ruling exists to forbid — and it is the
+    easiest thing for a later edit to break silently, hence the guard."""
+    console, _query = make_console(qtbot)
+
+    action = next(
+        a
+        for a in console._build_context_menu().actions()
+        if a.text() == "Format Selection"
+    )
+
+    assert action.shortcut().isEmpty()
+    assert console._format_shortcut.key() == QKeySequence("Ctrl+Alt+F")
+
+
+# -- BUG-056: the undo/redo chords are stated here, not inherited from Qt ----
+
+
+def _deliver(console, kind, key, mods):
+    event = QKeyEvent(kind, key, mods)
+    return console.eventFilter(console.editor, event), event
+
+
+_CTRL = Qt.KeyboardModifier.ControlModifier
+_CTRL_SHIFT = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier
+_ALT = Qt.KeyboardModifier.AltModifier
+
+
+def test_the_console_claims_the_shortcut_override_for_the_reserved_chords(qtbot):
+    """The half that stops the window-level shortcut. Without it `Ctrl+Y` on
+    Linux fell through to `MainWindow`'s window `Ctrl+Y`, which returns at once
+    because this is not the Raw XML tab (BUG-048's scoping) — no redo, no
+    refusal, no journal line, while the same source redid the buffer on
+    Windows."""
+    console, _query = make_console(qtbot)
+
+    for key, mods in (
+        (Qt.Key.Key_Z, _CTRL),
+        (Qt.Key.Key_Y, _CTRL),
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
+        (Qt.Key.Key_Backspace, _ALT),
+    ):
+        consumed, event = _deliver(console, QEvent.Type.ShortcutOverride, key, mods)
+        assert consumed is True, (key, mods)
+        assert event.isAccepted() is True
+
+
+def test_the_console_answers_undo_and_redo_from_its_own_stack(qtbot):
+    """The other half: claiming without answering leaves the key dead. The
+    console buffer is editable (unlike the DDL Explorer's), so the answer is its
+    own undo stack rather than a refusal. Asserted through the FILTER — the
+    offscreen platform runs Qt's Windows scheme, where the native path would pass
+    for the wrong reason."""
+    console, _query = make_console(qtbot)
+    console.editor.setPlainText("select 1")
+    console.editor.insertPlainText(" -- note")
+    typed = console.sql_text
+
+    consumed, _ = _deliver(console, QEvent.Type.KeyPress, Qt.Key.Key_Z, _CTRL)
+    assert consumed is True
+    assert console.sql_text != typed
+
+    consumed, _ = _deliver(console, QEvent.Type.KeyPress, Qt.Key.Key_Y, _CTRL)
+    assert consumed is True
+    assert console.sql_text == typed
+
+
+def test_the_console_claims_the_non_operation_chords_without_redoing(qtbot):
+    """`Ctrl+Shift+Z` is no longer redo (DEC-015) and the `Alt+Backspace` pair is
+    suppressed so the keyboard is identical on both systems. All three are
+    consumed and none of them touches the buffer."""
+    console, _query = make_console(qtbot)
+    console.editor.setPlainText("select 1")
+    console.editor.insertPlainText(" -- note")
+    _deliver(console, QEvent.Type.KeyPress, Qt.Key.Key_Z, _CTRL)
+    undone = console.sql_text
+
+    for key, mods in (
+        (Qt.Key.Key_Z, _CTRL_SHIFT),
+        (Qt.Key.Key_Backspace, _ALT),
+        (Qt.Key.Key_Backspace, _ALT | Qt.KeyboardModifier.ShiftModifier),
+    ):
+        consumed, _ = _deliver(console, QEvent.Type.KeyPress, key, mods)
+        assert consumed is True, (key, mods)
+        assert console.sql_text == undone
+
+
+def test_the_console_answers_the_x11_only_editing_chords_itself(qtbot):
+    """The owner's 2026-08-10 ruling, at this surface: `Ctrl+Shift+Insert` (paste)
+    and `Ctrl+D`/`Ctrl+K`/`Ctrl+U` are the app's own on both platforms. Qt binds
+    them on the Linux/KDE scheme only and the offscreen platform runs the
+    **Windows** scheme, so the filter's answer is the only observable one — which
+    is also the whole point of binding them: on Windows these gestures did not
+    exist before. The console buffer is editable, so they edit it."""
+    def console_at(text, position):
+        console, _query = make_console(qtbot)
+        console.editor.setPlainText(text)
+        cursor = console.editor.textCursor()
+        cursor.setPosition(position)
+        console.editor.setTextCursor(cursor)
+        return console
+
+    for key, position, expected in (
+        (Qt.Key.Key_D, 0, "elect 1\nselect 2"),
+        (Qt.Key.Key_K, 1, "s\nselect 2"),
+        (Qt.Key.Key_U, 1, "select 2"),
+    ):
+        console = console_at("select 1\nselect 2", position)
+        override = QKeyEvent(QEvent.Type.ShortcutOverride, key, _CTRL)
+        assert console.eventFilter(console.editor, override) is True
+        assert override.isAccepted() is True
+        consumed, _ = _deliver(console, QEvent.Type.KeyPress, key, _CTRL)
+        assert consumed is True, key
+        assert console.sql_text == expected, key
+
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText("-- ")
+    console = console_at("select 1", 0)
+    consumed, _ = _deliver(
+        console, QEvent.Type.KeyPress, Qt.Key.Key_Insert, _CTRL_SHIFT
+    )
+    assert consumed is True
+    assert console.sql_text == "-- select 1"
+
+
+def test_the_console_filter_does_not_claim_unrelated_keys(qtbot):
+    """The filter must not become a key sink -- the results table and the
+    completion popup keep their own keys, and anything else falls through."""
+    console, _query = make_console(qtbot)
+
+    for key, mods in (
+        (Qt.Key.Key_Z, Qt.KeyboardModifier.NoModifier),
+        (Qt.Key.Key_A, _CTRL),
+        (Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier),
+    ):
+        consumed, _ = _deliver(console, QEvent.Type.KeyPress, key, mods)
+        assert consumed is False, (key, mods)
+
+
 # -- §27's Ctrl+Return = Run -----------------------------------------------
 
 
@@ -599,7 +796,9 @@ def test_ctrl_return_runs_once_through_the_same_run_gesture(qtbot):
 
     console._run_shortcut.activated.emit()
 
-    assert query.calls == [(SESSION, "SELECT 1", DEFAULT_ROW_LIMIT)]
+    assert query.calls == [
+        (SESSION, "SELECT 1", DEFAULT_ROW_LIMIT, DEFAULT_TIMEOUT_MS)
+    ]
     assert console.result is query.result
 
 
@@ -922,11 +1121,87 @@ def test_as_confirmation_normalises_both_shapes_and_never_remembers_a_refusal():
     ) == ObjectChangeConfirmation(False, False)
 
 
-def test_there_is_no_statement_timeout_control_yet(qtbot):
-    """§18.5 D4 asks for one, but `SandboxExecutor.fetch` has no parameter to
-    pass it to, so the console does NOT fake one. Asserted so the gap stays
-    visible rather than being quietly "implemented" as a no-op control."""
+# -- the statement timeout (§18.5 D4's PRIMARY control) --------------------
+#
+# **SUPERSEDED, deliberately not deleted silently.** This section replaces
+# `test_there_is_no_statement_timeout_control_yet`, which asserted the *absence*
+# of `console.timeout_spin` / `console.statement_timeout_ms` on the grounds that
+# `SandboxExecutor.fetch` had no parameter to pass a timeout to. That gap was
+# the defect (BUG-260811024600), not the design: the seam has been widened in
+# all three of its declarations, and the control now exists. The old assertion
+# is inverted rather than dropped so the record of *why* the gap existed, and
+# that it was closed on purpose, stays readable in one place.
+
+
+def test_the_console_has_a_statement_timeout_control(qtbot):
     console, _query = make_console(qtbot)
 
-    assert not hasattr(console, "timeout_spin")
-    assert not hasattr(console, "statement_timeout_ms")
+    assert isinstance(console.timeout_spin, QSpinBox)
+    assert console.statement_timeout_ms() == DEFAULT_TIMEOUT_MS == 30_000
+
+
+def test_the_timeout_spin_box_has_a_floor_and_no_unlimited_setting(qtbot):
+    """The floor is the spec's 1 000 ms, and the box has a finite maximum -- so
+    there is no reachable value meaning "let it run forever". That absence is
+    the half of D4's design that carries the safety."""
+    console, _query = make_console(qtbot)
+
+    assert console.timeout_spin.minimum() == MIN_TIMEOUT_MS == 1_000
+    assert console.timeout_spin.maximum() == MAX_TIMEOUT_MS
+    assert MAX_TIMEOUT_MS > DEFAULT_TIMEOUT_MS
+    # The console's numbers are the db layer's, not a second pair that can drift.
+    assert DEFAULT_TIMEOUT_MS is DEFAULT_STATEMENT_TIMEOUT_MS
+    assert MIN_TIMEOUT_MS is MIN_STATEMENT_TIMEOUT_MS
+
+
+@pytest.mark.parametrize("asked", [0, -1, 10, 999])
+def test_a_timeout_below_the_floor_is_clamped_up_not_accepted(qtbot, asked):
+    console, _query = make_console(qtbot)
+
+    console.set_statement_timeout_ms(asked)
+
+    assert console.statement_timeout_ms() == MIN_TIMEOUT_MS
+
+
+def test_a_timeout_above_the_ceiling_is_clamped_down(qtbot):
+    console, _query = make_console(qtbot)
+
+    console.set_statement_timeout_ms(MAX_TIMEOUT_MS * 10)
+
+    assert console.statement_timeout_ms() == MAX_TIMEOUT_MS
+
+
+def test_the_timeout_in_force_is_the_one_passed_down(qtbot):
+    """Asserted THROUGH THE SEAM: what the fake executor was handed, not what a
+    constant says."""
+    console, query = make_console(qtbot)
+    console.set_statement_timeout_ms(5_000)
+    console.set_sql("SELECT 1")
+
+    console.run()
+
+    assert query.calls[0][3] == 5_000
+
+
+def test_changing_the_spin_box_between_runs_changes_what_the_next_run_sends(qtbot):
+    console, query = make_console(qtbot)
+    console.set_sql("SELECT 1")
+
+    console.run()
+    console.set_statement_timeout_ms(120_000)
+    console.run()
+
+    assert [call[3] for call in query.calls] == [DEFAULT_TIMEOUT_MS, 120_000]
+
+
+def test_every_statement_of_one_run_gets_the_same_timeout(qtbot):
+    """Read once per Run, exactly like the row cap: a control changed while a
+    multi-statement Run is in flight must not change the rules halfway."""
+    query = ScriptedQuery()
+    console, _query = make_console(qtbot, query)
+    console.set_statement_timeout_ms(45_000)
+    console.set_sql("SELECT 1; SELECT 2; SELECT 3")
+
+    console.run()
+
+    assert [call[3] for call in query.calls] == [45_000, 45_000, 45_000]

@@ -61,12 +61,12 @@ def test_shown_non_modally(dialog):
 
 
 def test_overrides_are_applied_and_the_callers_map_is_not_aliased(qtbot):
-    overrides = {"file.close": "Ctrl+U"}
+    overrides = {"file.close": "Ctrl+M"}
     dlg = CustomizeShortcutsDialog(COMMANDS, overrides)
     qtbot.addWidget(dlg)
-    assert dlg.binding_of("file.close") == "Ctrl+U"
-    dlg.set_binding("file.close", "Ctrl+K")
-    assert overrides == {"file.close": "Ctrl+U"}
+    assert dlg.binding_of("file.close") == "Ctrl+M"
+    dlg.set_binding("file.close", "Ctrl+J")
+    assert overrides == {"file.close": "Ctrl+M"}
 
 
 def test_reserved_rows_are_listed_read_only(dialog):
@@ -100,7 +100,7 @@ def test_conflict_is_announced_before_anything_is_committed(dialog):
 
 
 def test_no_conflict_message_for_a_free_key_or_the_commands_own_key(dialog):
-    assert dialog.conflict_message("file.close", "Ctrl+U") is None
+    assert dialog.conflict_message("file.close", "Ctrl+M") is None
     assert dialog.conflict_message("file.open", "Ctrl+O") is None
 
 
@@ -123,9 +123,9 @@ def test_a_reserved_key_is_refused_rather_than_stolen(dialog):
 
 
 def test_a_pinned_command_refuses_every_assignment(dialog):
-    assert dialog.refusal_message("help.manual", "Ctrl+U") is not None
+    assert dialog.refusal_message("help.manual", "Ctrl+M") is not None
     with pytest.raises(ValueError):
-        dialog.set_binding("help.manual", "Ctrl+U")
+        dialog.set_binding("help.manual", "Ctrl+M")
     assert dialog.binding_of("help.manual") == "F1"
 
 
@@ -149,7 +149,7 @@ def test_reset_to_default_steals_its_key_back(dialog):
 
 
 def test_restore_all_defaults_empties_the_override_map(dialog):
-    dialog.set_binding("file.close", "Ctrl+K")
+    dialog.set_binding("file.close", "Ctrl+J")
     dialog.set_binding("navigation.next-bookmark", "F4")
     assert dialog.result_overrides()
     dialog.restore_all_defaults()
@@ -173,14 +173,14 @@ def test_result_overrides_after_accepted(qtbot, dialog):
 
 
 def test_cancelling_changes_nothing(qtbot):
-    host = {"overrides": {"file.close": "Ctrl+U"}}
+    host = {"overrides": {"file.close": "Ctrl+M"}}
     dlg = CustomizeShortcutsDialog(COMMANDS, host["overrides"])
     qtbot.addWidget(dlg)
     dlg.accepted.connect(lambda: host.update(overrides=dlg.result_overrides()))
-    dlg.set_binding("file.close", "Ctrl+K")
+    dlg.set_binding("file.close", "Ctrl+J")
     dlg.set_binding("file.open", "F7")
     dlg.reject()
-    assert host["overrides"] == {"file.close": "Ctrl+U"}
+    assert host["overrides"] == {"file.close": "Ctrl+M"}
 
 
 # -- selection / capture seam ------------------------------------------------
@@ -207,9 +207,9 @@ def test_the_inline_label_shows_the_conflict_then_the_refusal(dialog):
 
 def test_assign_button_applies_the_captured_key(dialog):
     dialog.select_command("file.close")
-    dialog.key_edit.setKeySequence("Ctrl+K")
+    dialog.key_edit.setKeySequence("Ctrl+J")
     dialog.assign_button.click()
-    assert dialog.binding_of("file.close") == "Ctrl+K"
+    assert dialog.binding_of("file.close") == "Ctrl+J"
 
 
 def test_assign_button_refuses_a_reserved_key_without_changing_anything(dialog):

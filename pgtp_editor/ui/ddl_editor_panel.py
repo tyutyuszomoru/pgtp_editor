@@ -27,10 +27,23 @@ live/synthesized: the checked-out, editable form lives in `ddl/*.sql` files
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from pgtp_editor.ui.code_editor import CodeEditor
-from pgtp_editor.ui.ddl_buffer_panel import resolve_edit_target
+from pgtp_editor.ui.code_editor import (
+    CLAIMED_NOT_UNDO_REDO,
+    REDO,
+    UNDO,
+    CodeEditor,
+    apply_shrink_structural_selection,
+    classify_editor_chord,
+    is_mutating_editor_operation,
+)
+from pgtp_editor.ui.ddl_buffer_panel import (
+    RELOAD_LABEL,
+    edit_refusal_for_span,
+    resolve_edit_target,
+)
 from pgtp_editor.ui.find_replace_bar import FindReplaceBar, install_focus_shortcuts
 
 
@@ -60,6 +73,24 @@ class EditorPanel(QWidget):
     #: `BrowserPanel`: `checkout_requested` is withdrawn and checkout is a
     #: branch of MainWindow's handler for this signal (§18.1/§18.2).
     edit_requested = Signal(object, str)
+
+    #: Right-click ▸ Reload DDL, or `Ctrl+Shift+R` with the caret in this buffer
+    #: (BUG-062). "Re-introspect the connection this Explorer was opened over and
+    #: rebuild everything from the result."
+    #:
+    #: A SIGNAL, not a call: §18.5 D1's injection idiom says this panel never
+    #: talks to a database, and the fetch it asks for is the host's
+    #: `_open_ddl_explorer(role)` -- the same path the Database-menu toggle runs,
+    #: which is why reload is a re-introspection and NOT a re-render of a cached
+    #: `SchemaIndex`. A cached index is exactly what goes stale when the user
+    #: applies a change, so serving reload from it would answer the gesture with
+    #: the data the gesture exists to replace. (BUG-045 is what reaching for the
+    #: database from here looks like.)
+    #:
+    #: Carries NO role: this panel does not know which of §18.7's two Explorers
+    #: it is, and it must not learn -- the host connects each instance's signal
+    #: to that instance's role, exactly as it does for `edit_requested`.
+    reload_requested = Signal()
 
     def __init__(
         self, parent: QWidget | None = None, *, browse_only: bool = False
@@ -111,6 +142,35 @@ class EditorPanel(QWidget):
             install_focus_shortcuts(self, self.find_replace_bar)
         )
 
+        # Reload DDL (BUG-062). `Ctrl+Shift+R`, scoped to this panel and its
+        # children so it fires with the caret in the buffer -- the
+        # `install_focus_shortcuts` / `DdlObjectEditorPanel._format_shortcut`
+        # scope, for the same reason.
+        #
+        # THIS QShortcut IS THE GESTURE'S ONLY KEYBOARD HOST (DEC-012, as
+        # answered: *any gesture with a command form -- menu bar OR context menu
+        # -- has exactly one keyboard host*). Reload has three affordances: this
+        # panel's context menu, the tree's, and the host's Database-menu action.
+        # Neither menu form carries a shortcut; both are click-only commands,
+        # exactly as `Format Selection` ships since BUG-054.
+        #
+        # Why the widget and not the QAction -- the choice the one-host rule
+        # leaves open, and which the Format Selection precedent already made the
+        # same way. Reload is per-ROLE (§18.7 gives the target and the sandbox
+        # their own Explorer, their own connection and their own tab), so a
+        # window-level chord would have to guess which of the two the user meant
+        # from something other than focus. Here the answer is the buffer the
+        # caret is in, which is the only place the question has one answer.
+        # `Ctrl+Shift+R` is free of all six binding mechanisms (nothing else
+        # binds it, and Qt's tables bind Refresh to F5 on both schemes); it is
+        # recorded in `shortcut_registry.RESERVED_SEQUENCES` so no rebinding can
+        # be pointed at it.
+        self._reload_shortcut = QShortcut(QKeySequence("Ctrl+Shift+R"), self)
+        self._reload_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._reload_shortcut.activated.connect(self.reload_requested.emit)
+
     def set_ddl_text(self, text: str, spans=None, schema=None) -> None:
         """Replace the synthesized buffer (a fresh `build_ddl_text` result).
 
@@ -141,7 +201,8 @@ class EditorPanel(QWidget):
                 return span
         return None
 
-    #: Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z, claimed AND answered here (BUG-048).
+    #: The reserved editor chord set (`EDITOR_CHORDS`), claimed AND
+    #: answered here (BUG-048).
     #: Shaped after `DdlObjectEditorPanel.eventFilter`'s §18.5 carve-out 1, for
     #: the same hazard at the sibling site nobody filtered: a read-only
     #: `QPlainTextEdit` does not claim the `ShortcutOverride` for undo/redo, so
@@ -153,30 +214,49 @@ class EditorPanel(QWidget):
     #: state the reason (FQ-023) rather than to leave a dead key.
     _UNDO_REDO_REFUSAL = "this buffer is read only — there is nothing to undo here"
 
-    def _is_undo_redo_chord(self, event) -> bool:
-        ctrl = Qt.KeyboardModifier.ControlModifier
-        shift = Qt.KeyboardModifier.ShiftModifier
-        mods = event.modifiers()
-        key = event.key()
-        if mods == ctrl and key in (Qt.Key.Key_Z, Qt.Key.Key_Y):
-            return True
-        # Ctrl+Shift+Z is the second redo chord (BUG-050).
-        return mods == (ctrl | shift) and key == Qt.Key.Key_Z
+    #: The same shape for the four chords that would EDIT (paste, and the three
+    #: line-editing gestures the app took ownership of on 2026-08-10). They are
+    #: answered here, but the answer is a stated reason rather than an edit: the
+    #: buffer is synthesized by `build_ddl_text` and read-only by design (§18.1),
+    #: and `apply_editor_operation` refuses a read-only editor on its own — so
+    #: without this the key would be silently dead, which FQ-023 rules out. It is
+    #: a DIFFERENT sentence from the undo one on purpose: none of these asks for
+    #: an undo, and "there is nothing to undo here" would be the wrong reason.
+    _EDIT_REFUSAL = "this buffer is read only — edit the object in its own tab"
 
     def eventFilter(self, obj, event) -> bool:
-        if (
-            obj is self.editor
+        operation = (
+            classify_editor_chord(event)
+            if obj is self.editor
             and event.type()
             in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress)
-            and self._is_undo_redo_chord(event)
-        ):
+            else None
+        )
+        if operation is not None:
             if event.type() == QEvent.Type.ShortcutOverride:
                 # Claiming the sequence is what stops the window shortcut;
                 # answering the KeyPress is what stops the silence. Both halves
                 # are required — writing only the second changes nothing.
                 event.accept()
-            else:
+            elif operation in (UNDO, REDO):
                 self.editor.report_refusal(self._UNDO_REDO_REFUSAL)
+            elif is_mutating_editor_operation(operation):
+                self.editor.report_refusal(self._EDIT_REFUSAL)
+            elif operation == CLAIMED_NOT_UNDO_REDO:
+                # `Ctrl+Shift+Z` = Shrink Selection (FQ-034), and it RUNS here
+                # even though every other gesture in this panel refuses: the
+                # buffer is read-only, and **read-only is irrelevant to
+                # selecting** — the same argument that keeps `Select All` and
+                # `Ctrl+Shift+B` live in this panel (§8). So no refusal is owed,
+                # and none is stated; the ladder simply works on the synthesized
+                # DDL, which is the surface where reading structure matters most.
+                apply_shrink_structural_selection(self.editor)
+            # else: the `Alt+Backspace` pair (suppressed app-wide so the keyboard
+            # is identical on both platforms), claimed here for the same reason as
+            # everywhere else — Qt would otherwise answer it itself — but the
+            # read-only refusal above must NOT be stated for it: it does not ask
+            # for an undo, so answering "nothing to undo here" would be a wrong
+            # reason, which is worse than none.
             return True
         if obj is self.editor and event.type() == QEvent.Type.ContextMenu:
             menu = self._build_context_menu_at(event.pos())
@@ -203,7 +283,23 @@ class EditorPanel(QWidget):
         menu = self.editor.createStandardContextMenu()
         # A browse-only instance still gets the standard (copy/select-all) menu
         # -- reading the buffer is the whole point of it -- just no Edit DDL.
-        if not self._browse_only and span is not None and self._schema is not None:
+        refusal = edit_refusal_for_span(span) if span is not None else None
+        if not self._browse_only and refusal is not None:
+            # A click inside a table's, view's or matview's synthesized DDL
+            # resolves to an object that cannot be edited here
+            # (`FQ-260810183812`). It is answered with a stated reason rather
+            # than with an absent entry: the span exists, the click landed
+            # somewhere real, and FQ-023's rule is that a gesture states why it
+            # refuses instead of vanishing. Disabled, because there is nothing
+            # for it to do -- it is a sentence, not a command.
+            menu.addSeparator()
+            menu.addAction(refusal).setEnabled(False)
+        if (
+            not self._browse_only
+            and refusal is None
+            and span is not None
+            and self._schema is not None
+        ):
             resolved = resolve_edit_target(self._schema, span)
             if resolved is not None:
                 ref, source = resolved
@@ -216,4 +312,16 @@ class EditorPanel(QWidget):
                     f"Edit DDL: {ref.qualified}",
                     lambda: self.edit_requested.emit(ref, source),
                 )
+        # Reload DDL (BUG-062), offered ANYWHERE in the buffer -- outside every
+        # object's span, and on a browse-only instance too. It is a property of
+        # the CONNECTION this tab was filled from, not of the clicked object, so
+        # unlike `Edit DDL` it has nothing to resolve and no reason to be absent.
+        # The sandbox instance needs it most: applying to a sandbox is precisely
+        # the operation whose result the user then wants to re-read.
+        #
+        # NO `setShortcut` here: `Ctrl+Shift+R` has exactly one keyboard host
+        # (the QShortcut in `__init__`), and adding it to this action would be
+        # the two-hosts-for-one-gesture defect DEC-012 forbids.
+        menu.addSeparator()
+        menu.addAction(RELOAD_LABEL, self.reload_requested.emit)
         return menu

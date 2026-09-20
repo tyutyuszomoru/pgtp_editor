@@ -95,7 +95,16 @@ SNAPSHOT_FORMAT = "pgtp-editor.schema-snapshot"
 #: this module refuses to produce. Costless for the same reason as before:
 #: `Save Schema Snapshot…` has never been built, so no app-written snapshot of
 #: any version exists in the wild.
-SNAPSHOT_VERSION = 3
+#:
+#: **4 (2026-08-11, `DEC-260811022536`):** `ColumnInfo` gained `identity` and
+#: `generated`, so the synthesized `CREATE TABLE` can render
+#: `GENERATED ... AS IDENTITY` and `GENERATED ALWAYS AS (<expr>) STORED` instead
+#: of omitting them. Same reasoning as 3 in every respect, and the degraded
+#: reading is even louder here: a v3 column record accepted with the two fields
+#: defaulted would assert **"no column in this schema is an identity or
+#: generated column"** — about a schema whose surrogate keys are exactly what a
+#: diff would then propose to rewrite.
+SNAPSHOT_VERSION = 4
 
 # The exact field set each record carries, in the dataclasses' own order. Used
 # twice: to build the payload, and to reject a record whose keys do not match
@@ -112,6 +121,8 @@ COLUMN_FIELDS = (
     "default",
     "fk_target",
     "comment",
+    "identity",
+    "generated",
 )
 TABLE_FIELDS = ("name", "kind", "columns", "view_definition", "comment")
 ROUTINE_FIELDS = (
@@ -420,6 +431,8 @@ def _decode_column(value: Any, where: str) -> ColumnInfo:
         default=_opt_text(record["default"], f"{where}.default"),
         fk_target=_opt_text(record["fk_target"], f"{where}.fk_target"),
         comment=_opt_text(record["comment"], f"{where}.comment"),
+        identity=_opt_text(record["identity"], f"{where}.identity"),
+        generated=_opt_text(record["generated"], f"{where}.generated"),
     )
 
 

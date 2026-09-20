@@ -53,6 +53,13 @@ from enum import Enum
 #: `[Check]` (SQL/plpgsql, §18.5) and never `[SQL]` (formatter refusals, §18.4).
 LINT_PREFIX = "[Lint] "
 
+#: Where a user now SETS the linter (FQ-260812025705 moved `Tools ▸ Locate PHP
+#: Linter…` into the Software settings dialog). Spelled out here rather than
+#: imported: `lint/` is pure and must not reach into `ui/`, which owns the
+#: canonical `software_settings_dialog.EXTERNAL_TOOLS_SETTINGS_PATH`. A test
+#: pins the two strings together, so the copy cannot drift.
+EXTERNAL_TOOLS_SETTINGS_PATH = "Settings ▸ Software settings… ▸ External tools"
+
 #: `UserRole + 1` target tag the host writes on a `[Lint]` audit item, so
 #: `MainWindow._on_audit_item_clicked` routes the click to the PHP tab instead
 #: of the Raw XML editor (the "xsd" tag's precedent).
@@ -289,7 +296,8 @@ def audit_lines(outcome: LintOutcome) -> list[LintAuditLine]:
         return [
             LintAuditLine(
                 f"{LINT_PREFIX}NOT RUN: no PHP linter is configured — "
-                f"use Tools ▸ Locate PHP Linter… to point at your `php` executable."
+                f"use {EXTERNAL_TOOLS_SETTINGS_PATH} to point at your `php` "
+                f"executable."
             )
         ]
 
@@ -297,7 +305,8 @@ def audit_lines(outcome: LintOutcome) -> list[LintAuditLine]:
         return [
             LintAuditLine(
                 f"{LINT_PREFIX}NOT RUN: the configured PHP linter is missing or not "
-                f"executable: {outcome.detail} — re-run Tools ▸ Locate PHP Linter…"
+                f"executable: {outcome.detail} — set it again in "
+                f"{EXTERNAL_TOOLS_SETTINGS_PATH}."
             )
         ]
 

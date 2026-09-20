@@ -29,8 +29,11 @@ from tests.ui._menu_helpers import find_action, find_top_menu
 # Editor menu bar, which is why the walk must cover both bars.
 DEFAULT_LABELS = [
     "Open...",
-    "Undo",
-    "Redo",
+    # Renamed by BUG-064: they are the PROJECT-scoped history commands, not the
+    # menu twin of Ctrl+Z. The default buttons keep their vendored `undo`/`redo`
+    # SVGs because `LEGACY_ID_ALIASES` moved with the labels.
+    "Undo Project Edit",
+    "Redo Project Edit",
     "Validate Project",
     "Generate PHP...",
 ]
@@ -110,23 +113,43 @@ def test_apply_and_save_persists_and_round_trips(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_and_save(["history.undo", "deployment.save-pgtp"])
-    assert _toolbar_labels(window) == ["Undo", "Save pgtp"]
+    window._toolbar_ui.apply_and_save(
+        ["history.undo-project-edit", "deployment.save-pgtp"]
+    )
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Save pgtp"]
 
     # A new window reading the same store restores that toolbar.
     settings2 = _ini_settings(tmp_path)
     window2 = MainWindow(settings=settings2)
     qtbot.addWidget(window2)
-    assert _toolbar_labels(window2) == ["Undo", "Save pgtp"]
+    assert _toolbar_labels(window2) == ["Undo Project Edit", "Save pgtp"]
 
 
 def test_stored_comma_string_is_restored(qtbot, tmp_path):
     settings = _ini_settings(tmp_path)
-    settings.setValue("toolbarIds", "history.undo,history.redo")
+    settings.setValue(
+        "toolbarIds", "history.undo-project-edit,history.redo-project-edit"
+    )
     settings.sync()
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    assert _toolbar_labels(window) == ["Undo", "Redo"]
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Redo Project Edit"]
+
+
+def test_a_toolbar_saved_under_the_pre_rename_history_ids_survives(qtbot, tmp_path):
+    """BUG-064's rename went through BOTH alias tables, so a button saved under
+    either the bare legacy id or the OLD menu-path id still resolves. Without the
+    `RENAMED_ID_ALIASES` rows the menu-path form silently vanishes."""
+    settings = _ini_settings(tmp_path)
+    settings.setValue("toolbarIds", ["undo", "history.redo"])
+    settings.sync()
+    window = MainWindow(settings=settings)
+    qtbot.addWidget(window)
+    assert window._toolbar_ui.command_ids == [
+        "history.undo-project-edit",
+        "history.redo-project-edit",
+    ]
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Redo Project Edit"]
 
 
 def test_unknown_stored_ids_are_dropped(qtbot, tmp_path):
@@ -184,13 +207,15 @@ def test_the_walk_covers_BOTH_menu_bars(qtbot, tmp_path):
     # ...and the Editor bar's four-menu inventory (Select is FQ-015's lane).
     # The bookmark members read `navigation.*` since FQ-021 retitled their menu.
     for command_id in (
-        "history.history", "history.undo", "history.redo",
+        "history.history",
+        "history.undo-project-edit",
+        "history.redo-project-edit",
         "parsing.auto-parse-xml", "parsing.validate-project",
         "navigation.toggle-bookmark", "navigation.next-bookmark",
         "navigation.previous-bookmark", "navigation.clear-all-bookmarks",
     ):
         assert command_id in ids, command_id
-    assert labels["history.undo"] == "History › Undo"
+    assert labels["history.undo-project-edit"] == "History › Undo Project Edit"
     assert labels["parsing.validate-project"] == "Parsing › Validate Project"
     # Window-bar roots come first, so a walk that dropped one is visible in order.
     assert ids.index("file.open") < ids.index("history.history")
@@ -206,7 +231,7 @@ def test_the_walk_accepts_a_single_menu_bar_too(qtbot, tmp_path):
     lane = ToolbarController(window._shell, parent=window)
     lane.build(window.editor_menu_bar, window.addToolBar)
     ids = [command_id for command_id, _label in lane.all_menu_commands()]
-    assert "history.undo" in ids
+    assert "history.undo-project-edit" in ids
     assert "file.open" not in ids
 
 
@@ -256,10 +281,10 @@ def test_checkable_menu_toggle_stays_checkable_on_the_toolbar(qtbot, tmp_path):
     checked state in sync between menu and toolbar for free."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.apply_ids(["view.light-theme"])
+    window._toolbar_ui.apply_ids(["view.raw-xml-panel"])
     action = window._toolbar_ui.command_actions[0]
     assert action.isCheckable()
-    assert action is find_action(find_top_menu(window, "View"), "Light Theme")
+    assert action is find_action(find_top_menu(window, "View"), "Raw XML Panel")
 
 
 # -- BUG-027: saved toolbars from before the widening ----------------------
@@ -277,10 +302,10 @@ def test_legacy_stored_ids_still_restore(qtbot, tmp_path):
     # four successors are per-tab). The ids AROUND them survive, so this user
     # loses two buttons rather than having the toolbar reset to the default.
     assert window._toolbar_ui.command_ids == [
-        "history.undo",
+        "history.undo-project-edit",
         "generation.generate-php",
     ]
-    assert _toolbar_labels(window) == ["Undo", "Generate PHP..."]
+    assert _toolbar_labels(window) == ["Undo Project Edit", "Generate PHP..."]
 
 
 def test_legacy_comma_string_still_restores(qtbot, tmp_path):
@@ -292,18 +317,25 @@ def test_legacy_comma_string_still_restores(qtbot, tmp_path):
     assert _toolbar_labels(window) == ["Validate Project", "Generate PHP..."]
 
 
-def test_customize_toolbar_action_in_view_menu(qtbot, tmp_path):
+def test_customize_toolbar_is_GONE_from_the_view_menu(qtbot, tmp_path):
+    """FQ-260812002827 RELOCATED it: `View ▸ Customize Toolbar…` no longer
+    exists, and the surface is the Toolbar pane of
+    `Settings ▸ Software settings…`. Relocating means moving, so a second door
+    here would be the bug."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     view_menu = find_top_menu(window, "View")
-    action = find_action(view_menu, "Customize Toolbar…")
-    assert action is not None
+    assert find_action(view_menu, "Customize Toolbar…") is None
+    assert "view.customize-toolbar" not in window._toolbar_ui.menu_commands
 
 
-def test_opening_customize_toolbar_does_not_block(qtbot, tmp_path):
+def test_building_the_customize_toolbar_pane_does_not_block(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.open_customize_dialog()  # non-modal show(), must not raise/block
+    # Returns rather than shows -- the settings host embeds it.
+    pane = window._toolbar_ui.build_customize_pane()
+    qtbot.addWidget(pane)
+    assert pane.isVisible() is False
     assert window._toolbar_ui.customize_dialog is not None
     assert window._toolbar_ui.customize_dialog.selected_ids() == window._toolbar_ui.command_ids
 
@@ -311,7 +343,7 @@ def test_opening_customize_toolbar_does_not_block(qtbot, tmp_path):
 def test_customize_dialog_is_offered_every_menu_command(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._toolbar_ui.open_customize_dialog()
+    qtbot.addWidget(window._toolbar_ui.build_customize_pane())
     dialog = window._toolbar_ui.customize_dialog
     offered = dialog._available_ids()
     assert offered == [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
@@ -361,10 +393,10 @@ def test_an_icon_less_command_is_still_addable(qtbot, tmp_path):
     assert action.text() == "Save as new pgtp"
 
 
-def test_toggling_light_theme_keeps_icons_non_null(qtbot, tmp_path):
+def test_selecting_a_theme_keeps_icons_non_null(qtbot, tmp_path):
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window._on_light_theme_toggled(True)
+    window.apply_theme_named("light")
     actions = window._toolbar_ui.command_actions
     assert actions
     assert all(not a.icon().isNull() for a in actions)
@@ -417,9 +449,9 @@ def test_menu_walk_keepalive_survives_garbage_collection(qtbot, tmp_path):
     window._toolbar_ui.collect_menu_commands()
     gc.collect()
 
-    light = find_action(find_top_menu(window, "View"), "Light Theme")
-    assert light is not None
-    light.setChecked(light.isChecked())            # would raise if deleted
+    toggle = find_action(find_top_menu(window, "View"), "Raw XML Panel")
+    assert toggle is not None
+    toggle.setChecked(toggle.isChecked())          # would raise if deleted
     # Every walked command is still a usable QAction after the collection.
     for command_id, _label in window._toolbar_ui.all_menu_commands():
         assert window._toolbar_ui.menu_commands[command_id].text()
@@ -462,8 +494,9 @@ def test_duplicate_menu_labels_get_a_numeric_suffix(qtbot, tmp_path):
 
 
 def test_customize_dialog_reenumerates_commands_added_after_startup(qtbot, tmp_path):
-    """`open_customize_dialog` re-walks the menus, so a command the app grew
-    since startup is offered without a restart."""
+    """`build_customize_pane` re-walks the menus, so a command the app grew
+    since startup is offered without a restart -- which matters more now that
+    the settings host rebuilds the pane after every OK/Cancel."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     before = [command_id for command_id, _label in window._toolbar_ui.all_menu_commands()]
@@ -471,7 +504,7 @@ def test_customize_dialog_reenumerates_commands_added_after_startup(qtbot, tmp_p
 
     tools = find_top_menu(window, "Tools")
     fresh = tools.addAction("Brand New Command")
-    window._toolbar_ui.open_customize_dialog()
+    qtbot.addWidget(window._toolbar_ui.build_customize_pane())
     offered = window._toolbar_ui.customize_dialog._available_ids()
     assert "tools.brand-new-command" in offered
     assert window._toolbar_ui.menu_commands["tools.brand-new-command"] is fresh
@@ -1031,8 +1064,7 @@ def test_hidden_commands_still_enumerate_into_the_shortcut_list(qtbot, tmp_path)
     ]
     assert hidden, "expected at least one tab-gated menu command to be hidden"
 
-    window.open_customize_shortcuts_dialog()
-    dialog = window._customize_shortcuts_dialog
+    dialog = window.build_customize_shortcuts_pane()
     qtbot.addWidget(dialog)
     assert set(hidden) <= set(dialog.command_ids())
 
@@ -1043,8 +1075,7 @@ def test_cancelling_the_customize_shortcuts_dialog_persists_nothing(
     settings = _ini_settings(tmp_path)
     window = MainWindow(settings=settings)
     qtbot.addWidget(window)
-    window.open_customize_shortcuts_dialog()
-    dialog = window._customize_shortcuts_dialog
+    dialog = window.build_customize_shortcuts_pane()
     qtbot.addWidget(dialog)
 
     dialog.set_binding("file.close", "Ctrl+Alt+W")

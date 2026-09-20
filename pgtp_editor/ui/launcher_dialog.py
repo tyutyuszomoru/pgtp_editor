@@ -59,11 +59,41 @@ QActions"). So an entry shares its menu item's slot, enabled state and shortcut
 for free and can never drift from it, and the button labels are the walk's own
 ``File › Open``-style paths rather than new vocabulary.
 
+The one thing a button does NOT simply inherit is *enabledness*, and that took a
+bug to learn (BUG-260813025052): a column is a **destination**, not a command,
+and Qt's ``setVisible(False)`` disables the action it hides — so borrowing the
+flag let Maintenance mode grey out the two columns that leave it. See
+``_build_group``.
+
 Behaviour
 ---------
-* **Escape / window-close lands in the app exactly as before, and NEVER quits.**
-  Quitting on cancel would turn the launcher into a gate on running the app at
-  all. :func:`show_launcher` simply returns ``None``.
+* **Picking a mode is OBLIGATORY when there is no mode yet (BUG-059).** Owner
+  ruling, verbatim: *"do not permit to close the launcher without having chosen a
+  mode. If launcher is opened with a mode already chosen (new session), let it be
+  closed, otherwise make choice obligatory. this means that also window close
+  button must be disabled"* — because ``MainWindow._workflow_mode`` starts as
+  ``None`` and is never read from settings (FQ-027), a dismissable startup
+  launcher left the app in the invalid *No Mode* state.
+
+  So the launcher has TWO regimes, chosen by :func:`show_launcher` from the
+  window's current mode, and the undismissable one is the DEFAULT:
+
+  - **No mode yet (startup)** → ``dismissable=False``: no ``Close`` button, no
+    native ✕ (``WindowCloseButtonHint`` stripped *and* ``closeEvent`` ignored,
+    which is the authoritative barrier — the hint is only advisory on some
+    window managers and does not cover ``Alt+F4``), ``reject()`` neutralised,
+    Escape swallowed, :meth:`LauncherDialog.cancel` inert, and
+    :meth:`LauncherDialog.choose` refuses a column that names no mode. Every
+    exit from the dialog therefore carries a mode: *No Mode* is not merely
+    unlikely, it is unreachable.
+  - **A mode already chosen (``File ▸ New Session``)** → ``dismissable=True``:
+    it closes as it always did, and dismissal **retains** the mode the session
+    is already in (``new_session`` no longer clears it — that clear was the only
+    other production path back to ``None``).
+* **Cancelling still NEVER quits.** Where dismissal is allowed it lands in the
+  app exactly as before (FQ-010: quitting would make the launcher a gate on
+  running the app at all) — :func:`show_launcher` simply returns ``None`` and
+  leaves the current mode standing.
 * **NOT suppressible (FQ-027).** FQ-010's "Don't show this again" checkbox, its
   ``launcherSuppressed`` QSettings key and the ``force=`` bypass that existed
   only to override it are **deleted**. The launcher is the single starting gate
@@ -95,6 +125,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pgtp_editor.ui.software_settings_dialog import (
+    COMMAND_ID as SOFTWARE_SETTINGS_COMMAND_ID,
+)
+
 #: The three major workflow modes (FQ-027). Plain strings, not an enum, because
 #: they cross a lazy import boundary (`MainWindow` imports this module only
 #: inside the two methods that need it) and are compared, never arithmetic.
@@ -114,12 +148,20 @@ MODE_MAINTENANCE = "maintenance"
 #: * **Standalone** merges FQ-010's *Open a pgtp for editing* and *Open other
 #:   files* — both are "open something without a project".
 #: * **Project** is FQ-010's project group, unchanged.
-#: * **Maintenance** is **Edit XSD + Import XSD** only. The owner's verbatim
-#:   "Open XSD" does NOT map to a live command — the read-only
-#:   `SchemaViewerWindow` / `Schema ▸ Open XSD` was deleted 2026-07-24 in favour
-#:   of the editable Edit XSD tab — and the §20 re_phpgen/panGen entries that
-#:   FQ-010 put in this group LEFT the launcher: they are a generation loop, not
-#:   an administrative task on the app's own schema.
+#: * **Maintenance** is **Edit XSD + Import XSD**, plus **Software settings**
+#:   since FQ-260812002827. The owner's verbatim "Open XSD" does NOT map to a
+#:   live command — the read-only `SchemaViewerWindow` / `Schema ▸ Open XSD` was
+#:   deleted 2026-07-24 in favour of the editable Edit XSD tab — and the §20
+#:   re_phpgen/panGen entries that FQ-010 put in this group LEFT the launcher:
+#:   they are a generation loop, not an administrative task on the app's own
+#:   schema.
+#:
+#:   `settings.software-settings` is the reason the app's four scattered
+#:   configuration surfaces were consolidated into one two-pane dialog: a button
+#:   here is ONE command id resolved through the menu walk, so a whole `Settings`
+#:   menu could never have become a button. The id is imported from the dialog
+#:   that owns the label it is derived from, so this table and the menu row
+#:   cannot drift.
 LAUNCHER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "Standalone",
@@ -131,7 +173,7 @@ LAUNCHER_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "Maintenance",
-        ("schema.edit-xsd", "schema.import-xsd"),
+        ("schema.edit-xsd", "schema.import-xsd", SOFTWARE_SETTINGS_COMMAND_ID),
     ),
 )
 
@@ -158,8 +200,9 @@ _GROUP_HINTS: dict[str, str] = {
         "deployable .pgtp by diff/merge."
     ),
     "Maintenance": (
-        "One-off administrative work on the app's own schema. Trims the menu "
-        "bar to Schema, Help and a short File menu for this session."
+        "One-off administrative work on the app's own schema, and where the "
+        "app itself is configured. Trims the menu bar to Schema, Settings, "
+        "Help and a short File menu for this session."
     ),
 }
 
@@ -190,12 +233,33 @@ class LauncherDialog(QDialog):
         entries: dict,
         *,
         groups: Sequence[tuple[str, Sequence[str]]] = LAUNCHER_GROUPS,
+        dismissable: bool = False,
+        mode_filtered=(),
         parent=None,
     ):
         super().__init__(parent)
         self.setWindowTitle("PGTP Editor")
         self.setModal(True)
+        #: BUG-059: whether this launcher may be left without a pick. FALSE by
+        #: default -- the safe regime is the one that cannot produce an invalid
+        #: state, so a caller must ASK for dismissability rather than forget to
+        #: forbid it. `show_launcher` derives it from the window's current mode.
+        self._dismissable = bool(dismissable)
+        if not self._dismissable:
+            # Advisory only (some WMs draw the ✕ regardless, and neither hint
+            # touches Alt+F4) -- `closeEvent` below is the real barrier. Kept
+            # anyway so the frame doesn't offer a button that does nothing.
+            self.setWindowFlags(
+                self.windowFlags()
+                & ~Qt.WindowType.WindowCloseButtonHint
+                & ~Qt.WindowType.WindowContextHelpButtonHint
+            )
         self._entries = entries
+        #: BUG-260813025052: the QActions the window's workflow mode is
+        #: currently HIDING, straight off `MainWindow.mode_filtered_actions()`.
+        #: Empty by default, so every construction that does not pass it (every
+        #: test double, every ad-hoc `groups=`) behaves exactly as before.
+        self._mode_filtered = frozenset(mode_filtered)
         self._chosen_command_id: str | None = None
         #: command_id -> the QPushButton standing for it (test seam).
         self._buttons: dict[str, QPushButton] = {}
@@ -222,10 +286,18 @@ class LauncherDialog(QDialog):
                 continue
             grid.addWidget(box, 0, index)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        # Cancel/Escape/close lands in the app exactly as before -- it NEVER
-        # quits (FQ-010: quitting would make the launcher a gate on running the
-        # app at all).
+        # BUG-059: no `Close` button at all in the undismissable regime -- an
+        # empty box rather than no box, so `button_box` is always present for the
+        # test seam and the layout is identical in both regimes. Where the button
+        # DOES exist, cancel/Escape/close lands in the app exactly as before --
+        # it NEVER quits (FQ-010: quitting would make the launcher a gate on
+        # running the app at all).
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Close
+            if self._dismissable
+            else QDialogButtonBox.StandardButton.NoButton,
+            self,
+        )
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.button_box = buttons
@@ -247,12 +319,27 @@ class LauncherDialog(QDialog):
             label, action = entry
             button = QPushButton(label, box)
             button.setToolTip(f"Runs {label}")
-            # Mirror the menu item's enabled state: `Generation ▸ Save reJSON…`
-            # starts disabled (there is no gap JSON yet), and a button that looks
-            # clickable but silently does nothing is worse than a greyed one.
-            # Read once — the launcher is short-lived and modal, so nothing can
-            # change the answer while it is up.
-            button.setEnabled(action.isEnabled())
+            # A launcher button is one of TWO things, and they do not share a
+            # rule (BUG-260813025052):
+            #
+            # * a COMMAND, which is grey when it cannot run -- `Generation ▸
+            #   Save reJSON…` starts disabled because there is no gap JSON yet,
+            #   and a button that looks clickable but silently does nothing is
+            #   worse than a greyed one. That is what `isEnabled()` is for here.
+            # * a DESTINATION: a column IS a workflow mode (`GROUP_MODES`), and
+            #   its button is how the session ENTERS that mode. The mode being
+            #   LEFT must never be able to grey out the way out of itself -- a
+            #   circular gate, and the reason Maintenance mode was a one-way
+            #   door whose only exit was restarting the app.
+            #
+            # `isEnabled()` alone cannot tell the two apart, because Qt's
+            # `QAction.setVisible(False)` ALSO clears the enabled flag: every
+            # `File` action Maintenance mode hides reads as disabled, which is
+            # exactly the Standalone and Project columns. So the window's record
+            # of what the mode hid is consulted alongside it. Both are read once
+            # -- the launcher is short-lived and modal, and the mode deliberately
+            # STANDS while it is up (BUG-059) -- so nothing changes the answer.
+            button.setEnabled(action.isEnabled() or action in self._mode_filtered)
             # Default-argument binding, not a closure over the loop variable.
             button.clicked.connect(
                 lambda _checked=False, cid=command_id: self.choose(cid)
@@ -292,26 +379,66 @@ class LauncherDialog(QDialog):
         no pick, and for an ad-hoc `groups=` column that names no mode."""
         return GROUP_MODES.get(self.chosen_group_title or "")
 
+    @property
+    def dismissable(self) -> bool:
+        """Whether this launcher may be left without a pick (BUG-059)."""
+        return self._dismissable
+
     def choose(self, command_id: str) -> None:
         """Record a pick and accept. Does NOT trigger the action — that happens
         in :func:`show_launcher`, once the modal is down, so an action that opens
         its own file dialog is never stacked on top of this one."""
         if command_id not in self._entries:
             return
+        # BUG-059: in the undismissable regime a pick must NAME a mode, or it is
+        # refused. That is what makes "left the launcher with no mode"
+        # structurally impossible rather than merely improbable -- the only way
+        # out of an undismissable launcher is an `accept()` that carries a mode.
+        # Only an ad-hoc `groups=` column can fail this (all three real columns
+        # are in `GROUP_MODES`), and such a column belongs to the test/caller
+        # seam, which must ask for `dismissable=True` to use it.
+        if not self._dismissable:
+            if GROUP_MODES.get(self._group_of.get(command_id) or "") is None:
+                return
         self._chosen_command_id = command_id
         self.accept()
 
     def cancel(self) -> None:
-        """What Escape / the window close button do: no pick, reject."""
+        """What Escape / the window close button do: no pick, reject.
+
+        Inert when undismissable (BUG-059) — there is nothing to cancel INTO."""
+        if not self._dismissable:
+            return
         self._chosen_command_id = None
         self.reject()
 
+    def reject(self) -> None:
+        # Neutralised when undismissable, and this is the funnel that matters
+        # most: `QDialogButtonBox.rejected`, `QDialog`'s own Escape handling and
+        # any programmatic `reject()` all pass through here.
+        if not self._dismissable:
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        # THE authoritative barrier (BUG-059): `WindowCloseButtonHint` is only
+        # advisory and covers neither `Alt+F4` nor a window-manager close, both
+        # of which arrive here. Refusing the event is what actually keeps the
+        # modal up.
+        if not self._dismissable:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def keyPressEvent(self, event):
-        # Explicit so the "Escape never quits, it just lands in the app" rule is
-        # visible here rather than inherited: QDialog's default already rejects,
-        # this only makes sure the pick stays cleared.
+        # Explicit so both rules are visible here rather than inherited:
+        # dismissable -> "Escape never quits, it just lands in the app" (QDialog
+        # would already reject; this only makes sure the pick stays cleared);
+        # undismissable -> Escape is SWALLOWED, so it never reaches QDialog's
+        # default reject at all.
         if event.key() == Qt.Key.Key_Escape:
-            self.cancel()
+            if self._dismissable:
+                self.cancel()
             return
         super().keyPressEvent(event)
 
@@ -321,14 +448,24 @@ def show_launcher(
     settings=None,
     *,
     groups: Sequence[tuple[str, Sequence[str]]] = LAUNCHER_GROUPS,
+    dismissable: bool | None = None,
     resolve_entries: Callable[[object], dict] | None = None,
     exec_dialog: Callable[[QDialog], int] | None = None,
 ) -> str | None:
     """Show the launcher over `window` and run the picked entry's action.
 
     Returns the picked ``command_id``, or ``None`` when the launcher was closed
-    without a pick. **Never quits the app** on any path, and — since FQ-027
+    without a pick — which BUG-059 makes possible **only** when the window is
+    already in a mode. **Never quits the app** on any path, and — since FQ-027
     deleted the suppression flag — it is never skipped either.
+
+    `dismissable` defaults to *"is there already a mode to fall back into?"*,
+    read straight off ``window.workflow_mode``: at startup there is none, so the
+    launcher is undismissable and a choice is obligatory; from
+    ``File ▸ New Session`` there is one, so it closes and that mode stands. This
+    is the ONE place the regime is decided, so no caller can accidentally open a
+    dismissable launcher over a mode-less window. Pass it explicitly only to
+    exercise a regime directly (the test seam).
 
     `settings` no longer has anything to read or write here (the only key this
     module ever owned was ``launcherSuppressed``); it is kept as a positional
@@ -340,7 +477,21 @@ def show_launcher(
     """
     resolve = resolve_entries if resolve_entries is not None else resolve_menu_entries
     entries = resolve(window)
-    dialog = LauncherDialog(entries, groups=groups, parent=window)
+    if dismissable is None:
+        dismissable = getattr(window, "workflow_mode", None) is not None
+    # BUG-260813025052: what the current mode is HIDING, so a mode column stays
+    # selectable even when the mode being left has disabled its action as a
+    # side effect of hiding it. `getattr`-guarded because the window is a test
+    # double at most call sites.
+    filtered_getter = getattr(window, "mode_filtered_actions", None)
+    mode_filtered = filtered_getter() if callable(filtered_getter) else ()
+    dialog = LauncherDialog(
+        entries,
+        groups=groups,
+        dismissable=dismissable,
+        mode_filtered=mode_filtered,
+        parent=window,
+    )
     runner = exec_dialog if exec_dialog is not None else (lambda dlg: dlg.exec())
     runner(dialog)
 

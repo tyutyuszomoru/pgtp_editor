@@ -20,10 +20,11 @@ The load-bearing decisions asserted here:
 * Find All's row grammar and two-role payload **verbatim** (a tenth grammar was
   explicitly not to be invented), with the router's own discriminator on
   `UserRole+1`;
-* an editor the Audit click router has **no branch** for (the read-only DDL
-  Explorer buffer, an FQ-006 draft tab) gets **roles-less, inert** rows: the
-  router's fallback navigates Raw XML, and a row must never carry the user to a
-  different document than the one it describes;
+* an editor the Audit click router has **no branch** for (an FQ-006 draft tab)
+  gets **roles-less, inert** rows: the router's fallback navigates Raw XML, and
+  a row must never carry the user to a different document than the one it
+  describes. The read-only DDL Explorer buffer LEFT that set in
+  BUG-260811232724 -- it now carries a role-tagged route and navigates;
 * the listing clears its own rows first and touches no other prefix;
 * it is a **snapshot**, so the gutter's bookmark reset sweeps it -- including in
   the projectless case, where a reload still wipes the bookmarks.
@@ -32,7 +33,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QListWidgetItem
 
 from pgtp_editor.lint.findings import LINT_AUDIT_TARGET
+from pgtp_editor.ui.center_stage import DDL_EXPLORER_SANDBOX, DDL_EXPLORER_TARGET
 from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
+from pgtp_editor.ui.find_controller import DDL_EXPLORER_AUDIT_TARGET
 from pgtp_editor.ui.main_window import MainWindow
 from tests.ui._menu_helpers import find_action, find_top_menu
 
@@ -180,7 +183,13 @@ def test_a_php_tab_row_carries_the_php_target_and_its_tab_key(qtbot, tmp_path):
 # --- The unroutable editors: roles-less and inert ---------------------------
 
 
-def test_the_ddl_explorer_buffer_gets_rolesless_rows(qtbot, tmp_path):
+def test_the_ddl_explorer_buffer_rows_carry_the_explorer_target_and_role(
+    qtbot, tmp_path
+):
+    """SUPERSEDES `test_the_ddl_explorer_buffer_gets_rolesless_rows`
+    (BUG-260811232724): this buffer was inert only because the router had no
+    branch resolving to the read-only `EditorPanel`. It has one now, so the row
+    carries the line, the Explorer discriminator, and its role."""
     window = _window(qtbot, tmp_path)
     stage = window.center_stage
     stage.show_ddl_explorer()
@@ -192,7 +201,11 @@ def test_the_ddl_explorer_buffer_gets_rolesless_rows(qtbot, tmp_path):
 
     row = _rows(window)[0]
     assert row.text() == "[Bookmark] line 2: two"
-    assert row.data(_LINE) is None and row.data(_TARGET) is None
+    assert (row.data(_LINE), row.data(_TARGET), row.data(_EXTRA)) == (
+        2,
+        DDL_EXPLORER_AUDIT_TARGET,
+        DDL_EXPLORER_TARGET,
+    )
     assert _texts(window)[-1] == "[Bookmark] 1 bookmark(s)"
 
 
@@ -208,19 +221,46 @@ def test_a_draft_fragment_tab_gets_rolesless_rows(qtbot, tmp_path):
 
 def test_clicking_an_unroutable_row_navigates_nothing(qtbot, tmp_path):
     """The whole point of roles-less: the router's fallback branch is Raw XML, so
-    a routed row here would jump to the wrong document."""
+    a routed row here would jump to the wrong document. The draft fragment is
+    the remaining unroutable editor -- the DDL Explorer buffer left this set in
+    BUG-260811232724."""
     window = _window(qtbot, tmp_path)
     stage = window.center_stage
     stage.xml_editor.setPlainText("raw one\nraw two\nraw three")
-    stage.show_ddl_explorer()
-    stage.setCurrentIndex(stage.ddl_tab_index)
-    stage.ddl_editor_panel.editor.setPlainText("one\ntwo\nthree")
-    stage.ddl_editor_panel.editor.toggle_bookmark(2)
+    draft = stage.open_draft_fragment_tab("trigger", "pr.equipment", "one\ntwo\nthree")
+    draft.editor.toggle_bookmark(2)
     _list(window)
 
     window._on_audit_item_clicked(_rows(window)[0])
 
-    assert stage.currentIndex() == stage.ddl_tab_index  # never yanked to Raw XML
+    assert stage.currentWidget() is draft  # never yanked to Raw XML
+    assert stage.xml_editor.textCursor().blockNumber() == 0
+
+
+def test_clicking_a_ddl_explorer_row_navigates_that_explorers_buffer(qtbot, tmp_path):
+    """The bookmark half of BUG-260811232724 -- the SAME route the `[Find]` rows
+    use, since both resolve through `_bookmark_audit_route` and are navigated by
+    `_on_audit_item_clicked`. The role rides on the row, so a Sandbox bookmark
+    lands in the Sandbox buffer even while Quality is the current tab."""
+    window = _window(qtbot, tmp_path)
+    stage = window.center_stage
+    stage.xml_editor.setPlainText("raw one\nraw two\nraw three")
+    stage.show_ddl_explorer(DDL_EXPLORER_TARGET)
+    stage.show_ddl_explorer(DDL_EXPLORER_SANDBOX)
+    quality = stage.ddl_explorer_panel(DDL_EXPLORER_TARGET)
+    quality.editor.setPlainText("q one\nq two\nq three")
+    sandbox = stage.ddl_explorer_panel(DDL_EXPLORER_SANDBOX)
+    sandbox.editor.setPlainText("s one\ns two\ns three")
+    stage.setCurrentIndex(stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX))
+    sandbox.editor.toggle_bookmark(2)
+    _list(window)
+    stage.setCurrentIndex(stage.ddl_tab_index)  # the OTHER Explorer is current
+
+    window._on_audit_item_clicked(_rows(window)[0])
+
+    assert stage.currentIndex() == stage.ddl_explorer_tab_index(DDL_EXPLORER_SANDBOX)
+    assert sandbox.editor.textCursor().blockNumber() == 2
+    assert quality.editor.textCursor().blockNumber() == 0
     assert stage.xml_editor.textCursor().blockNumber() == 0
 
 

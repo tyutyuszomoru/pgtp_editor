@@ -45,8 +45,10 @@ def test_default_toolbar_ids_are_menu_path_ids_in_legacy_order():
     # FIVE buttons since FQ-020, and the app ships with NO save button at all.
     assert DEFAULT_TOOLBAR_IDS == [
         "file.open",
-        "history.undo",
-        "history.redo",
+        # BUG-064 renamed both History entries; the alias rows moved with them in
+        # the same commit, or these two default buttons ship empty and iconless.
+        "history.undo-project-edit",
+        "history.redo-project-edit",
         "parsing.validate-project",
         "generation.generate-php",
     ]
@@ -103,15 +105,16 @@ def test_menu_path_label_is_human_readable():
 _KNOWN = [
     "file.open",
     "deployment.save-pgtp",
-    "history.undo",
-    "history.redo",
+    "history.undo-project-edit",
+    "history.redo-project-edit",
 ]
 
 
 def test_valid_ids_preserves_order_drops_unknowns():
     assert valid_ids(
-        ["deployment.save-pgtp", "file.open", "bogus", "history.undo"], _KNOWN
-    ) == ["deployment.save-pgtp", "file.open", "history.undo"]
+        ["deployment.save-pgtp", "file.open", "bogus", "history.undo-project-edit"],
+        _KNOWN,
+    ) == ["deployment.save-pgtp", "file.open", "history.undo-project-edit"]
 
 
 def test_valid_ids_drops_duplicates_keeping_first():
@@ -136,7 +139,10 @@ def test_resolve_ids_maps_legacy_ids_so_saved_toolbars_survive():
     """The back-compat guarantee: a toolbar saved before BUG-027 stored
     `undo`/`redo`, which are unknown under the new scheme -- without aliasing
     every existing user's toolbar would silently empty on first launch."""
-    assert resolve_ids(["undo", "redo"], _KNOWN) == ["history.undo", "history.redo"]
+    assert resolve_ids(["undo", "redo"], _KNOWN) == [
+        "history.undo-project-edit",
+        "history.redo-project-edit",
+    ]
     # ...and the RETIRED `find` alias resolves to nothing rather than to a
     # dangling id (FQ-016): a pre-FQ-016 saved toolbar simply loses that button.
     assert resolve_ids(["find"], _KNOWN + ["edit.find"]) == []
@@ -156,7 +162,7 @@ def test_a_pinned_save_button_is_silently_dropped_not_left_dead():
     # rather than having their toolbar reset.
     assert resolve_ids(["file.open", "save", "undo"], _KNOWN) == [
         "file.open",
-        "history.undo",
+        "history.undo-project-edit",
     ]
     # `Save As…` went the same way, and deliberately gets no alias onto
     # `Deployment ▸ Save as new pgtp` either -- FQ-020 pins the degradation as a
@@ -173,7 +179,17 @@ def test_renamed_ids_are_never_inverted_into_the_icon_table():
     assert not set(RENAMED_ID_ALIASES) & set(LEGACY_ID_ALIASES)
     for old_id, new_id in RENAMED_ID_ALIASES.items():
         assert old_id not in ICON_ID_BY_COMMAND.values()
-        assert new_id not in ICON_ID_BY_COMMAND
+        # A RENAMED target may legitimately appear as an ICON_ID_BY_COMMAND KEY
+        # -- BUG-064's `history.undo-project-edit` is the first case: the command
+        # carries a vendored default icon (so it is a `LEGACY_ID_ALIASES` target)
+        # AND was renamed (so its old menu-path id needs a row here). What must
+        # never happen is the other direction: a menu-path id showing up on the
+        # icon side, where `icons.load_svg_text` would raise `KeyError`.
+        if new_id in ICON_ID_BY_COMMAND:
+            assert ICON_ID_BY_COMMAND[new_id] in dict(LEGACY_COMMANDS)
+    assert all(
+        icon_id in dict(LEGACY_COMMANDS) for icon_id in ICON_ID_BY_COMMAND.values()
+    )
 
 
 def test_resolve_ids_maps_a_renamed_menu_path_so_a_pinned_button_survives():
@@ -265,7 +281,14 @@ def test_resolve_ids_passes_through_new_ids_and_still_drops_unknowns():
 
 
 def test_resolve_ids_deduplicates_a_legacy_and_new_id_for_the_same_command():
-    assert resolve_ids(["undo", "history.undo"], _KNOWN) == ["history.undo"]
+    assert resolve_ids(["undo", "history.undo"], _KNOWN) == [
+        "history.undo-project-edit"
+    ]
+    # BUG-064's third spelling of the same command: the bare legacy id, the
+    # pre-rename menu-path id and the current id all collapse to one button.
+    assert resolve_ids(
+        ["undo", "history.undo", "history.undo-project-edit"], _KNOWN
+    ) == ["history.undo-project-edit"]
 
 
 # -- FQ-004: per-command icon assignments (still pure/Qt-free) ---------------

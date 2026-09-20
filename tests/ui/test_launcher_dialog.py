@@ -18,11 +18,13 @@ assert about a flag that no longer exists.
 `tests/test_main.py`.
 """
 import pytest
-from PySide6.QtCore import QSettings
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QDialog
+from PySide6.QtCore import QEvent, QSettings, Qt
+from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent
+from PySide6.QtWidgets import QDialog, QDialogButtonBox
 
 from pgtp_editor.ui import toolbar_registry
+from pgtp_editor.ui.center_stage import DDL_EXPLORER_SANDBOX, DDL_EXPLORER_TARGET
+from pgtp_editor.ui.ddl_object_editor import DdlObjectRef
 from pgtp_editor.ui.launcher_dialog import (
     GROUP_MODES,
     LAUNCHER_GROUPS,
@@ -112,10 +114,18 @@ def test_column_membership_is_the_owners_taxonomy():
     # files" -- both are "open something, with no project behind it".
     assert groups["Standalone"] == ("file.open", "file.open-php-file")
     assert groups["Project"] == ("file.new-project", "file.open-project")
-    # Edit XSD + Import XSD only: the owner's verbatim "Open XSD" names the
-    # read-only viewer that was deleted in favour of the editable tab, and the
-    # §20 re_phpgen/panGen entries left the launcher with FQ-027.
-    assert groups["Maintenance"] == ("schema.edit-xsd", "schema.import-xsd")
+    # Edit XSD + Import XSD, plus Software settings since FQ-260812002827: the
+    # owner's verbatim "Open XSD" names the read-only viewer that was deleted in
+    # favour of the editable tab, and the §20 re_phpgen/panGen entries left the
+    # launcher with FQ-027. `settings.software-settings` is the reason the app's
+    # four configuration surfaces were consolidated into one command -- a
+    # launcher button is one command id, so a whole `Settings` menu could never
+    # have become a button.
+    assert groups["Maintenance"] == (
+        "schema.edit-xsd",
+        "schema.import-xsd",
+        "settings.software-settings",
+    )
 
 
 def test_every_column_names_a_workflow_mode():
@@ -275,9 +285,13 @@ def test_a_pick_reports_the_mode_of_its_column(command_id, mode):
 
 def test_an_ad_hoc_column_names_no_mode():
     """`groups=` is a test/caller seam; a column outside the taxonomy must not
-    invent a mode."""
+    invent a mode. `dismissable=True` because BUG-059's undismissable regime
+    REFUSES a mode-less pick — see
+    `test_an_undismissable_launcher_refuses_a_pick_that_names_no_mode`."""
     dialog = LauncherDialog(
-        _fake_entries(["file.open"]), groups=(("Whatever", ("file.open",)),)
+        _fake_entries(["file.open"]),
+        groups=(("Whatever", ("file.open",)),),
+        dismissable=True,
     )
     dialog.choose("file.open")
     assert dialog.chosen_workflow_mode is None
@@ -313,22 +327,151 @@ def test_show_launcher_runs_the_menus_own_action(qtbot, tmp_path):
     assert opened == [True]
 
 
-# -- Escape / close: land in the app, never quit -----------------------------
+# -- BUG-059: two regimes -- obligatory choice, then dismissable -------------
+#
+# Owner ruling: "do not permit to close the launcher without having chosen a
+# mode. If launcher is opened with a mode already chosen (new session), let it be
+# closed, otherwise make choice obligatory. this means that also window close
+# button must be disabled". `MainWindow._workflow_mode` starts as None and is
+# never read from settings (FQ-027), so a dismissable startup launcher was the
+# one path into the invalid "No Mode" state.
 
 
-def test_cancel_rejects_with_no_pick():
+def test_undismissable_is_the_default_regime():
+    """The safe regime is the DEFAULT: a caller must ask for dismissability
+    rather than remember to forbid it."""
+    assert LauncherDialog(_fake_entries(["file.open"])).dismissable is False
+
+
+def test_an_undismissable_launcher_offers_no_close_button():
     dialog = LauncherDialog(_fake_entries(["file.open"]))
+    assert dialog.button_box.buttons() == []
+    assert (
+        dialog.button_box.button(QDialogButtonBox.StandardButton.Close) is None
+    )
+
+
+def test_an_undismissable_launcher_drops_the_native_close_button_hints():
+    dialog = LauncherDialog(_fake_entries(["file.open"]))
+    flags = dialog.windowFlags()
+    assert not flags & Qt.WindowType.WindowCloseButtonHint
+    assert not flags & Qt.WindowType.WindowContextHelpButtonHint
+
+
+def test_an_undismissable_launcher_refuses_a_close_event():
+    """The AUTHORITATIVE barrier: the window-flag hint is advisory and covers
+    neither Alt+F4 nor a window-manager close, both of which arrive here."""
+    dialog = LauncherDialog(_fake_entries(["file.open"]))
+    # `result()` starts at 0, which IS `Rejected`, so the observable that
+    # distinguishes "never dismissed" from "dismissed" is `finished`.
+    finished = []
+    dialog.finished.connect(finished.append)
+    event = QCloseEvent()
+    event.accept()
+    dialog.closeEvent(event)
+    assert event.isAccepted() is False
+    assert dialog.close() is False
+    assert finished == []
+
+
+def test_an_undismissable_launcher_swallows_escape_reject_and_cancel():
+    """Every dismissal funnel is inert, so there is no exit without a pick —
+    "No Mode" is unreachable rather than merely unlikely."""
+    dialog = LauncherDialog(_fake_entries(["file.open"]))
+    finished = []
+    dialog.finished.connect(finished.append)
+
+    dialog.keyPressEvent(
+        QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+    )
+    dialog.cancel()
+    dialog.reject()
+    dialog.button_box.rejected.emit()
+
+    assert dialog.chosen_command_id is None
+    assert finished == []
+
+
+def test_an_undismissable_launcher_still_accepts_a_pick():
+    dialog = LauncherDialog(_fake_entries(_all_group_ids()))
+    dialog.choose("file.new-project")
+    assert dialog.chosen_command_id == "file.new-project"
+    assert dialog.chosen_workflow_mode == MODE_PROJECT
+    assert dialog.result() == QDialog.DialogCode.Accepted
+
+
+def test_an_undismissable_launcher_refuses_a_pick_that_names_no_mode():
+    """The other half of unreachability: the only way OUT is an accept, and an
+    accept must carry a mode. Only an ad-hoc `groups=` column can fail this."""
+    dialog = LauncherDialog(
+        _fake_entries(["file.open"]), groups=(("Whatever", ("file.open",)),)
+    )
+    dialog.choose("file.open")
+    assert dialog.chosen_command_id is None
+    assert dialog.result() != QDialog.DialogCode.Accepted
+
+
+def test_a_dismissable_launcher_keeps_its_close_button_and_cancels():
+    dialog = LauncherDialog(_fake_entries(["file.open"]), dismissable=True)
+    assert dialog.button_box.button(QDialogButtonBox.StandardButton.Close) is not None
+    assert dialog.windowFlags() & Qt.WindowType.WindowCloseButtonHint
     dialog.cancel()
     assert dialog.chosen_command_id is None
     assert dialog.result() == QDialog.DialogCode.Rejected
 
 
+def test_a_dismissable_launchers_close_button_is_wired_to_reject():
+    dialog = LauncherDialog(_fake_entries(["file.open"]), dismissable=True)
+    dialog.button_box.rejected.emit()
+    assert dialog.result() == QDialog.DialogCode.Rejected
+    assert dialog.chosen_command_id is None
+
+
+def test_a_dismissable_launcher_accepts_a_close_event():
+    dialog = LauncherDialog(_fake_entries(["file.open"]), dismissable=True)
+    event = QCloseEvent()
+    event.accept()
+    dialog.closeEvent(event)
+    assert event.isAccepted() is True
+
+
+def test_show_launcher_derives_the_regime_from_the_windows_mode(qtbot, tmp_path):
+    """ONE rule, in ONE place: no mode -> obligatory choice; a mode already
+    chosen -> dismissable. No caller can open a dismissable launcher over a
+    mode-less window."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    seen = []
+
+    def _run(dialog):
+        seen.append(dialog.dismissable)
+        dialog.choose("file.open")
+
+    show_launcher(
+        window,
+        window._settings,
+        resolve_entries=lambda _w: _fake_entries(_all_group_ids()),
+        exec_dialog=_run,
+    )
+    assert seen == [False]  # started with no mode
+
+    show_launcher(
+        window,
+        window._settings,
+        resolve_entries=lambda _w: _fake_entries(_all_group_ids()),
+        exec_dialog=_run,
+    )
+    assert seen == [False, True]  # the first pick left a mode behind
+
+
 def test_escape_lands_in_the_app_rather_than_quitting(qtbot, tmp_path):
     """FQ-010: cancelling must leave the window up and running. Nothing here
-    closes, hides or quits anything — the app is simply still there."""
+    closes, hides or quits anything — the app is simply still there. Reachable
+    only once a mode is set (BUG-059), and the cancel RETAINS that mode."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window.show()
+    window.set_workflow_mode(MODE_STANDALONE)
     fired = []
     result = show_launcher(
         window,
@@ -339,14 +482,37 @@ def test_escape_lands_in_the_app_rather_than_quitting(qtbot, tmp_path):
     assert result is None
     assert fired == []
     assert window.isVisible() is True
+    assert window.workflow_mode == MODE_STANDALONE
+
+
+def test_a_startup_launcher_cannot_be_left_without_a_mode(qtbot, tmp_path):
+    """The end-to-end statement of the fix: over a mode-less window, every
+    dismissal gesture fails and the mode is only ever set by a pick."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
     assert window.workflow_mode is None
 
+    def _try_to_escape(dialog):
+        dialog.cancel()
+        dialog.reject()
+        dialog.close()
+        dialog.keyPressEvent(
+            QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier
+            )
+        )
+        assert dialog.chosen_command_id is None
+        # The only way out:
+        dialog.choose("file.open")
 
-def test_close_button_is_wired_to_reject():
-    dialog = LauncherDialog(_fake_entries(["file.open"]))
-    dialog.button_box.rejected.emit()
-    assert dialog.result() == QDialog.DialogCode.Rejected
-    assert dialog.chosen_command_id is None
+    result = show_launcher(
+        window,
+        window._settings,
+        resolve_entries=lambda _w: _fake_entries(_all_group_ids()),
+        exec_dialog=_try_to_escape,
+    )
+    assert result == "file.open"
+    assert window.workflow_mode == MODE_STANDALONE
 
 
 # -- the session workflow mode (FQ-027) --------------------------------------
@@ -498,9 +664,9 @@ def test_a_hidden_WHOLE_MENUS_shortcuts_still_fire_KNOWN_GAP(qtbot, tmp_path):
     **This pins a known gap, not a desired behaviour.** The two halves of the
     filter disagree: `File` is trimmed member-by-member, so a hidden File
     command genuinely loses its key (the test above), while a command inside a
-    hidden menu keeps one. A user who assigns a key to `View ▸ Customize
-    Toolbar…` can still fire it in Maintenance mode, which is the "filters what
-    you can SEE but not what you can DO" case the mode is supposed to avoid.
+    hidden menu keeps one. A user who assigns a key to `View ▸ Expand All` can
+    still fire it in Maintenance mode, which is the "filters what you can SEE
+    but not what you can DO" case the mode is supposed to avoid.
 
     It is NOT fixed here because the obvious fix collides with an owner ruling:
     hiding the child actions would also strip any pinned TOOLBAR button for
@@ -509,8 +675,8 @@ def test_a_hidden_WHOLE_MENUS_shortcuts_still_fire_KNOWN_GAP(qtbot, tmp_path):
     """
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
-    window.apply_and_save_shortcut_overrides({"view.customize-toolbar": "Ctrl+Alt+T"})
-    action = window._toolbar_ui.menu_commands["view.customize-toolbar"]
+    window.apply_and_save_shortcut_overrides({"view.expand-all": "Ctrl+Alt+T"})
+    action = window._toolbar_ui.menu_commands["view.expand-all"]
 
     window.set_workflow_mode(MODE_MAINTENANCE)
 
@@ -585,6 +751,183 @@ def test_the_mode_never_touches_enabled_state(qtbot, tmp_path):
     window.set_workflow_mode(MODE_MAINTENANCE)
     window.set_workflow_mode(None)
     assert {id(a): a.isEnabled() for a in everything} == before
+
+
+# -- BUG-260813025052: the mode may never grey out the way out of itself -----
+#
+# Qt couples the two flags: `QAction.setVisible(False)` ALSO clears the enabled
+# flag. The mode hides every File entry but `New Session`/`Exit`, which is
+# exactly `file.open`, `file.open-php-file`, `file.new-project` and
+# `file.open-project` -- i.e. the launcher's whole Standalone and Project
+# columns. The launcher mirrored `action.isEnabled()`, so both escape columns
+# came up grey and Maintenance mode had no exit short of restarting the app.
+#
+# Every case here reads the BUTTON, through `show_launcher`'s `exec_dialog=`
+# seam. A test that read `QAction.isEnabled()` would have passed throughout --
+# that is precisely how this shipped.
+
+
+def _filtered_launcher_ids(window):
+    """Which launcher command ids the current mode is hiding."""
+    return [
+        command_id
+        for command_id in _all_group_ids()
+        if window.is_mode_filtered(window._toolbar_ui.menu_commands[command_id])
+    ]
+
+
+def _launcher_button_states(window, **kwargs):
+    """`command_id -> button.isEnabled()` for a real `show_launcher` run."""
+    seen = {}
+
+    def _run(dialog):
+        for command_id in dialog.entry_ids():
+            seen[command_id] = dialog.button_for(command_id).isEnabled()
+
+    show_launcher(window, window._settings, exec_dialog=_run, **kwargs)
+    return seen
+
+
+def test_maintenance_mode_leaves_every_launcher_column_selectable(qtbot, tmp_path):
+    """The regression guard: in Maintenance mode all seven buttons are live.
+
+    A launcher column is a **destination**, not a command — the mode being left
+    must never gate the button that leaves it, which is a circular gate as well
+    as a trap.
+    """
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    # The underlying actions really ARE disabled -- this is the Qt coupling the
+    # fix has to see through, not a hypothetical.
+    escapes = ["file.open", "file.open-php-file", "file.new-project", "file.open-project"]
+    for command_id in escapes:
+        action = window._toolbar_ui.menu_commands[command_id]
+        assert action.isVisible() is False
+        assert action.isEnabled() is False
+
+    states = _launcher_button_states(window)
+    assert set(states) == set(_all_group_ids())
+    assert [command_id for command_id, live in states.items() if not live] == []
+
+
+@pytest.mark.parametrize("mode", [None, MODE_STANDALONE, MODE_PROJECT])
+def test_the_unfiltered_modes_keep_every_button_live_too(qtbot, tmp_path, mode):
+    """The baseline, so the fix cannot be a blanket "always enable" masking a
+    real regression: nothing is filtered outside Maintenance, so nothing needs
+    the new predicate to be live."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(mode)
+    assert _filtered_launcher_ids(window) == []
+
+    states = _launcher_button_states(window)
+    assert [command_id for command_id, live in states.items() if not live] == []
+
+
+def test_a_capability_disabled_button_stays_grey_inside_maintenance(qtbot, tmp_path):
+    """The two kinds are told apart, not merged. `Generation ▸ Save reJSON…` is
+    unavailable because there is no gap JSON — a COMMAND that cannot run, grey
+    in every mode, including the one that un-greys the mode columns."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    entries = _fake_entries(["file.open", "generation.save-rejson"])
+    entries["generation.save-rejson"][1].setEnabled(False)
+
+    states = _launcher_button_states(
+        window,
+        resolve_entries=lambda _w: entries,
+        groups=(("Standalone", ("file.open", "generation.save-rejson")),),
+    )
+    assert states == {"file.open": True, "generation.save-rejson": False}
+
+
+def test_picking_standalone_from_maintenance_actually_opens_the_door(qtbot, tmp_path):
+    """End-to-end escape, against the real menu actions: the mode changes, the
+    File menu comes back, and the triggered action is ENABLED when it fires.
+
+    That last part is why `show_launcher` sets the mode BEFORE triggering — do
+    not reorder those two statements; leaving Maintenance re-shows and therefore
+    re-enables the four File actions first.
+    """
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    open_action = window._toolbar_ui.menu_commands["file.open"]
+    fired_enabled = []
+    # `File ▸ Open...`'s own slot, replaced so no QFileDialog is ever reached.
+    window._doc_ui.open_dialog = lambda: fired_enabled.append(open_action.isEnabled())
+
+    chosen = show_launcher(
+        window,
+        window._settings,
+        exec_dialog=lambda dialog: dialog.choose("file.open"),
+    )
+
+    assert chosen == "file.open"
+    assert fired_enabled == [True]
+    assert window.workflow_mode == MODE_STANDALONE
+    assert open_action.isVisible() is True
+    assert open_action.isEnabled() is True
+    assert _filtered_launcher_ids(window) == []
+
+
+def test_the_record_tracks_exactly_what_the_current_mode_hides(qtbot, tmp_path):
+    """`_mode_filtered_actions` is rebuilt per refresh, so it always describes
+    the mode in force — and it is a RECORD: the filter still contains no
+    `setEnabled` (pinned separately by
+    `test_the_mode_never_touches_enabled_state`)."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    # A fresh window has never run the filter, so the record is genuinely empty.
+    assert window.mode_filtered_actions() == frozenset()
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    filtered = window.mode_filtered_actions()
+    for command_id in ("file.open", "file.new-project"):
+        action = window._toolbar_ui.menu_commands[command_id]
+        assert action in filtered
+        assert window.is_mode_filtered(action) is True
+    # `New Session` survives the trim, so it is not in the record.
+    new_session = find_action(find_top_menu(window, "File"), "New Session")
+    assert window.is_mode_filtered(new_session) is False
+
+    window.set_workflow_mode(MODE_STANDALONE)
+    # Not empty, and deliberately so: outside the mode the record holds the
+    # INVERSE rule's hidden menus (`Settings`) and nothing else — never a
+    # launcher command, which is all the launcher cares about.
+    assert _filtered_launcher_ids(window) == []
+    assert {a.text() for a in window.mode_filtered_actions()} == set(
+        _MAINTENANCE_ONLY_MENU_TITLES
+    )
+
+
+def test_a_pinned_toolbar_button_is_NOT_a_back_door_out_of_maintenance(
+    qtbot, tmp_path
+):
+    """The measured truth, replacing a docstring that claimed the opposite.
+
+    §7's "the toolbar hosts the menus' OWN QActions" cuts both ways: hiding the
+    menu item hides the pinned button with it, and Qt disables it into the
+    bargain. The accepted FQ-027 trade is that this code does not WALK the
+    toolbar — not that a pinned command keeps working. So the launcher was, and
+    remains, the only exit; it just works now.
+    """
+    path = str(tmp_path / "s.ini")
+    seed = QSettings(path, QSettings.Format.IniFormat)
+    seed.setValue("toolbarIds", ["file.open"])
+    seed.sync()
+    window = MainWindow(settings=QSettings(path, QSettings.Format.IniFormat))
+    qtbot.addWidget(window)
+    assert window._toolbar_ui.command_ids == ["file.open"]
+    pinned = window._toolbar_ui.menu_commands["file.open"]
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert pinned.isVisible() is False
+    assert pinned.isEnabled() is False
 
 
 def test_menu_actions_are_the_same_objects_across_a_mode_toggle(qtbot, tmp_path):
@@ -688,7 +1031,11 @@ def test_a_toolbar_saved_before_the_rename_still_resolves(qtbot, tmp_path):
     ]
 
 
-def test_new_session_clears_the_mode_and_reopens_the_launcher(qtbot, tmp_path):
+def test_new_session_retains_the_mode_and_reopens_the_launcher(qtbot, tmp_path):
+    """BUG-059 REVERSED FQ-027's clear-then-show. The mode STANDS while the
+    re-opened launcher is up — that is what makes this launcher dismissable at
+    all, and it is what a dismissal lands in. Clearing it was the one production
+    path into the invalid "No Mode" state."""
     window = MainWindow(settings=_ini_settings(tmp_path))
     qtbot.addWidget(window)
     window.set_workflow_mode(MODE_MAINTENANCE)
@@ -697,12 +1044,38 @@ def test_new_session_clears_the_mode_and_reopens_the_launcher(qtbot, tmp_path):
 
     assert find_action(find_top_menu(window, "File"), "New Session").trigger() is None
 
-    # The mode was already cleared when the launcher went up: it must never be
-    # re-entered on top of itself, and the full menu bar is what the user picks
-    # the next mode from.
-    assert shown == [None]
-    assert window.workflow_mode is None
-    assert _visible_labels(window.menuBar()) == _unfiltered_window_labels(window)
+    assert shown == [MODE_MAINTENANCE]
+    assert window.workflow_mode == MODE_MAINTENANCE
+
+
+def test_new_session_never_passes_none_to_set_workflow_mode(qtbot, tmp_path):
+    """The invalid state is made unrepresentable by removing the WRITE, not by
+    checking for it afterwards: no user gesture sets the mode back to None."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+    window.show_launcher = lambda: None
+    modes = []
+    original = window.set_workflow_mode
+    window.set_workflow_mode = lambda mode: (modes.append(mode), original(mode))[1]
+
+    assert window.new_session() is True
+
+    assert modes == []
+
+
+def test_a_maintenance_launcher_still_offers_every_column(qtbot, tmp_path):
+    """The consequence of retaining the mode: the launcher goes up over a
+    TRIMMED menu bar. That is safe because `_walk_menu_actions` never tests
+    `isVisible()`, so all six entries are still resolved and offered."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    entries = resolve_menu_entries(window)
+
+    for command_id in _all_group_ids():
+        assert command_id in entries
 
 
 def test_new_session_closes_the_document_and_the_project(qtbot, tmp_path):
@@ -790,3 +1163,133 @@ def test_new_session_reopens_the_launcher_with_no_force_argument(
     assert win is window
     assert settings is window._settings
     assert kwargs == {}
+
+
+# -- BUG-260812001640: entering Maintenance prunes the center stage ----------
+
+
+def _reveal_explorer(stage, role):
+    """Reveal `role`'s Explorer tab WITHOUT the Database-menu toggle: with no
+    connection configured, `show_ddl_explorer`'s own signal round-trip lands in
+    `_open_ddl_explorer`, which un-checks the action and hides the tab again."""
+    stage.setTabVisible(stage.ddl_explorer_tab_index(role), True)
+
+
+def test_entering_maintenance_hides_both_ddl_explorer_tabs(qtbot, tmp_path):
+    """The reported gesture: a Project session had a DDL Explorer ("browser")
+    tab open, the Maintenance column is picked, and the Project-mode surface
+    stayed. The mode now reduces the stage to its XSD-only surface, not only the
+    menu bar."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    window.set_workflow_mode(MODE_PROJECT)
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)
+    _reveal_explorer(stage, DDL_EXPLORER_SANDBOX)
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    for role in (DDL_EXPLORER_TARGET, DDL_EXPLORER_SANDBOX):
+        assert stage.isTabVisible(stage.ddl_explorer_tab_index(role)) is False
+    # The surface the mode exists FOR is untouched, and so is the Manual toggle.
+    assert stage.isTabVisible(stage.raw_xml_tab_index) is True
+
+
+def test_entering_maintenance_closes_dynamic_editor_tabs(qtbot, tmp_path):
+    """"all editor tabs … that isn't xsd related": the dynamic DDL-object and
+    PHP tabs go through the stage's own close route, so their per-kind
+    unsaved-changes prompt is reused rather than re-derived."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    stage.open_ddl_object_tab(ref, "-- clean\n")
+    path = tmp_path / "hooks.php"
+    path.write_text("<?php\n", encoding="utf-8")
+    stage.open_php_file_tab(path, "<?php\n")
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert stage.ddl_object_panels() == []
+    assert stage.php_file_tabs() == {}
+
+
+def test_entering_maintenance_leaves_a_cancelled_dirty_tab_open(qtbot, tmp_path):
+    """The per-kind prompt's Cancel means "keep this document", not "undo the
+    mode": the tab survives and the mode still holds. No second dialog is added
+    — this is the SAME prompt the tab's own ✕ raises, patched here so no test
+    ever reaches a real modal."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    ref = DdlObjectRef(kind="function", schema="pr", name="recalc")
+    panel = stage.open_ddl_object_tab(ref, "-- body\n")
+    panel.editor.insertPlainText("-- edited\n")
+    assert panel.is_dirty() is True
+    asked = []
+    window._confirm_close_ddl_object = lambda r: asked.append(r) or "cancel"
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert asked == [ref]
+    assert stage.indexOf(panel) != -1
+    assert window.workflow_mode == MODE_MAINTENANCE
+
+
+def test_entering_standalone_or_project_prunes_nothing(qtbot, tmp_path):
+    """The prune is Maintenance-only: the other two columns are ordinary working
+    modes and must not close a user's tabs."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)
+    panel = stage.open_ddl_object_tab(
+        DdlObjectRef(kind="function", schema="pr", name="recalc"), "-- clean\n"
+    )
+
+    window.set_workflow_mode(MODE_PROJECT)
+    window.set_workflow_mode(MODE_STANDALONE)
+
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_TARGET)) is True
+    assert stage.indexOf(panel) != -1
+
+
+def test_the_prune_does_not_announce_a_hidden_explorer_as_closing(qtbot, tmp_path):
+    """`hide_ddl_explorer` emits unconditionally, so hiding an already-hidden tab
+    would tell every subscriber the tree just closed."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    seen = []
+    stage.ddl_explorer_visibility_changed.connect(
+        lambda role, visible: seen.append((role, visible))
+    )
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)  # sandbox stays hidden
+    seen.clear()
+
+    window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert seen == [(DDL_EXPLORER_TARGET, False)]
+
+
+def test_new_session_into_maintenance_leaves_no_project_surface(qtbot, tmp_path):
+    """End to end on the reported path: Project session with an Explorer open →
+    New Session → the Maintenance column. `new_session` closes the dynamic tabs
+    and the document; the mode entry closes the browser tabs."""
+    window = MainWindow(settings=_ini_settings(tmp_path))
+    qtbot.addWidget(window)
+    stage = window.center_stage
+    window.set_workflow_mode(MODE_PROJECT)
+    _reveal_explorer(stage, DDL_EXPLORER_TARGET)
+    stage.open_ddl_object_tab(
+        DdlObjectRef(kind="function", schema="pr", name="recalc"), "-- clean\n"
+    )
+    # The launcher stands in for the real dialog: it picks the Maintenance
+    # column, which is the ONE production way the mode is entered.
+    window.show_launcher = lambda: window.set_workflow_mode(MODE_MAINTENANCE)
+
+    assert window.new_session() is True
+
+    assert window.workflow_mode == MODE_MAINTENANCE
+    assert stage.isTabVisible(stage.ddl_explorer_tab_index(DDL_EXPLORER_TARGET)) is False
+    assert stage.ddl_object_panels() == []

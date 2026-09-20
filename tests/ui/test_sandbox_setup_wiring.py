@@ -79,7 +79,7 @@ def _window(
     )
     qtbot.addWidget(window)
     window._run_async = sync_run
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: _caps()
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: _caps()
     window._inspect_sandbox_provisioning = lambda params: (None, None)
     stub_sandbox_provisioning(window)
     if not reachable:
@@ -472,7 +472,7 @@ def test_data_cloning_still_refuses_for_a_schema_only_sandbox(
     of sandbox it is, and the mode is chosen once at creation time (D2a)."""
     window, _dir = _window(qtbot, tmp_path, mode=SandboxMode.SCHEMA_ONLY)
     cloned = []
-    window.sandbox_controller._cloner = lambda target, sandbox: cloned.append(1)
+    window.sandbox_controller._cloner = lambda target, sandbox, **kw: cloned.append(1)
     _accept_confirmations(monkeypatch)
 
     window.sandbox_controller.run_data_clone()
@@ -568,7 +568,7 @@ def test_a_live_session_wires_both_node_actions_to_the_controller(qtbot, tmp_pat
     controller = window.sandbox_controller
     # `installable` + superuser is the one state `install_gate` OFFERS on, so the
     # click reaches `_installer` instead of stopping at the gate's own reason.
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: _caps(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: _caps(
         available_extensions=frozenset({"plpgsql_check"})
     )
 
@@ -596,7 +596,7 @@ def test_a_dying_session_leaves_both_node_actions_reporting(
     panel = window._project_status_window
     assert window.sandbox_controller.has_session  # BUG-040: it came up with the project
     cloned = []
-    window.sandbox_controller._cloner = lambda target, sandbox: cloned.append(1)
+    window.sandbox_controller._cloner = lambda target, sandbox, **kw: cloned.append(1)
     _refuse_confirmations(monkeypatch)
 
     window.sandbox_controller.close_session()
@@ -617,7 +617,7 @@ def test_the_clone_action_goes_through_the_controllers_confirmation(
     window, _dir = _window(qtbot, tmp_path, mode=SandboxMode.WITH_DATA)
     window._open_sandbox_session()
     cloned = []
-    window.sandbox_controller._cloner = lambda target, sandbox: cloned.append(
+    window.sandbox_controller._cloner = lambda target, sandbox, **kw: cloned.append(
         (target, sandbox)
     )
     asked = []
@@ -651,7 +651,7 @@ def test_declining_the_clone_confirmation_clones_nothing(
     window, _dir = _window(qtbot, tmp_path, mode=SandboxMode.WITH_DATA)
     window._open_sandbox_session()
     cloned = []
-    window.sandbox_controller._cloner = lambda target, sandbox: cloned.append(1)
+    window.sandbox_controller._cloner = lambda target, sandbox, **kw: cloned.append(1)
     _refuse_confirmations(monkeypatch)
     window._open_project_status()
     panel = window._project_status_window
@@ -671,7 +671,7 @@ def test_the_install_action_reaches_install_plpgsql_check_without_a_prompt(
     """Installing is non-destructive (`CREATE EXTENSION IF NOT EXISTS` drops
     nothing), so it must never reach `confirm_destructive`."""
     window, _dir = _window(qtbot, tmp_path)
-    window._ddl_project_ui.probe_sandbox_capabilities = lambda params: _caps(
+    window._ddl_project_ui.probe_sandbox_capabilities = lambda params, **kw: _caps(
         available_extensions=frozenset({"plpgsql_check"})
     )
     window._open_sandbox_session()

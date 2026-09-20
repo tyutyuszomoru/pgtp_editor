@@ -27,9 +27,41 @@ editor instead of hiding anything. `Ctrl+F`/`Ctrl+R` are **focus** gestures:
 :meth:`focus_find` / :meth:`focus_replace`, hosted by
 :func:`install_focus_shortcuts` on the widget that owns the editor *and* the bar
 -- see that function for why they are not window-level.
+
+Find All is PUBLISHED when nobody injected a callback (BUG-060)
+--------------------------------------------------------------
+Find All was born as an injected callback (``on_find_all`` /
+:meth:`set_on_find_all`) because the run itself belongs to
+``FindValidateController`` and the Audit surface is not the bar's business. That
+works for the two bars the host wires by hand -- Raw XML and Edit XSD -- and it
+is why Find All was **a dead button on every other bar**: the DDL Explorer
+buffer, an editable DDL object tab, a §21 PHP tab and an FQ-006 draft fragment
+each build their own bar inside their own panel, and no wiring line reaches
+them. Nor could one be added per tab type and stay true: those tabs are created
+at runtime, in three different files, and the next tab type would have to
+remember.
+
+So an **unwired** bar publishes the request instead
+(:func:`add_find_all_observer`, ``callback(bar, term, reason)``), exactly as
+``ui/editor_gutter.py`` publishes bookmark changes "without knowing this panel
+exists" -- and for the same reason: the producer is per-widget and dynamic, the
+consumer is one long-lived lane. `FindValidateController` subscribes once in its
+constructor and resolves *which* document a publishing bar searches from the
+bar's :attr:`editor`.
+
+A bar with an injected callback does **not** publish: it calls its callback and
+returns. That keeps the host's two explicit wirings authoritative (the Raw XML
+and Edit XSD bars pass a ``target``) and, more importantly, means a run can
+never be started twice for one click.
+
+The weakref plumbing below deliberately mirrors ``editor_gutter``'s rather than
+being shared with it: that registry is typed to ``(editor, reason)`` bookmark
+events, and widening it into a general-purpose event bus would couple the
+gutter to the find lane to save a dozen lines.
 """
 from __future__ import annotations
 
+import weakref
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
@@ -44,13 +76,82 @@ from PySide6.QtWidgets import (
 
 from pgtp_editor.ui import search
 
+#: The Find All button was pressed on an unwired bar; `term` is what to search.
+FIND_ALL_REQUESTED = "find-all-requested"
+
+#: The same button was pressed while a run was in flight, i.e. it was showing
+#: `Stop`. Published with an empty `term`.
+FIND_ALL_STOP_REQUESTED = "find-all-stop-requested"
+
+#: Registered Find-All observers. Bound methods are held as `WeakMethod`, so a
+#: subscriber's owner (a controller, and through it a window) is never kept
+#: alive by this list -- see the module docstring.
+_find_all_observers: list = []
+
+
+def add_find_all_observer(
+    callback: Callable[[object, str, str], None],
+) -> None:
+    """Subscribe `callback` to every **unwired** bar's Find All button; it is
+    called as ``callback(bar, term, reason)`` with `reason` one of
+    :data:`FIND_ALL_REQUESTED` / :data:`FIND_ALL_STOP_REQUESTED`.
+
+    Idempotent per callback, like `editor_gutter.add_bookmark_observer`: a host
+    that re-runs its wiring does not double-start a run."""
+    entry = weakref.WeakMethod(callback) if hasattr(callback, "__self__") else callback
+    for existing in _find_all_observers:
+        if _resolve_observer(existing) == callback:
+            return
+    _find_all_observers.append(entry)
+
+
+def remove_find_all_observer(
+    callback: Callable[[object, str, str], None],
+) -> None:
+    """Unsubscribe `callback`; a no-op if it is not registered."""
+    for existing in list(_find_all_observers):
+        if _resolve_observer(existing) in (callback, None):
+            _find_all_observers.remove(existing)
+
+
+def _resolve_observer(entry):
+    """The live callable behind a registry entry, or None once it has died."""
+    return entry() if isinstance(entry, weakref.WeakMethod) else entry
+
+
+def _notify_find_all_observers(bar, term: str, reason: str) -> None:
+    """Publish `(bar, term, reason)` to every live observer.
+
+    A dead observer (its owner garbage-collected, or its C++ object destroyed --
+    typically a window from an earlier test that was never closed) is dropped
+    rather than raised through: this runs inside a button click. Any other
+    exception propagates, because that is a real bug in the subscriber and
+    swallowing it would make Find All silently do nothing again."""
+    for entry in list(_find_all_observers):
+        callback = _resolve_observer(entry)
+        if callback is None:
+            if entry in _find_all_observers:
+                _find_all_observers.remove(entry)
+            continue
+        try:
+            callback(bar, term, reason)
+        except RuntimeError:
+            if entry in _find_all_observers:
+                _find_all_observers.remove(entry)
+
 
 class FindReplaceBar(QWidget):
     def __init__(self, editor, on_find_all: Callable[[str], None] | None = None, parent=None):
         super().__init__(parent)
         self._editor = editor
-        self._on_find_all = on_find_all or (lambda term: None)
-        self._on_stop_find_all: Callable[[], None] = lambda: None
+        #: None means UNWIRED -- the Find All button publishes instead of
+        #: calling a callback (BUG-060, see the module docstring). It is
+        #: deliberately not a no-op lambda any more: "no callback" and "a
+        #: callback that does nothing" have to be distinguishable for the
+        #: publish decision, and the no-op default is precisely what made Find
+        #: All a dead button on four tab kinds.
+        self._on_find_all = on_find_all
+        self._on_stop_find_all: Callable[[], None] | None = None
         self._on_status: Callable[[str], None] = lambda msg: None
         self._find_all_running = False
 
@@ -90,6 +191,18 @@ class FindReplaceBar(QWidget):
         # NO `self.hide()` here (FQ-016): the bar is visible from construction,
         # in its expanded form (both rows), in every editor. Deleted, not left
         # inert -- there is no hideable state left to restore.
+
+    @property
+    def editor(self):
+        """The editor this bar searches — read-only, and the SAME object that
+        was injected.
+
+        Published because a Find-All observer is handed the *bar* and has to
+        resolve which document it belongs to (BUG-060). It is resolved by
+        editor IDENTITY there, exactly as
+        `FindValidateController._bookmark_audit_route` already does, so the
+        answer cannot disagree with the bookmark lane's."""
+        return self._editor
 
     def set_on_find_all(self, callback: Callable[[str], None]) -> None:
         self._on_find_all = callback
@@ -177,13 +290,22 @@ class FindReplaceBar(QWidget):
         self._select_span(index, len(term))
 
     def find_all(self) -> None:
+        """The Find All / Stop button. Runs an injected callback if this bar has
+        one, and otherwise PUBLISHES the request (BUG-060, see the module
+        docstring) -- never both, so one click is never one run twice."""
         if self._find_all_running:
-            self._on_stop_find_all()
+            if self._on_stop_find_all is not None:
+                self._on_stop_find_all()
+            else:
+                _notify_find_all_observers(self, "", FIND_ALL_STOP_REQUESTED)
             return
         term = self._find_field.text()
         if not term:
             return
-        self._on_find_all(term)
+        if self._on_find_all is not None:
+            self._on_find_all(term)
+            return
+        _notify_find_all_observers(self, term, FIND_ALL_REQUESTED)
 
     def replace(self) -> None:
         term = self._find_field.text()

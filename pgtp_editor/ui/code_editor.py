@@ -37,7 +37,6 @@ import re
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import (
-    QColor,
     QFont,
     QFontDatabase,
     QKeyEvent,
@@ -56,6 +55,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from pgtp_editor.sql import block_spans
 from pgtp_editor.sql.keywords import SQL_KEYWORDS
 from pgtp_editor.sql.templates import (
     DEFAULT_SNIPPETS,
@@ -65,6 +65,307 @@ from pgtp_editor.sql.templates import (
     find_snippet,
 )
 from pgtp_editor.ui.editor_gutter import GutterBookmarkFoldMixin
+from pgtp_editor.ui.editor_shared import SharedEditorMixin
+from pgtp_editor.ui.mode_indicator import ModeIndicator
+from pgtp_editor.ui.theme import apply_syntax_role
+from pgtp_editor.ui.theme_model import theme_for
+from pgtp_editor.ui.shortcut_registry import (  # noqa: F401  (re-exported names)
+    CLAIMED_NOT_UNDO_REDO,
+    DELETE_CHARACTER,
+    DELETE_LINE,
+    DELETE_TO_END_OF_LINE,
+    EDITOR_CHORDS,
+    EDITOR_PASTE_CHORDS,
+    MUTATING_EDITOR_OPERATIONS,
+    PASTE,
+    REDO,
+    SUPPRESSED,
+    UNDO,
+)
+from pgtp_editor.ui.vim_mode import VimModeMixin
+
+# The operation names are re-exported deliberately: a surface imports the
+# matcher and the answers it can return from ONE module, and never spells a
+# chord out for itself.
+
+
+# -- the one editor chord matcher every editing surface calls (DEC-014) -------
+#
+# DEC-014, verbatim: *"For every chord `RESERVED_SEQUENCES` reserves because an
+# editor answers it, every editing surface states its answer."* The set is
+# therefore **fixed** and this function takes **no per-surface parameter** -- the
+# rejected alternative (option B, a per-surface chord list) was rejected because
+# per-surface variation is how BUG-053 happened.
+#
+# It **classifies** -- undo, redo, or claimed-but-neither -- and deliberately
+# never returns a bare boolean. DEC-014 spells out why: a caller that gets
+# "yes, an undo/redo chord" and re-derives which one is how a redo silently
+# becomes an undo. Only the MATCHING is shared here; the ANSWER stays per
+# surface, because the answers genuinely differ (own undo stack / a stated
+# refusal on a read-only buffer / re-emission into the project's snapshot
+# history), and four sites hand-repeating the match is what made this the fourth
+# Ctrl+Z-family bug (BUG-048, BUG-049, BUG-053, BUG-056).
+#
+# Parsed from the registry's chord strings so the set has exactly one source. A
+# QKeySequence spelling is turned into the (key, modifiers) pair a QKeyEvent
+# carries; nothing here consults Qt's platform-dependent StandardKey table,
+# which is the whole point (DEC-015: *"an operation's chord is bound by this
+# app, not inherited from Qt's platform table"*).
+def _chord_combinations() -> dict[tuple[int, Qt.KeyboardModifier], str]:
+    table: dict[tuple[int, Qt.KeyboardModifier], str] = {}
+    for sequence, operation in EDITOR_CHORDS.items():
+        combination = QKeySequence(sequence)[0]
+        table[(combination.key(), combination.keyboardModifiers())] = operation
+    return table
+
+
+_EDITOR_COMBINATIONS = _chord_combinations()
+
+
+def classify_editor_chord(event) -> str | None:
+    """One of the `EDITOR_CHORDS` operations, or None.
+
+    Renamed from `classify_undo_redo_chord` (2026-08-10) together with its table:
+    the owner's X11-chord rulings put a paste chord and three line-editing chords
+    into the same fixed set, and a SECOND matcher would give every surface two
+    calls to make -- which is the exact shape of the bug family this function
+    exists to prevent (BUG-048/049/053/056: a surface that forgot one).
+
+    **Any non-None answer must be consumed by the caller**, including the two
+    that run no operation. Neither is an "ignore me": letting the key fall
+    through hands it to Qt, whose compiled binding table is per-platform, and
+    then the app has two different keyboards.
+
+    - `CLAIMED_NOT_UNDO_REDO` -- `Ctrl+Shift+Z`, which Qt binds as
+      `StandardKey.Redo` under `KB_Win | KB_X11` (BUG-056 read both schemes).
+      DEC-015 freed it from redo, so every surface must actively refuse Qt's
+      answer; FQ-034 will bind shrink-selection there.
+    - `SUPPRESSED` -- `Alt+Backspace` / `Alt+Shift+Backspace`, which Qt binds as
+      native Undo/Redo under `KB_Win` **only**. Suppressed on every platform, per
+      the owner's rule that a chord means the same thing on Windows and Linux or
+      is not bound at all.
+    - `PASTE`, `DELETE_CHARACTER`, `DELETE_TO_END_OF_LINE`, `DELETE_LINE` --
+      `Ctrl+Shift+Insert`, `Ctrl+D`, `Ctrl+K`, `Ctrl+U`: Qt answers these on the
+      Linux/KDE scheme only, so the app implements them itself on both (owner,
+      2026-08-10). Editable surfaces run `apply_editor_operation`; a read-only
+      surface answers with its stated refusal, never with silence.
+    """
+    return _EDITOR_COMBINATIONS.get((event.key(), event.modifiers()))
+
+
+def apply_shrink_structural_selection(editor) -> bool:
+    """`Ctrl+Shift+Z`'s ONE answer, called from every editing surface (FQ-034).
+
+    **The chord is not bound by this feature -- the feature gives an existing
+    claim an answer.** `Ctrl+Shift+Z` is `CLAIMED_NOT_UNDO_REDO` in
+    `EDITOR_CHORDS`: Qt binds it as native `StandardKey.Redo` on the Windows *and*
+    X11 schemes, so all six surfaces already intercept it and accept its
+    `ShortcutOverride` to keep Qt's redo from firing (DEC-015, BUG-056). That
+    interception is mandated by DEC-014 and cannot be dropped, which is exactly
+    why `Select ▸ Shrink Selection`'s `QAction` carries **no `setShortcut`**: a
+    window action would be starved by the very override the surfaces must accept.
+
+    **This is not the double-hosting DEC-012 forbids.** DEC-012's defect is two
+    hosts that can *drift* -- different gates, different rebinding behaviour,
+    different lifetimes. Here there is one implementation and one answer, and the
+    per-surface interceptions all funnel into it, exactly as `Ctrl+Z`/`Ctrl+Y`
+    funnel into each surface's single undo/redo answer.
+
+    Returns whether the selection moved. Surfaces whose editor has no
+    `shrink_structural_selection` (every `XmlEditor`, by design -- §8 keeps the
+    XML family stateless and therefore shrink-less) get False and stay inert,
+    while still consuming the chord.
+    """
+    shrink = getattr(editor, "shrink_structural_selection", None)
+    if not callable(shrink):
+        return False
+    return bool(shrink())
+
+
+def is_mutating_editor_operation(operation: str | None) -> bool:
+    """Whether `operation` would CHANGE the buffer.
+
+    The question a surface asks between "is this chord mine" and "may it run
+    here": a read-only surface owes these a stated refusal (FQ-023), an editable
+    one runs `apply_editor_operation`.
+    """
+    return operation in MUTATING_EDITOR_OPERATIONS
+
+
+# -- the app's own editing primitives, settled in exactly ONE place ------------
+#
+# The owner's 2026-08-10 ruling on `Ctrl+D` / `Ctrl+K` / `Ctrl+U` / `Ctrl+Shift+Insert`
+# binds them on both platforms, which means **the app owns these primitives' edge
+# cases forever** where it used to inherit Qt's on one platform and nothing on the
+# other. The cost was accepted explicitly, so the answers live here, once, rather
+# than six times: every surface calls this function, so no two surfaces can drift.
+def apply_editor_operation(editor, operation: str | None) -> bool:
+    """Run one of the app-owned mutating editor operations on `editor`.
+
+    Returns whether the buffer actually changed -- False for a no-op at a
+    boundary, and False on a read-only buffer (where the CALLER states the
+    refusal; this function never edits a read-only editor, because QTextCursor
+    edits bypass `setReadOnly` and the guard has to be here too).
+
+    **The edge cases, each decided rather than inherited:**
+
+    * **A selection is active** -- all three delete gestures delete exactly the
+      selection, and nothing more. The selection is what the user can see is
+      targeted, and a `Ctrl+U` that threw away a line the selection only touched
+      part of would be a destructive surprise.
+    * **`DELETE_CHARACTER` at the end of the document** -- no-op. No edit block,
+      so no empty undo step is pushed either.
+    * **`DELETE_TO_END_OF_LINE` already at the end of a line** -- deletes the
+      newline, joining the next line up. That is what makes repeated `Ctrl+K`
+      useful (and matches readline); at the very end of the document it is a
+      no-op instead.
+    * **`DELETE_LINE`, last line with no trailing newline** -- deletes the line's
+      text *and the newline before it*, so the previous line becomes the last one
+      rather than an empty line being left behind. On a document that is a single
+      empty line there is nothing to delete: no-op.
+    * **`DELETE_LINE` is destructive, so it is ONE undo step** -- text and newline
+      go in a single `beginEditBlock`/`endEditBlock` pair, so one `Ctrl+Z` brings
+      the whole line back. The same block wraps the other two for consistency.
+    * **Inside an active tab-stop walk** -- the walk is ABANDONED first
+      (`exit_tab_stop_mode`), the same answer a click gets. The stops are tracked
+      `QTextCursor`s, so a deletion cannot corrupt them, but a walk whose
+      placeholders the user just deleted has nowhere honest to go, and a Tab that
+      jumped somewhere unexpected would be worse than a tab.
+    * **`PASTE`** -- delegated to `QPlainTextEdit.paste()`: the clipboard, the
+      read-only refusal and the single undo step are already Qt's, and the only
+      thing the app is adding is that the CHORD reaches it on both platforms.
+    * **The editor is in COMMAND MODE (FQ-032)** -- the three DELETE operations
+      are DECLINED, and this is the one place that decline lives. See
+      `_command_mode_declines` below.
+    """
+    if not is_mutating_editor_operation(operation):
+        return False
+    if editor.isReadOnly():
+        return False
+    if _command_mode_declines(editor, operation):
+        return False
+    exit_walk = getattr(editor, "exit_tab_stop_mode", None)
+    if callable(exit_walk):
+        exit_walk()
+    if operation == PASTE:
+        editor.paste()
+        return True
+
+    cursor = editor.textCursor()
+    cursor.beginEditBlock()
+    try:
+        changed = _delete_for(cursor, operation)
+    finally:
+        cursor.endEditBlock()
+    if changed:
+        editor.setTextCursor(cursor)
+        editor.ensureCursorVisible()
+    return changed
+
+
+#: The three operations Command mode FREES, reserving their chords for later vim
+#: scrolling (`DEC-260810193637`). `PASTE` is deliberately absent: the ruling
+#: freed exactly three operations, so `Ctrl+Shift+Insert` and `Ctrl+V` keep
+#: pasting in Command mode.
+COMMAND_MODE_FREED_OPERATIONS = frozenset(
+    {DELETE_CHARACTER, DELETE_TO_END_OF_LINE, DELETE_LINE}
+)
+
+
+def _command_mode_declines(editor, operation: str | None) -> bool:
+    """Whether `editor` is in FQ-032's Command mode and `operation` is one of the
+    three it frees -- **the app's ONE mode test for these chords.**
+
+    `Ctrl+D` / `Ctrl+K` / `Ctrl+U` remain bound, reserved and app-implemented at
+    all six surfaces in **Edit** mode: Windows keeps the three gestures it gained
+    in `55c2538`, this function keeps being their one implementation, and every
+    edge case in its docstring still governs. **Only Command mode declines them**,
+    and the decline is HERE rather than in six `eventFilter`s -- six copies of a
+    mode test is six chances to drift, which is the argument that put these chords
+    in one function to begin with. The table's invariant is untouched: what became
+    mode-conditional is the APPLICATION, not the classification, so
+    `classify_editor_chord` still gives the same answer at all six surfaces.
+
+    **⚠ ACCEPTED COST, RECORDED SO A SWEEP DOES NOT FILE IT AS A BUG: a
+    mode-dependent hole with no visible reason.** A swallowed keystroke that does
+    nothing is normally exactly what FQ-023/DEC-013 forbid -- *state the reason,
+    never nothing*. **The owner accepted the silence explicitly**, so this is a
+    stated exception rather than an oversight, and the mitigation is the mode
+    indicator, which is the one thing on screen that explains why the key did
+    nothing. A future sweep meeting an inert `Ctrl+U` in Command mode should be
+    closed against this docstring, **not** re-filed.
+    """
+    if operation not in COMMAND_MODE_FREED_OPERATIONS:
+        return False
+    return bool(getattr(editor, "in_command_mode", False))
+
+
+def _delete_for(cursor, operation: str) -> bool:
+    """The three deletions, on an already-open edit block. See
+    `apply_editor_operation` for why each boundary answers the way it does."""
+    if cursor.hasSelection():
+        cursor.removeSelectedText()
+        return True
+    if operation == DELETE_CHARACTER:
+        if cursor.atEnd():
+            return False
+        cursor.deleteChar()
+        return True
+    if operation == DELETE_TO_END_OF_LINE:
+        start = cursor.position()
+        cursor.movePosition(
+            QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor
+        )
+        if cursor.position() > start:
+            cursor.removeSelectedText()
+            return True
+        cursor.setPosition(start)
+        if cursor.atEnd():
+            return False
+        cursor.deleteChar()  # at end of line: eat the newline, joining the next
+        return True
+    if operation == DELETE_LINE:
+        block = cursor.block()
+        start = block.position()
+        # `QTextBlock.length()` counts the block separator, so this is the
+        # position just past the block's last character on every block, last
+        # included.
+        end = start + block.length() - 1
+        if block.next().isValid():
+            end += 1  # take the trailing newline with the line
+        elif start > 0:
+            start -= 1  # the last line has none: take the one before it instead
+        if start == end:
+            return False  # the whole document is one empty line
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.removeSelectedText()
+        return True
+    return False
+
+
+# The same trick for the paste family, and for the same reason: this must NOT be
+# `event.matches(QKeySequence.StandardKey.Paste)`, which is Qt's per-scheme table
+# and hands the app two different keyboards (DEC-015). Parsed from
+# `EDITOR_PASTE_CHORDS` so the chords have one source.
+_PASTE_COMBINATIONS = {
+    (
+        QKeySequence(sequence)[0].key(),
+        QKeySequence(sequence)[0].keyboardModifiers(),
+    )
+    for sequence in EDITOR_PASTE_CHORDS
+}
+
+
+def is_paste_chord(event) -> bool:
+    """True if `event` is one of the paste chords THIS APP owns.
+
+    Used by the read-only surfaces to decide whether a keystroke was an edit
+    attempt worth a hint. See `EDITOR_PASTE_CHORDS` for why the set is spelled
+    out rather than taken from Qt's `StandardKey.Paste`.
+    """
+    return (event.key(), event.modifiers()) in _PASTE_COMBINATIONS
+
 
 # Keyword lists kept as Qt-free module constants (unit-tested for existence /
 # non-triviality); the highlighter consumes them below.
@@ -154,6 +455,41 @@ class _CodeHighlighter(QSyntaxHighlighter):
     _STATE_NORMAL = 0
     _STATE_IN_BLOCK_COMMENT = 1
 
+    #: The theme file's syntax-role name behind each format attribute. Five of
+    #: the theme's 8 roles, SHARED by SQL/PHP/JS -- per-language colouring is
+    #: deliberately out of scope. The other three are the XML highlighter's
+    #: (`xml_editor.XmlSyntaxHighlighter`), which reads its map the same way.
+    _ROLE_FORMATS = {
+        "code_keyword": "_keyword_format",
+        "code_string": "_string_format",
+        "code_comment": "_comment_format",
+        "code_number": "_number_format",
+        "code_variable": "_variable_format",
+    }
+
+    def apply_syntax_theme(self, light: bool) -> bool:
+        """Load the five code syntax roles from the theme file; return whether
+        anything actually changed.
+
+        **The return value is what keeps this cheap.** Both bundled themes carry
+        the same five values today (this highlighter was THEME-BLIND before
+        FQ-260812021715, and the consolidation was not allowed to change a
+        pixel), so a theme flip resolves to the identical roles and the caller
+        skips the `rehighlight()` -- which reformats the entire document and
+        fires a spurious `textChanged` that dirty-tracking has to be told to
+        ignore (see `XmlEditor.is_applying_theme`). The moment a theme DOES give
+        the code roles their own light variant, this returns True and the
+        rehighlight happens, with no other change needed here.
+        """
+        theme = theme_for(light)
+        roles = {name: theme.role(name) for name in self._ROLE_FORMATS}
+        if roles == self._roles:
+            return False
+        self._roles = roles
+        for name, attribute in self._ROLE_FORMATS.items():
+            apply_syntax_role(getattr(self, attribute), roles[name])
+        return True
+
     def __init__(self, document, language: str):
         super().__init__(document)
         self._language = language
@@ -165,19 +501,14 @@ class _CodeHighlighter(QSyntaxHighlighter):
             self._keywords = _PHP_KEYWORDS
 
         self._keyword_format = QTextCharFormat()
-        self._keyword_format.setForeground(QColor("#569cd6"))
-
         self._string_format = QTextCharFormat()
-        self._string_format.setForeground(QColor("#ce9178"))
-
         self._comment_format = QTextCharFormat()
-        self._comment_format.setForeground(QColor("#6a9955"))
-
         self._number_format = QTextCharFormat()
-        self._number_format.setForeground(QColor("#b5cea8"))
-
         self._variable_format = QTextCharFormat()
-        self._variable_format.setForeground(QColor("#9cdcfe"))
+        self._roles: dict[str, object] = {}
+        # Defaults to the DARK theme's roles, the set this highlighter carried
+        # hardcoded before FQ-260812021715 made it theme-readable.
+        self.apply_syntax_theme(False)
 
         self._keyword_re = re.compile(r"\b[A-Za-z_]\w*\b")
         self._number_re = re.compile(r"\b\d+(?:\.\d+)?\b")
@@ -250,12 +581,18 @@ class _CodeHighlighter(QSyntaxHighlighter):
                 self.setFormat(block_open, block_close + 2 - block_open, self._comment_format)
 
 
-class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
+class CodeEditor(
+    GutterBookmarkFoldMixin, SharedEditorMixin, VimModeMixin, QPlainTextEdit
+):
     """QPlainTextEdit tuned for editing a single code body in one language
     ("js" | "php" | "sql").
 
     Carries the shared gutter/bookmark/fold base (`ui/editor_gutter.py`, §8) --
-    the same one `XmlEditor` uses, never a second parallel gutter. Foldable
+    the same one `XmlEditor` uses, never a second parallel gutter -- plus the two
+    other family-agnostic layers, both mixed in **before** `QPlainTextEdit` and
+    both shared with `XmlEditor`: `SharedEditorMixin` (the one hint/refusal path
+    and the one line-wrap toggle) and `VimModeMixin` (FQ-032's Edit-mode /
+    Command-mode layer). Foldable
     regions are supplied from outside via `set_fold_regions`; for the DDL
     Explorer's "sql" buffer `EditorPanel` derives them from the `DdlObjectSpan`
     index (one region per object body, banner → `end_line`, §18.1).
@@ -266,20 +603,12 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     # tab-indented bodies unreadably wide.
     _SQL_TAB_STOP_CHARS = 4
 
-    #: Emitted when an expansion gesture (snippet or expand-`SELECT`) refuses,
-    #: carrying the reason fit to show the user -- never on success. The same
-    #: "report outward, never reach into MainWindow" precedent as
-    #: `DdlObjectEditorPanel.format_refused`; a host that connects nothing
-    #: still sees the reason, because `report_refusal` also shows it as a
-    #: transient tooltip at the caret (the status bar is static since FQ-028).
-    expansion_refused = Signal(str)
-
-    #: Emitted for every transient caret hint this editor shows -- a refusal
-    #: (which also emits `expansion_refused`) or an answer, e.g. signature help
-    #: (FQ-030 slice 3). It exists because `QToolTip` shows nothing at all under
-    #: the offscreen platform, so this is the only thing a test can observe;
-    #: hosts are free to ignore it, and all of them do.
-    hint_shown = Signal(str)
+    # `expansion_refused` and `hint_shown` now live on `SharedEditorMixin`
+    # (`ui/editor_shared.py`) alongside `report_refusal` / `show_hint`, so
+    # `XmlEditor` states a refusal through the SAME implementation -- the lift
+    # FQ-032 forced, because a family-agnostic layer may not be given a private
+    # copy of something one family already implements. Both signals mean exactly
+    # what they meant before and every existing host connection is unchanged.
 
     def __init__(self, language: str, parent=None):
         super().__init__(parent)
@@ -320,8 +649,23 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         self._tab_stop_cursors: list[QTextCursor] = []
         self._tab_stop_index = 0
 
+        # The structural expansion stack (FQ-034, §8). PER EDITOR, ON THE EDITOR:
+        # a selection stack is a property of *this document in this viewport*, so
+        # a host-side map keyed by editor would need a lifetime rule for closed
+        # tabs and the state would have no meaning outside the widget that owns
+        # the selection. `_expansion_revision` / `_expansion_selection` are the
+        # invalidation pair -- see `_expansion_stack_is_live`.
+        self._expansion_stack: list[tuple[int, int]] = []
+        self._expansion_revision: int | None = None
+        self._expansion_selection: tuple[int, int] | None = None
+
         self._init_gutter_bookmarks_folding()
+        # FQ-032's editing-mode layer. Every editor starts in **Edit mode**,
+        # always: no setting is read, nothing is restored, and there is no
+        # "which editor was in Command mode" map to consult.
+        self._init_vim_mode()
         self._apply_gutter_theme_colors(self._palette_is_light())
+        self._apply_syntax_theme_colors(self._palette_is_light())
 
     # --- Shared gutter/bookmark/fold base hooks (§8) -----------------------
     def set_fold_regions(self, regions) -> None:
@@ -343,6 +687,17 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
     def _palette_is_light(self) -> bool:
         return self.palette().color(QPalette.ColorRole.Base).lightness() > 128
 
+    def _apply_syntax_theme_colors(self, light: bool) -> None:
+        """Re-read the highlighter's syntax roles for the theme, rehighlighting
+        only if they actually differ (see `_CodeHighlighter.apply_syntax_theme`).
+
+        Idempotent and last-write-wins, which a theme flip requires:
+        `PaletteChange` fires four times per flip and the first two report the
+        OLD lightness, so this runs up to four times per flip and the last call
+        is the one that decides."""
+        if self._highlighter.apply_syntax_theme(light):
+            self._highlighter.rehighlight()
+
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if event.type() in (
@@ -352,6 +707,7 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
             # Can fire during base-class construction, before the gutter exists.
             if hasattr(self, "_gutter"):
                 self._apply_gutter_theme_colors(self._palette_is_light())
+                self._apply_syntax_theme_colors(self._palette_is_light())
 
     def navigate_to_line(self, line: int) -> None:
         """Move the caret to `line` (1-based) -- the same public navigation
@@ -425,6 +781,147 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         cursor.setPosition(start, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()
+
+    # --- Structural expand / shrink: the repeatable ladder (FQ-034, §8) -----
+    #
+    # `Ctrl+Shift+A` grows the selection outward one structural unit per press;
+    # `Ctrl+Shift+Z` steps it back inward. Three facts shape the code below.
+    #
+    # 1. **The spans come from `sql/block_spans.py`, which is Qt-free.** This
+    #    widget converts offsets into a `QTextCursor` and nothing else -- it does
+    #    not know what a `BEGIN` is, and `sql/` does not know what a widget is
+    #    (§5's arrow, test-enforced). The rung *policy* (inner-before-outer for a
+    #    bracket group, the sparse clause rung, "nothing larger left" = None) all
+    #    lives there too, so the same ladder is testable without Qt.
+    # 2. **The stack is what makes shrink possible at all.** `XmlEditor`'s parent
+    #    walk is stateless -- re-derived from `selectionStart()` every press --
+    #    which is precisely why that family has no shrink. Here grow pushes the
+    #    selection it is replacing, and shrink pops it.
+    # 3. **The paren rung is TOKEN-level, unlike `Ctrl+Shift+B`.**
+    #    `enclosing_bracket_span` scans characters and so counts a `(` inside a
+    #    string literal or a comment; the ladder consults the tokenizer and does
+    #    not. Both survive on purpose: `Ctrl+Shift+B` also serves PHP and JS tabs,
+    #    which have no SQL tokenizer to consult, so one implementation is not
+    #    available (§8).
+
+    def supports_structural_expansion(self) -> bool:
+        """Whether `Select ▸ Expand Selection` means anything on this editor.
+
+        **A QUESTION on the editor, not a `hasattr`, and that is the point.**
+        The gate this replaces asked `hasattr(editor, "select_parent_block")`, a
+        *class* fact. Grow's gate is a **per-instance** fact -- a `CodeEditor`
+        supports the ladder only where its language is plpgsql -- which `hasattr`
+        cannot express, so both editor families answer this one predicate
+        instead (`XmlEditor` returns True unconditionally).
+        """
+        return self._language == "sql"
+
+    def expand_structural_selection(self) -> bool:
+        """`Ctrl+Shift+A`: select the next larger structural unit. Repeatable.
+
+        Returns whether the selection moved. **Nothing larger left is a NO-OP,
+        deliberately not a refusal** (§8): selecting mutates nothing, so a report
+        per keypress at the top of the ladder would be noise rather than
+        information, and it matches `select_parent_block`'s behaviour at the
+        document root.
+        """
+        if not self.supports_structural_expansion():
+            return False
+        cursor = self.textCursor()
+        selection = (cursor.selectionStart(), cursor.selectionEnd())
+        # Caret-at-start is the app's selection idiom (see `select_enclosing_
+        # brackets`), so `selectionStart()` is where the user's caret sits and is
+        # the honest place to resolve the chain from -- the same reasoning
+        # `XmlEditor.select_parent_block` states for its own re-derivation.
+        chain = block_spans.structure_chain(self.toPlainText(), selection[0])
+        target = block_spans.expand_target(chain, selection)
+        if target is None:
+            return False
+        if not self._expansion_stack_is_live(selection):
+            self._expansion_stack = []
+        self._expansion_stack.append(selection)
+        self._apply_structural_selection(target)
+        return True
+
+    def shrink_structural_selection(self) -> bool:
+        """`Ctrl+Shift+Z`: step the selection back inward. Returns whether it moved.
+
+        Two modes, and **the user cannot see which one they are in** -- an
+        accepted cost, recorded rather than hidden (§8). The mitigation is that
+        both move the selection *inward*, so the gesture's direction never
+        surprises even when its exact target does.
+
+        * **With a live stack** (grow put this selection here, and nothing has
+          edited the document or moved the selection since) it POPS -- the exact
+          inverse of the press that produced the current selection.
+        * **With no stack** -- after a mouse drag, after any edit, on a first
+          press -- it selects the largest structural span lying **strictly
+          inside** the current selection (owner, `DEC-260810164601`). That was
+          chosen because it *subsumes* the conservative "do nothing": at the
+          innermost span nothing lies strictly inside, so `shrink_target` returns
+          None and this **is** a no-op there. There is deliberately **no special
+          case** for that, and none should be added -- the whole reason the
+          deriving option won is that it needs one branch fewer.
+
+        There is no refusal path either, so DEC-013's boundary never comes into
+        play: there is nothing to refuse.
+        """
+        if not self.supports_structural_expansion():
+            return False
+        cursor = self.textCursor()
+        selection = (cursor.selectionStart(), cursor.selectionEnd())
+        if self._expansion_stack_is_live(selection) and self._expansion_stack:
+            self._apply_structural_selection(self._expansion_stack.pop())
+            return True
+        self._expansion_stack = []
+        # One character inside the selection, so a selection that starts exactly
+        # on a `(` still resolves the chain that `(` opens. An empty selection
+        # lands back on the caret, where nothing is strictly inside it -- which
+        # is the no-op above, reached without a branch of its own.
+        #
+        # The chain is resolved from ONE position, which the ruling's wording
+        # ("the largest `structure_chain` member strictly inside the selection")
+        # implies and which is worth stating: repeated derives walk inward along
+        # the chain at the selection's start, not toward whichever construct is
+        # widest somewhere in the middle. Both properties the ruling weighed hold
+        # at every step -- the selection always moves inward, and every press that
+        # fires changes something.
+        probe = min(selection[0] + 1, selection[1])
+        chain = block_spans.structure_chain(self.toPlainText(), probe)
+        target = block_spans.shrink_target(chain, selection)
+        if target is None:
+            return False
+        self._apply_structural_selection(target)
+        return True
+
+    def _expansion_stack_is_live(self, selection: tuple[int, int]) -> bool:
+        """Whether the stack still describes the text and selection on screen.
+
+        Dropped whole, never partially trusted, when either half is stale:
+
+        * **the document revision changed** (any edit) -- the stored offsets
+          describe text that no longer exists, and restoring one would select a
+          visibly wrong range. This is `_update_matching_tag_highlight`'s rule
+          applied to selections: while stale, do nothing rather than something
+          wrong.
+        * **the selection is not the one the last grow produced** -- the user
+          clicked, dragged, or ran another selection command in between.
+        """
+        return (
+            self._expansion_revision == self.document().revision()
+            and self._expansion_selection == selection
+        )
+
+    def _apply_structural_selection(self, span: tuple[int, int]) -> None:
+        """Select `span` caret-at-start and remember it as the ladder's state."""
+        start, end = span
+        cursor = self.textCursor()
+        cursor.setPosition(end)
+        cursor.setPosition(start, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(cursor)
+        self.ensureCursorVisible()
+        self._expansion_revision = self.document().revision()
+        self._expansion_selection = (start, end)
 
     # --- Template expansion: the ONE application path (FQ-030) -------------
     #
@@ -593,47 +1090,12 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
             return False
         return self.apply_expansion(expansion)
 
-    def report_refusal(self, reason: str) -> None:
-        """State why a gesture could not run (FQ-023), never nothing.
-
-        Two channels, and both still earn their place now that a host DOES
-        connect the signal (`MainWindow._report_editor_gesture_refusal` files
-        it as an Audit `[SQL]` row, since the status bar is static since
-        FQ-028): the signal is the durable record, readable after the fact and
-        reachable by a test; the caret tooltip is the immediate one, at the
-        place the author is looking, for a refusal that answers a keystroke
-        they just pressed. A dock row alone would make a Ctrl+Alt+E that
-        matched no snippet look like nothing happened; a tooltip alone would
-        vanish before it could be re-read. The hosts that connect nothing (Raw
-        XML, the PHP tabs) still get the tooltip.
-        """
-        self.show_hint(reason or "this gesture cannot run here", refusal=True)
-
-    def show_hint(self, text: str, *, refusal: bool = False) -> None:
-        """Show `text` as a transient tooltip at the caret -- the ONE hint path.
-
-        Signature help (FQ-030 slice 3) is a query, not an insertion: it has
-        nothing to put in the buffer and everything to say, so it says it here,
-        through the same channel a refusal uses. `refusal=True` additionally
-        emits `expansion_refused`, which is what makes a REFUSAL (and only a
-        refusal) reach the Audit surface -- an answered question is not a
-        notice and does not belong in a journal.
-        """
-        if not text:
-            return
-        if refusal:
-            self.expansion_refused.emit(text)
-        if self.isVisible():
-            # A tooltip anchored to a hidden widget has nowhere to appear, and
-            # asking for one under the offscreen platform only produces a Qt
-            # warning. `hint_shown` below is the channel that always fires, and
-            # is what tests assert on.
-            QToolTip.showText(
-                self.viewport().mapToGlobal(self.cursorRect().bottomLeft()),
-                text,
-                self,
-            )
-        self.hint_shown.emit(text)
+    # `report_refusal` / `show_hint` moved to `SharedEditorMixin`
+    # (`ui/editor_shared.py`), unchanged, so `XmlEditor` -- which had NEITHER --
+    # reports a refusal through the same one implementation. FQ-032 forced the
+    # lift: a Command-mode gesture that cannot run must state why on both editor
+    # families, and a private hint inside the vim layer would have been the app's
+    # second hint path.
 
     # --- Tab-stop mode ------------------------------------------------------
 
@@ -735,6 +1197,9 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
         super().mousePressEvent(event)
 
     def focusOutEvent(self, event) -> None:
+        # `super()` reaches `VimModeMixin.focusOutEvent`, which drops Command
+        # mode -- transient editor state the user cannot see the boundary of must
+        # not outlive focus, which is the same reason the tab-stop walk ends here.
         self.exit_tab_stop_mode()
         super().focusOutEvent(event)
 
@@ -798,6 +1263,17 @@ class CodeEditor(GutterBookmarkFoldMixin, QPlainTextEdit):
             if key == Qt.Key.Key_C:
                 self.expand_select_at_caret()
                 return
+
+        # FQ-032's editing-mode layer, HERE and not earlier: `Esc`'s precedence
+        # order puts tab-stop mode (row 3) ahead of Command-mode entry (row 4),
+        # and the `Ctrl+Alt+` gesture family above is not part of either
+        # vocabulary. Rows 1 and 2 need no arbitration -- the completion popup
+        # takes focus, so this editor never sees the key, and a `FindReplaceBar`
+        # field is a different widget. On a read-only editor the hook answers
+        # nothing at all (row 5).
+        if self.handle_command_mode_key(event):
+            event.accept()
+            return
 
         char = event.text()
         cursor = self.textCursor()
@@ -907,8 +1383,57 @@ class CodeEditorDialog(QDialog):
         button_box.accepted.connect(self.save)
         button_box.rejected.connect(self.cancel)
 
+        # The dialog's editing-mode chrome (`DEC-260810193639`). **Load-bearing,
+        # not cosmetic.** The owner ruled that this deliberately minimal,
+        # menu-less dialog DOES get Command mode -- against the recommendation,
+        # which was that the vim layer be inactive here because `Esc` is this
+        # dialog's cancel and, since `Ctrl+S`/`Ctrl+W` were deleted on
+        # 2026-08-09, its ONLY keyboard cancel -- and attached the condition that
+        # makes it survivable: an indicator plus an exit hint. FQ-032's entire
+        # safety argument for a user who enters Command mode by accident is that
+        # indicator and hint, so **shipping Command mode here without them ships
+        # the version the owner declined.**
+        #
+        # This is the THIRD `ModeIndicator` surface where §7 said "two surfaces,
+        # one call": the first outside the main window and the first not driven by
+        # `MainWindow._refresh_mode_indicator()`, which a dialog cannot reach. It
+        # renders the EDITING-MODE segment only -- it is not a workflow surface
+        # and has no MainWindow to ask. That APPLIES §7's one-source-of-truth
+        # rule rather than excepting it: the single accessor answers major and
+        # minor, while the editing mode's source of truth is the editor itself.
+        #
+        # THE CONSEQUENCE THE RULING DID NOT NAME, since DECIDED by the owner
+        # (2026-08-10): **the two-press escape, and it is THIS dialog only.**
+        #
+        #     Edit mode                     : Esc -> enter Command mode
+        #     Command mode, pending         : Esc -> clear pending, stay
+        #     Command mode, nothing pending : Esc -> reject this dialog
+        #
+        # Command mode had withdrawn this dialog's ONLY keyboard cancel: `Esc`
+        # *was* the cancel, and `Ctrl+S`/`Ctrl+W` were deleted here on 2026-08-09
+        # (see the note further down). A modal whose only remaining cancel is the
+        # mouse is a real regression, not a purist's quibble -- and **vim has no
+        # dialogs to be authentic about**, so nothing vim does is being
+        # contradicted; an absence is being filled.
+        #
+        # ⚠ THIS IS A DELIBERATE PER-SURFACE DIVERGENCE. At the other five editing
+        # surfaces `Esc` in Command mode with nothing pending STAYS PUT, exactly as
+        # shipped, because none of them is a modal and none of them loses a way
+        # out. **The accepted cost is that `Esc` means something different here
+        # than everywhere else in the app.** Do not "harmonise" it in either
+        # direction: removing it re-strands the keyboard user, and generalising it
+        # would make `Esc` leave Command mode in ordinary tabs, which the owner did
+        # not rule and vim does not do. The mechanism is the vim layer's single
+        # opt-in hook, whose docstring carries the ruling.
+        self._editor.set_command_mode_escape_fallback(self.cancel)
+
+        self._mode_indicator = ModeIndicator(self, editing_only=True)
+        self._mode_indicator.set_editing_mode(self._editor.editing_mode_label())
+        self._editor.editing_mode_changed.connect(self._refresh_mode_indicator)
+
         layout = QVBoxLayout(self)
         layout.addWidget(self._editor)
+        layout.addWidget(self._mode_indicator)
         layout.addWidget(button_box)
 
         # NO `Ctrl+S` / `Ctrl+W` (owner decision, 2026-08-09). This dialog was
@@ -919,9 +1444,15 @@ class CodeEditorDialog(QDialog):
         # over the local convention that OK/Cancel in a text-editing modal are
         # naturally those two keys.
         #
-        # OK and Cancel remain reachable by the button box, by `Return`/`Escape`
-        # (Qt's own defaults for a QDialogButtonBox), and by the window's close
-        # button, so nothing became unreachable.
+        # OK and Cancel remain reachable by the button box, by `Return` (Qt's own
+        # default for a QDialogButtonBox), by the window's close button -- and
+        # Cancel by `Escape`, which since Command mode landed is the **second**
+        # `Esc` press rather than the first: the first enters Command mode and the
+        # second rejects (see the two-press escape note above). It is no longer
+        # Qt's own `QDialog` Escape handling that answers, because the editor
+        # consumes the key; the outcome is the same, one press later. That
+        # distinction is written out because this comment read "by
+        # `Return`/`Escape`" while `Escape` did not cancel at all.
         #
         # ONE key this dialog does own: `Ctrl+Shift+B` (bracket-select). It is
         # `Select ▸ Select Enclosing Block` everywhere else, and this dialog has
@@ -943,6 +1474,17 @@ class CodeEditorDialog(QDialog):
             self._editor.select_enclosing_brackets
         )
 
+        # The reserved editor chord set, stated here too (DEC-014's fixed
+        # set: *every* editing surface states its answer, and this dialog hosts
+        # a full CodeEditor). Nothing can steal these keys from a modal -- no
+        # window `QShortcut` reaches it -- so `Ctrl+Z`/`Ctrl+Y` would have worked
+        # natively on Windows and `Ctrl+Y` would have been dead on Linux, which
+        # is exactly the divergence BUG-056 measured in the Sandbox SQL Console.
+        # DEC-014 accepted the uniformity cost here knowingly; the part that is
+        # NOT cosmetic is `Ctrl+Shift+Z`, which Qt answers with a native redo on
+        # both schemes and which DEC-015 freed from redo.
+        self._editor.installEventFilter(self)
+
         # Open at 80% of the host (XML editor) window so there's room to work.
         self.setMinimumSize(480, 320)
         if parent is not None:
@@ -954,6 +1496,58 @@ class CodeEditorDialog(QDialog):
                         int(ref_size.width() * 0.8),
                         int(ref_size.height() * 0.8),
                     )
+
+    def eventFilter(self, obj, event) -> bool:
+        """The dialog's stated answer to the reserved editor chord set.
+
+        Same two halves as every other surface (claim the `ShortcutOverride`,
+        answer the `KeyPress`), routed into this editor's own native stack --
+        the dialog holds no snapshot history.
+        """
+        if obj is self._editor and event.type() in (
+            QEvent.Type.ShortcutOverride,
+            QEvent.Type.KeyPress,
+        ):
+            operation = classify_editor_chord(event)
+            if operation is not None:
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    event.accept()
+                elif operation == UNDO:
+                    self._editor.undo()
+                elif operation == REDO:
+                    self._editor.redo()
+                elif is_mutating_editor_operation(operation):
+                    # Paste and the three line-editing gestures, bound by the
+                    # app on both platforms (owner, 2026-08-10). The dialog's
+                    # buffer is editable, so they simply run; the shared
+                    # implementation is what keeps all six surfaces identical.
+                    apply_editor_operation(self._editor, operation)
+                elif operation == CLAIMED_NOT_UNDO_REDO:
+                    # `Ctrl+Shift+Z` = Shrink Selection (FQ-034). The claim was
+                    # already here (DEC-015 freed the chord from redo and Qt
+                    # answers it natively on both schemes, so the interception
+                    # must stay); this feature gives it an answer instead of
+                    # binding the chord afresh. One implementation for all six
+                    # surfaces -- `apply_shrink_structural_selection` -- so a
+                    # seventh cannot arrive with a private one. The dialog's
+                    # editor answers only where its language is plpgsql, which is
+                    # the same per-instance gate the menu entries use.
+                    apply_shrink_structural_selection(self._editor)
+                # else: the one answer that still runs nothing -- the suppressed
+                # Alt+Backspace pair, consumed so Qt's own platform-conditional
+                # handling cannot answer instead.
+                return True
+        return super().eventFilter(obj, event)
+
+    @property
+    def mode_indicator(self) -> ModeIndicator:
+        """The dialog's editing-mode chrome -- the guard the ruling attached."""
+        return self._mode_indicator
+
+    def _refresh_mode_indicator(self) -> None:
+        """The dialog's own refresh. Driven by ITS editor's transitions, never by
+        `MainWindow._refresh_mode_indicator()`, which a dialog cannot reach."""
+        self._mode_indicator.set_editing_mode(self._editor.editing_mode_label())
 
     def set_code(self, text: str) -> None:
         self._editor.setPlainText(text)

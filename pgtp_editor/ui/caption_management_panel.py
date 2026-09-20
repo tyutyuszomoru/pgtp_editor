@@ -1076,10 +1076,50 @@ class CaptionManagementPanel(QWidget):
         layout.addWidget(self.find_replace_bar)
         layout.addLayout(button_row)
 
-        # Shortcuts scoped to the table.
-        QShortcut(QKeySequence.StandardKey.Copy, self._table, self.copy_selection)
-        QShortcut(QKeySequence.StandardKey.Paste, self._table, self.paste_into_new_value)
-        QShortcut(QKeySequence("Ctrl+G"), self._table, self.go_to_line_current)
+        # Copy / Paste act on the GRID's selection, so they are scoped to the
+        # grid and its cell editors -- never window-scoped. A Copy fired while
+        # focus sat in the Find field used to copy the grid selection instead of
+        # the field's text (BUG-260810143056), which the implicit
+        # `WindowShortcut` default made possible; the panel is contained today
+        # only because a hidden `CenterStage` tab page's shortcuts do not fire,
+        # and that invariant is not something correctness may rest on.
+        # `WidgetWithChildrenShortcut` and not `WidgetShortcut`: the grid is a
+        # QTableView with an editing delegate, and a widget-only scope would die
+        # the moment a cell editor takes focus.
+        #
+        # The chords are SPELLED OUT, never `QKeySequence.StandardKey.Copy` /
+        # `.Paste`. A `StandardKey` argument installs *every* chord Qt's
+        # per-scheme table lists for that key on the one QShortcut
+        # (`QShortcut(StandardKey.Copy, ...).keys()` -> `['Ctrl+C', 'Ctrl+Ins',
+        # 'Copy']`, plus `F16` and `Ctrl+Shift+Ins` on the Linux/KDE scheme), so
+        # a binding the app owns would answer different keys on Windows and on
+        # Linux -- exactly what DEC-015 forbids: *"an operation's chord is bound
+        # by this app, not inherited from Qt's platform table"*. Qt's own
+        # built-in clipboard handling inside text widgets still answers the alias
+        # spellings; that is Qt's business, and those chords are reserved in
+        # `shortcut_registry` so no command can be retargeted onto them.
+        self._copy_shortcut = QShortcut(
+            QKeySequence("Ctrl+C"), self._table, self.copy_selection
+        )
+        self._copy_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._paste_shortcut = QShortcut(
+            QKeySequence("Ctrl+V"), self._table, self.paste_into_new_value
+        )
+        self._paste_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        # Ctrl+G is parented to the PANEL, not the grid, and that is deliberate:
+        # it keeps the measured behaviour that Ctrl+G works from inside this
+        # panel's Find field (find a caption, jump straight to its line in the
+        # XML), which the accidental window scope used to give it for free. Do
+        # not "tidy" this down to `self._table` -- the Find field is part of the
+        # gesture. Same shape as the Ctrl+F / Ctrl+R pair below. DEC-012 is
+        # satisfied unchanged: the command form is the click-only *Go to line in
+        # XML* context-menu entry, and this stays its ONE keyboard host.
+        self._go_to_line_shortcut = QShortcut(
+            QKeySequence("Ctrl+G"), self, self.go_to_line_current
+        )
+        self._go_to_line_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
 
         # Ctrl+F / Ctrl+R FOCUS the permanent bar's Find / Replace-with field
         # (FQ-017). They used to be window-scoped, mode-gated MainWindow

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- PGTP Editor curated schema v1.2 -->
+<!-- PGTP Editor curated schema v1.3 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
   <xs:element name="Project" type="Project_Type"/>
   <xs:complexType name="Project_Type">
@@ -27,6 +27,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -41,6 +42,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -55,6 +57,8 @@
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value="php"/>
+           <xs:enumeration value="php4"/>
+            <xs:enumeration value="php5"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -124,6 +128,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -149,6 +154,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -172,6 +178,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -186,6 +193,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -286,7 +294,7 @@
     <xs:attribute name="exportAllRecordsAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-            <xs:enumeration value="0" label="Nonselected"/>
+            <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -298,7 +306,7 @@
     <xs:attribute name="exportRecordFromViewFormAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-           <xs:enumeration value="0" label="Nonselected"/>
+           <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -310,7 +318,7 @@
     <xs:attribute name="exportSelectedRecordsAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-           <xs:enumeration value="0" label="Nonselected"/>
+           <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -322,7 +330,7 @@
     <xs:attribute name="exportSingleRecordFromGridAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-           <xs:enumeration value="0" label="Nonselected"/>
+           <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -363,6 +371,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -370,6 +379,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -393,6 +403,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -400,6 +411,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -407,6 +419,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -414,6 +427,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -426,10 +440,11 @@
     </xs:sequence>
   </xs:complexType>
   <xs:complexType name="Project_Presentation_Groups_Group_Type">
-    <xs:attribute name="caption" use="required">
+    <xs:attribute name="caption" use="required" hint="You can make a group">
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value="No group"/>
+          <xs:enumeration value="Match and player"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -467,6 +482,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -557,6 +573,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
            <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -573,15 +590,21 @@
     <xs:attribute name="editFormCaptionTemplate" use="optional">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="%team1_id%"/>
-          <xs:enumeration value="%team1_id%%id%"/>
+          	<xs:enumeration value=""/>
+          	<xs:enumeration value="%id%"/>
+	<xs:enumeration value="%team1_id%"/>
+	<xs:enumeration value="%team2_id%"/>
+	<xs:enumeration value="%referee_id%"/>
+	<xs:enumeration value="%matchdate%"/>
+	<xs:enumeration value="%goal_team1%"/>
+	<xs:enumeration value="%goal_team2%"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
     <xs:attribute name="exportAllRecordsAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-          <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -593,7 +616,7 @@
     <xs:attribute name="exportRecordFromViewFormAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-           <xs:enumeration value="0" label="Nonselected"/>
+           <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -605,7 +628,7 @@
     <xs:attribute name="exportSelectedRecordsAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-          <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -617,7 +640,7 @@
     <xs:attribute name="exportSingleRecordFromGridAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-           <xs:enumeration value="0" label="Nonselected"/>
+           <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -640,6 +663,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -647,6 +671,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -654,10 +679,11 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
-    <xs:attribute name="horizontalFilterCondition" use="required" hint="You can modify it." >
+    <xs:attribute name="horizontalFilterCondition" use="required" hint="where clause for page filter" >
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value=""/>
@@ -722,6 +748,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -729,6 +756,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -736,6 +764,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -753,6 +782,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -760,12 +790,14 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
     <xs:attribute name="showSetNullCheckBox" use="optional">
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
+           <xs:enumeration value="false"/>
           <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
@@ -774,6 +806,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -798,6 +831,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -814,7 +848,14 @@
     <xs:attribute name="viewFormCaptionTemplate" use="optional">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="%id%"/>
+          	<xs:enumeration value=""/>
+          	<xs:enumeration value="%id%"/>
+	<xs:enumeration value="%team1_id%"/>
+	<xs:enumeration value="%team2_id%"/>
+	<xs:enumeration value="%referee_id%"/>
+	<xs:enumeration value="%matchdate%"/>
+	<xs:enumeration value="%goal_team1%"/>
+	<xs:enumeration value="%goal_team2%"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -839,6 +880,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -879,6 +921,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -908,6 +951,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -915,6 +959,19 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+    <xs:attribute name="totalFunction" use="optional">
+      <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="" label="none"/>
+          <xs:enumeration value="1" label="Average"/>          
+          <xs:enumeration value="2" label="Sum"/>
+          <xs:enumeration value="3" label="Max"/>
+          <xs:enumeration value="4" label="Min"/>
+          <xs:enumeration value="5" label="Count"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1003,8 +1060,10 @@
     <xs:attribute name="caption" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="playing"/>
-          <xs:enumeration value="sick"/>
+          <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+          <xs:enumeration value="Public.Refernce"/>
+          <xs:enumeration value="Team"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1023,6 +1082,9 @@
         <xs:restriction base="xs:string">
           <xs:enumeration value=""/>
           <xs:enumeration value="_parent"/>
+           <xs:enumeration value="_top"/>
+            <xs:enumeration value="_self"/>
+             <xs:enumeration value="_blank"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1030,6 +1092,12 @@
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value="%id%"/>
+           <xs:enumeration value="%team1_id%"/>
+           <xs:enumeration value="%team2_id%"/>
+           <xs:enumeration value="%referee_id%"/>
+          <xs:enumeration value="%matchdate%"/>
+          <xs:enumeration value="%goal_team1%"/>
+          <xs:enumeration value="%goal_team2%"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1039,6 +1107,8 @@
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value="teamname"/>
+          <xs:enumeration value="id"/>
+          <xs:enumeration value="countrycode"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1077,6 +1147,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1095,6 +1166,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1104,6 +1176,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1113,6 +1186,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1122,6 +1196,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+           <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1131,6 +1206,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1157,6 +1233,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value="No"/>
+           <xs:enumeration value="Yes"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1171,6 +1248,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value="Yes"/>
+           <xs:enumeration value="No"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1257,8 +1335,11 @@
     <xs:attribute name="type" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="number"/>
-
+         <xs:enumeration value="default"/>
+         <xs:enumeration value="number"/>
+         <xs:enumeration value="percent"/>
+         <xs:enumeration value="currency"/>
+         <xs:enumeration value="string"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1288,6 +1369,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1303,6 +1385,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1318,6 +1401,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1333,6 +1417,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1348,6 +1433,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1363,6 +1449,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1378,6 +1465,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1401,6 +1489,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1416,6 +1505,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1437,6 +1527,8 @@
         <xs:restriction base="xs:string">
           <xs:enumeration value="Match"/>
           <xs:enumeration value="Player"/>
+          <xs:enumeration value="Public.Refernce"/>
+          <xs:enumeration value="Team"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1450,6 +1542,7 @@
     <xs:attribute name="foreginColumnName" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:string">
+          <xs:enumeration value="id"/>
           <xs:enumeration value="team1_id"/>
           <xs:enumeration value="team2_id"/>
           <xs:enumeration value="team_id"/>
@@ -1485,6 +1578,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1524,7 +1618,7 @@
     <xs:attribute name="exportAllRecordsAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-            <xs:enumeration value="0" label="Nonselected"/>
+            <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -1536,7 +1630,7 @@
     <xs:attribute name="exportRecordFromViewFormAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-            <xs:enumeration value="0" label="Nonselected"/>
+            <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -1548,7 +1642,7 @@
     <xs:attribute name="exportSelectedRecordsAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-          <xs:enumeration value="0" label="Nonselected"/>
+          <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -1560,7 +1654,7 @@
     <xs:attribute name="exportSingleRecordFromGridAvailable" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-           <xs:enumeration value="0" label="Nonselected"/>
+           <xs:enumeration value="0" label="None selected"/>
           <xs:enumeration value="1" label="PDF"/>
           <xs:enumeration value="16" label="CSV"/>
           <xs:enumeration value="2" label="Excel"/>     
@@ -1636,6 +1730,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1653,6 +1748,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1675,6 +1771,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1706,6 +1803,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1786,8 +1884,10 @@
     <xs:attribute name="caption" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="playing"/>
-          <xs:enumeration value="sick"/>
+          <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+          <xs:enumeration value="Public.Refernce"/>
+          <xs:enumeration value="Team"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1804,18 +1904,46 @@
     <xs:attribute name="displayFieldName" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="teamname"/>
+         <xs:enumeration value="id"/>
+         <xs:enumeration value="team1_id"/>
+         <xs:enumeration value="team2_id"/>
+         <xs:enumeration value="referee_id"/>
+         <xs:enumeration value="matchdate"/>
+         <xs:enumeration value="goal_team1"/>
+         <xs:enumeration value="goal_team2"/>
+         <xs:enumeration value="fname"/>
+         <xs:enumeration value="lname"/>
+         <xs:enumeration value="birthdate"/>
+         <xs:enumeration value="team_id"/>
+        <xs:enumeration value="state"/>
+        <xs:enumeration value="referee"/>
+        <xs:enumeration value="teamname"/>
+          <xs:enumeration value="countrycode"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
     <xs:attribute name="linkFieldName" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value="id"/>
+         <xs:enumeration value="id"/>
+         <xs:enumeration value="team1_id"/>
+         <xs:enumeration value="team2_id"/>
+         <xs:enumeration value="referee_id"/>
+         <xs:enumeration value="matchdate"/>
+         <xs:enumeration value="goal_team1"/>
+         <xs:enumeration value="goal_team2"/>
+         <xs:enumeration value="fname"/>
+         <xs:enumeration value="lname"/>
+         <xs:enumeration value="birthdate"/>
+         <xs:enumeration value="team_id"/>
+        <xs:enumeration value="state"/>
+        <xs:enumeration value="referee"/>
+        <xs:enumeration value="teamname"/>
+          <xs:enumeration value="countrycode"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
-    <xs:attribute name="lookupFilter" use="required">
+    <xs:attribute name="lookupFilter" use="required" hint="Enter the filter the list of selectable items from the related table.">
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value=""/>
@@ -1843,6 +1971,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1888,8 +2017,12 @@
     </xs:attribute>
     <xs:attribute name="type" use="required">
       <xs:simpleType>
-        <xs:restriction base="xs:string">
-          <xs:enumeration value="number"/>
+         <xs:restriction base="xs:string">
+          <xs:enumeration value="default"/>
+         <xs:enumeration value="number"/>
+         <xs:enumeration value="percent"/>
+         <xs:enumeration value="currency"/>
+         <xs:enumeration value="string"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1919,6 +2052,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1934,6 +2068,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1965,6 +2100,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -1988,6 +2124,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2027,7 +2164,11 @@
     <xs:attribute name="caption" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:string">
-          <xs:enumeration value=""/>
+          <xs:enumeration value=" "/>
+            <xs:enumeration value="Match"/>
+          <xs:enumeration value="Player"/>
+          <xs:enumeration value="Public.Refernce"/>
+          <xs:enumeration value="Team"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2035,22 +2176,37 @@
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value="id"/>
+           <xs:enumeration value="team1_id"/>
+           <xs:enumeration value="team2_id"/>
+           <xs:enumeration value="referee_id"/>
+           <xs:enumeration value="matchdate"/>
+           <xs:enumeration value="goal_team1"/>
+           <xs:enumeration value="goal_team2"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
   </xs:complexType>
   <xs:complexType name="Project_Presentation_Pages_Page_MultiUploadColumnPresentation_Properties_Type">
-    <xs:attribute name="allowedFileExtensions" use="required">
+    <xs:attribute name="allowedFileExtensions" use="required" hint="Here you can add, modify, or remove file extensions individually.">
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value=""/>
+          <xs:enumeration value="jpg"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
-    <xs:attribute name="allowedFileTypes" use="required">
+    <xs:attribute name="allowedFileTypes" use="required" sums="true">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-          <xs:enumeration value="0"/>
+          <xs:enumeration value="0" label="nothing"/>
+          <xs:enumeration value="1" label="image"/>
+          <xs:enumeration value="2" label="office"/>
+          <xs:enumeration value="4" label="pdf"/>
+          <xs:enumeration value="8" label="html"/>
+          <xs:enumeration value="16" label="text"/>
+          <xs:enumeration value="32" label="video"/>
+          <xs:enumeration value="64" label="audio"/>
+          <xs:enumeration value="128" label="flash"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2088,6 +2244,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2095,6 +2252,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2102,6 +2260,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2123,6 +2282,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="true"/>
+          <xs:enumeration value="false"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2260,14 +2420,14 @@
   <xs:complexType name="Project_Presentation_UserGrants_Type">
   </xs:complexType>
   <xs:complexType name="Project_Presentation_outgoingMailSettings_Type">
-    <xs:attribute name="fromEmail" use="required">
+    <xs:attribute name="fromEmail" use="required" hint="You can write.">
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value=""/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
-    <xs:attribute name="fromName" use="required">
+    <xs:attribute name="fromName" use="required" hint="You can write.">
       <xs:simpleType>
         <xs:restriction base="xs:string">
           <xs:enumeration value=""/>
@@ -2277,7 +2437,19 @@
     <xs:attribute name="mailer" use="required">
       <xs:simpleType>
         <xs:restriction base="xs:integer">
-          <xs:enumeration value="0"/>
+          <xs:enumeration value="0" label="sendmail"/>
+          <xs:enumeration value="1" label="SMTP"/>
+          <xs:enumeration value="2" label="mail"/>
+          <xs:enumeration value="3" label="Qmail"/>
+        </xs:restriction>
+          </xs:simpleType>
+ </xs:attribute>
+     <xs:attribute name="smpt_encryption" use="optional">
+       <xs:simpleType>
+        <xs:restriction base="xs:integer">
+          <xs:enumeration value="" label="None"/>
+          <xs:enumeration value="1" label="SSL"/>
+          <xs:enumeration value="2" label="TLS"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2335,6 +2507,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2360,6 +2533,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>
@@ -2383,6 +2557,7 @@
       <xs:simpleType>
         <xs:restriction base="xs:boolean">
           <xs:enumeration value="false"/>
+          <xs:enumeration value="true"/>
         </xs:restriction>
       </xs:simpleType>
     </xs:attribute>

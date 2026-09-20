@@ -30,6 +30,11 @@ ENTRY_POINT = REPO_ROOT / "pgtp_editor" / "main.py"
 ICON_PATH = REPO_ROOT / "docs" / "pgtpeditor.ico"
 APP_NAME = "PGTPEditor"
 
+# The distribution name from `pyproject.toml`'s `[project] name` (hyphenated; the
+# import package is `pgtp_editor`). Restated here rather than imported so this
+# build script keeps depending on nothing inside the package it builds.
+DISTRIBUTION_NAME = "pgtp-editor"
+
 # Non-Python package data loaded at runtime via importlib.resources
 # (`files("pgtp_editor") / "resources" / ...`): the in-app manual
 # (resources/manual.md, ui/manual_panel.py) and the Breeze toolbar SVGs
@@ -40,6 +45,13 @@ APP_NAME = "PGTPEditor"
 # files("pgtp_editor") resolves to it inside the frozen app.
 RESOURCES_SRC = REPO_ROOT / "pgtp_editor" / "resources"
 RESOURCES_DEST = "pgtp_editor/resources"
+
+# Resource files whose absence degrades the app SILENTLY rather than crashing it,
+# so the build must refuse to produce the bundle instead of shipping it (BUG-057).
+# curated.xsd is the sole feed for attribute completion, hover and the Properties
+# panel labels (spec §11); without it `bundled_curated_xsd_text()` returns None and
+# the app quietly falls back to a stub generated from the learned model.
+REQUIRED_RESOURCE_FILES = ("curated.xsd", "manual.md")
 
 # Confirmed by grepping every worktree's pgtp_editor/ tree for
 # `from PySide6.<module>` imports: only QtCore, QtGui, QtWidgets, and QtSvg
@@ -226,6 +238,23 @@ def _find_upx() -> str | None:
     return str(Path(upx_path).resolve().parent)
 
 
+def _distribution_metadata_available() -> bool:
+    """Whether `pgtp-editor`'s dist-info exists in the building interpreter.
+
+    `--copy-metadata` aborts the whole build when it does not, so it is asked
+    first (see the call site for why the flag is wanted at all).
+    """
+    from importlib.metadata import PackageNotFoundError, distribution
+
+    try:
+        distribution(DISTRIBUTION_NAME)
+    except PackageNotFoundError:
+        return False
+    except Exception:
+        return False
+    return True
+
+
 def build() -> None:
     if not ENTRY_POINT.exists():
         raise SystemExit(f"Entry point not found: {ENTRY_POINT}")
@@ -241,6 +270,15 @@ def build() -> None:
             "The bundled manual and toolbar icons live here; the build cannot "
             "produce a working app without it."
         )
+    for name in REQUIRED_RESOURCE_FILES:
+        if not (RESOURCES_SRC / name).is_file():
+            raise SystemExit(
+                f"Bundled resource not found: {RESOURCES_SRC / name}\n"
+                "This file must be committed to the repository for the build to "
+                "work from a clean checkout. Shipping without it degrades the app "
+                "silently (curated.xsd feeds attribute completion, hover and the "
+                "Properties labels; manual.md is the in-app manual)."
+            )
 
     # PyInstaller wants "<src><os.pathsep><dest>" for --add-data.
     resources_spec = f"{RESOURCES_SRC}{os.pathsep}{RESOURCES_DEST}"
@@ -257,6 +295,29 @@ def build() -> None:
         "--clean",
         "--noconfirm",
     ]
+
+    # FQ-260810164455: carry the distribution's metadata into the bundle so the
+    # frozen app can read its own version. `pgtp_editor/version.py` resolves the
+    # version from `pyproject.toml` in a checkout, but a frozen build ships no
+    # `pyproject.toml`, so `importlib.metadata` is its ONLY route -- and
+    # PyInstaller collects no metadata unless asked. Without this flag the About
+    # box in a shipped build would read "unknown". The alternative (a hardcoded
+    # literal fallback in `version.py`) was rejected: it recreates the very
+    # second copy that feature exists to remove.
+    #
+    # Guarded rather than passed unconditionally, because `--copy-metadata` is a
+    # HARD build error when the distribution is not installed in the building
+    # interpreter -- and the project is installed editable on Windows but not
+    # necessarily anywhere else. A build from a bare checkout keeps working; it
+    # just produces an app that reports "unknown", which is the honest answer.
+    if _distribution_metadata_available():
+        args += ["--copy-metadata", DISTRIBUTION_NAME]
+    else:
+        print(
+            f"Distribution metadata for {DISTRIBUTION_NAME!r} not found in this "
+            "interpreter - the frozen app will report its version as 'unknown'. "
+            f"Install the project (pip install -e .) and re-run to embed it."
+        )
 
     for module in EXCLUDED_QT_MODULES + EXCLUDED_MODULES:
         args += ["--exclude-module", module]

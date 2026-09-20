@@ -24,7 +24,8 @@ Mode terminology is §7's and gains no fifth meaning: **major** = FQ-027's
 SESSION workflow mode (in-memory, never a QSettings key), **minor** = an active
 editor sub-state, shown only when there is one.
 """
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from pgtp_editor.ui.launcher_dialog import (
@@ -62,9 +63,61 @@ def _both(window):
 
 
 def test_mode_text_shows_the_minor_mode_only_when_there_is_one():
-    assert mode_text(MODE_PROJECT) == "Project"
-    assert mode_text(MODE_PROJECT, MINOR_CAPTION) == "Project · Caption"
+    assert mode_text(MODE_PROJECT) == "Project mode"
+    assert mode_text(MODE_PROJECT, MINOR_CAPTION) == "Project mode · Caption"
     assert mode_text(None) == NO_MODE_LABEL
+
+
+def test_every_mode_label_says_the_word_mode(qtbot):
+    """`BUG-260810174126`: a chip reading a bare "Project" does not tell a reader
+    it is a mode at all. EVERY label the indicator can render carries the word --
+    the three majors, the no-mode state, and both editing modes.
+
+    The editing-mode labels matter especially: `CodeEditorDialog`'s chrome renders
+    that segment ALONE, so it is the one surface with no major-mode label to supply
+    the word, and fixing only `MAJOR_LABELS` would have left it reading "Edit"."""
+    from pgtp_editor.ui.mode_indicator import (
+        EDITING_COMMAND,
+        EDITING_EDIT,
+        MAJOR_LABELS,
+    )
+
+    for label in MAJOR_LABELS.values():
+        assert "mode" in label.lower(), label
+    assert "mode" in NO_MODE_LABEL.lower()
+    assert EDITING_EDIT == "Edit mode"
+    assert EDITING_COMMAND.startswith("Command mode")
+    # The exit hint the owner attached to Command mode survives the rewording.
+    assert "press i" in EDITING_COMMAND
+
+
+def test_the_editing_only_chip_reads_a_labelled_mode(qtbot):
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND, EDITING_EDIT
+
+    indicator = ModeIndicator(editing_only=True)
+    qtbot.addWidget(indicator)
+    assert indicator.text() == EDITING_EDIT == "Edit mode"
+    indicator.set_editing_mode(EDITING_COMMAND)
+    assert indicator.text().startswith("Command mode")
+
+
+def test_no_tooltip_says_mode_twice_in_a_row(qtbot):
+    """The labels now carry the word themselves, so a tooltip that also prefixes
+    it reads like a bug ("Editing mode: Edit mode")."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND
+
+    editing = ModeIndicator(editing_only=True)
+    qtbot.addWidget(editing)
+    editing.set_editing_mode(EDITING_COMMAND)
+    assert "mode: Command mode" not in editing.toolTip()
+    assert "Command mode" in editing.toolTip()
+
+    full = ModeIndicator()
+    qtbot.addWidget(full)
+    full.set_mode(MODE_PROJECT, MINOR_CAPTION, EDITING_COMMAND)
+    tooltip = full.toolTip()
+    assert "Project mode" in tooltip
+    assert "mode: Project mode" not in tooltip
 
 
 def test_mode_colors_are_theme_aware_and_pure():
@@ -98,7 +151,7 @@ def test_the_minor_mode_is_text_not_a_second_colour(qtbot):
     indicator.set_mode(MODE_PROJECT, MINOR_CAPTION)
 
     assert indicator.colors() == plain
-    assert indicator.text() == "Project · Caption"
+    assert indicator.text() == "Project mode · Caption"
 
 
 # --- One source of truth, two surfaces --------------------------------------
@@ -119,7 +172,7 @@ def test_the_indicator_tracks_workflow_mode_through_a_change(qtbot, tmp_path):
     window.set_workflow_mode(MODE_MAINTENANCE)
 
     assert window.current_mode() == (MODE_MAINTENANCE, None)
-    assert _both(window) == ("Maintenance", "Maintenance")
+    assert _both(window) == ("Maintenance mode", "Maintenance mode")
     assert (
         window._mode_label.colors()
         == window.toolbar_mode_indicator.colors()
@@ -127,18 +180,22 @@ def test_the_indicator_tracks_workflow_mode_through_a_change(qtbot, tmp_path):
     )
 
 
-def test_new_session_resets_the_indicator(qtbot, tmp_path, monkeypatch):
-    """`File ▸ New Session` clears the session mode (FQ-027), and the indicator
-    follows it back to the no-mode state -- never to a stale label."""
+def test_new_session_keeps_the_indicator_on_the_standing_mode(
+    qtbot, tmp_path, monkeypatch
+):
+    """BUG-059 reversed FQ-027's clear-on-New-Session: the mode STANDS while the
+    re-opened launcher is up, so the indicator keeps showing it. It is not a
+    stale label -- it is the mode a dismissed launcher lands back in, and "No
+    Mode" is no longer reachable by any gesture."""
     window = _window(qtbot, tmp_path)
     window.set_workflow_mode(MODE_PROJECT)
-    assert _both(window) == ("Project", "Project")
+    assert _both(window) == ("Project mode", "Project mode")
     monkeypatch.setattr(window, "show_launcher", lambda: None)
 
     assert window.new_session() is True
 
-    assert window.workflow_mode is None
-    assert _both(window) == (NO_MODE_LABEL, NO_MODE_LABEL)
+    assert window.workflow_mode == MODE_PROJECT
+    assert _both(window) == ("Project mode", "Project mode")
 
 
 def test_the_mode_is_session_only_and_never_persisted(qtbot, tmp_path):
@@ -170,11 +227,11 @@ def test_caption_mode_appears_as_a_minor_mode_and_leaves_again(qtbot, tmp_path):
 
     find_action(find_top_menu(window, "Tools"), "Manage Captions...").trigger()
     assert window.current_mode() == (MODE_STANDALONE, MINOR_CAPTION)
-    assert _both(window) == ("Standalone · Caption", "Standalone · Caption")
+    assert _both(window) == ("Standalone mode · Caption", "Standalone mode · Caption")
 
     window.center_stage.caption_management_panel.close_panel()
     assert window.current_mode() == (MODE_STANDALONE, None)
-    assert _both(window) == ("Standalone", "Standalone")
+    assert _both(window) == ("Standalone mode", "Standalone mode")
 
 
 def test_compare_merge_appears_as_a_minor_mode(qtbot, tmp_path):
@@ -185,7 +242,7 @@ def test_compare_merge_appears_as_a_minor_mode(qtbot, tmp_path):
 
     window.center_stage.enter_diff_merge_mode()
     assert window.current_mode() == (MODE_PROJECT, MINOR_DIFF)
-    assert window._mode_label.text() == "Project · Compare/Merge"
+    assert window._mode_label.text() == "Project mode · Compare/Merge"
 
     window.center_stage.leave_diff_merge_mode()
     assert window.current_mode() == (MODE_PROJECT, None)
@@ -252,11 +309,108 @@ def test_a_theme_flip_re_renders_both_surfaces(qtbot, tmp_path):
     window.set_workflow_mode(MODE_PROJECT)
     dark = window._mode_label.colors()
 
-    window._light_theme_action.setChecked(True)  # fires the real toggle slot
+    window.apply_theme_named("light")  # the real selection path
 
     assert window._mode_label.colors() == mode_colors(True)[MODE_PROJECT]
     assert window.toolbar_mode_indicator.colors() == mode_colors(True)[MODE_PROJECT]
     assert window._mode_label.colors() != dark
     # Leave the app palette as the suite found it.
-    window._light_theme_action.setChecked(False)
+    window.apply_theme_named("dark")
     assert QApplication.instance() is not None
+
+
+# --- FQ-032: the THIRD segment, the focused editor's editing mode ------------
+
+
+def test_the_editing_mode_segment_is_present_on_a_focused_editable_editor(
+    qtbot, tmp_path
+):
+    """`set_mode(major, minor)` gained a third argument, and both surfaces still
+    render from the ONE `_refresh_mode_indicator` call."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND, EDITING_EDIT
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    editor.setFocus()
+    QApplication.processEvents()
+    window._refresh_mode_indicator()
+    assert _both(window) == (
+        f"{NO_MODE_LABEL} · {EDITING_EDIT}",
+        f"{NO_MODE_LABEL} · {EDITING_EDIT}",
+    )
+
+    QTest.keyClick(editor, Qt.Key.Key_Escape)
+    assert _both(window) == (
+        f"{NO_MODE_LABEL} · {EDITING_COMMAND}",
+        f"{NO_MODE_LABEL} · {EDITING_COMMAND}",
+    )
+
+
+def test_an_editing_mode_transition_is_a_TRIGGER_for_the_one_refresh(qtbot, tmp_path):
+    """The indicator follows a transition on ANY editor -- published through
+    `vim_mode.add_editing_mode_observer`, the bookmark-observer idiom -- so no tab
+    creation site needs a wiring line."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    editor.setFocus()
+    QApplication.processEvents()
+    editor.enter_command_mode()  # no keystroke: only the publish can move the chip
+    assert EDITING_COMMAND in window._mode_label.text()
+
+
+def test_the_segment_is_ABSENT_when_the_focused_editor_is_read_only(qtbot, tmp_path):
+    """FQ-032 makes the layer inactive on a read-only buffer, and a read-only
+    buffer already names itself in its tab title."""
+    from pgtp_editor.ui.mode_indicator import EDITING_COMMAND, EDITING_EDIT
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    editor.setReadOnly(True)
+    editor.setFocus()
+    QApplication.processEvents()
+    window._refresh_mode_indicator()
+    text = window._mode_label.text()
+    assert EDITING_EDIT not in text and EDITING_COMMAND not in text
+    editor.setReadOnly(False)
+
+
+def test_the_segment_is_ABSENT_on_a_non_editor_focus(qtbot, tmp_path):
+    from pgtp_editor.ui.mode_indicator import EDITING_EDIT
+
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    window.project_tree.setFocus()
+    QApplication.processEvents()
+    window._refresh_mode_indicator()
+    assert EDITING_EDIT not in window._mode_label.text()
+    assert window.focused_editing_mode() is None
+
+
+def test_the_palette_namespace_IS_the_menu_tree(qtbot, tmp_path):
+    """Derive, don't design: the `:` verbs are the shipped FQ-012 enumeration, so
+    the namespace auto-syncs as the menus change."""
+    window = _window(qtbot, tmp_path)
+    entries = window.vim_command_entries()
+    assert entries
+    labels = {label for _cid, label in entries}
+    assert any("›" in label for label in labels), "the verb is the FULL menu path"
+    command_id = entries[0][0]
+    assert window.vim_command_action(command_id) is not None
+    assert window.vim_command_action("no.such.command") is None
+
+
+def test_an_editor_inside_the_window_resolves_the_palette_namespace(qtbot, tmp_path):
+    window = _window(qtbot, tmp_path)
+    window.show()
+    qtbot.waitExposed(window)
+    editor = window.center_stage.xml_editor
+    assert editor.vim_command_entries()
