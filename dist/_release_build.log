@@ -1,0 +1,99 @@
+220 INFO: PyInstaller: 6.20.0, contrib hooks: 2026.5
+221 INFO: Python: 3.13.13
+258 INFO: Platform: Windows-11-10.0.26200-SP0
+258 INFO: Python environment: C:\Users\BotondZalai-RuzsicsP\AppData\Local\Programs\Python\Python313
+259 INFO: wrote C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\PGTPEditor.spec
+263 INFO: Removing temporary files and cleaning cache in C:\Users\BotondZalai-RuzsicsP\AppData\Local\pyinstaller
+278 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\BotondZalai-RuzsicsP\\docs\\Software development\\pgtp_editor',
+ 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip',
+ 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\DLLs',
+ 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib',
+ 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313',
+ 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Roaming\\Python\\Python313\\site-packages',
+ 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages',
+ 'C:\\Users\\BotondZalai-RuzsicsP\\docs\\Software development\\pgtp_editor']
+1664 INFO: Appending 'datas' from .spec
+1675 INFO: checking Analysis
+1676 INFO: Building Analysis because Analysis-00.toc is non existent
+1676 INFO: Looking for Python shared library...
+1676 INFO: Using Python shared library: C:\Users\BotondZalai-RuzsicsP\AppData\Local\Programs\Python\Python313\python313.dll
+1676 INFO: Running Analysis Analysis-00.toc
+1676 INFO: Target bytecode optimization level: 0
+1676 INFO: Initializing module dependency graph...
+1677 INFO: Initializing module graph hook caches...
+1746 INFO: Analyzing modules for base_library.zip ...
+3006 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+5243 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+6642 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+9326 INFO: Caching module dependency graph...
+9362 INFO: Analyzing C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\pgtp_editor\main.py
+9617 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+9651 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+9671 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+9695 INFO: Processing standard module hook 'hook-PySide6.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+9894 INFO: Processing standard module hook 'hook-shiboken6.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+10651 INFO: Processing standard module hook 'hook-PySide6.QtCore.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+14458 INFO: Processing standard module hook 'hook-PySide6.QtGui.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+34629 INFO: Processing standard module hook 'hook-lxml.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+35086 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+35183 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+35187 INFO: SetuptoolsInfo: initializing cached setuptools info...
+36274 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+36418 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+38077 INFO: Processing standard module hook 'hook-psycopg_binary.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+38579 INFO: Processing standard module hook 'hook-zoneinfo.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+39680 INFO: Processing standard module hook 'hook-PySide6.QtWidgets.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+44092 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+44334 INFO: Processing standard module hook 'hook-PySide6.QtSvg.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+45350 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+45534 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+46775 INFO: Processing module hooks (post-graph stage)...
+48112 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+48925 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+49006 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+49007 INFO: Processing standard module hook 'hook-tzdata.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+49688 INFO: Performing binary vs. data reclassification (875 entries)
+54130 INFO: Looking for ctypes DLLs
+54161 INFO: Analyzing run-time hooks ...
+54165 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+54188 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+54210 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+54226 INFO: Including run-time hook 'pyi_rth_pyside6.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+54240 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+54261 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PyInstaller\\hooks'
+54316 INFO: Creating base_library.zip...
+54335 INFO: Looking for dynamic libraries
+55058 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\shiboken6', 'C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\psycopg_binary.libs']
+55058 INFO: Extra DLL search directories (PATH): ['C:\\Users\\BotondZalai-RuzsicsP\\AppData\\Local\\Programs\\Python\\Python313\\Lib\\site-packages\\PySide6']
+56300 INFO: Warnings written to C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\build\PGTPEditor\warn-PGTPEditor.txt
+56334 INFO: Graph cross-reference written to C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\build\PGTPEditor\xref-PGTPEditor.html
+56422 INFO: checking PYZ
+56422 INFO: Building PYZ because PYZ-00.toc is non existent
+56423 INFO: Building PYZ (ZlibArchive) C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\build\PGTPEditor\PYZ-00.pyz
+56965 INFO: Building PYZ (ZlibArchive) C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\build\PGTPEditor\PYZ-00.pyz completed successfully.
+56977 INFO: checking PKG
+56977 INFO: Building PKG because PKG-00.toc is non existent
+56977 INFO: Building PKG (CArchive) PGTPEditor.pkg
+57032 INFO: Building PKG (CArchive) PGTPEditor.pkg completed successfully.
+57033 INFO: Bootloader C:\Users\BotondZalai-RuzsicsP\AppData\Local\Programs\Python\Python313\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+57033 INFO: checking EXE
+57033 INFO: Building EXE because EXE-00.toc is non existent
+57033 INFO: Building EXE from EXE-00.toc
+57034 INFO: Copying bootloader EXE to C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\build\PGTPEditor\PGTPEditor.exe
+57183 INFO: Copying icon to EXE
+57266 INFO: Copying 0 resources to EXE
+57266 INFO: Embedding manifest in EXE
+57364 INFO: Appending PKG archive to EXE
+57526 INFO: Fixing EXE headers
+58347 INFO: Building EXE from EXE-00.toc completed successfully.
+58355 INFO: checking COLLECT
+58355 INFO: Building COLLECT because COLLECT-00.toc is non existent
+58355 INFO: Removing dir C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\dist\PGTPEditor
+58375 INFO: Building COLLECT COLLECT-00.toc
+59966 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+59982 INFO: Build complete! The results are available in: C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\dist
+UPX not found on PATH - building without compression (output will be larger; install UPX and re-run to shrink it).
+Building PGTPEditor from C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\pgtp_editor\main.py ...
+Pruned unused Qt files from bundle: 47.2 MB freed.
+Build complete: C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\dist\PGTPEditor\PGTPEditor.exe

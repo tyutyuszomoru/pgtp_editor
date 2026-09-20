@@ -1,0 +1,67 @@
+
+This file lists modules PyInstaller was not able to find. This does not
+necessarily mean these modules are required for running your program. Both
+Python's standard library and 3rd-party Python packages often conditionally
+import optional modules, some of which may be available only on certain
+platforms.
+
+Types of import:
+* top-level: imported at the top-level - look at these first
+* conditional: imported within an if-statement
+* delayed: imported within a function
+* optional: imported within a try-except-statement
+
+IMPORTANT: Do NOT post this list to the issue-tracker. Use it as a basis for
+            tracking down the missing module yourself. Thanks!
+
+missing module named urllib.urlopen - imported by urllib (delayed, optional), lxml.html (delayed, optional)
+missing module named urllib.urlencode - imported by urllib (delayed, optional), lxml.html (delayed, optional)
+missing module named 'collections.abc' - imported by traceback (top-level), typing (top-level), inspect (top-level), logging (top-level), importlib.resources.readers (top-level), selectors (top-level), tracemalloc (top-level), http.client (top-level), PySide6.QtCore (top-level), PySide6.QtGui (top-level), pgtp_editor.mcp.providers (top-level), pgtp_editor.mcp.tools (top-level), pgtp_editor.db.migration_gen (top-level), pgtp_editor.db.introspect (top-level), psycopg.pq (top-level), psycopg.pq.abc (top-level), typing_extensions (top-level), asyncio.base_events (top-level), asyncio.coroutines (top-level), psycopg.errors (top-level), psycopg.abc (top-level), psycopg.sql (top-level), psycopg._connection_base (top-level), psycopg.rows (top-level), psycopg.cursor (top-level), psycopg._copy (top-level), psycopg._acompat (top-level), psycopg._copy_base (top-level), psycopg._py_transformer (top-level), psycopg._typeinfo (top-level), psycopg.connection (top-level), psycopg._preparing (top-level), psycopg._queries (top-level), psycopg._cursor_base (top-level), psycopg._column (top-level), psycopg.transaction (top-level), psycopg.connection_async (top-level), psycopg.cursor_async (top-level), psycopg._server_cursor_async (top-level), psycopg._server_cursor (top-level), psycopg.types.array (top-level), psycopg._struct (top-level), psycopg._adapters_map (top-level), psycopg.types.multirange (top-level), psycopg.types.composite (top-level), psycopg.types.datetime (top-level), psycopg.types.enum (top-level), psycopg.types.json (top-level), psycopg.types.net (top-level), psycopg.types.numeric (top-level), psycopg.types.uuid (top-level), psycopg._copy_async (top-level), psycopg.pq.pq_ctypes (top-level), psycopg.dbapi20 (top-level), PySide6.QtWidgets (top-level), pgtp_editor.ui.caption_management_panel (top-level), pgtp_editor.sql.templates (top-level), pgtp_editor.ui.editor_gutter (top-level), pgtp_editor.db.ddl_check (top-level), pgtp_editor.db.apply (top-level), pgtp_editor.db.sandbox (top-level), pgtp_editor.ui.alter_column_dialogs (top-level), pgtp_editor.db.ddl_skeleton (top-level), pgtp_editor.sql.expand_select (top-level), pgtp_editor.sql.join_fk (top-level), pgtp_editor.sql.signature_help (top-level), pgtp_editor.ui.find_replace_bar (top-level), pgtp_editor.ui.table_dialogs (top-level), pgtp_editor.ui.constraint_dialogs (top-level), pgtp_editor.ui.diff_merge_panel (top-level), pgtp_editor.ui.async_task (top-level), pgtp_editor.ui.sql_console_panel (top-level), pgtp_editor.db.sandbox_query (top-level), pgtp_editor.ui.sql_results_panel (top-level), pgtp_editor.db.activity_log (top-level), pgtp_editor.db.bookmark_store (top-level), pgtp_editor.ui.connection_setup_dialog (top-level), pgtp_editor.ui.new_project_dialog (top-level), pgtp_editor.ui.sandbox_controller (top-level), pgtp_editor.ui.new_trigger_dialog (top-level), pgtp_editor.ui.project_status_panel (top-level), pgtp_editor.ui.coherence_controller (top-level), pgtp_editor.db.coherence (top-level), pgtp_editor.ui.ui_shell (top-level), pgtp_editor.ui.ddl_project_controller (top-level), pgtp_editor.ui.project_settings_dialog (top-level), pgtp_editor.ui.diff_merge_controller (top-level), pgtp_editor.ui.find_controller (top-level), pgtp_editor.ui.activity_panel (top-level), pgtp_editor.ui.generation_controller (top-level), pgtp_editor.generation.runner (top-level), pgtp_editor.ui.lint_controller (top-level), pgtp_editor.lint.service (top-level), pgtp_editor.lint.runner (top-level), pgtp_editor.ui.pgtp_document_controller (top-level), pgtp_editor.ui.php_tab_controller (top-level), pgtp_editor.sql.snippet_store (top-level), pgtp_editor.ui.edit_snippets_dialog (top-level), pgtp_editor.ui.toolbar_controller (top-level), pgtp_editor.ui.toolbar_registry (top-level), pgtp_editor.ui.customize_shortcuts_dialog (top-level), pgtp_editor.ui.shortcut_registry (top-level), pgtp_editor.ui.xsd_controller (top-level), xml.etree.ElementTree (top-level), pgtp_editor.ui.audit_router (top-level), pgtp_editor.ui.status_bar (top-level), pgtp_editor.ui.launcher_dialog (top-level), lxml.html (top-level), lxml.html._setmixin (optional)
+missing module named pwd - imported by posixpath (delayed, conditional, optional), shutil (delayed, optional), tarfile (optional), pathlib._local (optional), subprocess (delayed, conditional, optional), netrc (delayed, optional), getpass (delayed, optional), http.server (delayed, optional)
+missing module named grp - imported by shutil (delayed, optional), tarfile (optional), pathlib._local (optional), subprocess (delayed, conditional, optional)
+missing module named posix - imported by os (conditional, optional), posixpath (optional), shutil (conditional), importlib._bootstrap_external (conditional)
+missing module named resource - imported by posix (top-level)
+missing module named _frozen_importlib_external - imported by importlib._bootstrap (delayed), importlib (optional), importlib.abc (optional), zipimport (top-level)
+excluded module named _frozen_importlib - imported by importlib (optional), importlib.abc (optional), zipimport (top-level)
+missing module named _posixsubprocess - imported by subprocess (conditional), multiprocessing.util (delayed)
+missing module named fcntl - imported by subprocess (optional), xmlrpc.server (optional)
+missing module named _posixshmem - imported by multiprocessing.resource_tracker (conditional), multiprocessing.shared_memory (conditional)
+missing module named termios - imported by getpass (optional), tty (top-level), _pyrepl.pager (delayed, optional)
+missing module named vms_lib - imported by platform (delayed, optional)
+missing module named 'java.lang' - imported by platform (delayed, optional)
+missing module named java - imported by platform (delayed)
+missing module named _scproxy - imported by urllib.request (conditional)
+missing module named multiprocessing.BufferTooShort - imported by multiprocessing (top-level), multiprocessing.connection (top-level)
+missing module named multiprocessing.AuthenticationError - imported by multiprocessing (top-level), multiprocessing.connection (top-level)
+missing module named multiprocessing.get_context - imported by multiprocessing (top-level), multiprocessing.pool (top-level), multiprocessing.managers (top-level), multiprocessing.sharedctypes (top-level)
+missing module named multiprocessing.TimeoutError - imported by multiprocessing (top-level), multiprocessing.pool (top-level)
+missing module named multiprocessing.set_start_method - imported by multiprocessing (top-level), multiprocessing.spawn (top-level)
+missing module named multiprocessing.get_start_method - imported by multiprocessing (top-level), multiprocessing.spawn (top-level)
+missing module named pyimod02_importers - imported by C:\Users\BotondZalai-RuzsicsP\docs\Software development\pgtp_editor\venv\Lib\site-packages\PyInstaller\hooks\rthooks\pyi_rth_pkgutil.py (delayed)
+excluded module named PySide6.QtOpenGL - imported by qtpy.QtGui (conditional, optional)
+excluded module named PySide6.QtOpenGLWidgets - imported by qtpy.QtWidgets (conditional, optional)
+missing module named asyncio.DefaultEventLoopPolicy - imported by asyncio (delayed, conditional), asyncio.events (delayed, conditional)
+missing module named annotationlib - imported by typing_extensions (conditional)
+excluded module named PySide6.QtDataVisualization - imported by qtpy.QtDataVisualization (conditional)
+missing module named htmlentitydefs - imported by lxml.html.soupparser (optional)
+missing module named BeautifulSoup - imported by lxml.html.soupparser (optional)
+missing module named bs4 - imported by lxml.html.soupparser (optional)
+missing module named urlparse - imported by lxml.ElementInclude (optional), lxml.html.html5parser (optional)
+missing module named urllib2 - imported by lxml.ElementInclude (optional), lxml.html.html5parser (optional)
+missing module named 'html5lib.treebuilders' - imported by lxml.html.html5parser (top-level)
+missing module named html5lib - imported by lxml.html._html5builder (top-level), lxml.html.html5parser (top-level)
+missing module named 'cython.cimports' - imported by lxml.html.diff (optional)
+missing module named cython - imported by lxml.html.diff (optional), lxml.html._difflib (optional)
+missing module named lxml_html_clean - imported by lxml.html.clean (optional)
+missing module named cgi - imported by lxml.doctestcompare (optional)
+missing module named readline - imported by cmd (delayed, conditional, optional), code (delayed, conditional, optional), pdb (delayed, conditional, optional), rlcompleter (optional)
+missing module named cssselect - imported by lxml.cssselect (optional)
+missing module named xmlrpclib - imported by defusedxml.xmlrpc (conditional)
+missing module named psycopg_c - imported by psycopg._cmodule (conditional), psycopg.pq (delayed, conditional, optional)
+missing module named 'string.templatelib' - imported by psycopg._compat (conditional)
+missing module named psycopg_pool - imported by psycopg._connection_base (conditional)
+excluded module named numpy - imported by psycopg.types.numeric (delayed, conditional)
+excluded module named PySide6.QtNetwork - imported by PySide6 (delayed, conditional, optional)
+missing module named mcp - imported by pgtp_editor.mcp.server (delayed, optional)
+missing module named win32evtlog - imported by logging.handlers (delayed, optional)
+missing module named win32evtlogutil - imported by logging.handlers (delayed, optional)
