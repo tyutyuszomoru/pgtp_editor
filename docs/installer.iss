@@ -77,6 +77,14 @@ DisableProgramGroupPage   = yes
 OutputDir                 = Output
 OutputBaseFilename        = PGTPEditor_Setup_{#AppVersion}
 SetupIconFile             = docs\pgtpeditor.ico
+
+; Code signing: the compiled installer (and its embedded uninstaller) are signed
+; with the "Actalis" sign tool registered in Inno Setup (Tools > Configure Sign
+; Tools), which invokes ActalisCodeSigner.exe with a timestamp. The bundled app
+; exe is signed separately, before ISCC runs. Compiling therefore requires the
+; "Actalis" sign tool to be present on this machine.
+SignTool                  = Actalis
+SignedUninstaller         = yes
 Compression               = lzma2/ultra64
 SolidCompression          = yes
 
